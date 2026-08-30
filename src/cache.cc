@@ -210,7 +210,12 @@ std::string FormatTimestamp(std::optional<std::uint64_t> timestamp) {
 void ListModels(const std::filesystem::path& cache_dir, std::ostream& output) {
   const ModelManifest manifest = ReadManifest(cache_dir);
   std::error_code error;
-  if (!std::filesystem::exists(cache_dir, error)) {
+  const bool exists = std::filesystem::exists(cache_dir, error);
+  if (error) {
+    throw std::runtime_error("failed to inspect model cache " +
+                             cache_dir.string() + ": " + error.message());
+  }
+  if (!exists) {
     return;
   }
   std::map<std::string, std::uintmax_t> models;

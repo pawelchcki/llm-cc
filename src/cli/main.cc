@@ -1,10 +1,11 @@
+#include <array>
 #include <charconv>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
 #include <iostream>
-#include <iterator>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -131,12 +132,26 @@ AnalyzeArguments ParseAnalyzeArguments(int argc, char** argv) {
 }
 
 std::string ReadFile(const std::filesystem::path& path) {
-  std::ifstream input(path, std::ios::binary);
+  using File = std::unique_ptr<std::FILE, decltype(&std::fclose)>;
+  File input(std::fopen(path.c_str(), "rb"), std::fclose);
   if (!input) {
     throw std::runtime_error("failed to read " + path.string());
   }
-  return {std::istreambuf_iterator<char>(input),
-          std::istreambuf_iterator<char>()};
+  std::string contents;
+  std::array<char, std::size_t{64} * 1024> buffer{};
+  for (;;) {
+    const std::size_t count =
+        std::fread(buffer.data(), 1, buffer.size(), input.get());
+    contents.append(buffer.data(), count);
+    if (count == buffer.size()) {
+      continue;
+    }
+    if (std::ferror(input.get()) != 0) {
+      throw std::runtime_error("failed while reading " + path.string());
+    }
+    break;
+  }
+  return contents;
 }
 
 int RunModels(int argc, char** argv) {

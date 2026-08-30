@@ -86,6 +86,19 @@ void SetOption(CURL* curl, CURLoption option, Value value) {
   }
 }
 
+void FinishOutput(std::ofstream& output, const std::filesystem::path& partial) {
+  output.flush();
+  if (!output) {
+    throw std::runtime_error("failed to write partial download " +
+                             partial.string());
+  }
+  output.close();
+  if (!output) {
+    throw std::runtime_error("failed to close partial download " +
+                             partial.string());
+  }
+}
+
 }  // namespace
 
 void StreamDownload(std::istream& input, const std::filesystem::path& target,
@@ -131,7 +144,7 @@ void StreamDownload(std::istream& input, const std::filesystem::path& target,
                              std::to_string(downloaded) + " bytes, expected " +
                              std::to_string(*total_length));
   }
-  output.close();
+  FinishOutput(output, partial);
   std::filesystem::rename(partial, target);
 }
 
@@ -147,67 +160,74 @@ void DownloadDefaultModel(const std::filesystem::path& target) {
     resume_offset =
         static_cast<std::uint64_t>(std::filesystem::file_size(partial));
   }
-  std::cerr << (resume_offset == 0 ? "Downloading model from "
-                                   : "Resuming model download from ")
-            << (resume_offset == 0 ? std::string(kDefaultModelUrl)
-                                   : std::to_string(resume_offset) + " bytes")
-            << '\n';
-
   CurlGlobal global;
-  Curl curl(curl_easy_init(), curl_easy_cleanup);
-  if (!curl) {
-    throw std::runtime_error("failed to create libcurl request");
-  }
-  std::ofstream output(
-      partial,
-      std::ios::binary | (resume_offset > 0 ? std::ios::app : std::ios::trunc));
-  if (!output) {
-    throw std::runtime_error("failed to open partial download " +
-                             partial.string());
-  }
-  WriteContext write_context{.output = &output, .error = {}};
-  std::array<char, CURL_ERROR_SIZE> error_buffer{};
-  SetOption(curl.get(), CURLOPT_URL, url.c_str());
-  SetOption(curl.get(), CURLOPT_FOLLOWLOCATION, 1L);
-  SetOption(curl.get(), CURLOPT_FAILONERROR, 1L);
-  SetOption(curl.get(), CURLOPT_USERAGENT, "llm-cc/1");
-  SetOption(curl.get(), CURLOPT_ERRORBUFFER, error_buffer.data());
-  SetOption(curl.get(), CURLOPT_WRITEFUNCTION, &WriteBytes);
-  SetOption(curl.get(), CURLOPT_WRITEDATA, &write_context);
-  if (resume_offset > 0) {
-    SetOption(curl.get(), CURLOPT_RESUME_FROM_LARGE,
-              static_cast<curl_off_t>(resume_offset));
-  }
-  const auto certificates = CertificateBundle();
-  std::string certificate_path;
-  if (certificates.has_value()) {
-    certificate_path = certificates->string();
-    SetOption(curl.get(), CURLOPT_CAINFO, certificate_path.c_str());
-  }
+  for (;;) {
+    std::cerr << (resume_offset == 0 ? "Downloading model from "
+                                     : "Resuming model download from ")
+              << (resume_offset == 0 ? std::string(kDefaultModelUrl)
+                                     : std::to_string(resume_offset) + " bytes")
+              << '\n';
 
-  const CURLcode result = curl_easy_perform(curl.get());
-  output.flush();
-  long status = 0;
-  curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status);
-  if (result != CURLE_OK || !write_context.error.empty()) {
-    std::string detail = write_context.error;
-    if (detail.empty()) {
-      detail = error_buffer[0] != '\0' ? error_buffer.data()
-                                       : curl_easy_strerror(result);
+    Curl curl(curl_easy_init(), curl_easy_cleanup);
+    if (!curl) {
+      throw std::runtime_error("failed to create libcurl request");
     }
-    throw std::runtime_error("download failed for " +
-                             std::string(kDefaultModelUrl) + ": " + detail);
-  }
-  if ((resume_offset > 0 && status != 206) ||
-      (resume_offset == 0 && status != 200)) {
-    output.close();
+    std::ofstream output(
+        partial, std::ios::binary |
+                     (resume_offset > 0 ? std::ios::app : std::ios::trunc));
+    if (!output) {
+      throw std::runtime_error("failed to open partial download " +
+                               partial.string());
+    }
+    WriteContext write_context{.output = &output, .error = {}};
+    std::array<char, CURL_ERROR_SIZE> error_buffer{};
+    SetOption(curl.get(), CURLOPT_URL, url.c_str());
+    SetOption(curl.get(), CURLOPT_FOLLOWLOCATION, 1L);
+    SetOption(curl.get(), CURLOPT_FAILONERROR, 1L);
+    SetOption(curl.get(), CURLOPT_USERAGENT, "llm-cc/1");
+    SetOption(curl.get(), CURLOPT_ERRORBUFFER, error_buffer.data());
+    SetOption(curl.get(), CURLOPT_WRITEFUNCTION, &WriteBytes);
+    SetOption(curl.get(), CURLOPT_WRITEDATA, &write_context);
     if (resume_offset > 0) {
-      std::filesystem::resize_file(partial, resume_offset);
+      SetOption(curl.get(), CURLOPT_RESUME_FROM_LARGE,
+                static_cast<curl_off_t>(resume_offset));
     }
-    throw std::runtime_error("download returned unexpected HTTP status " +
-                             std::to_string(status));
+    const auto certificates = CertificateBundle();
+    std::string certificate_path;
+    if (certificates.has_value()) {
+      certificate_path = certificates->string();
+      SetOption(curl.get(), CURLOPT_CAINFO, certificate_path.c_str());
+    }
+
+    const CURLcode result = curl_easy_perform(curl.get());
+    long status = 0;
+    curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status);
+    if (resume_offset > 0 && status == 200) {
+      output.close();
+      std::filesystem::resize_file(partial, 0);
+      resume_offset = 0;
+      continue;
+    }
+    FinishOutput(output, partial);
+    if (result != CURLE_OK || !write_context.error.empty()) {
+      std::string detail = write_context.error;
+      if (detail.empty()) {
+        detail = error_buffer[0] != '\0' ? error_buffer.data()
+                                         : curl_easy_strerror(result);
+      }
+      throw std::runtime_error("download failed for " +
+                               std::string(kDefaultModelUrl) + ": " + detail);
+    }
+    if ((resume_offset > 0 && status != 206) ||
+        (resume_offset == 0 && status != 200)) {
+      if (resume_offset > 0) {
+        std::filesystem::resize_file(partial, resume_offset);
+      }
+      throw std::runtime_error("download returned unexpected HTTP status " +
+                               std::to_string(status));
+    }
+    break;
   }
-  output.close();
   std::filesystem::rename(partial, target);
   MarkModelDownloaded(target);
 }

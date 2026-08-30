@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <stdexcept>
 
 #include "src/test_util.h"
 
@@ -35,6 +36,16 @@ int main() {
                       "GGUF listed");
   llmcc::test::Expect(models.str().find("ignored.txt") == std::string::npos,
                       "non-GGUF omitted");
+
+  const fs::path symlink_loop = fs::path(temporary) / "symlink-loop";
+  fs::create_symlink(symlink_loop.filename(), symlink_loop);
+  bool list_failed = false;
+  try {
+    llmcc::ListModels(symlink_loop / "child", models);
+  } catch (const std::runtime_error&) {
+    list_failed = true;
+  }
+  llmcc::test::Expect(list_failed, "cache lookup errors are reported");
 
   std::ofstream(llmcc::PartialPath(cache / "alpha.gguf")) << "partial";
   llmcc::RemoveModel(cache, "alpha.gguf");

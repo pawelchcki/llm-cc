@@ -143,5 +143,14 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::ExpectEq(Run(models_command), 0, "models path succeeds");
   llmcc::test::ExpectEq(Read(path_output), cache.string() + "\n",
                         "models path honors override");
+
+  const fs::path read_error = fs::path(test_tmpdir) / "read-error.txt";
+  const std::string read_error_command =
+      Quote(binary) + " " + Quote(fixtures) + " --lang rust --entropy-jsonl " +
+      Quote(fixtures / "sample.jsonl") + " 2>" + Quote(read_error);
+  llmcc::test::Expect(Run(read_error_command) != 0,
+                      "source read failures are reported");
+  llmcc::test::Expect(Read(read_error).find("failed") != std::string::npos,
+                      "source read failure is explained");
   return 0;
 }
