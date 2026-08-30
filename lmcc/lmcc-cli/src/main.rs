@@ -23,7 +23,7 @@ const PROGRESS_TIME_INTERVAL: Duration = Duration::from_secs(3);
 #[derive(Debug, Parser)]
 #[command(
     name = "lmcc",
-    version = env!("RETHINK_VERSION"),
+    version = env!("LMCC_VERSION"),
     about = "Compute entropy-guided language-model code complexity",
     args_conflicts_with_subcommands = true
 )]

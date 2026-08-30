@@ -17,8 +17,22 @@ genrule(
     name = "version_header",
     srcs = ["VERSION"],
     outs = ["generated/version.h"],
+    # Follow --stamp: development builds use the VERSION fallback, while
+    # release/install builds receive the workspace status files.
+    stamp = -1,
     cmd = """
-version=$$(tr -d '\\r\\n' < $(location VERSION))
+status_file=bazel-out/stable-status.txt
+version=""
+if [[ -f "$$status_file" ]]; then
+  version=$$(grep '^STABLE_RETHINK_VERSION ' "$$status_file" | cut -d' ' -f2- || true)
+fi
+if [[ -z "$$version" ]]; then
+  base=$$(tr -d '[:space:]' < $(location VERSION))
+  case "$$base" in
+    [0-9]*.[0-9]*.[0-9]*) base=$${base%.*} ;;
+  esac
+  version="$$base.0+unknown"
+fi
 case "$$version" in
   *[!0-9A-Za-z.+-]*|'') echo "invalid VERSION: $$version" >&2; exit 1 ;;
 esac
@@ -131,7 +145,7 @@ install_launcher(
     name = "install",
     binary = ":rethink-cc",
     script = "//tools:install.sh",
-    version = "VERSION",
+    version_script = "//tools:version.sh",
 )
 
 cc_test(

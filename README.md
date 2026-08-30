@@ -96,17 +96,12 @@ rethink-cc --version
 lmcc --version
 ```
 
-`VERSION` is the version source of truth. To release a new version, edit that
-one file and synchronize the Bazel module metadata, Cargo package metadata, and
-Cargo lockfile:
-
-```sh
-tools/sync_version.sh
-tools/sync_version.sh --check
-```
-
-The C++ build generates its version header directly from `VERSION`, while the
-Rust build script tracks the same file for Clap's `-V`/`--version` output.
+Versions are derived at build time from Git as
+`0.1.<commit-count>+g<short-sha>` (with `.dirty` for uncommitted changes), and
+installs determine the version automatically. To bump the minor version, edit
+`VERSION` from `0.1` to `0.2`. Source tarballs without Git metadata fall back to
+`0.1.0+unknown`; unstamped development `bazel build` commands use the same
+`+unknown` form.
 
 Linux x86_64 release binaries intended to run on CentOS 7 or newer can be
 built with the opt-in portable profile:

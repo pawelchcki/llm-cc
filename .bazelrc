@@ -2,6 +2,7 @@ common --enable_bzlmod
 build --define=backend=cpu
 build --announce_rc
 build --show_timestamps
+build --workspace_status_command=tools/bazel_status.sh
 
 build:cpu --define=backend=cpu
 build:cuda --define=backend=cuda
@@ -14,10 +15,12 @@ build:metal --define=backend=metal
 
 build:release --compilation_mode=opt
 build:release --strip=always
+build:release --stamp
 
 # `bazel run` is used for release executables such as //:install.
 run --compilation_mode=opt
 run --strip=always
+run --stamp
 
 # Build Linux x86_64 binaries against the CentOS 7 (glibc 2.17) sysroot.
 # This toolchain is selected only when the portable profile is requested.

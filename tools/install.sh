@@ -2,7 +2,7 @@
 set -euo pipefail
 
 rethink_binary="${1:?missing Bazel rethink-cc runfile}"
-version_file="${2:?missing VERSION runfile}"
+version_script_runfile="${2:?missing version script runfile}"
 shift 2
 
 prefix="${PREFIX:-${HOME:?HOME is unset}/.local}"
@@ -33,15 +33,20 @@ if [[ -z "$prefix" ]]; then
   exit 2
 fi
 
-version="$(tr -d '\r\n' < "$version_file")"
+workspace="${BUILD_WORKSPACE_DIRECTORY:-}"
+if [[ -n "$workspace" && -x "$workspace/tools/version.sh" ]]; then
+  version_script="$workspace/tools/version.sh"
+else
+  version_script="$version_script_runfile"
+fi
+version="$("$version_script")"
 bin_dir="$prefix/bin"
 mkdir -p "$bin_dir"
 install -m 0755 "$rethink_binary" "$bin_dir/rethink-cc"
 echo "Installed $("$bin_dir/rethink-cc" --version) to $bin_dir/rethink-cc"
 
-workspace="${BUILD_WORKSPACE_DIRECTORY:-}"
 if [[ -z "$workspace" ]]; then
-  workspace="$(CDPATH= cd -- "$(dirname -- "$version_file")" && pwd)"
+  workspace="$(CDPATH= cd -- "$(dirname -- "$version_script_runfile")/.." && pwd)"
 fi
 lmcc_binary="$workspace/lmcc/target/release/lmcc"
 
@@ -54,11 +59,10 @@ fi
 
 if [[ -x "$lmcc_binary" ]]; then
   lmcc_version="$("$lmcc_binary" --version)"
-  if [[ "$lmcc_version" == "lmcc $version" ]]; then
-    install -m 0755 "$lmcc_binary" "$bin_dir/lmcc"
-    echo "Installed $lmcc_version to $bin_dir/lmcc"
-  else
-    echo "Skipped lmcc: built binary reports '$lmcc_version', expected 'lmcc $version'." >&2
+  install -m 0755 "$lmcc_binary" "$bin_dir/lmcc"
+  echo "Installed $lmcc_version to $bin_dir/lmcc"
+  if [[ "$lmcc_version" != "lmcc $version" ]]; then
+    echo "Warning: lmcc reports '$lmcc_version', expected 'lmcc $version'." >&2
   fi
 else
   echo "Skipped lmcc: Cargo is unavailable and $lmcc_binary is not built." >&2

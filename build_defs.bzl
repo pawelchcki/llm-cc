@@ -10,12 +10,12 @@ set -euo pipefail
 runfiles_dir="${{RUNFILES_DIR:-$0.runfiles}}"
 exec "$runfiles_dir/{workspace}/{script}" \\
   "$runfiles_dir/{workspace}/{binary}" \\
-  "$runfiles_dir/{workspace}/{version}" "$@"
+  "$runfiles_dir/{workspace}/{version_script}" "$@"
 """.format(
             workspace = workspace,
             script = ctx.file.script.short_path,
             binary = ctx.executable.binary.short_path,
-            version = ctx.file.version.short_path,
+            version_script = ctx.file.version_script.short_path,
         ),
         is_executable = True,
     )
@@ -24,7 +24,8 @@ exec "$runfiles_dir/{workspace}/{script}" \\
         runfiles = ctx.runfiles(files = [
             ctx.executable.binary,
             ctx.file.script,
-            ctx.file.version,
+            ctx.file.version_script,
+            ctx.file._version_file,
         ]),
     )]
 
@@ -34,7 +35,11 @@ install_launcher = rule(
     attrs = {
         "binary": attr.label(executable = True, cfg = "target", mandatory = True),
         "script": attr.label(allow_single_file = True, mandatory = True),
-        "version": attr.label(allow_single_file = True, mandatory = True),
+        "version_script": attr.label(allow_single_file = True, mandatory = True),
+        "_version_file": attr.label(
+            allow_single_file = True,
+            default = Label("//:VERSION"),
+        ),
     },
 )
 

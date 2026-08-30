@@ -1,17 +1,28 @@
-use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 
 fn main() {
-    let version_file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../VERSION");
-    println!("cargo:rerun-if-changed={}", version_file.display());
-    let version = fs::read_to_string(&version_file)
-        .unwrap_or_else(|error| panic!("failed to read {}: {error}", version_file.display()));
-    let version = version.trim();
-    assert!(!version.is_empty(), "VERSION must not be empty");
-    assert_eq!(
-        version,
-        env!("CARGO_PKG_VERSION"),
-        "Cargo metadata is out of sync; run tools/sync_version.sh from the repository root"
-    );
-    println!("cargo:rustc-env=RETHINK_VERSION={version}");
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    for relative in ["../../VERSION", "../../tools/version.sh"] {
+        println!(
+            "cargo:rerun-if-changed={}",
+            manifest_dir.join(relative).display()
+        );
+    }
+    for relative in ["../../.git/HEAD", "../../.git/index"] {
+        let path = manifest_dir.join(relative);
+        if path.exists() {
+            println!("cargo:rerun-if-changed={}", path.display());
+        }
+    }
+
+    let version_script = manifest_dir.join("../../tools/version.sh");
+    let version = Command::new(&version_script)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|version| version.trim().to_owned())
+        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_owned());
+    println!("cargo:rustc-env=LMCC_VERSION={version}");
 }
