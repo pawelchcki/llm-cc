@@ -15,6 +15,10 @@ build:metal --define=backend=metal
 build:release --compilation_mode=opt
 build:release --strip=always
 
+# `bazel run` is used for release executables such as //:install.
+run --compilation_mode=opt
+run --strip=always
+
 # Build Linux x86_64 binaries against the CentOS 7 (glibc 2.17) sysroot.
 # This toolchain is selected only when the portable profile is requested.
 build:portable --extra_toolchains=@llvm_toolchain_portable//:cc-toolchain-x86_64-linux

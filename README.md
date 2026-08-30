@@ -70,6 +70,44 @@ bazel-bin/rethink-cc \
   --prompt "The quick brown fox"
 ```
 
+## Install
+
+Install an optimized `rethink-cc` build and the release `lmcc` CLI into
+`$HOME/.local/bin`:
+
+```sh
+bazel run //:install
+```
+
+If Cargo is available, the installer builds `lmcc` with `cargo build
+--release`; otherwise it installs an existing `lmcc/target/release/lmcc`, or
+prints a skip notice when neither is available. Set `PREFIX` or pass `--prefix`
+to choose another destination:
+
+```sh
+PREFIX=/opt/rethink bazel run //:install
+bazel run //:install -- --prefix /opt/rethink
+```
+
+Both executables report the repository version:
+
+```sh
+rethink-cc --version
+lmcc --version
+```
+
+`VERSION` is the version source of truth. To release a new version, edit that
+one file and synchronize the Bazel module metadata, Cargo package metadata, and
+Cargo lockfile:
+
+```sh
+tools/sync_version.sh
+tools/sync_version.sh --check
+```
+
+The C++ build generates its version header directly from `VERSION`, while the
+Rust build script tracks the same file for Clap's `-V`/`--version` output.
+
 Linux x86_64 release binaries intended to run on CentOS 7 or newer can be
 built with the opt-in portable profile:
 

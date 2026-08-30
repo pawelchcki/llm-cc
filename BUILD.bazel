@@ -2,9 +2,39 @@ load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
-load("//:build_defs.bzl", "llama_cmake_options", "llama_rocm_cmake_options")
+load(
+    "//:build_defs.bzl",
+    "install_launcher",
+    "llama_cmake_options",
+    "llama_rocm_cmake_options",
+)
 
 package(default_visibility = ["//visibility:public"])
+
+exports_files(["VERSION"])
+
+genrule(
+    name = "version_header",
+    srcs = ["VERSION"],
+    outs = ["generated/version.h"],
+    cmd = """
+version=$$(tr -d '\\r\\n' < $(location VERSION))
+case "$$version" in
+  *[!0-9A-Za-z.+-]*|'') echo "invalid VERSION: $$version" >&2; exit 1 ;;
+esac
+cat > "$@" <<EOF
+#ifndef RETHINK_CC_GENERATED_VERSION_H_
+#define RETHINK_CC_GENERATED_VERSION_H_
+#define RETHINK_CC_VERSION "$$version"
+#endif
+EOF
+""",
+)
+
+cc_library(
+    name = "version",
+    hdrs = [":version_header"],
+)
 
 config_setting(
     name = "backend_cuda",
@@ -93,7 +123,15 @@ cc_binary(
     deps = [
         ":llama_cpp",
         ":scoring",
+        ":version",
     ],
+)
+
+install_launcher(
+    name = "install",
+    binary = ":rethink-cc",
+    script = "//tools:install.sh",
+    version = "VERSION",
 )
 
 cc_test(

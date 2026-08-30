@@ -3,6 +3,7 @@ name = "lmcc-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+build = "build.rs"
 
 [[bin]]
 name = "lmcc"

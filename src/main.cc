@@ -21,6 +21,7 @@
 #include <thread>
 #include <vector>
 
+#include "generated/version.h"
 #include "src/scoring.h"
 
 namespace {
@@ -63,6 +64,7 @@ struct Arguments {
          "0)\n"
       << "  --override-memory-check  bypass the preflight memory check\n"
       << "  --entropy              emit full-vocabulary next-token entropy\n"
+      << "  -V, --version          show the program version\n"
       << "  -h, --help             show this help\n";
   std::exit(error.empty() ? 0 : 2);
 }
@@ -85,6 +87,10 @@ Arguments ParseArguments(int argc, char** argv) {
     const std::string_view option = argv[i];
     if (option == "-h" || option == "--help") {
       Usage();
+    }
+    if (option == "-V" || option == "--version") {
+      std::cout << "rethink-cc " << RETHINK_CC_VERSION << '\n';
+      std::exit(0);
     }
     if (option == "--entropy") {
       arguments.entropy = true;
