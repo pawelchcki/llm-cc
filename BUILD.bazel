@@ -2,7 +2,7 @@ load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
-load("//:build_defs.bzl", "llama_cmake_options")
+load("//:build_defs.bzl", "llama_cmake_options", "llama_rocm_cmake_options")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -28,10 +28,7 @@ cmake(
             BUILD_SHARED_LIBS = "ON",
             GGML_CUDA = "ON",
         ),
-        ":backend_rocm": llama_cmake_options(
-            BUILD_SHARED_LIBS = "ON",
-            GGML_HIP = "ON",
-        ),
+        ":backend_rocm": llama_rocm_cmake_options(),
         ":backend_metal": llama_cmake_options(
             BUILD_SHARED_LIBS = "ON",
             GGML_METAL = "ON",

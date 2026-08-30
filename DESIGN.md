@@ -82,6 +82,55 @@ concatenated in order and matched against the preprocessed source bytes.
   checked-in fixture entropy JSONL (no model download in CI).
 - `cargo test` must pass; `cargo clippy -- -D warnings` clean.
 
+### Interpretation notes
+
+Semantic units are atomic: they are created only by boundaries (entropy
+spikes and structural terminations), exactly as in the paper. Algorithm
+1's "recursive partitioning by nesting" operates over the flat unit
+sequence — each unit carries one nesting depth, sampled from the deepest
+scope containing its first byte, and the hierarchy groups units by
+recursively splitting depth runs. Nesting transitions strictly inside a
+unit (a scope that opens and does not terminate before the unit's end)
+do not create sub-units; a scope termination always ends a unit, so in
+practice a unit never outlives the scopes it starts in.
+
+## C and C++ frontends
+
+`lmcc-lang` grows `CFrontend` and `CppFrontend` (tree-sitter-c /
+tree-sitter-cpp), sharing the generic comment-stripping and
+structural-event walkers with `RustFrontend` — the frontends differ only
+in the tree-sitter language and two node-kind sets:
+
+- **Comment kinds** — `comment` (both grammars cover `//` and `/* */`;
+  doc comments are ordinary comments in C/C++).
+- **Structural kinds** —
+  - C: `function_definition`, `compound_statement`, `for_statement`,
+    `while_statement`, `do_statement`, `if_statement`, `switch_statement`.
+  - C++: all of C plus `for_range_loop`, `lambda_expression`,
+    `try_statement`, `namespace_definition`, and the body scopes
+    `field_declaration_list` (class/struct/union) and `enumerator_list`.
+
+The `LanguageFrontend` trait, offset-map contract, and boundary semantics
+are unchanged. `lmcc --lang` accepts `rust`, `c`, `cpp` (alias `c++`);
+when `--lang` is omitted it is inferred from the source extension
+(`.rs`; `.c`; `.cc`/`.cpp`/`.cxx`/`.hpp`/`.hh`; `.h` defaults to `c`).
+Preprocessor directives are left in place (they are tokens the model
+sees, exactly like any other code). Tests mirror the Rust suite: comment
+stripping (including comment-like strings and stringized macros),
+structural events and nesting on fixture files, and an end-to-end CLI run
+against a checked-in fixture entropy JSONL for a C++ sample.
+
+## Static linking
+
+The CPU `rethink-cc` binary must depend only on the loader plus libc
+family libraries (`libc`, `libm`, `libpthread`, `libdl`, `ld-linux`).
+llama.cpp is already linked statically in the CPU config; the C++
+runtime is linked statically too (`-static-libstdc++ -static-libgcc`,
+or the toolchain's static libc++). GPU configs (CUDA/ROCm/Metal)
+necessarily load vendor runtimes and are exempt. The `lmcc` Rust binary
+already meets the same bar by default. A CI check (`ldd` allowlist over
+the release CPU binary) enforces this.
+
 ## Out of scope for now
 Evaluation harness (pass@1 correlation study), semantics-preserving
 rewriting, other language frontends — the trait boundary is the extension

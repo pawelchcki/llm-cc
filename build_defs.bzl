@@ -20,3 +20,11 @@ def llama_cmake_options(**backend):
     }
     options.update(backend)
     return options
+
+def llama_rocm_cmake_options():
+    return llama_cmake_options(
+        BUILD_SHARED_LIBS = "ON",
+        CMAKE_HIP_COMPILER = "$$HIPCXX$$",
+        GGML_HIP = "ON",
+        GPU_TARGETS = "$$GPU_TARGETS$$",
+    )

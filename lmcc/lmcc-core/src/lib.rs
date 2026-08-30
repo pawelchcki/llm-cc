@@ -271,11 +271,17 @@ fn partition_at_shallowest(
     let starts = (first..end)
         .filter(|index| units[*index].nesting_depth == shallowest)
         .collect::<Vec<_>>();
-    starts
-        .iter()
-        .enumerate()
-        .map(|(index, start)| (*start, starts.get(index + 1).copied().unwrap_or(end)))
-        .collect()
+    let mut ranges = Vec::with_capacity(starts.len() + usize::from(starts[0] > first));
+    if starts[0] > first {
+        ranges.push((first, starts[0]));
+    }
+    ranges.extend(
+        starts
+            .iter()
+            .enumerate()
+            .map(|(index, start)| (*start, starts.get(index + 1).copied().unwrap_or(end))),
+    );
+    ranges
 }
 
 fn totals(units: &[Unit]) -> (u64, u64) {
@@ -509,6 +515,65 @@ mod tests {
         assert_eq!(units[1].branching, 0);
         let score = 0.8 * branches as f64 + 0.2 * levels as f64;
         assert!((score - 2.8).abs() < 1e-12);
+    }
+
+    #[test]
+    fn leading_deeper_child_run_is_not_dropped() {
+        let leaves = [0, 2, 1]
+            .into_iter()
+            .enumerate()
+            .map(|(start_byte, nesting_depth)| SemanticUnit {
+                start_byte,
+                end_byte: start_byte + 1,
+                nesting_depth,
+            })
+            .collect::<Vec<_>>();
+
+        let units = build_hierarchy(&leaves);
+        assert_eq!(units.len(), 1);
+        assert_eq!((units[0].start_byte, units[0].end_byte), (0, 3));
+        assert_eq!(units[0].branching, 2);
+        assert_eq!(
+            units[0]
+                .children
+                .iter()
+                .map(|child| (
+                    child.start_byte,
+                    child.end_byte,
+                    child.level,
+                    child.branching
+                ))
+                .collect::<Vec<_>>(),
+            vec![(1, 2, 2, 0), (2, 3, 2, 0)]
+        );
+        assert_eq!(totals(&units), (2, 5));
+    }
+
+    #[test]
+    fn leading_deeper_root_run_is_not_dropped() {
+        let leaves = [3, 1, 2, 1]
+            .into_iter()
+            .enumerate()
+            .map(|(start_byte, nesting_depth)| SemanticUnit {
+                start_byte,
+                end_byte: start_byte + 1,
+                nesting_depth,
+            })
+            .collect::<Vec<_>>();
+
+        let units = build_hierarchy(&leaves);
+        assert_eq!(units.len(), 3);
+        assert_eq!(
+            units
+                .iter()
+                .map(|unit| (unit.start_byte, unit.end_byte, unit.level, unit.branching))
+                .collect::<Vec<_>>(),
+            vec![(0, 1, 1, 0), (1, 3, 1, 1), (3, 4, 1, 0)]
+        );
+        assert_eq!(units[1].children[0].start_byte, 2);
+        assert_eq!(units[1].children[0].end_byte, 3);
+        assert_eq!(units[1].children[0].level, 2);
+        assert_eq!(totals(&units), (1, 5));
     }
 
     #[test]

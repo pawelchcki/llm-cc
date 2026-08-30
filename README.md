@@ -11,26 +11,40 @@ vendor SDK and driver on the target machine.
 
 ## Model
 
-The recommended 5–10B default is Qwen3.5-9B Q4_K_M (about 6.2 GB). Download it
-outside the build graph so model weights remain a runtime input:
+The primary recommendation is the pretrained DeepSeek-Coder-6.7B-Base Q6_K
+(about 5.5 GB) from `TheBloke/deepseek-coder-6.7B-base-GGUF`. Download model
+weights outside the build graph so they remain a runtime input:
 
 ```sh
 mkdir -p models
 curl -L --fail \
-  -o models/Qwen3.5-9B-Q4_K_M.gguf \
-  https://huggingface.co/bartowski/Qwen_Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf
+  -o models/deepseek-coder-6.7b-base.Q6_K.gguf \
+  https://huggingface.co/TheBloke/deepseek-coder-6.7B-base-GGUF/resolve/main/deepseek-coder-6.7b-base.Q6_K.gguf
 ```
 
-For CPU-only machines, Qwen3.5-4B Q4_K_M is about 3.0 GB:
+Qwen2.5-Coder-7B Base Q6_K (about 5.8 GB) is a good alternative:
 
 ```sh
 mkdir -p models
 curl -L --fail \
-  -o models/Qwen3.5-4B-Q4_K_M.gguf \
-  https://huggingface.co/bartowski/Qwen_Qwen3.5-4B-GGUF/resolve/main/Qwen_Qwen3.5-4B-Q4_K_M.gguf
+  -o models/Qwen2.5-Coder-7B-Q6_K.gguf \
+  https://huggingface.co/tensorblock/Qwen2.5-Coder-7B-GGUF/resolve/main/Qwen2.5-Coder-7B-Q6_K.gguf
 ```
 
-Any GGUF supported by the pinned llama.cpp revision can be used.
+For a small CPU option, use Qwen2.5-Coder-1.5B Base Q6_K (about 1.2 GB):
+
+```sh
+mkdir -p models
+curl -L --fail \
+  -o models/Qwen2.5-Coder-1.5B-Q6_K.gguf \
+  https://huggingface.co/tensorblock/Qwen2.5-Coder-1.5B-GGUF/resolve/main/Qwen2.5-Coder-1.5B-Q6_K.gguf
+```
+
+LM-CC measures the model's raw predictive uncertainty, so pretrained base code
+models are better entropy estimators than post-trained chat models, whose
+instruction tuning reshapes the next-token distribution. Q6_K or Q8_0 also
+preserves that distribution more faithfully than Q4; prefer Q8_0 when memory is
+plentiful. Any GGUF supported by the pinned llama.cpp revision can be used.
 
 ## Build and run
 
@@ -40,7 +54,7 @@ pinned `.bazelversion` automatically.
 ```sh
 bazel build --config=release --config=cpu //:rethink-cc
 bazel-bin/rethink-cc \
-  --model models/Qwen3.5-9B-Q4_K_M.gguf \
+  --model models/deepseek-coder-6.7b-base.Q6_K.gguf \
   --entropy \
   --prompt "The quick brown fox"
 ```
@@ -58,19 +72,37 @@ Accelerator configurations compile the corresponding llama.cpp backend:
 # NVIDIA CUDA toolkit and driver required
 bazel build --config=release --config=cuda //:rethink-cc
 
-# AMD ROCm SDK and driver required
+# AMD ROCm SDK and driver required; see the environment setup below
 bazel build --config=release --config=rocm //:rethink-cc
 
 # macOS with Xcode command-line tools required
 bazel build --config=release --config=metal //:rethink-cc
 ```
 
+ROCm builds require `ROCM_PATH`/`HIP_PATH` to name the SDK root and `HIPCXX` to
+name its `llvm/bin/clang++`. `GPU_TARGETS` is optional; set it to the
+architecture from `rocminfo` to avoid compiling for every detected GPU. The
+ROCm Bazel profile forwards these variables into the CMake action and sets
+`CMAKE_HIP_COMPILER` from `HIPCXX` explicitly.
+
+```sh
+export ROCM_PATH=/opt/rocm
+export HIP_PATH="$ROCM_PATH"
+export HIPCXX="$ROCM_PATH/llvm/bin/clang++"
+export GPU_TARGETS=gfx1100
+bazel build --config=release --config=rocm //:rethink-cc
+```
+
+Override the target for another build by changing `GPU_TARGETS` (for example,
+`GPU_TARGETS=gfx1030 bazel build --config=rocm //:rethink-cc`). If it is unset,
+llama.cpp detects the GPUs present on the build machine.
+
 Offload all transformer layers at runtime with `--gpu-layers -1`. Use zero
 (the default) for CPU inference.
 
 ```sh
 bazel-bin/rethink-cc \
-  --model models/Qwen3.5-9B-Q4_K_M.gguf \
+  --model models/deepseek-coder-6.7b-base.Q6_K.gguf \
   --gpu-layers -1 \
   --prompt "The quick brown fox"
 ```
@@ -121,10 +153,11 @@ loop and bounded logit memory.
 
 ## LM-CC analyzer
 
-The `lmcc/` Cargo workspace implements entropy-guided LM-CC for Rust. It strips
-comments with tree-sitter-rust, detects entropy and Rust structural boundaries,
-constructs the semantic compositional hierarchy, and emits the score and tree as
-JSON.
+The `lmcc/` Cargo workspace implements entropy-guided LM-CC for Rust, C, and
+C++. It strips comments with tree-sitter, detects entropy and structural
+boundaries, constructs the semantic compositional hierarchy, and emits the
+score and tree as JSON. The language is inferred from the file extension, or
+passed explicitly with `--lang rust|c|cpp` (see `lmcc/README.md`).
 
 Build and test it independently of Bazel:
 
@@ -141,7 +174,19 @@ Run the complete pipeline with a local GGUF and the C++ scorer:
 lmcc/target/debug/lmcc path/to/source.rs \
   --lang rust \
   --scorer-bin bazel-bin/rethink-cc \
-  --model models/Qwen3.5-9B-Q4_K_M.gguf
+  --model models/deepseek-coder-6.7b-base.Q6_K.gguf
+```
+
+When the scorer was built with CUDA, ROCm, or Metal, request layer offload in
+the same pipeline with `--gpu-layers`; `--context` forwards the scorer's maximum
+token context when a larger file needs it:
+
+```sh
+lmcc/target/debug/lmcc path/to/source.rs \
+  --scorer-bin bazel-bin/rethink-cc \
+  --model models/deepseek-coder-6.7b-base.Q6_K.gguf \
+  --gpu-layers 99 \
+  --context 8192
 ```
 
 For model-free/reproducible analysis, supply JSONL previously produced with

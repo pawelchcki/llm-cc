@@ -6,7 +6,7 @@ use std::process::Command;
 use anyhow::{Context, Result, bail, ensure};
 use clap::Parser;
 use lmcc_core::{Analysis, Token, Unit, analyze};
-use lmcc_lang::{LanguageFrontend, OffsetMap, RustFrontend};
+use lmcc_lang::{CFrontend, CppFrontend, LanguageFrontend, OffsetMap, RustFrontend};
 use serde_json::Value;
 use tempfile::NamedTempFile;
 
@@ -19,9 +19,9 @@ struct Arguments {
     /// Source file to analyze.
     source: PathBuf,
 
-    /// Source language (currently only rust).
-    #[arg(long, default_value = "rust")]
-    lang: String,
+    /// Source language (rust, c, cpp, or c++); inferred from the extension if omitted.
+    #[arg(long)]
+    lang: Option<String>,
 
     /// Read scorer JSONL instead of running model inference.
     #[arg(long, value_name = "PATH")]
@@ -34,6 +34,14 @@ struct Arguments {
     /// Path or command name for the C++ scorer.
     #[arg(long, default_value = "rethink-cc")]
     scorer_bin: PathBuf,
+
+    /// Transformer layers to offload to the GPU when running the scorer.
+    #[arg(long, value_name = "N")]
+    gpu_layers: Option<u32>,
+
+    /// Maximum scorer context size in tokens.
+    #[arg(long, value_name = "N")]
+    context: Option<u32>,
 
     /// Entropy percentile used as tau.
     #[arg(long, default_value_t = 67.0)]
@@ -60,18 +68,24 @@ fn main() {
 
 fn run(arguments: Arguments) -> Result<()> {
     ensure!(
-        arguments.lang == "rust",
-        "unsupported language '{}'; expected rust",
-        arguments.lang
-    );
-    ensure!(
         arguments.entropy_jsonl.is_some() ^ arguments.model.is_some(),
         "provide exactly one of --entropy-jsonl or --model"
     );
+    ensure!(
+        arguments.entropy_jsonl.is_none()
+            || (arguments.gpu_layers.is_none() && arguments.context.is_none()),
+        "--gpu-layers and --context cannot be used with --entropy-jsonl"
+    );
 
+    let language = selected_language(arguments.lang.as_deref(), &arguments.source)?;
+    let frontend: Box<dyn LanguageFrontend> = match language {
+        "rust" => Box::new(RustFrontend),
+        "c" => Box::new(CFrontend),
+        "cpp" | "c++" => Box::new(CppFrontend),
+        _ => bail!("unsupported language '{language}'; expected rust, c, cpp, or c++"),
+    };
     let source = fs::read_to_string(&arguments.source)
         .with_context(|| format!("failed to read source file {}", arguments.source.display()))?;
-    let frontend = RustFrontend;
     let (preprocessed, offset_map) = frontend.strip_comments(&source);
     let structural_events = frontend.structural_events(&preprocessed);
 
@@ -83,6 +97,8 @@ fn run(arguments: Arguments) -> Result<()> {
             &arguments.scorer_bin,
             arguments.model.as_deref().expect("model checked above"),
             &preprocessed,
+            arguments.gpu_layers,
+            arguments.context,
         )?
     };
     let records = parse_entropy_jsonl(&jsonl)?;
@@ -101,7 +117,29 @@ fn run(arguments: Arguments) -> Result<()> {
     Ok(())
 }
 
-fn run_scorer(scorer_bin: &Path, model: &Path, preprocessed: &str) -> Result<Vec<u8>> {
+fn selected_language<'a>(explicit: Option<&'a str>, source: &Path) -> Result<&'a str> {
+    if let Some(language) = explicit {
+        return Ok(language);
+    }
+
+    match source.extension().and_then(|extension| extension.to_str()) {
+        Some("rs") => Ok("rust"),
+        Some("c" | "h") => Ok("c"),
+        Some("cc" | "cpp" | "cxx" | "hpp" | "hh") => Ok("cpp"),
+        _ => bail!(
+            "cannot infer language from source file '{}'; pass --lang rust, c, cpp, or c++",
+            source.display()
+        ),
+    }
+}
+
+fn run_scorer(
+    scorer_bin: &Path,
+    model: &Path,
+    preprocessed: &str,
+    gpu_layers: Option<u32>,
+    context: Option<u32>,
+) -> Result<Vec<u8>> {
     let mut source_file = NamedTempFile::new().context("failed to create preprocessed input")?;
     source_file
         .write_all(preprocessed.as_bytes())
@@ -110,12 +148,21 @@ fn run_scorer(scorer_bin: &Path, model: &Path, preprocessed: &str) -> Result<Vec
         .flush()
         .context("failed to flush preprocessed input")?;
 
-    let output = Command::new(scorer_bin)
+    let mut command = Command::new(scorer_bin);
+    command
         .arg("--entropy")
         .arg("--model")
         .arg(model)
         .arg("--file")
-        .arg(source_file.path())
+        .arg(source_file.path());
+    if let Some(gpu_layers) = gpu_layers {
+        command.arg("--gpu-layers").arg(gpu_layers.to_string());
+    }
+    if let Some(context) = context {
+        command.arg("--context-size").arg(context.to_string());
+    }
+
+    let output = command
         .output()
         .with_context(|| format!("failed to run scorer {}", scorer_bin.display()))?;
     if !output.status.success() {
@@ -290,5 +337,54 @@ mod tests {
     fn requires_the_entropy_field() {
         let input = br#"{"position":0,"bytes_hex":"61"}"#;
         assert!(parse_entropy_jsonl(input).is_err());
+    }
+
+    #[test]
+    fn infers_supported_source_extensions() {
+        for (path, expected) in [
+            ("source.rs", "rust"),
+            ("source.c", "c"),
+            ("source.h", "c"),
+            ("source.cc", "cpp"),
+            ("source.cpp", "cpp"),
+            ("source.cxx", "cpp"),
+            ("source.hpp", "cpp"),
+            ("source.hh", "cpp"),
+        ] {
+            assert_eq!(selected_language(None, Path::new(path)).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn explicit_language_overrides_extension() {
+        assert_eq!(
+            selected_language(Some("c++"), Path::new("source.unknown")).unwrap(),
+            "c++"
+        );
+    }
+
+    #[test]
+    fn rejects_an_unknown_extension_without_lang() {
+        let error = selected_language(None, Path::new("source.txt"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("cannot infer language"));
+    }
+
+    #[test]
+    fn rejects_scorer_options_with_precomputed_entropy() {
+        for option in ["--gpu-layers", "--context"] {
+            let arguments = Arguments::try_parse_from([
+                "lmcc",
+                "source.rs",
+                "--entropy-jsonl",
+                "entropy.jsonl",
+                option,
+                "8",
+            ])
+            .unwrap();
+            let error = run(arguments).unwrap_err().to_string();
+            assert!(error.contains("cannot be used with --entropy-jsonl"));
+        }
     }
 }

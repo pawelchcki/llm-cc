@@ -1,16 +1,38 @@
 {
-  "lmcc": 3.0,
-  "total_branch": 2,
-  "total_comp_level": 7,
+  "lmcc": 5.8,
+  "total_branch": 4,
+  "total_comp_level": 13,
   "alpha": 0.8,
   "tau": 0.638,
   "units": [
     {
       "start_byte": 0,
+      "end_byte": 35,
+      "level": 1,
+      "branching": 0,
+      "children": []
+    },
+    {
+      "start_byte": 35,
       "end_byte": 159,
       "level": 1,
-      "branching": 1,
+      "branching": 2,
       "children": [
+        {
+          "start_byte": 110,
+          "end_byte": 153,
+          "level": 2,
+          "branching": 1,
+          "children": [
+            {
+              "start_byte": 143,
+              "end_byte": 153,
+              "level": 3,
+              "branching": 0,
+              "children": []
+            }
+          ]
+        },
         {
           "start_byte": 153,
           "end_byte": 159,

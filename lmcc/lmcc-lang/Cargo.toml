@@ -7,6 +7,8 @@ license.workspace = true
 [dependencies]
 lmcc-core = { path = "../lmcc-core" }
 tree-sitter.workspace = true
+tree-sitter-c.workspace = true
+tree-sitter-cpp.workspace = true
 tree-sitter-rust.workspace = true
 
 [lints]

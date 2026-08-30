@@ -50,3 +50,28 @@ fn realistic_rust_fixture_matches_full_golden_json() {
         .expect("valid golden JSON");
     assert_eq!(actual, expected);
 }
+
+#[test]
+fn infers_cpp_and_analyzes_checked_in_entropy_fixture() {
+    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let output = Command::new(env!("CARGO_BIN_EXE_lmcc"))
+        .arg(fixtures.join("sample.cpp"))
+        .arg("--entropy-jsonl")
+        .arg(fixtures.join("sample_cpp.jsonl"))
+        .output()
+        .expect("lmcc should run");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let result: Value = serde_json::from_slice(&output.stdout).expect("valid output JSON");
+    assert!((result["tau"].as_f64().unwrap() - 0.535).abs() < 1e-12);
+    assert_eq!(result["alpha"], 0.8);
+    assert!(
+        result["units"]
+            .as_array()
+            .is_some_and(|units| !units.is_empty())
+    );
+}

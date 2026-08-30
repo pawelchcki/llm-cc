@@ -6,6 +6,10 @@ build --show_timestamps
 build:cpu --define=backend=cpu
 build:cuda --define=backend=cuda
 build:rocm --define=backend=rocm
+build:rocm --action_env=ROCM_PATH
+build:rocm --action_env=HIP_PATH
+build:rocm --action_env=HIPCXX
+build:rocm --action_env=GPU_TARGETS
 build:metal --define=backend=metal
 
 build:release --compilation_mode=opt
