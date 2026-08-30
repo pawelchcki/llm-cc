@@ -1,18 +1,21 @@
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail, ensure};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use lmcc_core::{Analysis, Token, Unit, analyze};
 use lmcc_lang::{CFrontend, CppFrontend, LanguageFrontend, OffsetMap, RustFrontend};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use tempfile::NamedTempFile;
 
 const DEFAULT_MODEL_PATH: &str = "models/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf";
+const DEFAULT_MODEL_FILE: &str = "DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf";
+const MANIFEST_FILE: &str = "models.json";
 const DEFAULT_MODEL_URL: &str = "https://huggingface.co/bartowski/DeepSeek-Coder-V2-Lite-Base-GGUF/resolve/main/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf";
 const PROGRESS_BYTE_INTERVAL: u64 = 256 * 1024 * 1024;
 const PROGRESS_TIME_INTERVAL: Duration = Duration::from_secs(3);
@@ -20,11 +23,15 @@ const PROGRESS_TIME_INTERVAL: Duration = Duration::from_secs(3);
 #[derive(Debug, Parser)]
 #[command(
     name = "lmcc",
-    about = "Compute entropy-guided language-model code complexity"
+    about = "Compute entropy-guided language-model code complexity",
+    args_conflicts_with_subcommands = true
 )]
 struct Arguments {
     /// Source file to analyze.
-    source: PathBuf,
+    source: Option<PathBuf>,
+
+    #[command(subcommand)]
+    command: Option<CommandKind>,
 
     /// Source language (rust, c, cpp, or c++); inferred from the extension if omitted.
     #[arg(long)]
@@ -38,9 +45,9 @@ struct Arguments {
     #[arg(long, value_name = "GGUF")]
     model: Option<PathBuf>,
 
-    /// Download the default model if it is missing.
+    /// Do not automatically download the default model if it is missing.
     #[arg(long)]
-    download: bool,
+    no_download: bool,
 
     /// Path or command name for the C++ scorer.
     #[arg(long, default_value = "rethink-cc")]
@@ -63,6 +70,33 @@ struct Arguments {
     alpha: f64,
 }
 
+#[derive(Debug, Subcommand)]
+enum CommandKind {
+    /// Inspect or remove cached models.
+    Models {
+        #[command(subcommand)]
+        command: ModelsCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ModelsCommand {
+    /// List cached GGUF models.
+    List,
+    /// Remove a cached model and any partial download.
+    Remove { file_name: String },
+    /// Print the model cache directory.
+    Path,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ModelTimestamps {
+    downloaded_at: Option<u64>,
+    last_used_at: Option<u64>,
+}
+
+type ModelManifest = BTreeMap<String, ModelTimestamps>;
+
 #[derive(Debug)]
 struct EntropyRecord {
     position: usize,
@@ -78,12 +112,22 @@ fn main() {
 }
 
 fn run(mut arguments: Arguments) -> Result<()> {
+    if let Some(command) = arguments.command {
+        return run_command(command);
+    }
+
+    let source = arguments
+        .source
+        .as_deref()
+        .context("a source file is required unless a subcommand is used")?;
     let current_dir = std::env::current_dir().context("failed to determine current directory")?;
+    let cache_dir = cache_dir()?;
     arguments.model = resolve_model(
         arguments.model,
         arguments.entropy_jsonl.as_deref(),
-        arguments.download,
+        arguments.no_download,
         &current_dir,
+        &cache_dir,
     )?;
     ensure!(
         arguments.entropy_jsonl.is_none()
@@ -91,15 +135,15 @@ fn run(mut arguments: Arguments) -> Result<()> {
         "--gpu-layers and --context cannot be used with --entropy-jsonl"
     );
 
-    let language = selected_language(arguments.lang.as_deref(), &arguments.source)?;
+    let language = selected_language(arguments.lang.as_deref(), source)?;
     let frontend: Box<dyn LanguageFrontend> = match language {
         "rust" => Box::new(RustFrontend),
         "c" => Box::new(CFrontend),
         "cpp" | "c++" => Box::new(CppFrontend),
         _ => bail!("unsupported language '{language}'; expected rust, c, cpp, or c++"),
     };
-    let source = fs::read_to_string(&arguments.source)
-        .with_context(|| format!("failed to read source file {}", arguments.source.display()))?;
+    let source = fs::read_to_string(source)
+        .with_context(|| format!("failed to read source file {}", source.display()))?;
     let (preprocessed, offset_map) = frontend.strip_comments(&source);
     let structural_events = frontend.structural_events(&preprocessed);
 
@@ -107,9 +151,11 @@ fn run(mut arguments: Arguments) -> Result<()> {
         fs::read(path)
             .with_context(|| format!("failed to read entropy JSONL {}", path.display()))?
     } else {
+        let model = arguments.model.as_deref().expect("model checked above");
+        mark_cached_model_used(&cache_dir, model);
         run_scorer(
             &arguments.scorer_bin,
-            arguments.model.as_deref().expect("model checked above"),
+            model,
             &preprocessed,
             arguments.gpu_layers,
             arguments.context,
@@ -131,41 +177,100 @@ fn run(mut arguments: Arguments) -> Result<()> {
     Ok(())
 }
 
+fn run_command(command: CommandKind) -> Result<()> {
+    let cache_dir = cache_dir()?;
+    match command {
+        CommandKind::Models { command } => match command {
+            ModelsCommand::List => list_models(&cache_dir),
+            ModelsCommand::Remove { file_name } => remove_model(&cache_dir, &file_name),
+            ModelsCommand::Path => {
+                println!("{}", cache_dir.display());
+                Ok(())
+            }
+        },
+    }
+}
+
+fn cache_dir() -> Result<PathBuf> {
+    cache_dir_from(
+        std::env::var_os("LMCC_CACHE_DIR"),
+        std::env::var_os("XDG_CACHE_HOME"),
+        std::env::var_os("HOME"),
+    )
+}
+
+fn cache_dir_from(
+    lmcc_cache_dir: Option<OsString>,
+    xdg_cache_home: Option<OsString>,
+    home: Option<OsString>,
+) -> Result<PathBuf> {
+    if let Some(path) = lmcc_cache_dir.filter(|path| !path.is_empty()) {
+        return Ok(PathBuf::from(path));
+    }
+    if let Some(path) = xdg_cache_home.filter(|path| !path.is_empty()) {
+        return Ok(PathBuf::from(path).join("lmcc/models"));
+    }
+    if let Some(path) = home.filter(|path| !path.is_empty()) {
+        return Ok(PathBuf::from(path).join(".cache/lmcc/models"));
+    }
+    bail!("cannot determine model cache directory; set LMCC_CACHE_DIR")
+}
+
 fn resolve_model(
     model: Option<PathBuf>,
     entropy_jsonl: Option<&Path>,
-    download: bool,
+    no_download: bool,
     current_dir: &Path,
+    cache_dir: &Path,
 ) -> Result<Option<PathBuf>> {
+    resolve_model_with_downloader(
+        model,
+        entropy_jsonl,
+        no_download,
+        current_dir,
+        cache_dir,
+        download_default_model,
+    )
+}
+
+fn resolve_model_with_downloader<F>(
+    model: Option<PathBuf>,
+    entropy_jsonl: Option<&Path>,
+    no_download: bool,
+    current_dir: &Path,
+    cache_dir: &Path,
+    downloader: F,
+) -> Result<Option<PathBuf>>
+where
+    F: FnOnce(&Path) -> Result<()>,
+{
     ensure!(
         !(model.is_some() && entropy_jsonl.is_some()),
         "provide exactly one of --entropy-jsonl or --model"
     );
-    ensure!(
-        !(download && model.is_some()),
-        "--download cannot be used with an explicit --model path"
-    );
-    ensure!(
-        !(download && entropy_jsonl.is_some()),
-        "--download cannot be used with --entropy-jsonl"
-    );
-    if entropy_jsonl.is_some() {
-        return Ok(None);
-    }
     if model.is_some() {
         return Ok(model);
     }
-
-    let default_model = current_dir.join(DEFAULT_MODEL_PATH);
-    if !default_model.exists() && download {
-        download_default_model(&default_model)?;
+    if entropy_jsonl.is_some() {
+        return Ok(None);
     }
-    ensure!(
-        default_model.exists(),
-        "default model {} does not exist; rerun with --download to fetch it (about 14 GB)",
-        default_model.display()
-    );
-    Ok(Some(default_model))
+
+    let legacy_model = current_dir.join(DEFAULT_MODEL_PATH);
+    if legacy_model.exists() {
+        return Ok(Some(legacy_model));
+    }
+
+    let cached_model = cache_dir.join(DEFAULT_MODEL_FILE);
+    if !cached_model.exists() {
+        ensure!(
+            !no_download,
+            "default model is not cached at {}; remove --no-download to fetch it automatically",
+            cached_model.display()
+        );
+        eprintln!("downloading ~14 GB to {}", cached_model.display());
+        downloader(&cached_model)?;
+    }
+    Ok(Some(cached_model))
 }
 
 fn download_default_model(target: &Path) -> Result<()> {
@@ -191,11 +296,36 @@ fn download_default_model(target: &Path) -> Result<()> {
         eprintln!("Resuming model download at {requested_offset} bytes");
     }
 
-    let mut request = ureq::get(DEFAULT_MODEL_URL);
-    if requested_offset > 0 {
-        request = request.header("Range", format!("bytes={requested_offset}-"));
-    }
-    let response = match request.call() {
+    let platform_agent = ureq::Agent::config_builder()
+        .tls_config(
+            ureq::tls::TlsConfig::builder()
+                .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+                .build(),
+        )
+        .build()
+        .new_agent();
+    let request = |agent: &ureq::Agent| {
+        let mut request = agent.get(DEFAULT_MODEL_URL);
+        if requested_offset > 0 {
+            request = request.header("Range", format!("bytes={requested_offset}-"));
+        }
+        request.call()
+    };
+    let response = match request(&platform_agent) {
+        Err(error) if platform_roots_are_empty(&error) => {
+            let fallback_agent = ureq::Agent::config_builder()
+                .tls_config(
+                    ureq::tls::TlsConfig::builder()
+                        .root_certs(ureq::tls::RootCerts::WebPki)
+                        .build(),
+                )
+                .build()
+                .new_agent();
+            request(&fallback_agent)
+        }
+        response => response,
+    };
+    let response = match response {
         Ok(response) => response,
         Err(ureq::Error::StatusCode(status)) => {
             bail!("download failed with HTTP status {status} for {DEFAULT_MODEL_URL}")
@@ -241,7 +371,23 @@ fn download_default_model(target: &Path) -> Result<()> {
         target,
         resume_offset,
         total_length,
-    )
+    )?;
+    mark_model_downloaded(target);
+    Ok(())
+}
+
+fn platform_roots_are_empty(error: &ureq::Error) -> bool {
+    let mut current: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    while let Some(error) = current {
+        if error
+            .to_string()
+            .contains("No CA certificates were loaded from the system")
+        {
+            return true;
+        }
+        current = error.source();
+    }
+    false
 }
 
 fn partial_path(target: &Path) -> PathBuf {
@@ -334,6 +480,208 @@ fn print_download_progress(downloaded: u64, total_length: Option<u64>) {
     } else {
         eprintln!("Downloaded {downloaded} bytes");
     }
+}
+
+fn manifest_path(cache_dir: &Path) -> PathBuf {
+    cache_dir.join(MANIFEST_FILE)
+}
+
+fn read_manifest(cache_dir: &Path) -> ModelManifest {
+    let Some(Value::Object(entries)) = fs::read(manifest_path(cache_dir))
+        .ok()
+        .and_then(|contents| serde_json::from_slice(&contents).ok())
+    else {
+        return ModelManifest::new();
+    };
+    entries
+        .into_iter()
+        .filter_map(|(file_name, value)| {
+            let value = value.as_object()?;
+            Some((
+                file_name,
+                ModelTimestamps {
+                    downloaded_at: value.get("downloaded_at").and_then(Value::as_u64),
+                    last_used_at: value.get("last_used_at").and_then(Value::as_u64),
+                },
+            ))
+        })
+        .collect()
+}
+
+fn write_manifest(cache_dir: &Path, manifest: &ModelManifest) {
+    let result = (|| -> Result<()> {
+        fs::create_dir_all(cache_dir)?;
+        let entries = manifest
+            .iter()
+            .map(|(file_name, timestamps)| {
+                let mut value = Map::new();
+                if let Some(downloaded_at) = timestamps.downloaded_at {
+                    value.insert("downloaded_at".to_owned(), Value::from(downloaded_at));
+                }
+                if let Some(last_used_at) = timestamps.last_used_at {
+                    value.insert("last_used_at".to_owned(), Value::from(last_used_at));
+                }
+                (file_name.clone(), Value::Object(value))
+            })
+            .collect();
+        let contents = serde_json::to_vec_pretty(&Value::Object(entries))?;
+        fs::write(manifest_path(cache_dir), contents)?;
+        Ok(())
+    })();
+    let _ = result;
+}
+
+fn epoch_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn mark_model_downloaded(model: &Path) {
+    let (Some(cache_dir), Some(file_name)) = (
+        model.parent(),
+        model.file_name().and_then(|name| name.to_str()),
+    ) else {
+        return;
+    };
+    let mut manifest = read_manifest(cache_dir);
+    manifest
+        .entry(file_name.to_owned())
+        .or_default()
+        .downloaded_at = Some(epoch_seconds());
+    write_manifest(cache_dir, &manifest);
+}
+
+fn mark_cached_model_used(cache_dir: &Path, model: &Path) {
+    let Some(model_parent) = model.parent() else {
+        return;
+    };
+    let is_cached = model_parent == cache_dir
+        || model_parent
+            .canonicalize()
+            .ok()
+            .zip(cache_dir.canonicalize().ok())
+            .is_some_and(|(model_parent, cache_dir)| model_parent == cache_dir);
+    if !is_cached {
+        return;
+    }
+    let Some(file_name) = model.file_name().and_then(|name| name.to_str()) else {
+        return;
+    };
+    let mut manifest = read_manifest(cache_dir);
+    manifest
+        .entry(file_name.to_owned())
+        .or_default()
+        .last_used_at = Some(epoch_seconds());
+    write_manifest(cache_dir, &manifest);
+}
+
+fn list_models(cache_dir: &Path) -> Result<()> {
+    let manifest = read_manifest(cache_dir);
+    let entries = match fs::read_dir(cache_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to read model cache {}", cache_dir.display()));
+        }
+    };
+    let mut models = Vec::new();
+    for entry in entries {
+        let entry =
+            entry.with_context(|| format!("failed to read model cache {}", cache_dir.display()))?;
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("gguf") {
+            continue;
+        }
+        let metadata = entry
+            .metadata()
+            .with_context(|| format!("failed to inspect cached model {}", path.display()))?;
+        if metadata.is_file() {
+            models.push((entry.file_name(), metadata.len()));
+        }
+    }
+    models.sort_by(|left, right| left.0.cmp(&right.0));
+
+    for (file_name, size) in models {
+        let file_name = file_name.to_string_lossy();
+        let timestamps = manifest
+            .get(file_name.as_ref())
+            .cloned()
+            .unwrap_or_default();
+        println!(
+            "{}\t{:.2} GiB\t{}\t{}",
+            file_name,
+            size as f64 / 1024_f64.powi(3),
+            format_timestamp(timestamps.downloaded_at),
+            format_timestamp(timestamps.last_used_at),
+        );
+    }
+    Ok(())
+}
+
+fn remove_model(cache_dir: &Path, file_name: &str) -> Result<()> {
+    ensure!(
+        is_bare_file_name(file_name),
+        "model name must be a bare file name without path separators"
+    );
+    let target = cache_dir.join(file_name);
+    remove_if_present(&target)?;
+    remove_if_present(&partial_path(&target))?;
+
+    let mut manifest = read_manifest(cache_dir);
+    manifest.remove(file_name);
+    write_manifest(cache_dir, &manifest);
+    Ok(())
+}
+
+fn is_bare_file_name(file_name: &str) -> bool {
+    !file_name.is_empty()
+        && file_name != "."
+        && file_name != ".."
+        && !file_name.contains(['/', '\\'])
+}
+
+fn remove_if_present(path: &Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| format!("failed to remove {}", path.display())),
+    }
+}
+
+fn format_timestamp(timestamp: Option<u64>) -> String {
+    let Some(timestamp) = timestamp else {
+        return "never".to_owned();
+    };
+    let Ok(timestamp) = i64::try_from(timestamp) else {
+        return timestamp.to_string();
+    };
+    let days = timestamp.div_euclid(86_400);
+    let seconds = timestamp.rem_euclid(86_400);
+    let (year, month, day) = civil_date(days);
+    format!(
+        "{year:04}-{month:02}-{day:02} {:02}:{:02}:{:02} UTC",
+        seconds / 3_600,
+        seconds % 3_600 / 60,
+        seconds % 60
+    )
+}
+
+fn civil_date(days_since_epoch: i64) -> (i64, i64, i64) {
+    let days = days_since_epoch + 719_468;
+    let era = if days >= 0 { days } else { days - 146_096 } / 146_097;
+    let day_of_era = days - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let mut year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+    year += i64::from(month <= 2);
+    (year, month, day)
 }
 
 fn selected_language<'a>(explicit: Option<&'a str>, source: &Path) -> Result<&'a str> {
@@ -628,28 +976,110 @@ mod tests {
     }
 
     #[test]
-    fn defaults_to_deepseek_coder_v2_model_in_current_directory() {
+    fn removed_download_flag_is_rejected() {
+        assert!(Arguments::try_parse_from(["lmcc", "source.rs", "--download"]).is_err());
+    }
+
+    #[test]
+    fn cache_directory_uses_the_documented_precedence() {
+        assert_eq!(
+            cache_dir_from(
+                Some(OsString::from("/override")),
+                Some(OsString::from("/xdg")),
+                Some(OsString::from("/home/user")),
+            )
+            .unwrap(),
+            PathBuf::from("/override")
+        );
+        assert_eq!(
+            cache_dir_from(
+                None,
+                Some(OsString::from("/xdg")),
+                Some(OsString::from("/home/user")),
+            )
+            .unwrap(),
+            PathBuf::from("/xdg/lmcc/models")
+        );
+        assert_eq!(
+            cache_dir_from(None, None, Some(OsString::from("/home/user"))).unwrap(),
+            PathBuf::from("/home/user/.cache/lmcc/models")
+        );
+        assert!(cache_dir_from(None, None, None).is_err());
+    }
+
+    #[test]
+    fn model_resolution_follows_explicit_entropy_legacy_and_cache_order() {
         let directory = tempfile::tempdir().unwrap();
-        let model = directory.path().join(DEFAULT_MODEL_PATH);
-        fs::create_dir_all(model.parent().unwrap()).unwrap();
-        fs::write(&model, []).unwrap();
+        let cache = directory.path().join("cache");
+        let legacy = directory.path().join(DEFAULT_MODEL_PATH);
+        let cached = cache.join(DEFAULT_MODEL_FILE);
+        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        fs::create_dir_all(&cache).unwrap();
+        fs::write(&legacy, []).unwrap();
+        fs::write(&cached, []).unwrap();
 
         assert_eq!(
-            resolve_model(None, None, false, directory.path()).unwrap(),
-            Some(model)
+            resolve_model(
+                Some(PathBuf::from("explicit.gguf")),
+                None,
+                false,
+                directory.path(),
+                &cache,
+            )
+            .unwrap(),
+            Some(PathBuf::from("explicit.gguf"))
+        );
+        assert_eq!(
+            resolve_model(
+                None,
+                Some(Path::new("entropy.jsonl")),
+                false,
+                directory.path(),
+                &cache,
+            )
+            .unwrap(),
+            None
+        );
+        assert_eq!(
+            resolve_model(None, None, false, directory.path(), &cache).unwrap(),
+            Some(legacy.clone())
+        );
+        fs::remove_file(legacy).unwrap();
+        assert_eq!(
+            resolve_model(None, None, false, directory.path(), &cache).unwrap(),
+            Some(cached)
         );
     }
 
     #[test]
-    fn missing_default_model_error_suggests_download_flag_and_size() {
+    fn missing_cached_model_is_downloaded_automatically() {
         let directory = tempfile::tempdir().unwrap();
-        let error = resolve_model(None, None, false, directory.path())
+        let cache = directory.path().join("cache");
+        let expected = cache.join(DEFAULT_MODEL_FILE);
+
+        let resolved =
+            resolve_model_with_downloader(None, None, false, directory.path(), &cache, |target| {
+                assert_eq!(target, expected);
+                fs::create_dir_all(target.parent().unwrap())?;
+                fs::write(target, b"fake model")?;
+                Ok(())
+            })
+            .unwrap();
+
+        assert_eq!(resolved, Some(expected));
+    }
+
+    #[test]
+    fn no_download_error_includes_expected_cache_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = directory.path().join("cache");
+        let expected = cache.join(DEFAULT_MODEL_FILE);
+        let error = resolve_model(None, None, true, directory.path(), &cache)
             .unwrap_err()
             .to_string();
 
-        assert!(error.contains(DEFAULT_MODEL_PATH));
-        assert!(error.contains("--download"));
-        assert!(error.contains("14 GB"));
+        assert!(error.contains("--no-download"));
+        assert!(error.contains(&expected.display().to_string()));
     }
 
     #[test]
@@ -659,6 +1089,7 @@ mod tests {
             Some(Path::new("entropy.jsonl")),
             false,
             Path::new("."),
+            Path::new("cache"),
         )
         .unwrap_err()
         .to_string();
@@ -667,26 +1098,22 @@ mod tests {
     }
 
     #[test]
-    fn download_rejects_an_explicit_model() {
-        let error = resolve_model(
-            Some(PathBuf::from("model.gguf")),
-            None,
-            true,
-            Path::new("."),
-        )
-        .unwrap_err()
-        .to_string();
+    fn manifest_updates_and_corruption_is_tolerated() {
+        let directory = tempfile::tempdir().unwrap();
+        let model = directory.path().join("model.gguf");
+        fs::write(&model, []).unwrap();
 
-        assert!(error.contains("--download cannot be used with an explicit --model"));
-    }
+        mark_model_downloaded(&model);
+        let manifest = read_manifest(directory.path());
+        assert!(manifest["model.gguf"].downloaded_at.is_some());
+        assert!(manifest["model.gguf"].last_used_at.is_none());
 
-    #[test]
-    fn download_rejects_precomputed_entropy() {
-        let error = resolve_model(None, Some(Path::new("entropy.jsonl")), true, Path::new("."))
-            .unwrap_err()
-            .to_string();
-
-        assert!(error.contains("--download cannot be used with --entropy-jsonl"));
+        fs::write(manifest_path(directory.path()), b"not json").unwrap();
+        assert!(read_manifest(directory.path()).is_empty());
+        mark_cached_model_used(directory.path(), &model);
+        let manifest = read_manifest(directory.path());
+        assert!(manifest["model.gguf"].downloaded_at.is_none());
+        assert!(manifest["model.gguf"].last_used_at.is_some());
     }
 
     #[test]
