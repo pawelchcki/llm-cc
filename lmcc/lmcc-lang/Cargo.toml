@@ -1,0 +1,13 @@
+[package]
+name = "lmcc-lang"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+lmcc-core = { path = "../lmcc-core" }
+tree-sitter.workspace = true
+tree-sitter-rust.workspace = true
+
+[lints]
+workspace = true

@@ -1,4 +1,5 @@
 /target/
+/lmcc/target/
 /bazel-*
 /models/
 *.gguf

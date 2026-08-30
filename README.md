@@ -41,6 +41,7 @@ pinned `.bazelversion` automatically.
 bazel build --config=release --config=cpu //:rethink-cc
 bazel-bin/rethink-cc \
   --model models/Qwen3.5-9B-Q4_K_M.gguf \
+  --entropy \
   --prompt "The quick brown fox"
 ```
 
@@ -98,14 +99,17 @@ without CI coverage.
 Each stdout line describes one observed input token:
 
 ```json
-{"position":0,"token_id":785,"piece":"The","bytes_hex":"546865","probability":null,"log_probability":null}
-{"position":1,"token_id":3991,"piece":" quick","bytes_hex":"20717569636b","probability":0.044,"log_probability":-3.12}
+{"position":0,"token_id":785,"piece":"The","bytes_hex":"546865","probability":null,"log_probability":null,"entropy":null}
+{"position":1,"token_id":3991,"piece":" quick","bytes_hex":"20717569636b","probability":0.044,"log_probability":-3.12,"entropy":5.71}
 ```
 
 `probability` is the full-vocabulary softmax probability assigned to the
 observed token after ingesting its prefix; `log_probability` is its natural
 logarithm. `bytes_hex` preserves exact token bytes even when an individual piece
-is not valid UTF-8. Mean negative log-likelihood and perplexity go to stderr.
+is not valid UTF-8. With `--entropy`, `entropy` is the natural-log entropy of the
+full next-token distribution aligned with that observed token. The first token
+without a prefix has `null` probability, log probability, and entropy. Mean
+negative log-likelihood and perplexity go to stderr.
 
 The default `--bos auto` follows the model tokenizer metadata. Without a BOS,
 the first observed token has no prefix and therefore receives `null`. Override
@@ -114,6 +118,72 @@ this with `--bos always` or `--bos never`.
 Internally, logits after token `t[i]` are used to score observed token `t[i+1]`.
 Only one vocabulary row is retained at a time, so the CLI has no text-generation
 loop and bounded logit memory.
+
+## LM-CC analyzer
+
+The `lmcc/` Cargo workspace implements entropy-guided LM-CC for Rust. It strips
+comments with tree-sitter-rust, detects entropy and Rust structural boundaries,
+constructs the semantic compositional hierarchy, and emits the score and tree as
+JSON.
+
+Build and test it independently of Bazel:
+
+```sh
+cd lmcc
+cargo build
+cargo test
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+Run the complete pipeline with a local GGUF and the C++ scorer:
+
+```sh
+lmcc/target/debug/lmcc path/to/source.rs \
+  --lang rust \
+  --scorer-bin bazel-bin/rethink-cc \
+  --model models/Qwen3.5-9B-Q4_K_M.gguf
+```
+
+For model-free/reproducible analysis, supply JSONL previously produced with
+`rethink-cc --entropy`:
+
+```sh
+lmcc/target/debug/lmcc path/to/source.rs \
+  --entropy-jsonl path/to/entropy.jsonl \
+  --tau-percentile 67 \
+  --alpha 0.8
+```
+
+Token bytes in the JSONL must concatenate exactly to the comment-stripped source.
+The output has the following shape; byte ranges are mapped back to the original
+source:
+
+```json
+{
+  "lmcc": 1.4,
+  "total_branch": 1,
+  "total_comp_level": 3,
+  "alpha": 0.8,
+  "tau": 0.736,
+  "units": [
+    {
+      "start_byte": 0,
+      "end_byte": 29,
+      "level": 1,
+      "branching": 1,
+      "children": [
+        {
+          "start_byte": 12,
+          "end_byte": 29,
+          "level": 2,
+          "branching": 0,
+          "children": []
+        }
+      ]
+    }
+  ]
+}
+```
 
 ## License
 

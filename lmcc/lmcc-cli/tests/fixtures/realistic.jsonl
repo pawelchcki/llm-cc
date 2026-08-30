@@ -1,0 +1,16 @@
+{"position":0,"bytes_hex":"73747275637420436f756e746572207b0a","entropy":null}
+{"position":1,"bytes_hex":"20202020746f74616c3a206933322c0a","entropy":0.1}
+{"position":2,"bytes_hex":"7d0a","entropy":0.2}
+{"position":3,"bytes_hex":"0a","entropy":0.3}
+{"position":4,"bytes_hex":"696d706c20436f756e746572207b0a","entropy":0.4}
+{"position":5,"bytes_hex":"20202020666e2061646428266d75742073656c662c2076616c75653a2069333229207b0a","entropy":0.5}
+{"position":6,"bytes_hex":"202020202020202069662076616c7565203e2030207b0a","entropy":0.6}
+{"position":7,"bytes_hex":"20202020202020202020202073656c662e746f74616c202b3d2076616c75653b0a","entropy":2.0}
+{"position":8,"bytes_hex":"20202020202020207d0a","entropy":0.7}
+{"position":9,"bytes_hex":"202020207d0a","entropy":0.8}
+{"position":10,"bytes_hex":"7d0a","entropy":0.9}
+{"position":11,"bytes_hex":"0a","entropy":0.2}
+{"position":12,"bytes_hex":"666e206d61696e2829207b0a","entropy":0.3}
+{"position":13,"bytes_hex":"202020206c6574206d757420636f756e746572203d20436f756e746572207b20746f74616c3a2030207d3b0a","entropy":1.8}
+{"position":14,"bytes_hex":"20202020636f756e7465722e6164642833293b0a","entropy":0.4}
+{"position":15,"bytes_hex":"7d0a","entropy":0.5}

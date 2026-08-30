@@ -1,0 +1,3 @@
+{"position":0,"token_id":1,"piece":"fn main() {\n","bytes_hex":"666e206d61696e2829207b0a","probability":null,"log_probability":null,"entropy":null}
+{"position":1,"token_id":2,"piece":"    let x = 1;\n","bytes_hex":"202020206c65742078203d20313b0a","probability":0.5,"log_probability":-0.6931471805599453,"entropy":1.0}
+{"position":2,"token_id":3,"piece":"}\n","bytes_hex":"7d0a","probability":0.5,"log_probability":-0.6931471805599453,"entropy":0.2}

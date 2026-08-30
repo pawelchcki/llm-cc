@@ -33,6 +33,7 @@ struct Arguments {
   std::uint32_t context_size = 2048;
   std::int32_t threads = 0;
   std::int32_t gpu_layers = 0;
+  bool entropy = false;
 };
 
 [[noreturn]] void Usage(std::string_view error = {}) {
@@ -53,6 +54,7 @@ struct Arguments {
       << "  --context-size N       maximum tokens in the input (default: 2048)\n"
       << "  --threads N            inference threads (default: hardware count)\n"
       << "  --gpu-layers N         layers to offload; -1 means all (default: 0)\n"
+      << "  --entropy              emit full-vocabulary next-token entropy\n"
       << "  -h, --help             show this help\n";
   std::exit(error.empty() ? 0 : 2);
 }
@@ -75,6 +77,10 @@ Arguments ParseArguments(int argc, char** argv) {
     const std::string_view option = argv[i];
     if (option == "-h" || option == "--help") {
       Usage();
+    }
+    if (option == "--entropy") {
+      arguments.entropy = true;
+      continue;
     }
     if (i + 1 >= argc) {
       Usage(std::string(option) + " requires a value");
@@ -195,21 +201,29 @@ std::string TokenPiece(const llama_vocab* vocab, llama_token token) {
 }
 
 void WriteNullScore(std::size_t position, llama_token token,
-                    std::string_view piece) {
+                    std::string_view piece, bool emit_entropy) {
   std::cout << "{\"position\":" << position << ",\"token_id\":" << token
             << ",\"piece\":\"" << rethink::JsonEscapeBytes(piece)
             << "\",\"bytes_hex\":\"" << rethink::BytesToHex(piece)
-            << "\",\"probability\":null,\"log_probability\":null}\n";
+            << "\",\"probability\":null,\"log_probability\":null";
+  if (emit_entropy) {
+    std::cout << ",\"entropy\":null";
+  }
+  std::cout << "}\n";
 }
 
 void WriteScore(std::size_t position, llama_token token, std::string_view piece,
-                const rethink::TokenScore& score) {
+                const rethink::TokenScore& score, bool emit_entropy) {
   std::cout << std::setprecision(17) << "{\"position\":" << position
             << ",\"token_id\":" << token << ",\"piece\":\""
             << rethink::JsonEscapeBytes(piece) << "\",\"bytes_hex\":\""
             << rethink::BytesToHex(piece) << "\",\"probability\":"
             << score.probability << ",\"log_probability\":"
-            << score.log_probability << "}\n";
+            << score.log_probability;
+  if (emit_entropy) {
+    std::cout << ",\"entropy\":" << *score.entropy;
+  }
+  std::cout << "}\n";
 }
 
 class Backend {
@@ -282,7 +296,7 @@ int Run(const Arguments& arguments) {
   const std::size_t first_observed = prepend_bos ? 1 : 0;
   if (!prepend_bos) {
     const std::string piece = TokenPiece(vocabulary, tokens.front());
-    WriteNullScore(0, tokens.front(), piece);
+    WriteNullScore(0, tokens.front(), piece, arguments.entropy);
   }
 
   const std::int32_t vocabulary_size = llama_vocab_n_tokens(vocabulary);
@@ -321,9 +335,10 @@ int Run(const Arguments& arguments) {
     }
     const rethink::TokenScore score = rethink::ScoreToken(
         std::span<const float>(logits, static_cast<std::size_t>(vocabulary_size)),
-        static_cast<std::size_t>(target));
+        static_cast<std::size_t>(target), arguments.entropy);
     const std::string piece = TokenPiece(vocabulary, target);
-    WriteScore(source + 1 - first_observed, target, piece, score);
+    WriteScore(source + 1 - first_observed, target, piece, score,
+               arguments.entropy);
     negative_log_likelihood -= score.log_probability;
     ++scored;
   }

@@ -1,6 +1,5 @@
 #include "src/scoring.h"
 
-#include <algorithm>
 #include <cmath>
 #include <iomanip>
 #include <limits>
@@ -9,7 +8,8 @@
 
 namespace rethink {
 
-TokenScore ScoreToken(std::span<const float> logits, std::size_t token_id) {
+TokenScore ScoreToken(std::span<const float> logits, std::size_t token_id,
+                      bool compute_entropy) {
   if (logits.empty()) {
     throw std::invalid_argument("cannot score an empty logit row");
   }
@@ -18,19 +18,53 @@ TokenScore ScoreToken(std::span<const float> logits, std::size_t token_id) {
   }
 
   double maximum = -std::numeric_limits<double>::infinity();
-  for (float logit : logits) {
-    maximum = std::max(maximum, static_cast<double>(logit));
-  }
-
   double denominator = 0.0;
-  for (float logit : logits) {
-    denominator += std::exp(static_cast<double>(logit) - maximum);
+  double weighted_shifted_logits = 0.0;
+  for (float raw_logit : logits) {
+    const double logit = static_cast<double>(raw_logit);
+    if (logit == -std::numeric_limits<double>::infinity()) {
+      continue;
+    }
+    if (!std::isfinite(logit)) {
+      throw std::invalid_argument("logits must not contain NaN or +infinity");
+    }
+    if (denominator == 0.0) {
+      maximum = logit;
+      denominator = 1.0;
+      continue;
+    }
+    if (logit > maximum) {
+      const double maximum_shift = maximum - logit;
+      const double scale = std::exp(maximum_shift);
+      if (compute_entropy) {
+        weighted_shifted_logits =
+            scale * (weighted_shifted_logits + maximum_shift * denominator);
+      }
+      denominator = scale * denominator + 1.0;
+      maximum = logit;
+    } else {
+      const double shifted_logit = logit - maximum;
+      const double weight = std::exp(shifted_logit);
+      denominator += weight;
+      if (compute_entropy) {
+        weighted_shifted_logits += shifted_logit * weight;
+      }
+    }
+  }
+  if (denominator == 0.0) {
+    throw std::invalid_argument("logit row has no finite value");
   }
 
   const double log_probability =
       static_cast<double>(logits[token_id]) - maximum - std::log(denominator);
+  const std::optional<double> entropy =
+      compute_entropy
+          ? std::optional<double>(std::log(denominator) -
+                                  weighted_shifted_logits / denominator)
+          : std::nullopt;
   return {.probability = std::exp(log_probability),
-          .log_probability = log_probability};
+          .log_probability = log_probability,
+          .entropy = entropy};
 }
 
 std::string BytesToHex(std::string_view bytes) {
