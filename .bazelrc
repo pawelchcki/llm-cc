@@ -1,0 +1,12 @@
+common --enable_bzlmod
+build --define=backend=cpu
+build --announce_rc
+build --show_timestamps
+
+build:cpu --define=backend=cpu
+build:cuda --define=backend=cuda
+build:rocm --define=backend=rocm
+build:metal --define=backend=metal
+
+build:release --compilation_mode=opt
+build:release --strip=always

@@ -1,3 +1,4 @@
 /target/
+/bazel-*
+/models/
 *.gguf
-

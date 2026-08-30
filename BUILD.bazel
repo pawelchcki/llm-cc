@@ -1,0 +1,105 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
+load("//:build_defs.bzl", "llama_cmake_options")
+
+package(default_visibility = ["//visibility:public"])
+
+config_setting(
+    name = "backend_cuda",
+    define_values = {"backend": "cuda"},
+)
+
+config_setting(
+    name = "backend_rocm",
+    define_values = {"backend": "rocm"},
+)
+
+config_setting(
+    name = "backend_metal",
+    define_values = {"backend": "metal"},
+)
+
+cmake(
+    name = "llama_cpp",
+    cache_entries = select({
+        ":backend_cuda": llama_cmake_options(
+            BUILD_SHARED_LIBS = "ON",
+            GGML_CUDA = "ON",
+        ),
+        ":backend_rocm": llama_cmake_options(
+            BUILD_SHARED_LIBS = "ON",
+            GGML_HIP = "ON",
+        ),
+        ":backend_metal": llama_cmake_options(
+            BUILD_SHARED_LIBS = "ON",
+            GGML_METAL = "ON",
+        ),
+        "//conditions:default": llama_cmake_options(),
+    }),
+    generate_args = ["-GNinja"],
+    lib_source = "@llama_cpp//:all",
+    out_static_libs = select({
+        ":backend_cuda": [],
+        ":backend_rocm": [],
+        ":backend_metal": [],
+        "//conditions:default": [
+            "libllama.a",
+            "libggml.a",
+            "libggml-base.a",
+            "libggml-cpu.a",
+        ],
+    }),
+    out_shared_libs = select({
+        ":backend_cuda": [
+            "libllama.so",
+            "libggml.so",
+            "libggml-base.so",
+            "libggml-cpu.so",
+            "libggml-cuda.so",
+        ],
+        ":backend_rocm": [
+            "libllama.so",
+            "libggml.so",
+            "libggml-base.so",
+            "libggml-cpu.so",
+            "libggml-hip.so",
+        ],
+        ":backend_metal": [
+            "libllama.dylib",
+            "libggml.dylib",
+            "libggml-base.dylib",
+            "libggml-cpu.dylib",
+            "libggml-metal.dylib",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+cc_library(
+    name = "scoring",
+    srcs = ["src/scoring.cc"],
+    hdrs = ["src/scoring.h"],
+)
+
+cc_binary(
+    name = "rethink-cc",
+    srcs = ["src/main.cc"],
+    linkopts = select({
+        ":backend_cuda": ["-ldl", "-lpthread"],
+        ":backend_rocm": ["-ldl", "-lpthread"],
+        ":backend_metal": [],
+        "//conditions:default": ["-ldl", "-lpthread"],
+    }),
+    deps = [
+        ":llama_cpp",
+        ":scoring",
+    ],
+)
+
+cc_test(
+    name = "scoring_test",
+    srcs = ["src/scoring_test.cc"],
+    deps = [":scoring"],
+)
