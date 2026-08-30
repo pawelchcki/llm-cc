@@ -17,9 +17,39 @@ void Expect(bool condition, std::string_view message) {
   }
 }
 
+bool Contains(const std::string& value, std::string_view needle) {
+  return value.find(needle) != std::string::npos;
+}
+
 }  // namespace
 
 int main() {
+  constexpr std::uint64_t kMiB = 1024ULL * 1024;
+  constexpr std::uint64_t kGiB = 1024ULL * kMiB;
+
+  Expect(rethink::CheckMemory(kGiB, 2 * kGiB, std::nullopt, 0, false).ok,
+         "model fits in host RAM");
+  const rethink::MemoryCheckResult host_too_small =
+      rethink::CheckMemory(kGiB, 1500 * kMiB, std::nullopt, 0, false);
+  Expect(!host_too_small.ok && Contains(host_too_small.error, "host required") &&
+             Contains(host_too_small.error, "available"),
+         "model does not fit in host RAM");
+  Expect(rethink::CheckMemory(kGiB, 512 * kMiB, 1200 * kMiB, 1, false).ok,
+         "model fits in GPU VRAM");
+  const rethink::MemoryCheckResult gpu_too_small =
+      rethink::CheckMemory(kGiB, kGiB, kGiB, -1, false);
+  Expect(!gpu_too_small.ok && Contains(gpu_too_small.error, "GPU required") &&
+             Contains(gpu_too_small.error, "host required"),
+         "model does not fit in GPU VRAM");
+  const rethink::MemoryCheckResult no_gpu =
+      rethink::CheckMemory(kGiB, 2 * kGiB, std::nullopt, 1, false);
+  Expect(!no_gpu.ok && Contains(no_gpu.error, "no GPU backend"),
+         "GPU requested without GPU backend");
+  Expect(rethink::CheckMemory(std::numeric_limits<std::uint64_t>::max(), 0,
+                              std::nullopt, -1, true)
+             .ok,
+         "memory-check override bypasses failures");
+
   const std::vector<float> logits = {1.0F, 2.0F, 3.0F};
   const rethink::TokenScore score = rethink::ScoreToken(logits, 2, true);
   Expect(std::abs(score.probability - 0.6652409558) < 1e-9,

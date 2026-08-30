@@ -1,4 +1,5 @@
 #include <llama.h>
+#include <ggml-backend.h>
 
 #include <algorithm>
 #include <charconv>
@@ -34,6 +35,7 @@ struct Arguments {
   std::int32_t threads = 0;
   std::int32_t gpu_layers = 0;
   bool entropy = false;
+  bool override_memory_check = false;
 };
 
 [[noreturn]] void Usage(std::string_view error = {}) {
@@ -54,6 +56,7 @@ struct Arguments {
       << "  --context-size N       maximum tokens in the input (default: 2048)\n"
       << "  --threads N            inference threads (default: hardware count)\n"
       << "  --gpu-layers N         layers to offload; -1 means all (default: 0)\n"
+      << "  --override-memory-check  bypass the preflight memory check\n"
       << "  --entropy              emit full-vocabulary next-token entropy\n"
       << "  -h, --help             show this help\n";
   std::exit(error.empty() ? 0 : 2);
@@ -80,6 +83,10 @@ Arguments ParseArguments(int argc, char** argv) {
     }
     if (option == "--entropy") {
       arguments.entropy = true;
+      continue;
+    }
+    if (option == "--override-memory-check") {
+      arguments.override_memory_check = true;
       continue;
     }
     if (i + 1 >= argc) {
@@ -234,6 +241,80 @@ class Backend {
   ~Backend() { llama_backend_free(); }
 };
 
+std::uint64_t ModelFileSize(const std::filesystem::path& path) {
+  std::error_code error;
+  const std::uintmax_t size = std::filesystem::file_size(path, error);
+  if (error) {
+    throw std::runtime_error("could not stat model: " + path.string() +
+                             ": " + error.message());
+  }
+  if (size > std::numeric_limits<std::uint64_t>::max()) {
+    throw std::runtime_error("model file is too large to measure: " +
+                             path.string());
+  }
+  return static_cast<std::uint64_t>(size);
+}
+
+std::optional<std::uint64_t> HostAvailableMemory() {
+  std::ifstream input("/proc/meminfo");
+  std::string field;
+  std::uint64_t kibibytes = 0;
+  std::string unit;
+  while (input >> field >> kibibytes >> unit) {
+    if (field != "MemAvailable:") {
+      continue;
+    }
+    if (unit != "kB" ||
+        kibibytes > std::numeric_limits<std::uint64_t>::max() / 1024) {
+      return std::nullopt;
+    }
+    return kibibytes * 1024;
+  }
+  return std::nullopt;
+}
+
+std::optional<std::uint64_t> GpuAvailableMemory() {
+  for (std::size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+    ggml_backend_dev_t device = ggml_backend_dev_get(i);
+    if (ggml_backend_dev_type(device) != GGML_BACKEND_DEVICE_TYPE_GPU) {
+      continue;
+    }
+    std::size_t free_bytes = 0;
+    std::size_t total_bytes = 0;
+    ggml_backend_dev_memory(device, &free_bytes, &total_bytes);
+    return static_cast<std::uint64_t>(free_bytes);
+  }
+  return std::nullopt;
+}
+
+void CheckAvailableMemory(const Arguments& arguments) {
+  if (arguments.override_memory_check) {
+    return;
+  }
+
+  const std::uint64_t model_bytes = ModelFileSize(arguments.model);
+  const std::optional<std::uint64_t> gpu_available =
+      arguments.gpu_layers == 0 ? std::nullopt : GpuAvailableMemory();
+  const std::optional<std::uint64_t> host_available = HostAvailableMemory();
+  if (!host_available.has_value()) {
+    if (arguments.gpu_layers != 0 && !gpu_available.has_value()) {
+      const rethink::MemoryCheckResult result = rethink::CheckMemory(
+          model_bytes, 0, gpu_available, arguments.gpu_layers, false);
+      throw std::runtime_error(result.error);
+    }
+    std::cerr << "warning: could not read MemAvailable from /proc/meminfo; "
+                 "skipping memory check\n";
+    return;
+  }
+
+  const rethink::MemoryCheckResult result = rethink::CheckMemory(
+      model_bytes, *host_available, gpu_available, arguments.gpu_layers,
+      false);
+  if (!result.ok) {
+    throw std::runtime_error(result.error);
+  }
+}
+
 using Model = std::unique_ptr<llama_model, decltype(&llama_model_free)>;
 using Context = std::unique_ptr<llama_context, decltype(&llama_free)>;
 
@@ -243,6 +324,7 @@ int Run(const Arguments& arguments) {
   const std::string input = ReadInput(arguments);
   llama_log_set(DiscardBackendLog, nullptr);
   Backend backend;
+  CheckAvailableMemory(arguments);
 
   llama_model_params model_parameters = llama_model_default_params();
   model_parameters.n_gpu_layers = arguments.gpu_layers;

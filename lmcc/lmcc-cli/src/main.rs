@@ -10,6 +10,9 @@ use lmcc_lang::{CFrontend, CppFrontend, LanguageFrontend, OffsetMap, RustFronten
 use serde_json::Value;
 use tempfile::NamedTempFile;
 
+const DEFAULT_MODEL_PATH: &str = "models/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf";
+const DEFAULT_MODEL_DOWNLOAD: &str = "mkdir -p models && curl -L --fail -o models/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf https://huggingface.co/bartowski/DeepSeek-Coder-V2-Lite-Base-GGUF/resolve/main/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf";
+
 #[derive(Debug, Parser)]
 #[command(
     name = "lmcc",
@@ -66,11 +69,13 @@ fn main() {
     }
 }
 
-fn run(arguments: Arguments) -> Result<()> {
-    ensure!(
-        arguments.entropy_jsonl.is_some() ^ arguments.model.is_some(),
-        "provide exactly one of --entropy-jsonl or --model"
-    );
+fn run(mut arguments: Arguments) -> Result<()> {
+    let current_dir = std::env::current_dir().context("failed to determine current directory")?;
+    arguments.model = resolve_model(
+        arguments.model,
+        arguments.entropy_jsonl.as_deref(),
+        &current_dir,
+    )?;
     ensure!(
         arguments.entropy_jsonl.is_none()
             || (arguments.gpu_layers.is_none() && arguments.context.is_none()),
@@ -115,6 +120,31 @@ fn run(arguments: Arguments) -> Result<()> {
         .context("failed to write JSON output")?;
     println!();
     Ok(())
+}
+
+fn resolve_model(
+    model: Option<PathBuf>,
+    entropy_jsonl: Option<&Path>,
+    current_dir: &Path,
+) -> Result<Option<PathBuf>> {
+    ensure!(
+        !(model.is_some() && entropy_jsonl.is_some()),
+        "provide exactly one of --entropy-jsonl or --model"
+    );
+    if entropy_jsonl.is_some() {
+        return Ok(None);
+    }
+    if model.is_some() {
+        return Ok(model);
+    }
+
+    let default_model = current_dir.join(DEFAULT_MODEL_PATH);
+    ensure!(
+        default_model.exists(),
+        "default model {} does not exist; download it with: {DEFAULT_MODEL_DOWNLOAD}",
+        default_model.display()
+    );
+    Ok(Some(default_model))
 }
 
 fn selected_language<'a>(explicit: Option<&'a str>, source: &Path) -> Result<&'a str> {
@@ -386,5 +416,42 @@ mod tests {
             let error = run(arguments).unwrap_err().to_string();
             assert!(error.contains("cannot be used with --entropy-jsonl"));
         }
+    }
+
+    #[test]
+    fn defaults_to_deepseek_coder_v2_model_in_current_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let model = directory.path().join(DEFAULT_MODEL_PATH);
+        fs::create_dir_all(model.parent().unwrap()).unwrap();
+        fs::write(&model, []).unwrap();
+
+        assert_eq!(
+            resolve_model(None, None, directory.path()).unwrap(),
+            Some(model)
+        );
+    }
+
+    #[test]
+    fn missing_default_model_error_includes_download_command() {
+        let directory = tempfile::tempdir().unwrap();
+        let error = resolve_model(None, None, directory.path())
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains(DEFAULT_MODEL_PATH));
+        assert!(error.contains(DEFAULT_MODEL_DOWNLOAD));
+    }
+
+    #[test]
+    fn explicit_model_and_entropy_jsonl_remain_mutually_exclusive() {
+        let error = resolve_model(
+            Some(PathBuf::from("model.gguf")),
+            Some(Path::new("entropy.jsonl")),
+            Path::new("."),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("provide exactly one"));
     }
 }

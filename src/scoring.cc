@@ -1,12 +1,89 @@
 #include "src/scoring.h"
 
 #include <cmath>
+#include <cstdint>
 #include <iomanip>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
 
 namespace rethink {
+
+namespace {
+
+constexpr std::uint64_t kContextOverheadBytes = 512ULL * 1024 * 1024;
+
+std::uint64_t SaturatingAdd(std::uint64_t left, std::uint64_t right) {
+  if (right > std::numeric_limits<std::uint64_t>::max() - left) {
+    return std::numeric_limits<std::uint64_t>::max();
+  }
+  return left + right;
+}
+
+std::uint64_t EstimatedWeightBytes(std::uint64_t model_bytes) {
+  const std::uint64_t safety_margin =
+      model_bytes / 10 + (model_bytes % 10 != 0 ? 1 : 0);
+  return SaturatingAdd(model_bytes, safety_margin);
+}
+
+std::string FormatBytes(std::uint64_t bytes) {
+  constexpr long double kGiB = 1024.0L * 1024.0L * 1024.0L;
+  std::ostringstream output;
+  output << std::fixed << std::setprecision(2)
+         << static_cast<long double>(bytes) / kGiB << " GiB (" << bytes
+         << " bytes)";
+  return output.str();
+}
+
+}  // namespace
+
+MemoryCheckResult CheckMemory(
+    std::uint64_t model_bytes, std::uint64_t host_available_bytes,
+    std::optional<std::uint64_t> gpu_available_bytes, std::int32_t gpu_layers,
+    bool override_check) {
+  if (override_check) {
+    return {.ok = true, .error = {}};
+  }
+
+  const std::uint64_t weight_bytes = EstimatedWeightBytes(model_bytes);
+  if (gpu_layers == 0) {
+    const std::uint64_t host_required =
+        SaturatingAdd(weight_bytes, kContextOverheadBytes);
+    if (host_required <= host_available_bytes) {
+      return {.ok = true, .error = {}};
+    }
+    return {
+        .ok = false,
+        .error = "insufficient memory: host required " +
+                 FormatBytes(host_required) + ", available " +
+                 FormatBytes(host_available_bytes) + "; GPU not used",
+    };
+  }
+
+  if (!gpu_available_bytes.has_value()) {
+    return {.ok = false,
+            .error =
+                "--gpu-layers is nonzero, but the build has no GPU backend"};
+  }
+
+  // Heuristic: when any layers are offloaded, all model weights count against
+  // VRAM and the fixed context overhead counts against host RAM. Actual partial
+  // offload allocations vary by architecture and requested layer count.
+  const std::uint64_t host_required = kContextOverheadBytes;
+  const std::uint64_t gpu_required = weight_bytes;
+  if (host_required <= host_available_bytes &&
+      gpu_required <= *gpu_available_bytes) {
+    return {.ok = true, .error = {}};
+  }
+  return {
+      .ok = false,
+      .error = "insufficient memory: host required " +
+               FormatBytes(host_required) + ", available " +
+               FormatBytes(host_available_bytes) + "; GPU required " +
+               FormatBytes(gpu_required) + ", available " +
+               FormatBytes(*gpu_available_bytes),
+  };
+}
 
 TokenScore ScoreToken(std::span<const float> logits, std::size_t token_id,
                       bool compute_entropy) {

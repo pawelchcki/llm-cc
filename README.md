@@ -11,24 +11,27 @@ vendor SDK and driver on the target machine.
 
 ## Model
 
-The primary recommendation is the pretrained DeepSeek-Coder-6.7B-Base Q6_K
-(about 5.5 GB) from `TheBloke/deepseek-coder-6.7B-base-GGUF`. Download model
-weights outside the build graph so they remain a runtime input:
+The primary recommendation is the pretrained DeepSeek-Coder-V2-Lite-Base Q6_K
+(about 14.1 GB). It is a mixture-of-experts model with about 2.4B active
+parameters, so CPU inference is viable when the machine has enough RAM.
+Download model weights outside the build graph so they remain a runtime input:
+
+```sh
+mkdir -p models && curl -L --fail -o models/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf https://huggingface.co/bartowski/DeepSeek-Coder-V2-Lite-Base-GGUF/resolve/main/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf
+```
+
+When `lmcc` runs model inference without an explicit `--model`, it uses
+`models/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf` relative to the current
+directory.
+
+For lower-RAM machines, DeepSeek-Coder-6.7B-Base Q6_K (about 5.5 GB) is the
+larger fallback:
 
 ```sh
 mkdir -p models
 curl -L --fail \
   -o models/deepseek-coder-6.7b-base.Q6_K.gguf \
   https://huggingface.co/TheBloke/deepseek-coder-6.7B-base-GGUF/resolve/main/deepseek-coder-6.7b-base.Q6_K.gguf
-```
-
-Qwen2.5-Coder-7B Base Q6_K (about 5.8 GB) is a good alternative:
-
-```sh
-mkdir -p models
-curl -L --fail \
-  -o models/Qwen2.5-Coder-7B-Q6_K.gguf \
-  https://huggingface.co/tensorblock/Qwen2.5-Coder-7B-GGUF/resolve/main/Qwen2.5-Coder-7B-Q6_K.gguf
 ```
 
 For a small CPU option, use Qwen2.5-Coder-1.5B Base Q6_K (about 1.2 GB):
@@ -54,7 +57,7 @@ pinned `.bazelversion` automatically.
 ```sh
 bazel build --config=release --config=cpu //:rethink-cc
 bazel-bin/rethink-cc \
-  --model models/deepseek-coder-6.7b-base.Q6_K.gguf \
+  --model models/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf \
   --entropy \
   --prompt "The quick brown fox"
 ```
@@ -102,10 +105,16 @@ Offload all transformer layers at runtime with `--gpu-layers -1`. Use zero
 
 ```sh
 bazel-bin/rethink-cc \
-  --model models/deepseek-coder-6.7b-base.Q6_K.gguf \
+  --model models/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf \
   --gpu-layers -1 \
   --prompt "The quick brown fox"
 ```
+
+Before loading a model, `rethink-cc` checks whether available memory can hold
+the model file plus a 10% safety margin and an estimated 512 MiB context
+overhead. With GPU offload, model weights are conservatively charged to the
+first GPU and context overhead to host RAM. If this coarse preflight estimate
+does not match a known-good setup, pass `--override-memory-check` to bypass it.
 
 Run the model-independent numerical and encoding tests with:
 
@@ -173,8 +182,7 @@ Run the complete pipeline with a local GGUF and the C++ scorer:
 ```sh
 lmcc/target/debug/lmcc path/to/source.rs \
   --lang rust \
-  --scorer-bin bazel-bin/rethink-cc \
-  --model models/deepseek-coder-6.7b-base.Q6_K.gguf
+  --scorer-bin bazel-bin/rethink-cc
 ```
 
 When the scorer was built with CUDA, ROCm, or Metal, request layer offload in
@@ -184,7 +192,6 @@ token context when a larger file needs it:
 ```sh
 lmcc/target/debug/lmcc path/to/source.rs \
   --scorer-bin bazel-bin/rethink-cc \
-  --model models/deepseek-coder-6.7b-base.Q6_K.gguf \
   --gpu-layers 99 \
   --context 8192
 ```
