@@ -1,5 +1,5 @@
 module(
-    name = "rethink_cc",
+    name = "llm_cc",
     version = "0.1.0",
 )
 
@@ -84,4 +84,60 @@ http_archive(
     sha256 = "682bdd1f58907d0bbfbd38bdfd7b8601de804bfda5ee15a739744e59c6585dd8",
     strip_prefix = "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0",
     urls = ["https://github.com/ggml-org/llama.cpp/archive/c589f0ed10c643678c4707dd160c21ac7633ebc0.tar.gz"],
+)
+
+http_archive(
+    name = "nlohmann_json",
+    build_file = "//third_party:nlohmann_json.BUILD.bazel",
+    sha256 = "4b92eb0c06d10683f7447ce9406cb97cd4b453be18d7279320f7b2f025c10187",
+    strip_prefix = "json-3.12.0",
+    urls = ["https://github.com/nlohmann/json/archive/refs/tags/v3.12.0.tar.gz"],
+)
+
+# Runtime 0.26.11 with the newest official complete-source grammar bundles.
+http_archive(
+    name = "tree_sitter",
+    build_file = "//third_party:tree_sitter.BUILD.bazel",
+    sha256 = "1bab01ed21464f3272665b9c60e39ee79f68da1333e80b23f2c9356569d06971",
+    strip_prefix = "tree-sitter-0.26.11",
+    urls = ["https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.26.11.tar.gz"],
+)
+
+http_archive(
+    name = "tree_sitter_rust",
+    build_file = "//third_party:tree_sitter_grammar.BUILD.bazel",
+    sha256 = "953d7a7122cc004d3ad516ae193dde408e633c2da59356ba67e713f3e52d73fc",
+    urls = ["https://github.com/tree-sitter/tree-sitter-rust/releases/download/v0.24.2/tree-sitter-rust.tar.gz"],
+)
+
+http_archive(
+    name = "tree_sitter_c",
+    build_file = "//third_party:tree_sitter_grammar.BUILD.bazel",
+    sha256 = "f3a2cdfbca39c79f60baf2ef62b42084c609782c76485de457ba36ff65d51baf",
+    urls = ["https://github.com/tree-sitter/tree-sitter-c/releases/download/v0.24.2/tree-sitter-c.tar.gz"],
+)
+
+http_archive(
+    name = "tree_sitter_cpp",
+    build_file = "//third_party:tree_sitter_grammar.BUILD.bazel",
+    sha256 = "4333032439bef29e71c4d7a8d3acb0c4a498dc9d767980419859ed6fbeeeef29",
+    urls = ["https://github.com/tree-sitter/tree-sitter-cpp/releases/download/v0.23.4/tree-sitter-cpp.tar.xz"],
+)
+
+http_archive(
+    name = "curl",
+    build_file = "//third_party:all.BUILD.bazel",
+    sha256 = "f4619a1e2474c4bbfedc88a7c2191209c8334b48fa1f4e53fd584cc12e9120dd",
+    strip_prefix = "curl-8.14.1",
+    urls = ["https://curl.se/download/curl-8.14.1.tar.xz"],
+)
+
+http_archive(
+    name = "openssl",
+    build_file = "//third_party:all.BUILD.bazel",
+    patches = ["//third_party:openssl_reproducible_buildinfo.patch"],
+    patch_strip = 1,
+    sha256 = "a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2",
+    strip_prefix = "openssl-3.5.8",
+    urls = ["https://github.com/openssl/openssl/releases/download/openssl-3.5.8/openssl-3.5.8.tar.gz"],
 )

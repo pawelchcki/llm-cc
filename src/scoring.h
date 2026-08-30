@@ -1,5 +1,5 @@
-#ifndef RETHINK_CC_SCORING_H_
-#define RETHINK_CC_SCORING_H_
+#ifndef LLM_CC_SCORING_H_
+#define LLM_CC_SCORING_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -8,7 +8,7 @@
 #include <string>
 #include <string_view>
 
-namespace rethink {
+namespace llmcc {
 
 struct TokenScore {
   double probability;
@@ -30,6 +30,6 @@ MemoryCheckResult CheckMemory(std::uint64_t model_bytes,
                               std::optional<std::uint64_t> gpu_available_bytes,
                               std::int32_t gpu_layers, bool override_check);
 
-}  // namespace rethink
+}  // namespace llmcc
 
-#endif  // RETHINK_CC_SCORING_H_
+#endif  // LLM_CC_SCORING_H_

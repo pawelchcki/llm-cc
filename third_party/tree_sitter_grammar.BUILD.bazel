@@ -1,0 +1,15 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "grammar",
+    srcs = glob([
+        "src/parser.c",
+        "src/scanner.c",
+        "src/scanner.cc",
+    ], allow_empty = True),
+    hdrs = glob(["src/tree_sitter/*.h"]),
+    copts = ["-w"],
+    includes = ["src"],
+)

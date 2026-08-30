@@ -7,7 +7,7 @@
 #include <sstream>
 #include <stdexcept>
 
-namespace rethink {
+namespace llmcc {
 
 namespace {
 
@@ -256,4 +256,4 @@ std::string JsonEscapeBytes(std::string_view bytes) {
   return output.str();
 }
 
-}  // namespace rethink
+}  // namespace llmcc

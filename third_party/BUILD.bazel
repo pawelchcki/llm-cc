@@ -1,4 +1,9 @@
 exports_files([
+    "all.BUILD.bazel",
+    "nlohmann_json.BUILD.bazel",
+    "tree_sitter.BUILD.bazel",
+    "tree_sitter_grammar.BUILD.bazel",
     "llama_cpp.BUILD.bazel",
+    "openssl_reproducible_buildinfo.patch",
     "rules_foreign_cc_reproducible_logs.patch",
 ])

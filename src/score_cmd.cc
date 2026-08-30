@@ -1,3 +1,5 @@
+#include "src/score_cmd.h"
+
 #include <ggml-backend.h>
 #include <llama.h>
 
@@ -15,6 +17,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -45,7 +48,7 @@ struct Arguments {
     std::cerr << "error: " << error << "\n\n";
   }
   std::cerr
-      << "Usage: rethink-cc --model MODEL.gguf [INPUT] [OPTIONS]\n\n"
+      << "Usage: llm-cc --model MODEL.gguf [INPUT] [OPTIONS]\n\n"
       << "Teacher-force input through a GGUF model and emit observed-token "
          "probabilities.\n"
       << "No continuation is generated. Output is JSONL on stdout.\n\n"
@@ -89,7 +92,7 @@ Arguments ParseArguments(int argc, char** argv) {
       Usage();
     }
     if (option == "-V" || option == "--version") {
-      std::cout << "rethink-cc " << RETHINK_CC_VERSION << '\n';
+      std::cout << "llm-cc " << LLM_CC_VERSION << '\n';
       std::exit(0);
     }
     if (option == "--entropy") {
@@ -216,33 +219,35 @@ std::string TokenPiece(const llama_vocab* vocab, llama_token token) {
   return piece;
 }
 
-void WriteNullScore(std::size_t position, llama_token token,
-                    std::string_view piece, bool emit_entropy) {
-  std::cout << "{\"position\":" << position << ",\"token_id\":" << token
-            << ",\"piece\":\"" << rethink::JsonEscapeBytes(piece)
-            << "\",\"bytes_hex\":\"" << rethink::BytesToHex(piece)
-            << "\",\"probability\":null,\"log_probability\":null";
+void WriteNullScore(std::ostream& output, std::size_t position,
+                    llama_token token, std::string_view piece,
+                    bool emit_entropy) {
+  output << "{\"position\":" << position << ",\"token_id\":" << token
+         << ",\"piece\":\"" << llmcc::JsonEscapeBytes(piece)
+         << "\",\"bytes_hex\":\"" << llmcc::BytesToHex(piece)
+         << "\",\"probability\":null,\"log_probability\":null";
   if (emit_entropy) {
-    std::cout << ",\"entropy\":null";
+    output << ",\"entropy\":null";
   }
-  std::cout << "}\n";
+  output << "}\n";
 }
 
-void WriteScore(std::size_t position, llama_token token, std::string_view piece,
-                const rethink::TokenScore& score, bool emit_entropy) {
-  std::cout << std::setprecision(17) << "{\"position\":" << position
-            << ",\"token_id\":" << token << ",\"piece\":\""
-            << rethink::JsonEscapeBytes(piece) << "\",\"bytes_hex\":\""
-            << rethink::BytesToHex(piece)
-            << "\",\"probability\":" << score.probability
-            << ",\"log_probability\":" << score.log_probability;
+void WriteScore(std::ostream& output, std::size_t position, llama_token token,
+                std::string_view piece, const llmcc::TokenScore& score,
+                bool emit_entropy) {
+  output << std::setprecision(17) << "{\"position\":" << position
+         << ",\"token_id\":" << token << ",\"piece\":\""
+         << llmcc::JsonEscapeBytes(piece) << "\",\"bytes_hex\":\""
+         << llmcc::BytesToHex(piece)
+         << "\",\"probability\":" << score.probability
+         << ",\"log_probability\":" << score.log_probability;
   if (emit_entropy) {
     if (!score.entropy.has_value()) {
       throw std::logic_error("entropy was requested but not computed");
     }
-    std::cout << ",\"entropy\":" << *score.entropy;
+    output << ",\"entropy\":" << *score.entropy;
   }
-  std::cout << "}\n";
+  output << "}\n";
 }
 
 class Backend {
@@ -310,7 +315,7 @@ void CheckAvailableMemory(const Arguments& arguments) {
   const std::optional<std::uint64_t> host_available = HostAvailableMemory();
   if (!host_available.has_value()) {
     if (arguments.gpu_layers != 0 && !gpu_available.has_value()) {
-      const rethink::MemoryCheckResult result = rethink::CheckMemory(
+      const llmcc::MemoryCheckResult result = llmcc::CheckMemory(
           model_bytes, 0, gpu_available, arguments.gpu_layers, false);
       throw std::runtime_error(result.error);
     }
@@ -319,7 +324,7 @@ void CheckAvailableMemory(const Arguments& arguments) {
     return;
   }
 
-  const rethink::MemoryCheckResult result = rethink::CheckMemory(
+  const llmcc::MemoryCheckResult result = llmcc::CheckMemory(
       model_bytes, *host_available, gpu_available, arguments.gpu_layers, false);
   if (!result.ok) {
     throw std::runtime_error(result.error);
@@ -332,8 +337,11 @@ using Context = std::unique_ptr<llama_context, decltype(&llama_free)>;
 void DiscardBackendLog(ggml_log_level level, const char* text,
                        void* user_data) {}
 
-int Run(const Arguments& arguments) {
-  const std::string input = ReadInput(arguments);
+int Run(const Arguments& arguments, std::ostream& output,
+        std::ostream& diagnostics,
+        const std::optional<std::string>& input_override = std::nullopt) {
+  const std::string input =
+      input_override.has_value() ? *input_override : ReadInput(arguments);
   llama_log_set(DiscardBackendLog, nullptr);
   Backend backend;
   CheckAvailableMemory(arguments);
@@ -361,7 +369,7 @@ int Run(const Arguments& arguments) {
     tokens.insert(tokens.begin(), bos_token);
   }
   if (tokens.empty()) {
-    std::cerr << "tokens=0 scored=0 mean_nll=null perplexity=null\n";
+    diagnostics << "tokens=0 scored=0 mean_nll=null perplexity=null\n";
     return 0;
   }
   if (tokens.size() > arguments.context_size) {
@@ -388,7 +396,7 @@ int Run(const Arguments& arguments) {
   const std::size_t first_observed = prepend_bos ? 1 : 0;
   if (!prepend_bos) {
     const std::string piece = TokenPiece(vocabulary, tokens.front());
-    WriteNullScore(0, tokens.front(), piece, arguments.entropy);
+    WriteNullScore(output, 0, tokens.front(), piece, arguments.entropy);
   }
 
   const std::int32_t vocabulary_size = llama_vocab_n_tokens(vocabulary);
@@ -426,38 +434,58 @@ int Run(const Arguments& arguments) {
       throw std::runtime_error(
           "tokenizer produced a token outside the vocabulary");
     }
-    const rethink::TokenScore score = rethink::ScoreToken(
+    const llmcc::TokenScore score = llmcc::ScoreToken(
         std::span<const float>(logits,
                                static_cast<std::size_t>(vocabulary_size)),
         static_cast<std::size_t>(target), arguments.entropy);
     const std::string piece = TokenPiece(vocabulary, target);
-    WriteScore(source + 1 - first_observed, target, piece, score,
+    WriteScore(output, source + 1 - first_observed, target, piece, score,
                arguments.entropy);
     negative_log_likelihood -= score.log_probability;
     ++scored;
   }
 
   if (scored == 0) {
-    std::cerr << "tokens=" << (tokens.size() - first_observed)
-              << " scored=0 mean_nll=null perplexity=null\n";
+    diagnostics << "tokens=" << (tokens.size() - first_observed)
+                << " scored=0 mean_nll=null perplexity=null\n";
   } else {
     const double mean_nll =
         negative_log_likelihood / static_cast<double>(scored);
-    std::cerr << std::setprecision(10)
-              << "tokens=" << (tokens.size() - first_observed)
-              << " scored=" << scored << " mean_nll=" << mean_nll
-              << " perplexity=" << std::exp(mean_nll) << '\n';
+    diagnostics << std::setprecision(10)
+                << "tokens=" << (tokens.size() - first_observed)
+                << " scored=" << scored << " mean_nll=" << mean_nll
+                << " perplexity=" << std::exp(mean_nll) << '\n';
   }
   return 0;
 }
 
 }  // namespace
 
-int main(int argc, char** argv) {
+namespace llmcc {
+
+std::string ScoreEntropyJsonl(const std::filesystem::path& model,
+                              std::string_view input,
+                              const InferenceOptions& options) {
+  Arguments arguments;
+  arguments.model = model;
+  arguments.context_size = options.context_size;
+  arguments.gpu_layers = options.gpu_layers;
+  arguments.entropy = true;
+  arguments.threads = static_cast<std::int32_t>(
+      std::max(1U, std::thread::hardware_concurrency()));
+  std::ostringstream output;
+  std::ostringstream diagnostics;
+  static_cast<void>(Run(arguments, output, diagnostics, std::string(input)));
+  return output.str();
+}
+
+int RunScoreCommand(int argc, char** argv) {
   try {
-    return Run(ParseArguments(argc, argv));
+    return Run(ParseArguments(argc, argv), std::cout, std::cerr);
   } catch (const std::exception& error) {
     std::cerr << "error: " << error.what() << '\n';
     return 1;
   }
 }
+
+}  // namespace llmcc

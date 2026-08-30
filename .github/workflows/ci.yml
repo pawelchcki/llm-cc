@@ -19,4 +19,4 @@ jobs:
           disk-cache: ${{ github.workflow }}
           repository-cache: true
       - run: bazel test //...
-      - run: bazel build --config=release --config=cpu //:rethink-cc
+      - run: bazel build --config=release --config=cpu //:llm-cc

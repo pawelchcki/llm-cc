@@ -1,0 +1,26 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "tree_sitter",
+    srcs = ["lib/src/lib.c"],
+    hdrs = glob([
+        "lib/include/tree_sitter/*.h",
+        "lib/src/*.h",
+        "lib/src/portable/*.h",
+        "lib/src/unicode/*.h",
+        "lib/src/wasm/*.h",
+    ]),
+    textual_hdrs = glob(["lib/src/*.c"], exclude = ["lib/src/lib.c"]),
+    copts = [
+        "-D_BSD_SOURCE",
+        "-D_DEFAULT_SOURCE",
+        "-D_POSIX_C_SOURCE=200809L",
+        "-std=c11",
+    ],
+    includes = [
+        "lib/include",
+        "lib/src",
+    ],
+)

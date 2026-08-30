@@ -2,6 +2,7 @@ load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
+load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make_variant")
 load(
     "//:build_defs.bzl",
     "install_launcher",
@@ -24,7 +25,7 @@ genrule(
 status_file=bazel-out/stable-status.txt
 version=""
 if [[ -f "$$status_file" ]]; then
-  version=$$(grep '^STABLE_RETHINK_VERSION ' "$$status_file" | cut -d' ' -f2- || true)
+  version=$$(grep '^STABLE_LLM_CC_VERSION ' "$$status_file" | cut -d' ' -f2- || true)
 fi
 if [[ -z "$$version" ]]; then
   base=$$(tr -d '[:space:]' < $(location VERSION))
@@ -37,9 +38,9 @@ case "$$version" in
   *[!0-9A-Za-z.+-]*|'') echo "invalid VERSION: $$version" >&2; exit 1 ;;
 esac
 cat > "$@" <<EOF
-#ifndef RETHINK_CC_GENERATED_VERSION_H_
-#define RETHINK_CC_GENERATED_VERSION_H_
-#define RETHINK_CC_VERSION "$$version"
+#ifndef LLM_CC_GENERATED_VERSION_H_
+#define LLM_CC_GENERATED_VERSION_H_
+#define LLM_CC_VERSION "$$version"
 #endif
 EOF
 """,
@@ -119,21 +120,129 @@ cmake(
     }),
 )
 
-cc_library(
-    name = "scoring",
-    srcs = ["src/scoring.cc"],
-    hdrs = ["src/scoring.h"],
+configure_make_variant(
+    name = "openssl",
+    args = [
+        # GNU Make exports command-line variables to recipes. OpenSSL's
+        # build-info generator otherwise records the wall-clock time.
+        "SOURCE_DATE_EPOCH=0",
+        # These features are disabled, but OpenSSL still compiles their
+        # default directories into libcrypto unless they are overridden.
+        "ENGINESDIR=lib64/engines-3",
+        "MODULESDIR=lib64/ossl-modules",
+    ],
+    configure_command = "Configure",
+    configure_in_place = True,
+    configure_options = [
+        "--openssldir=/etc/ssl",
+        "no-apps",
+        "no-dso",
+        "no-engine",
+        "no-module",
+        "no-shared",
+        "no-tests",
+        "no-zlib",
+    ],
+    lib_source = "@openssl//:all",
+    out_lib_dir = "lib64",
+    out_static_libs = [
+        "libcrypto.a",
+        "libssl.a",
+    ],
+    set_file_prefix_map = True,
+    targets = [
+        "",
+        # Install libraries and headers without populating --openssldir.
+        "install_sw",
+    ],
+    toolchain = "@rules_foreign_cc//toolchains:preinstalled_make_toolchain",
 )
 
-cc_binary(
-    name = "rethink-cc",
-    srcs = ["src/main.cc"],
-    linkopts = select({
-        ":backend_cuda": ["-ldl", "-lpthread"],
-        ":backend_rocm": ["-ldl", "-lpthread"],
-        ":backend_metal": [],
-        "//conditions:default": ["-ldl", "-lpthread"],
-    }),
+cmake(
+    name = "curl",
+    cache_entries = {
+        "BUILD_CURL_EXE": "OFF",
+        "BUILD_EXAMPLES": "OFF",
+        "BUILD_LIBCURL_DOCS": "OFF",
+        "BUILD_MISC_DOCS": "OFF",
+        "BUILD_SHARED_LIBS": "OFF",
+        "BUILD_TESTING": "OFF",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_DISABLE_FIND_PACKAGE_PkgConfig": "ON",
+        "CMAKE_INSTALL_LIBDIR": "lib",
+        "CURL_BROTLI": "OFF",
+        "CURL_DISABLE_LDAP": "ON",
+        "CURL_USE_LIBPSL": "OFF",
+        "CURL_USE_LIBSSH2": "OFF",
+        "CURL_USE_GSSAPI": "OFF",
+        "CURL_USE_OPENSSL": "ON",
+        "CURL_ZLIB": "OFF",
+        "CURL_ZSTD": "OFF",
+        "HTTP_ONLY": "ON",
+        "USE_LIBIDN2": "OFF",
+        "USE_NGHTTP2": "OFF",
+        "USE_NGHTTP3": "OFF",
+        "USE_NGTCP2": "OFF",
+        "USE_QUICHE": "OFF",
+    },
+    deps = [":openssl"],
+    generate_args = ["-GNinja"],
+    lib_source = "@curl//:all",
+    out_static_libs = ["libcurl.a"],
+    set_file_prefix_map = True,
+)
+
+cc_library(
+    name = "core",
+    srcs = ["src/core.cc"],
+    hdrs = ["src/core.h"],
+)
+
+cc_library(
+    name = "cache",
+    srcs = ["src/cache.cc"],
+    hdrs = ["src/cache.h"],
+    deps = ["@nlohmann_json//:json"],
+)
+
+cc_library(
+    name = "download",
+    srcs = ["src/download.cc"],
+    hdrs = ["src/download.h"],
+    deps = [
+        ":cache",
+        ":curl",
+    ],
+)
+
+cc_library(
+    name = "jsonl",
+    srcs = ["src/jsonl.cc"],
+    hdrs = ["src/jsonl.h"],
+    deps = [
+        ":core",
+        ":lang",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_library(
+    name = "lang",
+    srcs = ["src/lang.cc"],
+    hdrs = ["src/lang.h"],
+    deps = [
+        ":core",
+        "@tree_sitter//:tree_sitter",
+        "@tree_sitter_c//:grammar",
+        "@tree_sitter_cpp//:grammar",
+        "@tree_sitter_rust//:grammar",
+    ],
+)
+
+cc_library(
+    name = "score_cmd",
+    srcs = ["src/score_cmd.cc"],
+    hdrs = ["src/score_cmd.h"],
     deps = [
         ":llama_cpp",
         ":scoring",
@@ -141,11 +250,103 @@ cc_binary(
     ],
 )
 
+cc_library(
+    name = "scoring",
+    srcs = ["src/scoring.cc"],
+    hdrs = ["src/scoring.h"],
+)
+
+cc_library(
+    name = "test_util",
+    hdrs = ["src/test_util.h"],
+)
+
+cc_binary(
+    name = "llm-cc",
+    srcs = ["src/cli/main.cc"],
+    linkopts = select({
+        ":backend_cuda": ["-ldl", "-lpthread"],
+        ":backend_rocm": ["-ldl", "-lpthread"],
+        ":backend_metal": [],
+        "//conditions:default": ["-ldl", "-lpthread"],
+    }),
+    deps = [
+        ":cache",
+        ":core",
+        ":download",
+        ":jsonl",
+        ":lang",
+        ":score_cmd",
+        ":version",
+    ],
+)
+
 install_launcher(
     name = "install",
-    binary = ":rethink-cc",
+    binary = ":llm-cc",
     script = "//tools:install.sh",
     version_script = "//tools:version.sh",
+)
+
+cc_test(
+    name = "cache_test",
+    srcs = ["src/cache_test.cc"],
+    deps = [
+        ":cache",
+        ":test_util",
+    ],
+)
+
+cc_test(
+    name = "cli_test",
+    srcs = ["src/cli_test.cc"],
+    data = [
+        ":llm-cc",
+    ] + glob(["testdata/cli/*"]),
+    deps = [
+        ":test_util",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_test(
+    name = "core_test",
+    srcs = ["src/core_test.cc"],
+    deps = [
+        ":core",
+        ":test_util",
+    ],
+)
+
+cc_test(
+    name = "download_test",
+    srcs = ["src/download_test.cc"],
+    deps = [
+        ":cache",
+        ":download",
+        ":test_util",
+    ],
+)
+
+cc_test(
+    name = "jsonl_test",
+    srcs = ["src/jsonl_test.cc"],
+    deps = [
+        ":core",
+        ":jsonl",
+        ":test_util",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_test(
+    name = "lang_test",
+    srcs = ["src/lang_test.cc"],
+    data = glob(["testdata/lang/*"]),
+    deps = [
+        ":lang",
+        ":test_util",
+    ],
 )
 
 cc_test(
