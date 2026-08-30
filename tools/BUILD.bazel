@@ -1,0 +1,42 @@
+load("@rules_foreign_cc//toolchains/native_tools:native_tools_toolchain.bzl", "native_tool_toolchain")
+
+package(default_visibility = ["//visibility:public"])
+
+native_tool_toolchain(
+    name = "unused_make",
+    env = {"MAKE": "$(execpath :unused_foreign_tool.sh)"},
+    path = "$(execpath :unused_foreign_tool.sh)",
+    target = ":unused_foreign_tool.sh",
+)
+
+native_tool_toolchain(
+    name = "unused_m4",
+    env = {"M4": "$(execpath :unused_foreign_tool.sh)"},
+    path = "$(execpath :unused_foreign_tool.sh)",
+    target = ":unused_foreign_tool.sh",
+)
+
+native_tool_toolchain(
+    name = "unused_pkgconfig",
+    env = {"PKG_CONFIG": "$(execpath :unused_foreign_tool.sh)"},
+    path = "$(execpath :unused_foreign_tool.sh)",
+    target = ":unused_foreign_tool.sh",
+)
+
+toolchain(
+    name = "unused_make_toolchain",
+    toolchain = ":unused_make",
+    toolchain_type = "@rules_foreign_cc//toolchains:make_toolchain",
+)
+
+toolchain(
+    name = "unused_m4_toolchain",
+    toolchain = ":unused_m4",
+    toolchain_type = "@rules_foreign_cc//toolchains:m4_toolchain",
+)
+
+toolchain(
+    name = "unused_pkgconfig_toolchain",
+    toolchain = ":unused_pkgconfig",
+    toolchain_type = "@rules_foreign_cc//toolchains:pkgconfig_toolchain",
+)

@@ -1,0 +1,13 @@
+diff --git a/foreign_cc/private/framework.bzl b/foreign_cc/private/framework.bzl
+index b5cc977..f18cbad 100644
+--- a/foreign_cc/private/framework.bzl
++++ b/foreign_cc/private/framework.bzl
+@@ -648,6 +648,8 @@ def wrap_outputs(ctx, lib_name, configure_name, script_text, env_prelude, build_
+         "\n".join([
+             "##rm_rf## $$BUILD_TMPDIR$$",
+             "##rm_rf## $$EXT_BUILD_DEPS$$",
++            "##rm_rf## $$BUILD_LOG$$",
++            "##touch## \"$$BUILD_LOG$$\"",
+         ]),
+     )
+     cleanup_on_failure_function = create_function(

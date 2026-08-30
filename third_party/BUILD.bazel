@@ -1,1 +1,4 @@
-exports_files(["llama_cpp.BUILD.bazel"])
+exports_files([
+    "llama_cpp.BUILD.bazel",
+    "rules_foreign_cc_reproducible_logs.patch",
+])

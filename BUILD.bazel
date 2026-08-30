@@ -40,6 +40,7 @@ cmake(
     }),
     generate_args = ["-GNinja"],
     lib_source = "@llama_cpp//:all",
+    set_file_prefix_map = True,
     out_static_libs = select({
         ":backend_cuda": [],
         ":backend_rocm": [],
