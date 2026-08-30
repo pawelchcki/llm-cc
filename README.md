@@ -70,6 +70,25 @@ bazel-bin/rethink-cc \
   --prompt "The quick brown fox"
 ```
 
+Linux x86_64 release binaries intended to run on CentOS 7 or newer can be
+built with the opt-in portable profile:
+
+```sh
+bazel build --config=release --config=portable --config=cpu //:rethink-cc
+tools/check_glibc_version.sh bazel-bin/rethink-cc
+```
+
+The profile keeps C++20 and the statically linked C++ standard library, but
+selects a separate LLVM 22 toolchain configured with the osquery project's
+pinned, SHA-256-verified glibc 2.17 sysroot. The default build is unchanged. The
+profile is for CPU Linux x86_64 releases; accelerator builds continue to use
+their vendor SDKs and the default toolchain.
+
+`tools/check_glibc_version.sh <binary> [max-version]` inspects imported symbol
+versions with `objdump -T` and fails when any `GLIBC_x.y` requirement exceeds
+the limit (2.17 by default). Use it for any release artifact whose compatibility
+floor matters.
+
 Text can come from a file or standard input:
 
 ```sh
@@ -191,6 +210,17 @@ cd lmcc
 cargo build
 cargo test
 cargo clippy --workspace --all-targets -- -D warnings
+```
+
+Rust's `x86_64-unknown-linux-gnu` target has a glibc 2.17 platform baseline, so
+no repository-specific Rust toolchain changes are needed. The final native link
+can still pick up newer host objects or native dependencies, so verify the
+release artifact with the same check:
+
+```sh
+cd lmcc
+cargo build --release
+../tools/check_glibc_version.sh target/release/lmcc
 ```
 
 Run the complete pipeline with a local GGUF and the C++ scorer:

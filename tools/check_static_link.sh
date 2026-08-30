@@ -4,7 +4,7 @@
 set -euo pipefail
 
 binary="${1:?usage: check_static_link.sh <binary>}"
-allowed='^(linux-vdso|libc|libm|libpthread|libdl|ld-linux)'
+allowed='^(linux-vdso|libc|libm|libpthread|libdl|librt|ld-linux)'
 
 violations=$(ldd "$binary" | awk '{print $1}' | sed 's/.*\///' \
   | grep -Ev "$allowed" || true)

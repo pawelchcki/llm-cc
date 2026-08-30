@@ -22,6 +22,24 @@ llvm.toolchain(
 )
 use_repo(llvm, "llvm_toolchain", "llvm_toolchain_llvm")
 
+# A second, opt-in toolchain shares the pinned LLVM distribution but links
+# Linux x86_64 targets against a CentOS 7 (glibc 2.17) sysroot.
+llvm.toolchain(
+    name = "llvm_toolchain_portable",
+    cxx_standard = {"": "c++20"},
+    llvm_version = "22.1.7",
+)
+llvm.toolchain_root(
+    name = "llvm_toolchain_portable",
+    label = "@llvm_toolchain_llvm//:BUILD",
+)
+llvm.sysroot(
+    name = "llvm_toolchain_portable",
+    label = "@portable_linux_sysroot//:sysroot",
+    targets = ["linux-x86_64"],
+)
+use_repo(llvm, "llvm_toolchain_portable")
+
 register_toolchains("@llvm_toolchain//:all")
 
 # The CMake rule declares Make, M4, and pkg-config toolchains even when Ninja is
@@ -51,6 +69,14 @@ register_toolchains(
 )
 
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "portable_linux_sysroot",
+    build_file = "//third_party:portable_linux_sysroot.BUILD.bazel",
+    sha256 = "6063c774b439539a11d61ce33023c38fd9bd022db691eb65266dbc57b6d32614",
+    strip_prefix = "osquery-toolchain",
+    urls = ["https://github.com/osquery/osquery-toolchain/releases/download/1.3.0/osquery-toolchain-1.3.0-x86_64.tar.xz"],
+)
 
 http_archive(
     name = "llama_cpp",
