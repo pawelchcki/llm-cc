@@ -1,7 +1,9 @@
-use std::fs;
-use std::io::{self, Write};
+use std::ffi::OsString;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail, ensure};
 use clap::Parser;
@@ -11,7 +13,9 @@ use serde_json::Value;
 use tempfile::NamedTempFile;
 
 const DEFAULT_MODEL_PATH: &str = "models/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf";
-const DEFAULT_MODEL_DOWNLOAD: &str = "mkdir -p models && curl -L --fail -o models/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf https://huggingface.co/bartowski/DeepSeek-Coder-V2-Lite-Base-GGUF/resolve/main/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf";
+const DEFAULT_MODEL_URL: &str = "https://huggingface.co/bartowski/DeepSeek-Coder-V2-Lite-Base-GGUF/resolve/main/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf";
+const PROGRESS_BYTE_INTERVAL: u64 = 256 * 1024 * 1024;
+const PROGRESS_TIME_INTERVAL: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Parser)]
 #[command(
@@ -33,6 +37,10 @@ struct Arguments {
     /// GGUF model passed to rethink-cc.
     #[arg(long, value_name = "GGUF")]
     model: Option<PathBuf>,
+
+    /// Download the default model if it is missing.
+    #[arg(long)]
+    download: bool,
 
     /// Path or command name for the C++ scorer.
     #[arg(long, default_value = "rethink-cc")]
@@ -74,6 +82,7 @@ fn run(mut arguments: Arguments) -> Result<()> {
     arguments.model = resolve_model(
         arguments.model,
         arguments.entropy_jsonl.as_deref(),
+        arguments.download,
         &current_dir,
     )?;
     ensure!(
@@ -125,11 +134,20 @@ fn run(mut arguments: Arguments) -> Result<()> {
 fn resolve_model(
     model: Option<PathBuf>,
     entropy_jsonl: Option<&Path>,
+    download: bool,
     current_dir: &Path,
 ) -> Result<Option<PathBuf>> {
     ensure!(
         !(model.is_some() && entropy_jsonl.is_some()),
         "provide exactly one of --entropy-jsonl or --model"
+    );
+    ensure!(
+        !(download && model.is_some()),
+        "--download cannot be used with an explicit --model path"
+    );
+    ensure!(
+        !(download && entropy_jsonl.is_some()),
+        "--download cannot be used with --entropy-jsonl"
     );
     if entropy_jsonl.is_some() {
         return Ok(None);
@@ -139,12 +157,183 @@ fn resolve_model(
     }
 
     let default_model = current_dir.join(DEFAULT_MODEL_PATH);
+    if !default_model.exists() && download {
+        download_default_model(&default_model)?;
+    }
     ensure!(
         default_model.exists(),
-        "default model {} does not exist; download it with: {DEFAULT_MODEL_DOWNLOAD}",
+        "default model {} does not exist; rerun with --download to fetch it (about 14 GB)",
         default_model.display()
     );
     Ok(Some(default_model))
+}
+
+fn download_default_model(target: &Path) -> Result<()> {
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create model directory {}", parent.display()))?;
+    }
+
+    let partial = partial_path(target);
+    let requested_offset = match fs::metadata(&partial) {
+        Ok(metadata) => metadata.len(),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => 0,
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!("failed to inspect partial download {}", partial.display())
+            });
+        }
+    };
+
+    if requested_offset == 0 {
+        eprintln!("Downloading model from {DEFAULT_MODEL_URL}");
+    } else {
+        eprintln!("Resuming model download at {requested_offset} bytes");
+    }
+
+    let mut request = ureq::get(DEFAULT_MODEL_URL);
+    if requested_offset > 0 {
+        request = request.header("Range", format!("bytes={requested_offset}-"));
+    }
+    let response = match request.call() {
+        Ok(response) => response,
+        Err(ureq::Error::StatusCode(status)) => {
+            bail!("download failed with HTTP status {status} for {DEFAULT_MODEL_URL}")
+        }
+        Err(error) => {
+            return Err(error).with_context(|| format!("download failed for {DEFAULT_MODEL_URL}"));
+        }
+    };
+
+    let status = response.status().as_u16();
+    let resume_offset = if requested_offset > 0 && status == 206 {
+        let content_range = response
+            .headers()
+            .get("Content-Range")
+            .and_then(|value| value.to_str().ok())
+            .context("resume response has no valid Content-Range header")?;
+        let range_start = content_range
+            .strip_prefix("bytes ")
+            .and_then(|range| range.split_once('-'))
+            .and_then(|(start, _)| start.parse::<u64>().ok())
+            .context("resume response has an invalid Content-Range header")?;
+        ensure!(
+            range_start == requested_offset,
+            "resume response starts at byte {range_start}, expected {requested_offset}"
+        );
+        requested_offset
+    } else {
+        ensure!(
+            status == 200,
+            "download failed with HTTP status {status} for {DEFAULT_MODEL_URL}"
+        );
+        0
+    };
+
+    let response_length = response
+        .headers()
+        .get("Content-Length")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok());
+    let total_length = response_length.and_then(|length| resume_offset.checked_add(length));
+    stream_download(
+        response.into_body().into_reader(),
+        target,
+        resume_offset,
+        total_length,
+    )
+}
+
+fn partial_path(target: &Path) -> PathBuf {
+    let mut path = OsString::from(target.as_os_str());
+    path.push(".partial");
+    PathBuf::from(path)
+}
+
+fn stream_download<R: Read>(
+    mut reader: R,
+    target: &Path,
+    resume_offset: u64,
+    total_length: Option<u64>,
+) -> Result<()> {
+    if let Some(parent) = target.parent().filter(|path| !path.as_os_str().is_empty()) {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create model directory {}", parent.display()))?;
+    }
+
+    let partial = partial_path(target);
+    if resume_offset > 0 {
+        let actual_length = fs::metadata(&partial)
+            .with_context(|| format!("failed to inspect partial download {}", partial.display()))?
+            .len();
+        ensure!(
+            actual_length == resume_offset,
+            "partial download has {actual_length} bytes, expected {resume_offset}"
+        );
+    }
+    let mut output = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(resume_offset > 0)
+        .truncate(resume_offset == 0)
+        .open(&partial)
+        .with_context(|| format!("failed to open partial download {}", partial.display()))?;
+
+    let mut downloaded = resume_offset;
+    let mut last_reported_bytes = downloaded;
+    let mut last_reported_at = Instant::now();
+    let mut buffer = vec![0_u8; 1024 * 1024];
+    loop {
+        let count = reader
+            .read(&mut buffer)
+            .with_context(|| format!("failed while downloading {DEFAULT_MODEL_URL}"))?;
+        if count == 0 {
+            break;
+        }
+        output
+            .write_all(&buffer[..count])
+            .with_context(|| format!("failed to write partial download {}", partial.display()))?;
+        downloaded = downloaded
+            .checked_add(u64::try_from(count).context("download size overflow")?)
+            .context("download size overflow")?;
+
+        if downloaded.saturating_sub(last_reported_bytes) >= PROGRESS_BYTE_INTERVAL
+            || last_reported_at.elapsed() >= PROGRESS_TIME_INTERVAL
+        {
+            print_download_progress(downloaded, total_length);
+            last_reported_bytes = downloaded;
+            last_reported_at = Instant::now();
+        }
+    }
+    if let Some(total) = total_length {
+        ensure!(
+            downloaded == total,
+            "download ended after {downloaded} bytes, expected {total}"
+        );
+    }
+    output
+        .flush()
+        .with_context(|| format!("failed to flush partial download {}", partial.display()))?;
+    drop(output);
+
+    print_download_progress(downloaded, total_length);
+    fs::rename(&partial, target).with_context(|| {
+        format!(
+            "failed to move completed download {} to {}",
+            partial.display(),
+            target.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn print_download_progress(downloaded: u64, total_length: Option<u64>) {
+    if let Some(total) = total_length.filter(|total| *total > 0) {
+        let percentage = downloaded as f64 * 100.0 / total as f64;
+        eprintln!("Downloaded {downloaded} bytes ({percentage:.1}%)");
+    } else {
+        eprintln!("Downloaded {downloaded} bytes");
+    }
 }
 
 fn selected_language<'a>(explicit: Option<&'a str>, source: &Path) -> Result<&'a str> {
@@ -340,6 +529,26 @@ fn map_analysis_offsets(analysis: &mut Analysis, map: &OffsetMap) -> Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
+
+    struct InterruptedReader {
+        data: Cursor<Vec<u8>>,
+        reads_before_error: usize,
+    }
+
+    impl Read for InterruptedReader {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if self.reads_before_error == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "test interruption",
+                ));
+            }
+            self.reads_before_error -= 1;
+            let read_length = buffer.len().min(4);
+            self.data.read(&mut buffer[..read_length])
+        }
+    }
 
     #[test]
     fn rejects_jsonl_byte_mismatch() {
@@ -426,20 +635,21 @@ mod tests {
         fs::write(&model, []).unwrap();
 
         assert_eq!(
-            resolve_model(None, None, directory.path()).unwrap(),
+            resolve_model(None, None, false, directory.path()).unwrap(),
             Some(model)
         );
     }
 
     #[test]
-    fn missing_default_model_error_includes_download_command() {
+    fn missing_default_model_error_suggests_download_flag_and_size() {
         let directory = tempfile::tempdir().unwrap();
-        let error = resolve_model(None, None, directory.path())
+        let error = resolve_model(None, None, false, directory.path())
             .unwrap_err()
             .to_string();
 
         assert!(error.contains(DEFAULT_MODEL_PATH));
-        assert!(error.contains(DEFAULT_MODEL_DOWNLOAD));
+        assert!(error.contains("--download"));
+        assert!(error.contains("14 GB"));
     }
 
     #[test]
@@ -447,11 +657,77 @@ mod tests {
         let error = resolve_model(
             Some(PathBuf::from("model.gguf")),
             Some(Path::new("entropy.jsonl")),
+            false,
             Path::new("."),
         )
         .unwrap_err()
         .to_string();
 
         assert!(error.contains("provide exactly one"));
+    }
+
+    #[test]
+    fn download_rejects_an_explicit_model() {
+        let error = resolve_model(
+            Some(PathBuf::from("model.gguf")),
+            None,
+            true,
+            Path::new("."),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("--download cannot be used with an explicit --model"));
+    }
+
+    #[test]
+    fn download_rejects_precomputed_entropy() {
+        let error = resolve_model(None, Some(Path::new("entropy.jsonl")), true, Path::new("."))
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("--download cannot be used with --entropy-jsonl"));
+    }
+
+    #[test]
+    fn successful_download_renames_partial_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("models/model.gguf");
+
+        stream_download(Cursor::new(b"model data"), &target, 0, Some(10)).unwrap();
+
+        assert_eq!(fs::read(&target).unwrap(), b"model data");
+        assert!(!partial_path(&target).exists());
+    }
+
+    #[test]
+    fn interrupted_download_leaves_only_partial_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("model.gguf");
+        let reader = InterruptedReader {
+            data: Cursor::new(b"unfinished".to_vec()),
+            reads_before_error: 1,
+        };
+
+        let error = stream_download(reader, &target, 0, None)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("failed while downloading"));
+        assert!(!target.exists());
+        assert_eq!(fs::read(partial_path(&target)).unwrap(), b"unfi");
+    }
+
+    #[test]
+    fn resumed_download_appends_at_the_existing_offset() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("model.gguf");
+        let partial = partial_path(&target);
+        fs::write(&partial, b"first ").unwrap();
+
+        stream_download(Cursor::new(b"second"), &target, 6, Some(12)).unwrap();
+
+        assert_eq!(fs::read(&target).unwrap(), b"first second");
+        assert!(!partial.exists());
     }
 }

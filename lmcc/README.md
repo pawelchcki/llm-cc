@@ -3,7 +3,14 @@
 Run the analyzer with a source file and either precomputed entropy JSONL or a
 model. When neither `--entropy-jsonl` nor `--model` is supplied, `lmcc` defaults
 to `models/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf` relative to the current
-directory. Download the recommended model with:
+directory. Let `lmcc` download the recommended model when it is missing with:
+
+```sh
+lmcc path/to/source.cpp --download
+```
+
+The download is written to a `.partial` file and can be resumed by running the
+same command again. To fetch the weights manually instead, use:
 
 ```sh
 mkdir -p models && curl -L --fail -o models/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf https://huggingface.co/bartowski/DeepSeek-Coder-V2-Lite-Base-GGUF/resolve/main/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf

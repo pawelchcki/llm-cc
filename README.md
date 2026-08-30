@@ -14,7 +14,15 @@ vendor SDK and driver on the target machine.
 The primary recommendation is the pretrained DeepSeek-Coder-V2-Lite-Base Q6_K
 (about 14.1 GB). It is a mixture-of-experts model with about 2.4B active
 parameters, so CPU inference is viable when the machine has enough RAM.
-Download model weights outside the build graph so they remain a runtime input:
+Model weights stay outside the build graph as a runtime input. The Rust `lmcc`
+CLI can download the default model itself when it is missing:
+
+```sh
+lmcc path/to/source.cpp --download
+```
+
+The download is written to a `.partial` file and can be resumed by running the
+same command again. Alternatively, fetch the weights manually with curl:
 
 ```sh
 mkdir -p models && curl -L --fail -o models/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf https://huggingface.co/bartowski/DeepSeek-Coder-V2-Lite-Base-GGUF/resolve/main/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf
