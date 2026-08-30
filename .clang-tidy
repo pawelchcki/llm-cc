@@ -1,0 +1,10 @@
+# Short identifiers are often clearer for indexes, iterators, and dimensions.
+# Trailing return types conflict with the project's existing declaration style.
+# Named constants for every numeric literal add noise in numerical code and tests.
+# Cognitive-complexity thresholds are subjective and duplicate code review.
+# Implicit boolean conversions are idiomatic for streams and smart handles.
+# Swappable-parameter warnings are noisy for small internal functions and C APIs.
+# Raw-string rewrites are a readability preference, not a modernization issue.
+# Explicit types are intentional when they document numerical precision.
+Checks: '-*,bugprone-*,performance-*,modernize-*,readability-*,-readability-identifier-length,-modernize-use-trailing-return-type,-readability-magic-numbers,-readability-function-cognitive-complexity,-readability-implicit-bool-conversion,-bugprone-easily-swappable-parameters,-modernize-raw-string-literal,-modernize-use-auto'
+WarningsAsErrors: '*'

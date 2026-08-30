@@ -22,7 +22,7 @@ std::uint64_t SaturatingAdd(std::uint64_t left, std::uint64_t right) {
 
 std::uint64_t EstimatedWeightBytes(std::uint64_t model_bytes) {
   const std::uint64_t safety_margin =
-      model_bytes / 10 + (model_bytes % 10 != 0 ? 1 : 0);
+      (model_bytes / 10) + (model_bytes % 10 != 0 ? 1 : 0);
   return SaturatingAdd(model_bytes, safety_margin);
 }
 
@@ -37,10 +37,10 @@ std::string FormatBytes(std::uint64_t bytes) {
 
 }  // namespace
 
-MemoryCheckResult CheckMemory(
-    std::uint64_t model_bytes, std::uint64_t host_available_bytes,
-    std::optional<std::uint64_t> gpu_available_bytes, std::int32_t gpu_layers,
-    bool override_check) {
+MemoryCheckResult CheckMemory(std::uint64_t model_bytes,
+                              std::uint64_t host_available_bytes,
+                              std::optional<std::uint64_t> gpu_available_bytes,
+                              std::int32_t gpu_layers, bool override_check) {
   if (override_check) {
     return {.ok = true, .error = {}};
   }
@@ -61,9 +61,9 @@ MemoryCheckResult CheckMemory(
   }
 
   if (!gpu_available_bytes.has_value()) {
-    return {.ok = false,
-            .error =
-                "--gpu-layers is nonzero, but the build has no GPU backend"};
+    return {
+        .ok = false,
+        .error = "--gpu-layers is nonzero, but the build has no GPU backend"};
   }
 
   // Heuristic: when any layers are offloaded, all model weights count against
@@ -115,9 +115,9 @@ TokenScore ScoreToken(std::span<const float> logits, std::size_t token_id,
       const double scale = std::exp(maximum_shift);
       if (compute_entropy) {
         weighted_shifted_logits =
-            scale * (weighted_shifted_logits + maximum_shift * denominator);
+            scale * (weighted_shifted_logits + (maximum_shift * denominator));
       }
-      denominator = scale * denominator + 1.0;
+      denominator = (scale * denominator) + 1.0;
       maximum = logit;
     } else {
       const double shifted_logit = logit - maximum;
@@ -137,7 +137,7 @@ TokenScore ScoreToken(std::span<const float> logits, std::size_t token_id,
   const std::optional<double> entropy =
       compute_entropy
           ? std::optional<double>(std::log(denominator) -
-                                  weighted_shifted_logits / denominator)
+                                  (weighted_shifted_logits / denominator))
           : std::nullopt;
   return {.probability = std::exp(log_probability),
           .log_probability = log_probability,
@@ -145,7 +145,7 @@ TokenScore ScoreToken(std::span<const float> logits, std::size_t token_id,
 }
 
 std::string BytesToHex(std::string_view bytes) {
-  static constexpr char kHex[] = "0123456789abcdef";
+  static constexpr std::string_view kHex = "0123456789abcdef";
   std::string result;
   result.reserve(bytes.size() * 2);
   for (unsigned char byte : bytes) {

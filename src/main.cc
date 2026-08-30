@@ -1,8 +1,9 @@
-#include <llama.h>
 #include <ggml-backend.h>
+#include <llama.h>
 
 #include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -24,7 +25,7 @@
 
 namespace {
 
-enum class BosMode { kAuto, kAlways, kNever };
+enum class BosMode : std::uint8_t { kAuto, kAlways, kNever };
 
 struct Arguments {
   std::filesystem::path model;
@@ -52,10 +53,14 @@ struct Arguments {
       << "  --file PATH            score the contents of a file\n\n"
       << "Options:\n"
       << "  --model PATH           local llama.cpp-compatible GGUF (required)\n"
-      << "  --bos auto|always|never  beginning-of-stream policy (default: auto)\n"
-      << "  --context-size N       maximum tokens in the input (default: 2048)\n"
-      << "  --threads N            inference threads (default: hardware count)\n"
-      << "  --gpu-layers N         layers to offload; -1 means all (default: 0)\n"
+      << "  --bos auto|always|never  beginning-of-stream policy (default: "
+         "auto)\n"
+      << "  --context-size N       maximum tokens in the input (default: "
+         "2048)\n"
+      << "  --threads N            inference threads (default: hardware "
+         "count)\n"
+      << "  --gpu-layers N         layers to offload; -1 means all (default: "
+         "0)\n"
       << "  --override-memory-check  bypass the preflight memory check\n"
       << "  --entropy              emit full-vocabulary next-token entropy\n"
       << "  -h, --help             show this help\n";
@@ -93,17 +98,15 @@ Arguments ParseArguments(int argc, char** argv) {
       Usage(std::string(option) + " requires a value");
     }
     const std::string_view value = argv[++i];
+    if ((option == "--prompt" && arguments.file.has_value()) ||
+        (option == "--file" && arguments.prompt.has_value())) {
+      Usage("--prompt and --file are mutually exclusive");
+    }
     if (option == "--model") {
       arguments.model = value;
     } else if (option == "--prompt") {
-      if (arguments.file.has_value()) {
-        Usage("--prompt and --file are mutually exclusive");
-      }
       arguments.prompt = value;
     } else if (option == "--file") {
-      if (arguments.prompt.has_value()) {
-        Usage("--prompt and --file are mutually exclusive");
-      }
       arguments.file = value;
     } else if (option == "--bos") {
       if (value == "auto") {
@@ -165,14 +168,14 @@ std::string ReadInput(const Arguments& arguments) {
 }
 
 std::vector<llama_token> Tokenize(const llama_vocab* vocab,
-                                  std::string_view text) {
-  if (text.size() > static_cast<std::size_t>(
-                        std::numeric_limits<std::int32_t>::max())) {
+                                  const std::string& text) {
+  if (text.size() >
+      static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) {
     throw std::runtime_error("input is too large for the tokenizer");
   }
   const auto text_size = static_cast<std::int32_t>(text.size());
-  std::int32_t count = llama_tokenize(vocab, text.data(), text_size, nullptr, 0,
-                                      false, true);
+  std::int32_t count =
+      llama_tokenize(vocab, text.data(), text_size, nullptr, 0, false, true);
   if (count == std::numeric_limits<std::int32_t>::min()) {
     throw std::runtime_error("token count overflow");
   }
@@ -191,14 +194,14 @@ std::vector<llama_token> Tokenize(const llama_vocab* vocab,
 
 std::string TokenPiece(const llama_vocab* vocab, llama_token token) {
   std::string piece(32, '\0');
-  std::int32_t size = llama_token_to_piece(
-      vocab, token, piece.data(), static_cast<std::int32_t>(piece.size()), 0,
-      true);
+  std::int32_t size =
+      llama_token_to_piece(vocab, token, piece.data(),
+                           static_cast<std::int32_t>(piece.size()), 0, true);
   if (size < 0) {
     piece.resize(static_cast<std::size_t>(-size));
-    size = llama_token_to_piece(vocab, token, piece.data(),
-                                static_cast<std::int32_t>(piece.size()), 0,
-                                true);
+    size =
+        llama_token_to_piece(vocab, token, piece.data(),
+                             static_cast<std::int32_t>(piece.size()), 0, true);
   }
   if (size < 0) {
     throw std::runtime_error("could not decode token piece");
@@ -224,10 +227,13 @@ void WriteScore(std::size_t position, llama_token token, std::string_view piece,
   std::cout << std::setprecision(17) << "{\"position\":" << position
             << ",\"token_id\":" << token << ",\"piece\":\""
             << rethink::JsonEscapeBytes(piece) << "\",\"bytes_hex\":\""
-            << rethink::BytesToHex(piece) << "\",\"probability\":"
-            << score.probability << ",\"log_probability\":"
-            << score.log_probability;
+            << rethink::BytesToHex(piece)
+            << "\",\"probability\":" << score.probability
+            << ",\"log_probability\":" << score.log_probability;
   if (emit_entropy) {
+    if (!score.entropy.has_value()) {
+      throw std::logic_error("entropy was requested but not computed");
+    }
     std::cout << ",\"entropy\":" << *score.entropy;
   }
   std::cout << "}\n";
@@ -245,8 +251,8 @@ std::uint64_t ModelFileSize(const std::filesystem::path& path) {
   std::error_code error;
   const std::uintmax_t size = std::filesystem::file_size(path, error);
   if (error) {
-    throw std::runtime_error("could not stat model: " + path.string() +
-                             ": " + error.message());
+    throw std::runtime_error("could not stat model: " + path.string() + ": " +
+                             error.message());
   }
   if (size > std::numeric_limits<std::uint64_t>::max()) {
     throw std::runtime_error("model file is too large to measure: " +
@@ -308,8 +314,7 @@ void CheckAvailableMemory(const Arguments& arguments) {
   }
 
   const rethink::MemoryCheckResult result = rethink::CheckMemory(
-      model_bytes, *host_available, gpu_available, arguments.gpu_layers,
-      false);
+      model_bytes, *host_available, gpu_available, arguments.gpu_layers, false);
   if (!result.ok) {
     throw std::runtime_error(result.error);
   }
@@ -318,7 +323,8 @@ void CheckAvailableMemory(const Arguments& arguments) {
 using Model = std::unique_ptr<llama_model, decltype(&llama_model_free)>;
 using Context = std::unique_ptr<llama_context, decltype(&llama_free)>;
 
-void DiscardBackendLog(ggml_log_level, const char*, void*) {}
+void DiscardBackendLog(ggml_log_level level, const char* text,
+                       void* user_data) {}
 
 int Run(const Arguments& arguments) {
   const std::string input = ReadInput(arguments);
@@ -328,9 +334,9 @@ int Run(const Arguments& arguments) {
 
   llama_model_params model_parameters = llama_model_default_params();
   model_parameters.n_gpu_layers = arguments.gpu_layers;
-  Model model(llama_model_load_from_file(arguments.model.c_str(),
-                                         model_parameters),
-              llama_model_free);
+  Model model(
+      llama_model_load_from_file(arguments.model.c_str(), model_parameters),
+      llama_model_free);
   if (!model) {
     throw std::runtime_error("could not load model: " +
                              arguments.model.string());
@@ -339,8 +345,7 @@ int Run(const Arguments& arguments) {
   const llama_vocab* vocabulary = llama_model_get_vocab(model.get());
   const bool prepend_bos =
       arguments.bos == BosMode::kAlways ||
-      (arguments.bos == BosMode::kAuto &&
-       llama_vocab_get_add_bos(vocabulary));
+      (arguments.bos == BosMode::kAuto && llama_vocab_get_add_bos(vocabulary));
   std::vector<llama_token> tokens = Tokenize(vocabulary, input);
   if (prepend_bos) {
     const llama_token bos_token = llama_vocab_bos(vocabulary);
@@ -354,10 +359,9 @@ int Run(const Arguments& arguments) {
     return 0;
   }
   if (tokens.size() > arguments.context_size) {
-    throw std::runtime_error("input token count " +
-                             std::to_string(tokens.size()) +
-                             " exceeds --context-size " +
-                             std::to_string(arguments.context_size));
+    throw std::runtime_error(
+        "input token count " + std::to_string(tokens.size()) +
+        " exceeds --context-size " + std::to_string(arguments.context_size));
   }
 
   llama_context_params context_parameters = llama_context_default_params();
@@ -413,10 +417,12 @@ int Run(const Arguments& arguments) {
 
     const llama_token target = tokens[source + 1];
     if (target < 0 || target >= vocabulary_size) {
-      throw std::runtime_error("tokenizer produced a token outside the vocabulary");
+      throw std::runtime_error(
+          "tokenizer produced a token outside the vocabulary");
     }
     const rethink::TokenScore score = rethink::ScoreToken(
-        std::span<const float>(logits, static_cast<std::size_t>(vocabulary_size)),
+        std::span<const float>(logits,
+                               static_cast<std::size_t>(vocabulary_size)),
         static_cast<std::size_t>(target), arguments.entropy);
     const std::string piece = TokenPiece(vocabulary, target);
     WriteScore(source + 1 - first_observed, target, piece, score,
@@ -429,7 +435,8 @@ int Run(const Arguments& arguments) {
     std::cerr << "tokens=" << (tokens.size() - first_observed)
               << " scored=0 mean_nll=null perplexity=null\n";
   } else {
-    const double mean_nll = negative_log_likelihood / scored;
+    const double mean_nll =
+        negative_log_likelihood / static_cast<double>(scored);
     std::cerr << std::setprecision(10)
               << "tokens=" << (tokens.size() - first_observed)
               << " scored=" << scored << " mean_nll=" << mean_nll

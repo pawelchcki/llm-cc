@@ -130,6 +130,14 @@ Run the model-independent numerical and encoding tests with:
 bazel test //...
 ```
 
+## C++ hygiene
+
+The repository uses the clang-format and clang-tidy binaries from its pinned
+Bazel LLVM toolchain. Check formatting with `tools/check_format.sh`, and run the
+local static-analysis pass with `tools/run_clang_tidy.sh`. The format check also
+runs in BuildBuddy CI; clang-tidy remains a developer check to keep CI costs
+low. Both scripts inspect only C++ files under `src/`, never `third_party/`.
+
 ## CI
 
 The primary CI definition is `buildbuddy.yaml`. After linking this repository

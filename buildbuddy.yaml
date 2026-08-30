@@ -14,6 +14,7 @@ actions:
         branches:
           - "main"
     steps:
+      - run: "tools/check_format.sh"
       - run: "bazel test --config=buildbuddy //..."
       - run: "bazel build --config=buildbuddy --config=release --config=cpu //:rethink-cc"
       - run: "tools/check_static_link.sh bazel-bin/rethink-cc"
