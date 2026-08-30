@@ -1,0 +1,18 @@
+actions:
+  - name: "CPU build and test"
+    container_image: "ubuntu-24.04"
+    allow_concurrent_runs: false
+    allow_concurrent_runs_on_branches:
+      - "main"
+      - "gh-readonly-queue/*"
+    triggers:
+      push:
+        branches:
+          - "main"
+          - "gh-readonly-queue/*"
+      pull_request:
+        branches:
+          - "main"
+    steps:
+      - run: "bazel test --config=buildbuddy //..."
+      - run: "bazel build --config=buildbuddy --config=release --config=cpu //:rethink-cc"

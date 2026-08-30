@@ -10,3 +10,10 @@ build:metal --define=backend=metal
 
 build:release --compilation_mode=opt
 build:release --strip=always
+
+# BuildBuddy Workflows injects the API key and BES configuration. This named
+# profile enables its shared cache without putting credentials in the repo.
+build:buildbuddy --remote_cache=grpcs://remote.buildbuddy.io
+build:buildbuddy --remote_upload_local_results=true
+build:buildbuddy --remote_download_minimal
+build:buildbuddy --remote_timeout=3600

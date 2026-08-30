@@ -80,6 +80,19 @@ Run the model-independent numerical and encoding tests with:
 bazel test //...
 ```
 
+## CI
+
+The primary CI definition is `buildbuddy.yaml`. After linking this repository
+in BuildBuddy and enabling Workflows, it runs the CPU tests and release build on
+Ubuntu 24.04 for pushes to `main`, pull requests targeting `main`, and GitHub
+merge-queue branches. BuildBuddy supplies workflow authentication and build
+event reporting; the `--config=buildbuddy` profile enables its shared remote
+cache without storing a key in the repository.
+
+GitHub Actions runs the same commands independently as a fallback, so a
+BuildBuddy outage or incomplete initial account setup does not leave the branch
+without CI coverage.
+
 ## Output
 
 Each stdout line describes one observed input token:
