@@ -122,8 +122,10 @@ filegroup(
 
 cc_library(
     name = "runtime",
-    data = [":runtime_files"],
-    deps = [
+    # Vendor libraries are runtime data, not direct link dependencies of
+    # llm-cc. libggml-cuda records the subset it needs in DT_NEEDED.
+    data = [
+        ":runtime_files",
         ":cublas",
         ":cublas_lt",
         ":cudart",

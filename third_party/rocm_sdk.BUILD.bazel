@@ -129,8 +129,10 @@ filegroup(
 
 cc_library(
     name = "runtime",
-    data = [":runtime_files"],
-    deps = [
+    # Vendor libraries are runtime data, not direct link dependencies of
+    # llm-cc. libggml-hip records the subset it actually needs in DT_NEEDED.
+    data = [
+        ":runtime_files",
         ":amd_comgr",
         ":amdhip",
         ":clang_cpp",
