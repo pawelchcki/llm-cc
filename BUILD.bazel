@@ -7,6 +7,7 @@ load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make_variant")
 load(
     "//:build_defs.bzl",
+    "curl_cmake_options",
     "install_launcher",
     "llama_cmake_options",
     "llama_cuda_cmake_options",
@@ -153,7 +154,7 @@ cmake(
         ":backend_cuda": llama_cuda_cmake_options(),
         ":backend_rocm": llama_rocm_cmake_options(),
         ":backend_metal": llama_cmake_options(
-            BUILD_SHARED_LIBS = "ON",
+            BUILD_SHARED_LIBS = "OFF",
             GGML_METAL = "ON",
             GGML_METAL_EMBED_LIBRARY = "ON",
             GGML_METAL_MACOSX_VERSION_MIN = "14.0",
@@ -192,7 +193,14 @@ cmake(
         ":backend_universal": [],
         ":backend_cuda": [],
         ":backend_rocm": [],
-        ":backend_metal": [],
+        ":backend_metal": [
+            "libllama.a",
+            "libggml.a",
+            "libggml-base.a",
+            "libggml-blas.a",
+            "libggml-cpu.a",
+            "libggml-metal.a",
+        ],
         "//conditions:default": [
             "libllama.a",
             "libggml.a",
@@ -216,13 +224,7 @@ cmake(
             "libggml.so",
             "libggml-base.so",
         ],
-        ":backend_metal": [
-            "libllama.dylib",
-            "libggml.dylib",
-            "libggml-base.dylib",
-            "libggml-cpu.dylib",
-            "libggml-metal.dylib",
-        ],
+        ":backend_metal": [],
         "//conditions:default": [],
     }),
     out_data_files = select({
@@ -273,6 +275,10 @@ configure_make_variant(
         "libssl.a",
     ],
     set_file_prefix_map = True,
+    target_compatible_with = select({
+        ":host_macos": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
     targets = [
         "",
         # Install libraries and headers without populating --openssldir.
@@ -283,32 +289,20 @@ configure_make_variant(
 
 cmake(
     name = "curl",
-    cache_entries = {
-        "BUILD_CURL_EXE": "OFF",
-        "BUILD_EXAMPLES": "OFF",
-        "BUILD_LIBCURL_DOCS": "OFF",
-        "BUILD_MISC_DOCS": "OFF",
-        "BUILD_SHARED_LIBS": "OFF",
-        "BUILD_TESTING": "OFF",
-        "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_DISABLE_FIND_PACKAGE_PkgConfig": "ON",
-        "CMAKE_INSTALL_LIBDIR": "lib",
-        "CURL_BROTLI": "OFF",
-        "CURL_DISABLE_LDAP": "ON",
-        "CURL_USE_LIBPSL": "OFF",
-        "CURL_USE_LIBSSH2": "OFF",
-        "CURL_USE_GSSAPI": "OFF",
-        "CURL_USE_OPENSSL": "ON",
-        "CURL_ZLIB": "OFF",
-        "CURL_ZSTD": "OFF",
-        "HTTP_ONLY": "ON",
-        "USE_LIBIDN2": "OFF",
-        "USE_NGHTTP2": "OFF",
-        "USE_NGHTTP3": "OFF",
-        "USE_NGTCP2": "OFF",
-        "USE_QUICHE": "OFF",
-    },
-    deps = [":openssl"],
+    cache_entries = select({
+        ":host_macos": curl_cmake_options(
+            CURL_USE_OPENSSL = "OFF",
+            CURL_USE_SECTRANSP = "ON",
+        ),
+        "//conditions:default": curl_cmake_options(
+            CURL_USE_OPENSSL = "ON",
+            CURL_USE_SECTRANSP = "OFF",
+        ),
+    }),
+    deps = select({
+        ":host_macos": [],
+        "//conditions:default": [":openssl"],
+    }),
     generate_args = ["-GNinja"],
     lib_source = "@curl//:all",
     out_static_libs = ["libcurl.a"],
@@ -344,6 +338,15 @@ cc_library(
     name = "download",
     srcs = ["src/download.cc"],
     hdrs = ["src/download.h"],
+    linkopts = select({
+        ":host_macos": [
+            "-framework CoreFoundation",
+            "-framework CoreServices",
+            "-framework Security",
+            "-framework SystemConfiguration",
+        ],
+        "//conditions:default": [],
+    }),
     deps = [
         ":cache",
         ":curl",
@@ -460,7 +463,13 @@ cc_binary(
             "-Wl,-rpath,$$ORIGIN/../+http_archive+rocm_sdk/lib/llvm/lib",
             "-Wl,-rpath,$$ORIGIN/../+http_archive+rocm_sdk/lib/rocm_sysdeps/lib",
         ],
-        ":backend_metal": [],
+        ":backend_metal": [
+            "-framework Accelerate",
+            "-framework Foundation",
+            "-framework Metal",
+            "-framework MetalKit",
+            "-lobjc",
+        ],
         ":backend_cpu": [
             "-static",
             "-ldl",
@@ -481,6 +490,7 @@ cc_binary(
 
 install_launcher(
     name = "install",
+    binary = ":llm-cc",
     payload = ":install_payload",
     script = "//tools:install.sh",
     version_script = "//tools:version.sh",

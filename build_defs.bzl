@@ -1,5 +1,33 @@
 """Small build helpers for project targets."""
 
+def curl_cmake_options(**tls):
+    options = {
+        "BUILD_CURL_EXE": "OFF",
+        "BUILD_EXAMPLES": "OFF",
+        "BUILD_LIBCURL_DOCS": "OFF",
+        "BUILD_MISC_DOCS": "OFF",
+        "BUILD_SHARED_LIBS": "OFF",
+        "BUILD_TESTING": "OFF",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_DISABLE_FIND_PACKAGE_PkgConfig": "ON",
+        "CMAKE_INSTALL_LIBDIR": "lib",
+        "CURL_BROTLI": "OFF",
+        "CURL_DISABLE_LDAP": "ON",
+        "CURL_USE_GSSAPI": "OFF",
+        "CURL_USE_LIBPSL": "OFF",
+        "CURL_USE_LIBSSH2": "OFF",
+        "CURL_ZLIB": "OFF",
+        "CURL_ZSTD": "OFF",
+        "HTTP_ONLY": "ON",
+        "USE_LIBIDN2": "OFF",
+        "USE_NGHTTP2": "OFF",
+        "USE_NGHTTP3": "OFF",
+        "USE_NGTCP2": "OFF",
+        "USE_QUICHE": "OFF",
+    }
+    options.update(tls)
+    return options
+
 def _install_launcher_impl(ctx):
     launcher = ctx.actions.declare_file(ctx.label.name)
     workspace = ctx.workspace_name
@@ -9,22 +37,25 @@ def _install_launcher_impl(ctx):
 set -euo pipefail
 runfiles_dir="${{RUNFILES_DIR:-$0.runfiles}}"
 exec "$runfiles_dir/{workspace}/{script}" \\
+  "$runfiles_dir/{workspace}/{binary}" \\
   "$runfiles_dir/{workspace}/{version_script}" \\
   "$runfiles_dir/{workspace}/{payload}" "$@"
 """.format(
             workspace = workspace,
             script = ctx.file.script.short_path,
+            binary = ctx.executable.binary.short_path,
             version_script = ctx.file.version_script.short_path,
             payload = ctx.file.payload.short_path,
         ),
         is_executable = True,
     )
     runfiles = ctx.runfiles(files = [
+        ctx.executable.binary,
         ctx.file.script,
         ctx.file.version_script,
         ctx.file.payload,
         ctx.file._version_file,
-    ])
+    ]).merge(ctx.attr.binary[DefaultInfo].default_runfiles)
     return [DefaultInfo(
         executable = launcher,
         runfiles = runfiles,
@@ -34,6 +65,7 @@ install_launcher = rule(
     implementation = _install_launcher_impl,
     executable = True,
     attrs = {
+        "binary": attr.label(executable = True, cfg = "target", mandatory = True),
         "script": attr.label(allow_single_file = True, mandatory = True),
         "version_script": attr.label(allow_single_file = True, mandatory = True),
         "payload": attr.label(allow_single_file = True, mandatory = True),

@@ -32,30 +32,29 @@ int main() {
   constexpr std::uint64_t kMiB = 1024ULL * 1024;
   constexpr std::uint64_t kGiB = 1024ULL * kMiB;
 
-  Expect(llmcc::CheckMemory(kGiB, 2 * kGiB, std::nullopt, 0, false).ok,
+  Expect(llmcc::CheckMemory(kGiB, 2 * kGiB, std::nullopt, false, false).ok,
          "model fits in host RAM");
   const llmcc::MemoryCheckResult host_too_small =
-      llmcc::CheckMemory(kGiB, 1500 * kMiB, std::nullopt, 0, false);
+      llmcc::CheckMemory(kGiB, 1500 * kMiB, std::nullopt, false, false);
   Expect(!host_too_small.ok &&
              Contains(host_too_small.error, "host required") &&
              Contains(host_too_small.error, "available"),
          "model does not fit in host RAM");
-  Expect(llmcc::CheckMemory(kGiB, 512 * kMiB, 1200 * kMiB, 1, false).ok,
+  Expect(llmcc::CheckMemory(kGiB, 512 * kMiB, 1200 * kMiB, true, false).ok,
          "model fits in GPU VRAM");
   const llmcc::MemoryCheckResult gpu_too_small =
-      llmcc::CheckMemory(kGiB, kGiB, kGiB, -1, false);
+      llmcc::CheckMemory(kGiB, kGiB, kGiB, true, false);
   Expect(!gpu_too_small.ok && Contains(gpu_too_small.error, "GPU required") &&
              Contains(gpu_too_small.error, "host required"),
          "model does not fit in GPU VRAM");
   const llmcc::MemoryCheckResult no_gpu =
-      llmcc::CheckMemory(kGiB, 2 * kGiB, std::nullopt, 1, false);
+      llmcc::CheckMemory(kGiB, 2 * kGiB, std::nullopt, true, false);
   Expect(!no_gpu.ok && Contains(no_gpu.error, "no GPU backend"),
          "GPU requested without GPU backend");
   Expect(llmcc::CheckMemory(std::numeric_limits<std::uint64_t>::max(), 0,
-                            std::nullopt, -1, true)
+                            std::nullopt, true, true)
              .ok,
          "memory-check override bypasses failures");
-
   const std::vector<float> logits = {1.0F, 2.0F, 3.0F};
   const llmcc::TokenScore score = llmcc::ScoreToken(logits, 2, true);
   Expect(std::abs(score.probability - 0.6652409558) < 1e-9,

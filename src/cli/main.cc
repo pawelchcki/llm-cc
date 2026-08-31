@@ -5,11 +5,14 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <locale>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 
 #include "generated/version.h"
 #include "src/cache.h"
@@ -68,9 +71,18 @@ constexpr std::string_view kUsageAfterContext =
 template <typename Number>
 Number ParseNumber(std::string_view option, std::string_view value) {
   Number result{};
-  const auto [end, error] =
-      std::from_chars(value.data(), value.data() + value.size(), result);
-  if (error != std::errc{} || end != value.data() + value.size()) {
+  bool valid = false;
+  if constexpr (std::is_floating_point_v<Number>) {
+    std::istringstream input{std::string(value)};
+    input.imbue(std::locale::classic());
+    input >> std::noskipws >> result;
+    valid = input && input.eof();
+  } else {
+    const auto [end, error] =
+        std::from_chars(value.data(), value.data() + value.size(), result);
+    valid = error == std::errc{} && end == value.data() + value.size();
+  }
+  if (!valid) {
     Usage(std::string(option) + " expects a number, got '" +
           std::string(value) + "'");
   }
@@ -142,6 +154,9 @@ AnalyzeArguments ParseAnalyzeArguments(int argc, char** argv) {
   }
   if (arguments.source.empty()) {
     Usage("a source file is required unless a subcommand is used");
+  }
+  if (arguments.entropy_jsonl.has_value() && arguments.model.has_value()) {
+    Usage("--entropy-jsonl and --model are mutually exclusive");
   }
   if (arguments.entropy_jsonl.has_value() &&
       (arguments.gpu_layers_set || arguments.context_set ||
@@ -224,9 +239,12 @@ std::string LoadEntropyJsonl(const AnalyzeArguments& arguments,
 
 int RunAnalyze(const AnalyzeArguments& arguments) {
   const std::filesystem::path cache_dir = llmcc::CacheDir();
-  const auto model = llmcc::ResolveModel(
-      arguments.model, arguments.entropy_jsonl, arguments.no_download,
-      std::filesystem::current_path(), cache_dir, llmcc::DownloadDefaultModel);
+  std::optional<std::filesystem::path> model;
+  if (!arguments.entropy_jsonl.has_value()) {
+    model = llmcc::ResolveModel(arguments.model, arguments.no_download,
+                                std::filesystem::current_path(), cache_dir,
+                                llmcc::DownloadDefaultModel);
+  }
   const llmcc::Language language =
       arguments.language.has_value()
           ? llmcc::ParseLanguage(*arguments.language)
