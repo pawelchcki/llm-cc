@@ -3,6 +3,7 @@ load("@rules_foreign_cc//toolchains/native_tools:native_tools_toolchain.bzl", "n
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
+    "cuda_host_compiler_wrapper.sh",
     "install.sh",
     "version.sh",
 ])

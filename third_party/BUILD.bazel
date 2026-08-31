@@ -1,9 +1,12 @@
 exports_files([
     "all.BUILD.bazel",
+    "cuda_host_sysroot_package.patch",
+    "cuda_host_toolchain.BUILD.bazel",
     "nlohmann_json.BUILD.bazel",
     "tree_sitter.BUILD.bazel",
     "tree_sitter_grammar.BUILD.bazel",
     "llama_cpp.BUILD.bazel",
+    "llama_cpp_deterministic_hip_cuid.patch",
     "openssl_reproducible_buildinfo.patch",
     "rules_foreign_cc_reproducible_logs.patch",
 ])

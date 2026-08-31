@@ -1,5 +1,0 @@
-filegroup(
-    name = "sysroot",
-    srcs = glob(["**"], allow_empty = False),
-    visibility = ["//visibility:public"],
-)

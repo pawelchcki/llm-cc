@@ -3,8 +3,8 @@
 # compatibility floor.
 set -euo pipefail
 
-binary="${1:?usage: check_glibc_version.sh <binary> [max-version, default 2.17]}"
-max_version="${2:-2.17}"
+binary="${1:?usage: check_glibc_version.sh <binary> [max-version, default 2.37]}"
+max_version="${2:-2.37}"
 
 if [[ ! -f "$binary" ]]; then
   echo "binary not found: $binary" >&2

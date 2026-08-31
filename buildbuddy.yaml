@@ -15,7 +15,7 @@ actions:
           - "main"
     steps:
       - run: "tools/check_format.sh"
-      - run: "bazel test --config=buildbuddy //..."
+      - run: "bazel test --config=buildbuddy --config=cpu //..."
       - run: "bazel build --config=buildbuddy --config=release --config=portable --config=cpu //:llm-cc"
-      - run: "tools/check_glibc_version.sh bazel-bin/llm-cc"
+      - run: "tools/check_glibc_version.sh bazel-bin/llm-cc 2.37"
       - run: "tools/check_static_link.sh bazel-bin/llm-cc"

@@ -1,0 +1,156 @@
+load("@rules_cc//cc:cc_import.bzl", "cc_import")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "sdk",
+    srcs = glob(["**"]),
+)
+
+filegroup(
+    name = "clang",
+    srcs = ["lib/llvm/bin/clang++"],
+)
+
+cc_import(
+    name = "amdhip",
+    shared_library = "lib/libamdhip64.so.7",
+)
+
+cc_import(
+    name = "hipblas",
+    shared_library = "lib/libhipblas.so.3",
+)
+
+cc_import(
+    name = "rocblas",
+    shared_library = "lib/librocblas.so.5",
+)
+
+cc_import(
+    name = "amd_comgr",
+    shared_library = "lib/libamd_comgr.so.3",
+)
+
+cc_import(
+    name = "hipblaslt",
+    shared_library = "lib/libhipblaslt.so.1",
+)
+
+cc_import(
+    name = "hsa_runtime",
+    shared_library = "lib/libhsa-runtime64.so.1",
+)
+
+cc_import(
+    name = "rocprofiler_register",
+    shared_library = "lib/librocprofiler-register.so.0",
+)
+
+cc_import(
+    name = "rocm_kpack",
+    shared_library = "lib/librocm_kpack.so.0",
+)
+
+cc_import(
+    name = "rocsolver",
+    shared_library = "lib/librocsolver.so.0",
+)
+
+cc_import(
+    name = "roctx",
+    shared_library = "lib/libroctx64.so.4",
+)
+
+cc_import(
+    name = "clang_cpp",
+    shared_library = "lib/llvm/lib/libclang-cpp.so.23.0git",
+)
+
+cc_import(
+    name = "llvm",
+    shared_library = "lib/llvm/lib/libLLVM.so.23.0git",
+)
+
+cc_import(
+    name = "rocroller",
+    shared_library = "lib/librocroller.so.1",
+)
+
+cc_import(
+    name = "sysdeps_bz2",
+    shared_library = "lib/rocm_sysdeps/lib/librocm_sysdeps_bz2.so",
+)
+
+cc_import(
+    name = "sysdeps_drm",
+    shared_library = "lib/rocm_sysdeps/lib/librocm_sysdeps_drm.so.2",
+)
+
+cc_import(
+    name = "sysdeps_drm_amdgpu",
+    shared_library = "lib/rocm_sysdeps/lib/librocm_sysdeps_drm_amdgpu.so.1",
+)
+
+cc_import(
+    name = "sysdeps_elf",
+    shared_library = "lib/rocm_sysdeps/lib/librocm_sysdeps_elf.so.1",
+)
+
+cc_import(
+    name = "sysdeps_liblzma",
+    shared_library = "lib/rocm_sysdeps/lib/librocm_sysdeps_liblzma.so.5",
+)
+
+cc_import(
+    name = "sysdeps_numa",
+    shared_library = "lib/rocm_sysdeps/lib/librocm_sysdeps_numa.so.1",
+)
+
+cc_import(
+    name = "sysdeps_z",
+    shared_library = "lib/rocm_sysdeps/lib/librocm_sysdeps_z.so.1",
+)
+
+cc_import(
+    name = "sysdeps_zstd",
+    shared_library = "lib/rocm_sysdeps/lib/librocm_sysdeps_zstd.so.1",
+)
+
+filegroup(
+    name = "runtime_files",
+    srcs = glob([
+        ".kpack/**",
+        "lib/hipblaslt/**",
+        "lib/rocblas/**",
+    ]),
+)
+
+cc_library(
+    name = "runtime",
+    data = [":runtime_files"],
+    deps = [
+        ":amd_comgr",
+        ":amdhip",
+        ":clang_cpp",
+        ":hipblas",
+        ":hipblaslt",
+        ":hsa_runtime",
+        ":llvm",
+        ":rocblas",
+        ":rocm_kpack",
+        ":rocprofiler_register",
+        ":rocroller",
+        ":rocsolver",
+        ":roctx",
+        ":sysdeps_bz2",
+        ":sysdeps_drm",
+        ":sysdeps_drm_amdgpu",
+        ":sysdeps_elf",
+        ":sysdeps_liblzma",
+        ":sysdeps_numa",
+        ":sysdeps_z",
+        ":sysdeps_zstd",
+    ],
+)
