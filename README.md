@@ -17,9 +17,10 @@ bazel test --config=cpu //...
 ```
 
 The build downloads checksum-pinned LLVM, llama.cpp, tree-sitter and its Rust,
-C, and C++ source bundles, nlohmann/json, curl, and OpenSSL. The default backend
-is ROCm on Linux and Metal on macOS. Select a backend explicitly when building
-for a different machine:
+C, and C++ source bundles, nlohmann/json, curl, and OpenSSL. On Linux x86-64,
+the default build is a universal CPU + CUDA + ROCm build with dynamically
+loaded private backend plugins. Metal remains the macOS default. Smaller,
+single-family builds remain available:
 
 ```sh
 bazel build --config=release --config=rocm //:llm-cc
@@ -57,9 +58,20 @@ bazel run //:install
 bazel run //:install -- --prefix /opt/llm-cc
 ```
 
-Accelerator installs keep the executable and its content-addressed Bazel
-runfiles payload under `libexec/llm-cc`; the `bin/llm-cc` launcher selects that
-immutable payload. This preserves the pinned vendor runtime after installation.
+Installs keep a normalized, content-addressed payload under `libexec/llm-cc`;
+the `bin/llm-cc` launcher selects that immutable payload. The payload contains
+only the executable, private llama.cpp libraries and plugins, and pinned vendor
+runtimes, so it can be moved independently of Bazel's runfiles tree.
+
+Build deterministic release archives with:
+
+```sh
+bazel build --config=release //:universal_archive
+bazel build --config=release --config=cpu //:cpu_static_archive
+```
+
+The first produces `llm-cc-0.1-linux-x86_64-universal.tar.gz`; the second is a
+fully static CPU fallback with no ELF dynamic section.
 
 ## Analyze source
 
@@ -79,6 +91,7 @@ Analysis options are:
 --model GGUF
 --no-download
 --gpu-layers N
+--backend auto|cpu|cuda|rocm
 --context N
 --tau-percentile N
 --alpha N
@@ -123,11 +136,18 @@ llm-cc score --model model.gguf --entropy --file source.cpp
 ```
 
 `score` accepts `--prompt` or `--file`, `--bos auto|always|never`,
-`--context-size`, `--threads`, `--gpu-layers`, `--override-memory-check`, and
-`--entropy`. It emits one JSONL object per observed token. It never samples or
+`--context-size`, `--threads`, `--gpu-layers`, `--backend`,
+`--override-memory-check`, and `--entropy`. It emits one JSONL object per observed token. It never samples or
 generates a continuation. Its default maximum input context is 131,072 tokens;
 use `--context-size` to override it. Mean negative log-likelihood and perplexity
 go to stderr.
+
+`--backend auto` is the default. When GPU layers are requested it totals free
+VRAM for each usable family and chooses the larger aggregate, preferring CUDA
+on a tie. Explicit `cuda` or `rocm` loads only that GPU plugin plus CPU and
+fails clearly when the requested device is unavailable. `cpu` rejects nonzero
+GPU layers. Backend options are invalid with `--entropy-jsonl`, which performs
+no inference.
 
 ```json
 {"position":0,"token_id":785,"piece":"The","bytes_hex":"546865","probability":null,"log_probability":null,"entropy":null}

@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "generated/version.h"
+#include "src/backend.h"
 #include "src/scoring.h"
 
 namespace {
@@ -39,6 +40,7 @@ struct Arguments {
   std::uint32_t context_size = llmcc::kDefaultContextSize;
   std::int32_t threads = 0;
   std::int32_t gpu_layers = 0;
+  llmcc::BackendKind backend = llmcc::BackendKind::kAuto;
   bool entropy = false;
   bool override_memory_check = false;
 };
@@ -60,6 +62,7 @@ constexpr std::string_view kUsageAfterContext =
     ")\n"
     "  --threads N            inference threads (default: hardware count)\n"
     "  --gpu-layers N         layers to offload; -1 means all (default: 0)\n"
+    "  --backend NAME         auto, cpu, cuda, or rocm (default: auto)\n"
     "  --override-memory-check  bypass the preflight memory check\n"
     "  --entropy              emit full-vocabulary next-token entropy\n"
     "  -V, --version          show the program version\n"
@@ -123,6 +126,12 @@ void SetOption(Arguments& arguments, std::string_view option,
     if (arguments.gpu_layers < -1) {
       Usage("--gpu-layers must be -1 or greater");
     }
+  } else if (option == "--backend") {
+    try {
+      arguments.backend = llmcc::ParseBackend(value);
+    } catch (const std::invalid_argument& error) {
+      Usage(error.what());
+    }
   } else {
     Usage("unknown option: " + std::string(option));
   }
@@ -158,6 +167,14 @@ Arguments ParseArguments(int argc, char** argv) {
   if (arguments.threads == 0) {
     arguments.threads = static_cast<std::int32_t>(
         std::max(1U, std::thread::hardware_concurrency()));
+  }
+  try {
+    static_cast<void>(
+        llmcc::SelectBackend(arguments.backend, arguments.gpu_layers, {}));
+  } catch (const std::invalid_argument& error) {
+    Usage(error.what());
+  } catch (const std::runtime_error&) {
+    // Device availability is checked after the selected plugins are loaded.
   }
   return arguments;
 }
@@ -256,14 +273,6 @@ void WriteScore(std::ostream& output, std::size_t position, llama_token token,
   output << "}\n";
 }
 
-class Backend {
- public:
-  Backend() { llama_backend_init(); }
-  Backend(const Backend&) = delete;
-  Backend& operator=(const Backend&) = delete;
-  ~Backend() { llama_backend_free(); }
-};
-
 std::uint64_t ModelFileSize(const std::filesystem::path& path) {
   std::error_code error;
   const std::uintmax_t size = std::filesystem::file_size(path, error);
@@ -297,6 +306,8 @@ std::optional<std::uint64_t> HostAvailableMemory() {
 }
 
 std::optional<std::uint64_t> GpuAvailableMemory() {
+  std::uint64_t aggregate = 0;
+  bool found = false;
   for (std::size_t i = 0; i < ggml_backend_dev_count(); ++i) {
     ggml_backend_dev_t device = ggml_backend_dev_get(i);
     if (ggml_backend_dev_type(device) != GGML_BACKEND_DEVICE_TYPE_GPU) {
@@ -305,9 +316,13 @@ std::optional<std::uint64_t> GpuAvailableMemory() {
     std::size_t free_bytes = 0;
     std::size_t total_bytes = 0;
     ggml_backend_dev_memory(device, &free_bytes, &total_bytes);
-    return static_cast<std::uint64_t>(free_bytes);
+    found = true;
+    const auto memory = static_cast<std::uint64_t>(free_bytes);
+    aggregate = memory > std::numeric_limits<std::uint64_t>::max() - aggregate
+                    ? std::numeric_limits<std::uint64_t>::max()
+                    : aggregate + memory;
   }
-  return std::nullopt;
+  return found ? std::optional<std::uint64_t>(aggregate) : std::nullopt;
 }
 
 void CheckAvailableMemory(const Arguments& arguments) {
@@ -349,7 +364,7 @@ int Run(const Arguments& arguments, std::ostream& output,
   const std::string input =
       input_override.has_value() ? *input_override : ReadInput(arguments);
   llama_log_set(DiscardBackendLog, nullptr);
-  Backend backend;
+  llmcc::BackendRuntime backend(arguments.backend, arguments.gpu_layers);
   CheckAvailableMemory(arguments);
 
   llama_model_params model_parameters = llama_model_default_params();
@@ -479,6 +494,7 @@ std::string ScoreEntropyJsonl(const std::filesystem::path& model,
   arguments.model = model;
   arguments.context_size = options.context_size;
   arguments.gpu_layers = options.gpu_layers;
+  arguments.backend = options.backend;
   arguments.entropy = true;
   arguments.threads = static_cast<std::int32_t>(
       std::max(1U, std::thread::hardware_concurrency()));

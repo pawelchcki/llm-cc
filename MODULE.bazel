@@ -104,7 +104,10 @@ http_archive(
     name = "llama_cpp",
     build_file = "//third_party:llama_cpp.BUILD.bazel",
     patch_strip = 1,
-    patches = ["//third_party:llama_cpp_deterministic_hip_cuid.patch"],
+    patches = [
+        "//third_party:llama_cpp_deterministic_hip_cuid.patch",
+        "//third_party:llama_cpp_namespaced_backends.patch",
+    ],
     sha256 = "682bdd1f58907d0bbfbd38bdfd7b8601de804bfda5ee15a739744e59c6585dd8",
     strip_prefix = "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0",
     urls = ["https://github.com/ggml-org/llama.cpp/archive/c589f0ed10c643678c4707dd160c21ac7633ebc0.tar.gz"],

@@ -11,9 +11,13 @@ load(
     "llama_cmake_options",
     "llama_cuda_cmake_options",
     "llama_rocm_cmake_options",
+    "llama_universal_cmake_options",
+    "payload_archive",
 )
 
 package(default_visibility = ["//visibility:public"])
+
+DIST_VERSION = "0.1"
 
 exports_files(["VERSION"])
 
@@ -72,6 +76,11 @@ config_setting(
 )
 
 config_setting(
+    name = "backend_cpu",
+    flag_values = {":backend": "cpu"},
+)
+
+config_setting(
     name = "backend_metal_explicit",
     flag_values = {":backend": "metal"},
 )
@@ -100,7 +109,7 @@ config_setting(
 )
 
 selects.config_setting_group(
-    name = "backend_rocm_auto",
+    name = "backend_universal",
     match_all = [
         ":backend_auto",
         ":target_linux_x86_64",
@@ -117,9 +126,15 @@ selects.config_setting_group(
 
 selects.config_setting_group(
     name = "backend_rocm",
+    match_any = [":backend_rocm_explicit"],
+)
+
+selects.config_setting_group(
+    name = "backend_dynamic",
     match_any = [
-        ":backend_rocm_auto",
-        ":backend_rocm_explicit",
+        ":backend_cuda",
+        ":backend_rocm",
+        ":backend_universal",
     ],
 )
 
@@ -134,6 +149,7 @@ selects.config_setting_group(
 cmake(
     name = "llama_cpp",
     cache_entries = select({
+        ":backend_universal": llama_universal_cmake_options(),
         ":backend_cuda": llama_cuda_cmake_options(),
         ":backend_rocm": llama_rocm_cmake_options(),
         ":backend_metal": llama_cmake_options(
@@ -147,6 +163,14 @@ cmake(
         "//conditions:default": llama_cmake_options(),
     }),
     build_data = select({
+        ":backend_universal": [
+            "@cuda_sdk//:nvcc",
+            "@cuda_sdk//:sdk",
+            "@cuda_host_toolchain//:host_toolchain",
+            "@rocm_sdk//:clang",
+            "@rocm_sdk//:sdk",
+            "//tools:cuda_host_compiler_wrapper.sh",
+        ],
         ":backend_cuda": [
             "@cuda_sdk//:nvcc",
             "@cuda_sdk//:sdk",
@@ -165,6 +189,7 @@ cmake(
     lib_source = "@llama_cpp//:all",
     set_file_prefix_map = True,
     out_static_libs = select({
+        ":backend_universal": [],
         ":backend_cuda": [],
         ":backend_rocm": [],
         ":backend_metal": [],
@@ -176,19 +201,20 @@ cmake(
         ],
     }),
     out_shared_libs = select({
+        ":backend_universal": [
+            "libllama.so",
+            "libggml.so",
+            "libggml-base.so",
+        ],
         ":backend_cuda": [
             "libllama.so",
             "libggml.so",
             "libggml-base.so",
-            "libggml-cpu.so",
-            "libggml-cuda.so",
         ],
         ":backend_rocm": [
             "libllama.so",
             "libggml.so",
             "libggml-base.so",
-            "libggml-cpu.so",
-            "libggml-hip.so",
         ],
         ":backend_metal": [
             "libllama.dylib",
@@ -196,6 +222,22 @@ cmake(
             "libggml-base.dylib",
             "libggml-cpu.dylib",
             "libggml-metal.dylib",
+        ],
+        "//conditions:default": [],
+    }),
+    out_data_files = select({
+        ":backend_universal": [
+            "lib/libllm-cc-backend-cpu.so",
+            "lib/libllm-cc-backend-cuda.so",
+            "lib/libllm-cc-backend-rocm.so",
+        ],
+        ":backend_cuda": [
+            "lib/libllm-cc-backend-cpu.so",
+            "lib/libllm-cc-backend-cuda.so",
+        ],
+        ":backend_rocm": [
+            "lib/libllm-cc-backend-cpu.so",
+            "lib/libllm-cc-backend-rocm.so",
         ],
         "//conditions:default": [],
     }),
@@ -274,6 +316,18 @@ cmake(
 )
 
 cc_library(
+    name = "backend_runtime",
+    srcs = ["src/backend.cc"],
+    hdrs = ["src/backend.h"],
+    defines = select({
+        ":backend_dynamic": ["LLM_CC_DYNAMIC_BACKENDS"],
+        ":backend_metal": ["LLM_CC_BUILTIN_GPU"],
+        "//conditions:default": [],
+    }),
+    deps = [":llama_cpp"],
+)
+
+cc_library(
     name = "core",
     srcs = ["src/core.cc"],
     hdrs = ["src/core.h"],
@@ -325,6 +379,7 @@ cc_library(
     srcs = ["src/score_cmd.cc"],
     hdrs = ["src/score_cmd.h"],
     deps = [
+        ":backend_runtime",
         ":llama_cpp",
         ":scoring",
         ":version",
@@ -345,13 +400,48 @@ cc_library(
 cc_binary(
     name = "llm-cc",
     srcs = ["src/cli/main.cc"],
+    data = select({
+        ":backend_universal": [
+            ":llama_cpp",
+            "@cuda_sdk//:runtime",
+            "@cuda_host_toolchain//x86_64-buildroot-linux-gnu/sysroot:runtime",
+            "@rocm_sdk//:runtime",
+        ],
+        ":backend_cuda": [
+            ":llama_cpp",
+            "@cuda_sdk//:runtime",
+        ],
+        ":backend_rocm": [
+            ":llama_cpp",
+            "@cuda_host_toolchain//x86_64-buildroot-linux-gnu/sysroot:runtime",
+            "@rocm_sdk//:runtime",
+        ],
+        "//conditions:default": [],
+    }),
     linkopts = select({
+        ":backend_universal": [
+            "-ldl",
+            "-lpthread",
+            "-Wl,--disable-new-dtags",
+            "-Wl,-rpath,$$ORIGIN/lib",
+            "-Wl,-rpath,$$ORIGIN/lib/cuda",
+            "-Wl,-rpath,$$ORIGIN/lib/rocm",
+            "-Wl,-rpath,$$ORIGIN/lib/rocm/llvm/lib",
+            "-Wl,-rpath,$$ORIGIN/lib/rocm/rocm_sysdeps/lib",
+            "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+cuda_sdk_repository+cuda_sdk/sdk/lib",
+            "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib",
+            "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib/llvm/lib",
+            "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib/rocm_sysdeps/lib",
+            "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+cuda_host_toolchain/x86_64-buildroot-linux-gnu/sysroot/lib",
+        ],
         ":backend_cuda": [
             "-ldl",
             "-lpthread",
             # DT_RPATH is intentionally transitive: vendor libraries have
             # further dependencies in the same checksum-pinned SDK.
             "-Wl,--disable-new-dtags",
+            "-Wl,-rpath,$$ORIGIN/lib",
+            "-Wl,-rpath,$$ORIGIN/lib/cuda",
             "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+cuda_sdk_repository+cuda_sdk/sdk/lib",
             "-Wl,-rpath,$$ORIGIN/../+cuda_sdk_repository+cuda_sdk/sdk/lib",
         ],
@@ -359,6 +449,10 @@ cc_binary(
             "-ldl",
             "-lpthread",
             "-Wl,--disable-new-dtags",
+            "-Wl,-rpath,$$ORIGIN/lib",
+            "-Wl,-rpath,$$ORIGIN/lib/rocm",
+            "-Wl,-rpath,$$ORIGIN/lib/rocm/llvm/lib",
+            "-Wl,-rpath,$$ORIGIN/lib/rocm/rocm_sysdeps/lib",
             "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib",
             "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib/llvm/lib",
             "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib/rocm_sysdeps/lib",
@@ -367,6 +461,11 @@ cc_binary(
             "-Wl,-rpath,$$ORIGIN/../+http_archive+rocm_sdk/lib/rocm_sysdeps/lib",
         ],
         ":backend_metal": [],
+        ":backend_cpu": [
+            "-static",
+            "-ldl",
+            "-lpthread",
+        ],
         "//conditions:default": ["-ldl", "-lpthread"],
     }),
     deps = [
@@ -377,21 +476,67 @@ cc_binary(
         ":lang",
         ":score_cmd",
         ":version",
-    ] + select({
-        ":backend_cuda": ["@cuda_sdk//:runtime"],
-        ":backend_rocm": [
-            "@cuda_host_toolchain//x86_64-buildroot-linux-gnu/sysroot:runtime",
-            "@rocm_sdk//:runtime",
-        ],
-        "//conditions:default": [],
-    }),
+    ],
 )
 
 install_launcher(
     name = "install",
-    binary = ":llm-cc",
+    payload = ":install_payload",
     script = "//tools:install.sh",
     version_script = "//tools:version.sh",
+)
+
+payload_archive(
+    name = "install_payload",
+    binary = ":llm-cc",
+    cuda_runtime = "@cuda_sdk//:runtime_files",
+    host_runtime = "@cuda_host_toolchain//x86_64-buildroot-linux-gnu/sysroot:runtime_files",
+    kind = "auto",
+    llama = ":llama_cpp",
+    output_name = "llm-cc-install-payload.tar.gz",
+    rocm_runtime = "@rocm_sdk//:runtime_files",
+    root_name = "llm-cc-payload",
+)
+
+payload_archive(
+    name = "universal_archive",
+    binary = ":llm-cc",
+    cuda_runtime = "@cuda_sdk//:runtime_files",
+    host_runtime = "@cuda_host_toolchain//x86_64-buildroot-linux-gnu/sysroot:runtime_files",
+    kind = "universal",
+    llama = ":llama_cpp",
+    output_name = "llm-cc-%s-linux-x86_64-universal.tar.gz" % DIST_VERSION,
+    rocm_runtime = "@rocm_sdk//:runtime_files",
+    root_name = "llm-cc-%s-linux-x86_64-universal" % DIST_VERSION,
+    target_compatible_with = select({
+        ":backend_universal": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
+payload_archive(
+    name = "cpu_static_archive",
+    binary = ":llm-cc",
+    cuda_runtime = "@cuda_sdk//:runtime_files",
+    host_runtime = "@cuda_host_toolchain//x86_64-buildroot-linux-gnu/sysroot:runtime_files",
+    kind = "static",
+    llama = ":llama_cpp",
+    output_name = "llm-cc-%s-linux-x86_64-cpu-static.tar.gz" % DIST_VERSION,
+    rocm_runtime = "@rocm_sdk//:runtime_files",
+    root_name = "llm-cc-%s-linux-x86_64-cpu-static" % DIST_VERSION,
+    target_compatible_with = select({
+        ":backend_cpu": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
+cc_test(
+    name = "backend_test",
+    srcs = ["src/backend_test.cc"],
+    deps = [
+        ":backend_runtime",
+        ":test_util",
+    ],
 )
 
 cc_test(

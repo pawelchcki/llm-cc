@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-llm_cc_binary="${1:?missing Bazel llm-cc runfile}"
-version_script_runfile="${2:?missing version script runfile}"
-runfiles_source="${3:?missing Bazel runfiles root}"
-shift 3
+version_script_runfile="${1:?missing version script runfile}"
+payload_archive="${2:?missing normalized payload archive}"
+shift 2
 
 prefix="${PREFIX:-${HOME:?HOME is unset}/.local}"
 while (($# > 0)); do
@@ -53,7 +52,7 @@ else
   echo "error: sha256sum or shasum is required to install" >&2
   exit 1
 fi
-payload_material="$(hash_file "$llm_cc_binary")"
+payload_material="$(hash_file "$payload_archive")"
 if [[ -n "$workspace" ]]; then
   for build_input in \
       .bazelrc \
@@ -78,18 +77,7 @@ mkdir -p "$bin_dir" "$libexec_root"
 if [[ ! -x "$payload_dir/llm-cc" ]]; then
   staging_dir="$(mktemp -d "$libexec_root/.install.XXXXXXXX")"
   trap 'rm -rf -- "$staging_dir"' EXIT
-  install -m 0755 "$llm_cc_binary" "$staging_dir/llm-cc"
-
-  # Shared accelerator builds rely on Bazel's checksum-pinned runfiles tree.
-  # Copy it beside the executable so the binary's $ORIGIN-relative RPATH stays
-  # valid after installation, independently of workspace convenience symlinks.
-  if [[ -d "$runfiles_source" ]]; then
-    if cp --version >/dev/null 2>&1; then
-      cp -aL --reflink=auto "$runfiles_source" "$staging_dir/llm-cc.runfiles"
-    else
-      cp -aL "$runfiles_source" "$staging_dir/llm-cc.runfiles"
-    fi
-  fi
+  tar -xzf "$payload_archive" --strip-components=1 -C "$staging_dir"
 
   mv "$staging_dir" "$payload_dir"
   trap - EXIT
@@ -98,7 +86,9 @@ fi
 launcher="$(mktemp "$bin_dir/.llm-cc.XXXXXXXX")"
 {
   printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail'
-  printf 'exec %q "$@"\n' "$payload_dir/llm-cc"
+  printf '%s\n' 'launcher_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"'
+  printf 'exec "$launcher_dir/../libexec/llm-cc/%s/llm-cc" "$@"\n' \
+    "$(basename -- "$payload_dir")"
 } > "$launcher"
 chmod 0755 "$launcher"
 mv "$launcher" "$bin_dir/llm-cc"

@@ -6,6 +6,8 @@
 #include <string>
 #include <string_view>
 
+#include "src/backend.h"
+
 namespace llmcc {
 
 inline constexpr std::uint32_t kDefaultContextSize = 128U * 1024U;
@@ -13,6 +15,7 @@ inline constexpr std::uint32_t kDefaultContextSize = 128U * 1024U;
 struct InferenceOptions {
   std::int32_t gpu_layers = 0;
   std::uint32_t context_size = kDefaultContextSize;
+  BackendKind backend = BackendKind::kAuto;
 };
 
 std::string ScoreEntropyJsonl(const std::filesystem::path& model,

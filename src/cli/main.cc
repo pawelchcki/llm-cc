@@ -28,9 +28,11 @@ struct AnalyzeArguments {
   std::optional<std::filesystem::path> model;
   bool no_download = false;
   std::int32_t gpu_layers = 0;
+  llmcc::BackendKind backend = llmcc::BackendKind::kAuto;
   std::uint32_t context = llmcc::kDefaultContextSize;
   bool gpu_layers_set = false;
   bool context_set = false;
+  bool backend_set = false;
   double tau_percentile = 67.0;
   double alpha = 0.8;
 };
@@ -44,6 +46,7 @@ constexpr std::string_view kUsageBeforeContext =
     "Analysis options:\n"
     "  --no-download          do not fetch the default model\n"
     "  --gpu-layers N         transformer layers to offload (-1 means all)\n"
+    "  --backend NAME         auto, cpu, cuda, or rocm (default: auto)\n"
     "  --context N            maximum input tokens (default: ";
 
 constexpr std::string_view kUsageAfterContext =
@@ -87,6 +90,13 @@ void SetAnalyzeOption(AnalyzeArguments& arguments, std::string_view option,
     arguments.gpu_layers_set = true;
     if (arguments.gpu_layers < -1) {
       Usage("--gpu-layers must be -1 or greater");
+    }
+  } else if (option == "--backend") {
+    try {
+      arguments.backend = llmcc::ParseBackend(value);
+      arguments.backend_set = true;
+    } catch (const std::invalid_argument& error) {
+      Usage(error.what());
     }
   } else if (option == "--context") {
     arguments.context = ParseNumber<std::uint32_t>(option, value);
@@ -134,8 +144,19 @@ AnalyzeArguments ParseAnalyzeArguments(int argc, char** argv) {
     Usage("a source file is required unless a subcommand is used");
   }
   if (arguments.entropy_jsonl.has_value() &&
-      (arguments.gpu_layers_set || arguments.context_set)) {
-    Usage("--gpu-layers and --context cannot be used with --entropy-jsonl");
+      (arguments.gpu_layers_set || arguments.context_set ||
+       arguments.backend_set)) {
+    Usage(
+        "--gpu-layers, --context, and --backend cannot be used with "
+        "--entropy-jsonl");
+  }
+  try {
+    static_cast<void>(
+        llmcc::SelectBackend(arguments.backend, arguments.gpu_layers, {}));
+  } catch (const std::invalid_argument& error) {
+    Usage(error.what());
+  } catch (const std::runtime_error&) {
+    // Device availability is checked after the selected plugins are loaded.
   }
   return arguments;
 }
@@ -195,9 +216,10 @@ std::string LoadEntropyJsonl(const AnalyzeArguments& arguments,
     throw std::logic_error("model resolution returned no model");
   }
   llmcc::MarkCachedModelUsed(cache_dir, *model);
-  return llmcc::ScoreEntropyJsonl(
-      *model, preprocessed,
-      {.gpu_layers = arguments.gpu_layers, .context_size = arguments.context});
+  return llmcc::ScoreEntropyJsonl(*model, preprocessed,
+                                  {.gpu_layers = arguments.gpu_layers,
+                                   .context_size = arguments.context,
+                                   .backend = arguments.backend});
 }
 
 int RunAnalyze(const AnalyzeArguments& arguments) {

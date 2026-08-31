@@ -62,6 +62,21 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(
       Read(score_help).find("default: 131072") != std::string::npos,
       "score advertises the large default context");
+  llmcc::test::Expect(
+      Read(score_help).find("auto, cpu, cuda, or rocm") != std::string::npos,
+      "score documents runtime backend selection");
+
+  const fs::path backend_error = fs::path(test_tmpdir) / "backend-error.txt";
+  const std::string cpu_gpu_command =
+      Quote(binary) +
+      " score --model missing.gguf --prompt x --backend cpu "
+      "--gpu-layers 1 2>" +
+      Quote(backend_error);
+  llmcc::test::Expect(Run(cpu_gpu_command) != 0,
+                      "CPU backend rejects GPU offload");
+  llmcc::test::Expect(
+      Read(backend_error).find("--backend cpu") != std::string::npos,
+      "CPU backend rejection is explained");
 
   const std::string command =
       Quote(binary) + " " + Quote(fixtures / "realistic.rs") +
@@ -72,6 +87,19 @@ int main() {  // NOLINT(bugprone-exception-escape)
   const nlohmann::json expected =
       nlohmann::json::parse(Read(fixtures / "realistic.expected.json"));
   llmcc::test::ExpectEq(actual, expected, "realistic output matches golden");
+
+  const fs::path entropy_backend_error =
+      fs::path(test_tmpdir) / "entropy-backend-error.txt";
+  const std::string entropy_backend_command =
+      Quote(binary) + " " + Quote(fixtures / "realistic.rs") +
+      " --entropy-jsonl " + Quote(fixtures / "realistic.jsonl") +
+      " --backend auto 2>" + Quote(entropy_backend_error);
+  llmcc::test::Expect(Run(entropy_backend_command) != 0,
+                      "backend option is rejected for JSONL analysis");
+  llmcc::test::Expect(
+      Read(entropy_backend_error).find("cannot be used with --entropy-jsonl") !=
+          std::string::npos,
+      "JSONL backend rejection is explained");
 
   if (fs::exists("/dev/full")) {
     const fs::path write_error = fs::path(test_tmpdir) / "write-error.txt";
