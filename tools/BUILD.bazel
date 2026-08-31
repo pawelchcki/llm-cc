@@ -4,6 +4,7 @@ package(default_visibility = ["//visibility:public"])
 
 exports_files([
     "cuda_host_compiler_wrapper.sh",
+    "format_test.sh",
     "install.sh",
     "package_payload.sh",
     "version.sh",

@@ -4,6 +4,8 @@ module(
 )
 
 bazel_dep(name = "rules_cc", version = "0.2.22")
+bazel_dep(name = "rules_cuda", version = "0.3.0")
+bazel_dep(name = "rules_shell", version = "0.6.1")
 bazel_dep(name = "rules_foreign_cc", version = "0.15.1")
 bazel_dep(name = "bazel_skylib", version = "1.8.2")
 bazel_dep(name = "platforms", version = "1.0.0")
@@ -88,14 +90,6 @@ http_archive(
 http_archive(
     name = "rocm_sdk",
     build_file = "//third_party:rocm_sdk.BUILD.bazel",
-    # TheRock ships multi-gigabyte static LLVM/ROCm archives alongside the
-    # shared compiler and runtime used here. Prune those deterministic dead
-    # inputs before Bazel commits the repository to its contents cache.
-    patch_cmds = [
-        "find . -type f -name '*.a' -delete",
-        "rm -rf lib/llvm/include libexec",
-        "rm -f lib/libMIOpen* lib/libamd_smi* lib/libhipdnn* lib/libhipsparse* lib/libhiptensor* lib/liboam* lib/librccl* lib/librdc* lib/librocalution* lib/librocdecode* lib/librocfft* lib/librocjitsu* lib/librocjpeg* lib/librocm_smi* lib/librocprof-sys* lib/librocprofiler-sdk* lib/librocrand* lib/librocshmem* lib/librocsparse*",
-    ],
     sha256 = "e78a4445c52d879fbd0765f24e7fa9df1e262a8baf681b118a13e75340120127",
     urls = ["https://repo.amd.com/rocm/tarball-multi-arch/therock-dist-linux-gfx110X-all-7.14.0.tar.gz"],
 )

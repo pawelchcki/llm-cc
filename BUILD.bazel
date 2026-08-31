@@ -1,6 +1,8 @@
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
 load("@bazel_skylib//lib:selects.bzl", "selects")
 load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
@@ -189,6 +191,7 @@ cmake(
     generate_args = ["-GNinja"],
     lib_source = "@llama_cpp//:all",
     set_file_prefix_map = True,
+    tags = ["manual"],
     out_static_libs = select({
         ":backend_universal": [],
         ":backend_cuda": [],
@@ -243,6 +246,18 @@ cmake(
         ],
         "//conditions:default": [],
     }),
+)
+
+# Native compilation is used for the static CPU graph. Accelerator/Metal
+# variants keep their existing implementation until their native backend
+# modules are selected below; callers depend on this stable facade.
+alias(
+    name = "llama",
+    actual = select({
+        ":backend_cpu": "@llama_cpp//:llama",
+        "//conditions:default": ":llama_cpp",
+    }),
+    tags = ["manual"],
 )
 
 configure_make_variant(
@@ -310,6 +325,12 @@ cmake(
 )
 
 cc_library(
+    name = "backend_policy",
+    srcs = ["src/backend_policy.cc"],
+    hdrs = ["src/backend.h"],
+)
+
+cc_library(
     name = "backend_runtime",
     srcs = ["src/backend.cc"],
     hdrs = ["src/backend.h"],
@@ -318,7 +339,11 @@ cc_library(
         ":backend_metal": ["LLM_CC_BUILTIN_GPU"],
         "//conditions:default": [],
     }),
-    deps = [":llama_cpp"],
+    deps = [
+        ":backend_policy",
+        ":llama",
+    ],
+    tags = ["manual"],
 )
 
 cc_library(
@@ -383,10 +408,11 @@ cc_library(
     hdrs = ["src/score_cmd.h"],
     deps = [
         ":backend_runtime",
-        ":llama_cpp",
+        ":llama",
         ":scoring",
         ":version",
     ],
+    tags = ["manual"],
 )
 
 cc_library(
@@ -486,6 +512,42 @@ cc_binary(
         ":score_cmd",
         ":version",
     ],
+    tags = ["manual"],
+)
+
+filegroup(
+    name = "cpp_sources",
+    srcs = glob([
+        "src/**/*.cc",
+        "src/**/*.h",
+    ]),
+)
+
+sh_test(
+    name = "format_test",
+    srcs = ["//tools:format_test.sh"],
+    args = [
+        "$(location @llvm_toolchain_llvm//:bin/clang-format)",
+        "$(location :.clang-format)",
+        "$(locations :cpp_sources)",
+    ],
+    data = [
+        ".clang-format",
+        ":cpp_sources",
+        "@llvm_toolchain_llvm//:bin/clang-format",
+    ],
+)
+
+build_test(
+    name = "starlark_test",
+    targets = [
+        ":backend_policy",
+        ":cache",
+        ":core",
+        ":jsonl",
+        ":lang",
+        ":scoring",
+    ],
 )
 
 install_launcher(
@@ -494,6 +556,7 @@ install_launcher(
     payload = ":install_payload",
     script = "//tools:install.sh",
     version_script = "//tools:version.sh",
+    tags = ["manual"],
 )
 
 payload_archive(
@@ -506,6 +569,7 @@ payload_archive(
     output_name = "llm-cc-install-payload.tar.gz",
     rocm_runtime = "@rocm_sdk//:runtime_files",
     root_name = "llm-cc-payload",
+    tags = ["manual"],
 )
 
 payload_archive(
@@ -518,6 +582,7 @@ payload_archive(
     output_name = "llm-cc-%s-linux-x86_64-universal.tar.gz" % DIST_VERSION,
     rocm_runtime = "@rocm_sdk//:runtime_files",
     root_name = "llm-cc-%s-linux-x86_64-universal" % DIST_VERSION,
+    tags = ["manual"],
     target_compatible_with = select({
         ":backend_universal": [],
         "//conditions:default": ["@platforms//:incompatible"],
@@ -534,6 +599,7 @@ payload_archive(
     output_name = "llm-cc-%s-linux-x86_64-cpu-static.tar.gz" % DIST_VERSION,
     rocm_runtime = "@rocm_sdk//:runtime_files",
     root_name = "llm-cc-%s-linux-x86_64-cpu-static" % DIST_VERSION,
+    tags = ["manual"],
     target_compatible_with = select({
         ":backend_cpu": [],
         "//conditions:default": ["@platforms//:incompatible"],
@@ -544,7 +610,7 @@ cc_test(
     name = "backend_test",
     srcs = ["src/backend_test.cc"],
     deps = [
-        ":backend_runtime",
+        ":backend_policy",
         ":test_util",
     ],
 )
@@ -568,6 +634,7 @@ cc_test(
         ":test_util",
         "@nlohmann_json//:json",
     ],
+    tags = ["manual"],
 )
 
 cc_test(
@@ -614,4 +681,25 @@ cc_test(
     name = "scoring_test",
     srcs = ["src/scoring_test.cc"],
     deps = [":scoring"],
+)
+
+test_suite(
+    name = "unit",
+    tests = [
+        ":backend_test",
+        ":cache_test",
+        ":core_test",
+        ":download_test",
+        ":format_test",
+        ":jsonl_test",
+        ":lang_test",
+        ":scoring_test",
+        ":starlark_test",
+    ],
+)
+
+test_suite(
+    name = "integration",
+    tags = ["manual"],
+    tests = [":cli_test"],
 )

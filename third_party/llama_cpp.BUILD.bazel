@@ -1,6 +1,166 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
 package(default_visibility = ["//visibility:public"])
 
+# Compatibility for source-oriented tooling. Production targets below compile
+# each source independently and never pass this filegroup to CMake.
 filegroup(
     name = "all",
     srcs = glob(["**"]),
+)
+
+GGML_PUBLIC_HEADERS = [
+    "ggml/include/ggml-alloc.h",
+    "ggml/include/ggml-backend.h",
+    "ggml/include/ggml-blas.h",
+    "ggml/include/ggml-cpp.h",
+    "ggml/include/ggml-cpu.h",
+    "ggml/include/ggml-metal.h",
+    "ggml/include/ggml-opt.h",
+    "ggml/include/ggml.h",
+    "ggml/include/gguf.h",
+]
+
+GGML_BASE_SOURCES = [
+    "ggml/src/ggml-alloc.c",
+    "ggml/src/ggml-backend-meta.cpp",
+    "ggml/src/ggml-backend.cpp",
+    "ggml/src/ggml-opt.cpp",
+    "ggml/src/ggml-quants.c",
+    "ggml/src/ggml-threading.cpp",
+    "ggml/src/ggml.c",
+    "ggml/src/ggml.cpp",
+    "ggml/src/gguf.cpp",
+]
+
+GGML_CPU_SOURCES = [
+    "ggml/src/ggml-cpu/amx/amx.cpp",
+    "ggml/src/ggml-cpu/amx/mmq.cpp",
+    "ggml/src/ggml-cpu/arch/x86/quants.c",
+    "ggml/src/ggml-cpu/arch/x86/repack.cpp",
+    "ggml/src/ggml-cpu/binary-ops.cpp",
+    "ggml/src/ggml-cpu/ggml-cpu.c",
+    "ggml/src/ggml-cpu/ggml-cpu.cpp",
+    "ggml/src/ggml-cpu/hbm.cpp",
+    "ggml/src/ggml-cpu/llamafile/sgemm.cpp",
+    "ggml/src/ggml-cpu/ops.cpp",
+    "ggml/src/ggml-cpu/quants.c",
+    "ggml/src/ggml-cpu/repack.cpp",
+    "ggml/src/ggml-cpu/traits.cpp",
+    "ggml/src/ggml-cpu/unary-ops.cpp",
+    "ggml/src/ggml-cpu/vec.cpp",
+]
+
+LLAMA_SOURCES = [
+    "src/llama-adapter.cpp",
+    "src/llama-arch.cpp",
+    "src/llama-batch.cpp",
+    "src/llama-chat.cpp",
+    "src/llama-context.cpp",
+    "src/llama-cparams.cpp",
+    "src/llama-grammar.cpp",
+    "src/llama-graph.cpp",
+    "src/llama-hparams.cpp",
+    "src/llama-impl.cpp",
+    "src/llama-io.cpp",
+    "src/llama-kv-cache-dsa-iswa.cpp",
+    "src/llama-kv-cache-dsa.cpp",
+    "src/llama-kv-cache-dsv4.cpp",
+    "src/llama-kv-cache-iswa.cpp",
+    "src/llama-kv-cache-msa.cpp",
+    "src/llama-kv-cache.cpp",
+    "src/llama-memory-hybrid-idx.cpp",
+    "src/llama-memory-hybrid-iswa.cpp",
+    "src/llama-memory-hybrid.cpp",
+    "src/llama-memory-recurrent.cpp",
+    "src/llama-memory.cpp",
+    "src/llama-mmap.cpp",
+    "src/llama-model-loader.cpp",
+    "src/llama-model-saver.cpp",
+    "src/llama-model.cpp",
+    "src/llama-quant.cpp",
+    "src/llama-sampler.cpp",
+    "src/llama-vocab.cpp",
+    "src/llama.cpp",
+    "src/unicode-data.cpp",
+    "src/unicode.cpp",
+] + glob(["src/models/*.cpp"])
+
+COMMON_HEADERS = glob([
+    "ggml/src/**/*.h",
+    "ggml/src/**/*.hpp",
+    "src/**/*.h",
+])
+
+cc_library(
+    name = "ggml_base",
+    srcs = GGML_BASE_SOURCES,
+    hdrs = GGML_PUBLIC_HEADERS + COMMON_HEADERS,
+    defines = [
+        "GGML_COMMIT=\\\"c589f0ed10c643678c4707dd160c21ac7633ebc0\\\"",
+        "GGML_SCHED_MAX_COPIES=4",
+        "GGML_VERSION=\\\"0.22.0\\\"",
+        "_GNU_SOURCE",
+        "_XOPEN_SOURCE=600",
+    ],
+    includes = [
+        "ggml/include",
+        "ggml/src",
+    ],
+    linkopts = [
+        "-ldl",
+        "-lpthread",
+    ],
+)
+
+cc_library(
+    name = "ggml_cpu",
+    srcs = GGML_CPU_SOURCES,
+    hdrs = COMMON_HEADERS,
+    defines = [
+        "GGML_USE_CPU_REPACK",
+        "GGML_USE_LLAMAFILE",
+    ],
+    includes = [
+        "ggml/include",
+        "ggml/src",
+        "ggml/src/ggml-cpu",
+    ],
+    deps = [":ggml_base"],
+)
+
+cc_library(
+    name = "ggml",
+    srcs = [
+        "ggml/src/ggml-backend-dl.cpp",
+        "ggml/src/ggml-backend-reg.cpp",
+    ],
+    hdrs = GGML_PUBLIC_HEADERS + COMMON_HEADERS,
+    defines = ["GGML_USE_CPU"],
+    includes = [
+        "ggml/include",
+        "ggml/src",
+        "ggml/src/ggml-cpu",
+    ],
+    deps = [
+        ":ggml_base",
+        ":ggml_cpu",
+    ],
+)
+
+cc_library(
+    name = "llama",
+    srcs = LLAMA_SOURCES,
+    hdrs = ["include/llama.h"] + COMMON_HEADERS,
+    defines = [
+        "LLAMA_COMMIT=\\\"c589f0ed10c643678c4707dd160c21ac7633ebc0\\\"",
+        "LLAMA_VERSION=\\\"0.0.0\\\"",
+    ],
+    includes = [
+        "include",
+        "src",
+        "ggml/include",
+        "ggml/src",
+    ],
+    deps = [":ggml"],
 )
