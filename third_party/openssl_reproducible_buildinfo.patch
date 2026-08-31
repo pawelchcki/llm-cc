@@ -1,0 +1,17 @@
+diff --git a/util/mkbuildinf.pl b/util/mkbuildinf.pl
+index 69bd2f7..8628ba2 100755
+--- a/util/mkbuildinf.pl
++++ b/util/mkbuildinf.pl
+@@ -11,6 +11,12 @@ use warnings;
+ 
+ my $platform = pop @ARGV;
+ my $cflags = join(' ', @ARGV);
++
++# rules_foreign_cc uses a fresh EXT_BUILD_ROOT for isolated builds. Keep the
++# useful compiler command in OpenSSL's version output without embedding that
++# nondeterministic sandbox prefix in libcrypto.
++$cflags =~ s/\Q$ENV{'EXT_BUILD_ROOT'}\E/./g
++    if defined $ENV{'EXT_BUILD_ROOT'} && $ENV{'EXT_BUILD_ROOT'} ne '';
+ $cflags =~ s(\\)(\\\\)g;
+ $cflags = "compiler: $cflags";
+ 

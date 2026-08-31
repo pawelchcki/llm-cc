@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-rethink_binary="${1:?missing Bazel rethink-cc runfile}"
+llm_cc_binary="${1:?missing Bazel llm-cc runfile}"
 version_script_runfile="${2:?missing version script runfile}"
 shift 2
 
@@ -42,28 +42,5 @@ fi
 version="$("$version_script")"
 bin_dir="$prefix/bin"
 mkdir -p "$bin_dir"
-install -m 0755 "$rethink_binary" "$bin_dir/rethink-cc"
-echo "Installed $("$bin_dir/rethink-cc" --version) to $bin_dir/rethink-cc"
-
-if [[ -z "$workspace" ]]; then
-  workspace="$(CDPATH= cd -- "$(dirname -- "$version_script_runfile")/.." && pwd)"
-fi
-lmcc_binary="$workspace/lmcc/target/release/lmcc"
-
-if command -v cargo >/dev/null 2>&1; then
-  echo "Building lmcc $version with Cargo..."
-  CARGO_TARGET_DIR="$workspace/lmcc/target" \
-    cargo build --release --package lmcc-cli \
-      --manifest-path "$workspace/lmcc/Cargo.toml"
-fi
-
-if [[ -x "$lmcc_binary" ]]; then
-  lmcc_version="$("$lmcc_binary" --version)"
-  install -m 0755 "$lmcc_binary" "$bin_dir/lmcc"
-  echo "Installed $lmcc_version to $bin_dir/lmcc"
-  if [[ "$lmcc_version" != "lmcc $version" ]]; then
-    echo "Warning: lmcc reports '$lmcc_version', expected 'lmcc $version'." >&2
-  fi
-else
-  echo "Skipped lmcc: Cargo is unavailable and $lmcc_binary is not built." >&2
-fi
+install -m 0755 "$llm_cc_binary" "$bin_dir/llm-cc"
+echo "Installed $("$bin_dir/llm-cc" --version) to $bin_dir/llm-cc"

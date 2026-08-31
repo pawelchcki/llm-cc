@@ -16,13 +16,20 @@ if ((${#files[@]} == 0)); then
 fi
 
 output_base="$(bazel info output_base 2>/dev/null)"
+bazel_bin="$(bazel info bazel-bin 2>/dev/null)"
 llama_root="$output_base/external/+http_archive+llama_cpp"
-fixes_file="$(mktemp "${TMPDIR:-/tmp}/rethink-clang-tidy.XXXXXX")"
+json_root="$output_base/external/+http_archive+nlohmann_json"
+tree_sitter_root="$output_base/external/+http_archive+tree_sitter"
+curl_root="$output_base/external/+http_archive+curl"
+fixes_file="$(mktemp "${TMPDIR:-/tmp}/llm-cc-clang-tidy.XXXXXX")"
 trap 'rm -f "$fixes_file"' EXIT
 
 bazel run @llvm_toolchain_llvm//:bin/clang-tidy -- \
   --export-fixes="$fixes_file" "${files[@]}" -- -x c++ -std=c++20 -I. \
-  -isystem "$llama_root/include" -isystem "$llama_root/ggml/include"
+  -I"$bazel_bin" -isystem "$llama_root/include" \
+  -isystem "$llama_root/ggml/include" \
+  -isystem "$json_root/single_include" \
+  -isystem "$tree_sitter_root/lib/include" -isystem "$curl_root/include"
 
 if [[ -s "$fixes_file" ]] && ! grep -q '^Diagnostics: \[\]$' "$fixes_file"; then
   echo "clang-tidy reported diagnostics." >&2
