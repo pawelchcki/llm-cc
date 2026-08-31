@@ -36,39 +36,41 @@ struct Arguments {
   std::optional<std::string> prompt;
   std::optional<std::filesystem::path> file;
   BosMode bos = BosMode::kAuto;
-  std::uint32_t context_size = 2048;
+  std::uint32_t context_size = llmcc::kDefaultContextSize;
   std::int32_t threads = 0;
   std::int32_t gpu_layers = 0;
   bool entropy = false;
   bool override_memory_check = false;
 };
 
+constexpr std::string_view kUsageBeforeContext =
+    "Usage: llm-cc --model MODEL.gguf [INPUT] [OPTIONS]\n\n"
+    "Teacher-force input through a GGUF model and emit observed-token "
+    "probabilities.\n"
+    "No continuation is generated. Output is JSONL on stdout.\n\n"
+    "Input (choose at most one; otherwise stdin):\n"
+    "  --prompt TEXT          score literal text\n"
+    "  --file PATH            score the contents of a file\n\n"
+    "Options:\n"
+    "  --model PATH           local llama.cpp-compatible GGUF (required)\n"
+    "  --bos auto|always|never  beginning-of-stream policy (default: auto)\n"
+    "  --context-size N       maximum tokens in the input (default: ";
+
+constexpr std::string_view kUsageAfterContext =
+    ")\n"
+    "  --threads N            inference threads (default: hardware count)\n"
+    "  --gpu-layers N         layers to offload; -1 means all (default: 0)\n"
+    "  --override-memory-check  bypass the preflight memory check\n"
+    "  --entropy              emit full-vocabulary next-token entropy\n"
+    "  -V, --version          show the program version\n"
+    "  -h, --help             show this help\n";
+
 [[noreturn]] void Usage(std::string_view error = {}) {
   if (!error.empty()) {
     std::cerr << "error: " << error << "\n\n";
   }
-  std::cerr
-      << "Usage: llm-cc --model MODEL.gguf [INPUT] [OPTIONS]\n\n"
-      << "Teacher-force input through a GGUF model and emit observed-token "
-         "probabilities.\n"
-      << "No continuation is generated. Output is JSONL on stdout.\n\n"
-      << "Input (choose at most one; otherwise stdin):\n"
-      << "  --prompt TEXT          score literal text\n"
-      << "  --file PATH            score the contents of a file\n\n"
-      << "Options:\n"
-      << "  --model PATH           local llama.cpp-compatible GGUF (required)\n"
-      << "  --bos auto|always|never  beginning-of-stream policy (default: "
-         "auto)\n"
-      << "  --context-size N       maximum tokens in the input (default: "
-         "2048)\n"
-      << "  --threads N            inference threads (default: hardware "
-         "count)\n"
-      << "  --gpu-layers N         layers to offload; -1 means all (default: "
-         "0)\n"
-      << "  --override-memory-check  bypass the preflight memory check\n"
-      << "  --entropy              emit full-vocabulary next-token entropy\n"
-      << "  -V, --version          show the program version\n"
-      << "  -h, --help             show this help\n";
+  std::cerr << kUsageBeforeContext << llmcc::kDefaultContextSize
+            << kUsageAfterContext;
   std::exit(error.empty() ? 0 : 2);
 }
 
@@ -82,6 +84,48 @@ Integer ParseInteger(std::string_view name, std::string_view value) {
           std::string(value) + "'");
   }
   return parsed;
+}
+
+void SetOption(Arguments& arguments, std::string_view option,
+               std::string_view value) {
+  if ((option == "--prompt" && arguments.file.has_value()) ||
+      (option == "--file" && arguments.prompt.has_value())) {
+    Usage("--prompt and --file are mutually exclusive");
+  }
+  if (option == "--model") {
+    arguments.model = value;
+  } else if (option == "--prompt") {
+    arguments.prompt = value;
+  } else if (option == "--file") {
+    arguments.file = value;
+  } else if (option == "--bos") {
+    if (value == "auto") {
+      arguments.bos = BosMode::kAuto;
+    } else if (value == "always") {
+      arguments.bos = BosMode::kAlways;
+    } else if (value == "never") {
+      arguments.bos = BosMode::kNever;
+    } else {
+      Usage("--bos expects auto, always, or never");
+    }
+  } else if (option == "--context-size") {
+    arguments.context_size = ParseInteger<std::uint32_t>(option, value);
+    if (arguments.context_size == 0) {
+      Usage("--context-size must be positive");
+    }
+  } else if (option == "--threads") {
+    arguments.threads = ParseInteger<std::int32_t>(option, value);
+    if (arguments.threads < 1) {
+      Usage("--threads must be positive");
+    }
+  } else if (option == "--gpu-layers") {
+    arguments.gpu_layers = ParseInteger<std::int32_t>(option, value);
+    if (arguments.gpu_layers < -1) {
+      Usage("--gpu-layers must be -1 or greater");
+    }
+  } else {
+    Usage("unknown option: " + std::string(option));
+  }
 }
 
 Arguments ParseArguments(int argc, char** argv) {
@@ -106,45 +150,7 @@ Arguments ParseArguments(int argc, char** argv) {
     if (i + 1 >= argc) {
       Usage(std::string(option) + " requires a value");
     }
-    const std::string_view value = argv[++i];
-    if ((option == "--prompt" && arguments.file.has_value()) ||
-        (option == "--file" && arguments.prompt.has_value())) {
-      Usage("--prompt and --file are mutually exclusive");
-    }
-    if (option == "--model") {
-      arguments.model = value;
-    } else if (option == "--prompt") {
-      arguments.prompt = value;
-    } else if (option == "--file") {
-      arguments.file = value;
-    } else if (option == "--bos") {
-      if (value == "auto") {
-        arguments.bos = BosMode::kAuto;
-      } else if (value == "always") {
-        arguments.bos = BosMode::kAlways;
-      } else if (value == "never") {
-        arguments.bos = BosMode::kNever;
-      } else {
-        Usage("--bos expects auto, always, or never");
-      }
-    } else if (option == "--context-size") {
-      arguments.context_size = ParseInteger<std::uint32_t>(option, value);
-      if (arguments.context_size == 0) {
-        Usage("--context-size must be positive");
-      }
-    } else if (option == "--threads") {
-      arguments.threads = ParseInteger<std::int32_t>(option, value);
-      if (arguments.threads < 1) {
-        Usage("--threads must be positive");
-      }
-    } else if (option == "--gpu-layers") {
-      arguments.gpu_layers = ParseInteger<std::int32_t>(option, value);
-      if (arguments.gpu_layers < -1) {
-        Usage("--gpu-layers must be -1 or greater");
-      }
-    } else {
-      Usage("unknown option: " + std::string(option));
-    }
+    SetOption(arguments, option, argv[++i]);
   }
   if (arguments.model.empty()) {
     Usage("--model is required");
@@ -379,7 +385,10 @@ int Run(const Arguments& arguments, std::ostream& output,
   }
 
   llama_context_params context_parameters = llama_context_default_params();
-  context_parameters.n_ctx = arguments.context_size;
+  // The option is an input limit, not a reason to reserve the entire KV cache
+  // for short inputs. Size the actual context to this invocation so the large
+  // default remains practical on memory-constrained accelerators.
+  context_parameters.n_ctx = static_cast<std::uint32_t>(tokens.size());
   context_parameters.n_batch = 1;
   context_parameters.n_ubatch = 1;
   context_parameters.n_seq_max = 1;

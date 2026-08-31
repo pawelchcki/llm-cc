@@ -51,6 +51,11 @@ Analysis options are:
 --alpha N
 ```
 
+The default maximum input context is 131,072 tokens. The runtime allocates the
+KV cache for the tokenized input rather than eagerly reserving the entire
+maximum, so short source files retain a small memory footprint. Use `--context`
+to select a different limit.
+
 Without `--model` or `--entropy-jsonl`, `llm-cc` first checks
 `models/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf`, then its model cache. If the
 default model is absent it downloads it over HTTPS to a `.partial` file and
@@ -87,8 +92,9 @@ llm-cc score --model model.gguf --entropy --file source.cpp
 `score` accepts `--prompt` or `--file`, `--bos auto|always|never`,
 `--context-size`, `--threads`, `--gpu-layers`, `--override-memory-check`, and
 `--entropy`. It emits one JSONL object per observed token. It never samples or
-generates a continuation. Mean negative log-likelihood and perplexity go to
-stderr.
+generates a continuation. Its default maximum input context is 131,072 tokens;
+use `--context-size` to override it. Mean negative log-likelihood and perplexity
+go to stderr.
 
 ```json
 {"position":0,"token_id":785,"piece":"The","bytes_hex":"546865","probability":null,"log_probability":null,"entropy":null}
