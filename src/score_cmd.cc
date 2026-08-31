@@ -24,12 +24,18 @@
 #include <thread>
 #include <vector>
 
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#endif
+
 #include "generated/version.h"
 #include "src/scoring.h"
 
 namespace {
 
 enum class BosMode : std::uint8_t { kAuto, kAlways, kNever };
+
+constexpr std::size_t kDecodeBatchSize = 64;
 
 struct Arguments {
   std::filesystem::path model;
@@ -38,7 +44,6 @@ struct Arguments {
   BosMode bos = BosMode::kAuto;
   std::uint32_t context_size = llmcc::kDefaultContextSize;
   std::int32_t threads = 0;
-  std::int32_t gpu_layers = 0;
   bool entropy = false;
   bool override_memory_check = false;
 };
@@ -59,7 +64,6 @@ constexpr std::string_view kUsageBeforeContext =
 constexpr std::string_view kUsageAfterContext =
     ")\n"
     "  --threads N            inference threads (default: hardware count)\n"
-    "  --gpu-layers N         layers to offload; -1 means all (default: 0)\n"
     "  --override-memory-check  bypass the preflight memory check\n"
     "  --entropy              emit full-vocabulary next-token entropy\n"
     "  -V, --version          show the program version\n"
@@ -117,11 +121,6 @@ void SetOption(Arguments& arguments, std::string_view option,
     arguments.threads = ParseInteger<std::int32_t>(option, value);
     if (arguments.threads < 1) {
       Usage("--threads must be positive");
-    }
-  } else if (option == "--gpu-layers") {
-    arguments.gpu_layers = ParseInteger<std::int32_t>(option, value);
-    if (arguments.gpu_layers < -1) {
-      Usage("--gpu-layers must be -1 or greater");
     }
   } else {
     Usage("unknown option: " + std::string(option));
@@ -279,6 +278,28 @@ std::uint64_t ModelFileSize(const std::filesystem::path& path) {
 }
 
 std::optional<std::uint64_t> HostAvailableMemory() {
+#if defined(__APPLE__)
+  vm_statistics64_data_t statistics{};
+  mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
+  if (host_statistics64(mach_host_self(), HOST_VM_INFO64,
+                        reinterpret_cast<host_info64_t>(&statistics),
+                        &count) != KERN_SUCCESS) {
+    return std::nullopt;
+  }
+  vm_size_t page_size = 0;
+  if (host_page_size(mach_host_self(), &page_size) != KERN_SUCCESS ||
+      page_size == 0) {
+    return std::nullopt;
+  }
+  const std::uint64_t available_pages =
+      static_cast<std::uint64_t>(statistics.free_count) +
+      static_cast<std::uint64_t>(statistics.inactive_count) +
+      static_cast<std::uint64_t>(statistics.purgeable_count);
+  if (available_pages > std::numeric_limits<std::uint64_t>::max() / page_size) {
+    return std::nullopt;
+  }
+  return available_pages * page_size;
+#else
   std::ifstream input("/proc/meminfo");
   std::string field;
   std::uint64_t kibibytes = 0;
@@ -294,6 +315,7 @@ std::optional<std::uint64_t> HostAvailableMemory() {
     return kibibytes * 1024;
   }
   return std::nullopt;
+#endif
 }
 
 std::optional<std::uint64_t> GpuAvailableMemory() {
@@ -310,28 +332,27 @@ std::optional<std::uint64_t> GpuAvailableMemory() {
   return std::nullopt;
 }
 
-void CheckAvailableMemory(const Arguments& arguments) {
+void CheckAvailableMemory(const Arguments& arguments, bool use_gpu,
+                          const std::optional<std::uint64_t>& gpu_available) {
   if (arguments.override_memory_check) {
     return;
   }
 
   const std::uint64_t model_bytes = ModelFileSize(arguments.model);
-  const std::optional<std::uint64_t> gpu_available =
-      arguments.gpu_layers == 0 ? std::nullopt : GpuAvailableMemory();
   const std::optional<std::uint64_t> host_available = HostAvailableMemory();
   if (!host_available.has_value()) {
-    if (arguments.gpu_layers != 0 && !gpu_available.has_value()) {
-      const llmcc::MemoryCheckResult result = llmcc::CheckMemory(
-          model_bytes, 0, gpu_available, arguments.gpu_layers, false);
+    if (use_gpu && !gpu_available.has_value()) {
+      const llmcc::MemoryCheckResult result =
+          llmcc::CheckMemory(model_bytes, 0, gpu_available, true, false);
       throw std::runtime_error(result.error);
     }
-    std::cerr << "warning: could not read MemAvailable from /proc/meminfo; "
+    std::cerr << "warning: could not determine available host memory; "
                  "skipping memory check\n";
     return;
   }
 
   const llmcc::MemoryCheckResult result = llmcc::CheckMemory(
-      model_bytes, *host_available, gpu_available, arguments.gpu_layers, false);
+      model_bytes, *host_available, gpu_available, use_gpu, false);
   if (!result.ok) {
     throw std::runtime_error(result.error);
   }
@@ -340,26 +361,53 @@ void CheckAvailableMemory(const Arguments& arguments) {
 using Model = std::unique_ptr<llama_model, decltype(&llama_model_free)>;
 using Context = std::unique_ptr<llama_context, decltype(&llama_free)>;
 
-void DiscardBackendLog(ggml_log_level level, const char* text,
-                       void* user_data) {}
+class BackendLogCapture {
+ public:
+  BackendLogCapture() { llama_log_set(Record, this); }
+  BackendLogCapture(const BackendLogCapture&) = delete;
+  BackendLogCapture& operator=(const BackendLogCapture&) = delete;
+  ~BackendLogCapture() { llama_log_set(nullptr, nullptr); }
+
+  [[nodiscard]] std::string Error() const {
+    std::string result = errors_;
+    while (!result.empty() &&
+           (result.back() == '\n' || result.back() == '\r')) {
+      result.pop_back();
+    }
+    return result;
+  }
+
+ private:
+  static void Record(ggml_log_level level, const char* text, void* user_data) {
+    if (level == GGML_LOG_LEVEL_ERROR && text != nullptr) {
+      static_cast<BackendLogCapture*>(user_data)->errors_ += text;
+    }
+  }
+
+  std::string errors_;
+};
 
 int Run(const Arguments& arguments, std::ostream& output,
         std::ostream& diagnostics,
         const std::optional<std::string>& input_override = std::nullopt) {
   const std::string input =
       input_override.has_value() ? *input_override : ReadInput(arguments);
-  llama_log_set(DiscardBackendLog, nullptr);
+  BackendLogCapture backend_log;
   Backend backend;
-  CheckAvailableMemory(arguments);
+  const std::optional<std::uint64_t> gpu_available = GpuAvailableMemory();
+  const bool use_gpu = gpu_available.has_value();
+  CheckAvailableMemory(arguments, use_gpu, gpu_available);
 
   llama_model_params model_parameters = llama_model_default_params();
-  model_parameters.n_gpu_layers = arguments.gpu_layers;
+  model_parameters.n_gpu_layers = use_gpu ? -1 : 0;
   Model model(
       llama_model_load_from_file(arguments.model.c_str(), model_parameters),
       llama_model_free);
   if (!model) {
-    throw std::runtime_error("could not load model: " +
-                             arguments.model.string());
+    const std::string detail = backend_log.Error();
+    throw std::runtime_error(
+        "could not load model: " + arguments.model.string() +
+        (detail.empty() ? std::string() : ": " + detail));
   }
 
   const llama_vocab* vocabulary = llama_model_get_vocab(model.get());
@@ -384,48 +432,61 @@ int Run(const Arguments& arguments, std::ostream& output,
         " exceeds --context-size " + std::to_string(arguments.context_size));
   }
 
-  llama_context_params context_parameters = llama_context_default_params();
-  // The option is an input limit, not a reason to reserve the entire KV cache
-  // for short inputs. Size the actual context to this invocation so the large
-  // default remains practical on memory-constrained accelerators.
-  context_parameters.n_ctx = static_cast<std::uint32_t>(tokens.size());
-  context_parameters.n_batch = 1;
-  context_parameters.n_ubatch = 1;
-  context_parameters.n_seq_max = 1;
-  context_parameters.n_outputs_max = 1;
-  context_parameters.n_outputs_max_per_seq = 1;
-  context_parameters.n_threads = arguments.threads;
-  context_parameters.n_threads_batch = arguments.threads;
-  Context context(llama_init_from_model(model.get(), context_parameters),
-                  llama_free);
-  if (!context) {
-    throw std::runtime_error("could not create inference context");
-  }
-
   const std::size_t first_observed = prepend_bos ? 1 : 0;
   if (!prepend_bos) {
     const std::string piece = TokenPiece(vocabulary, tokens.front());
     WriteNullScore(output, 0, tokens.front(), piece, arguments.entropy);
   }
+  if (tokens.size() == 1) {
+    diagnostics << "tokens=" << (tokens.size() - first_observed)
+                << " scored=0 mean_nll=null perplexity=null\n";
+    return 0;
+  }
+
+  const std::size_t batch_size = std::min(kDecodeBatchSize, tokens.size() - 1);
+  llama_context_params context_parameters = llama_context_default_params();
+  // The option is an input limit, not a reason to reserve the entire KV cache
+  // for short inputs. Size the actual context to this invocation so the large
+  // default remains practical on memory-constrained accelerators.
+  context_parameters.n_ctx = static_cast<std::uint32_t>(tokens.size());
+  context_parameters.n_batch = static_cast<std::uint32_t>(batch_size);
+  context_parameters.n_ubatch = static_cast<std::uint32_t>(batch_size);
+  context_parameters.n_seq_max = 1;
+  context_parameters.n_outputs_max = static_cast<std::uint32_t>(batch_size);
+  context_parameters.n_outputs_max_per_seq =
+      static_cast<std::uint32_t>(batch_size);
+  context_parameters.n_threads = arguments.threads;
+  context_parameters.n_threads_batch = arguments.threads;
+  Context context(llama_init_from_model(model.get(), context_parameters),
+                  llama_free);
+  if (!context) {
+    const std::string detail = backend_log.Error();
+    throw std::runtime_error("could not create inference context" +
+                             (detail.empty() ? std::string() : ": " + detail));
+  }
 
   const std::int32_t vocabulary_size = llama_vocab_n_tokens(vocabulary);
   double negative_log_likelihood = 0.0;
   std::size_t scored = 0;
-  for (std::size_t source = 0; source + 1 < tokens.size(); ++source) {
-    llama_token token = tokens[source];
-    llama_pos position = static_cast<llama_pos>(source);
-    std::int32_t sequence_count = 1;
-    llama_seq_id sequence = 0;
-    llama_seq_id* sequences = &sequence;
-    std::int8_t output_logits = 1;
+  std::vector<llama_pos> positions(batch_size);
+  std::vector<std::int32_t> sequence_counts(batch_size, 1);
+  llama_seq_id sequence = 0;
+  std::vector<llama_seq_id*> sequences(batch_size, &sequence);
+  std::vector<std::int8_t> output_logits(batch_size, 1);
+  for (std::size_t source = 0; source + 1 < tokens.size();
+       source += batch_size) {
+    const std::size_t count = std::min(batch_size, tokens.size() - 1 - source);
+    for (std::size_t index = 0; index < count; ++index) {
+      positions[index] = static_cast<llama_pos>(source + index);
+    }
     llama_batch batch = {
-        .n_tokens = 1,
-        .token = &token,
+        .n_tokens = static_cast<std::int32_t>(count),
+        .token = tokens.data() + source,
         .embd = nullptr,
-        .pos = &position,
-        .n_seq_id = &sequence_count,
-        .seq_id = &sequences,
-        .logits = &output_logits,
+        .pos = positions.data(),
+        .n_seq_id = sequence_counts.data(),
+        .seq_id = sequences.data(),
+        .logits = output_logits.data(),
     };
     const int decode_result = llama_decode(context.get(), batch);
     if (decode_result != 0) {
@@ -433,25 +494,29 @@ int Run(const Arguments& arguments, std::ostream& output,
                                std::to_string(source) + " with code " +
                                std::to_string(decode_result));
     }
-    float* logits = llama_get_logits_ith(context.get(), 0);
-    if (logits == nullptr) {
-      throw std::runtime_error("model returned no logits");
-    }
+    for (std::size_t index = 0; index < count; ++index) {
+      float* logits =
+          llama_get_logits_ith(context.get(), static_cast<std::int32_t>(index));
+      if (logits == nullptr) {
+        throw std::runtime_error("model returned no logits");
+      }
 
-    const llama_token target = tokens[source + 1];
-    if (target < 0 || target >= vocabulary_size) {
-      throw std::runtime_error(
-          "tokenizer produced a token outside the vocabulary");
+      const std::size_t target_index = source + index + 1;
+      const llama_token target = tokens[target_index];
+      if (target < 0 || target >= vocabulary_size) {
+        throw std::runtime_error(
+            "tokenizer produced a token outside the vocabulary");
+      }
+      const llmcc::TokenScore score = llmcc::ScoreToken(
+          std::span<const float>(logits,
+                                 static_cast<std::size_t>(vocabulary_size)),
+          static_cast<std::size_t>(target), arguments.entropy);
+      const std::string piece = TokenPiece(vocabulary, target);
+      WriteScore(output, target_index - first_observed, target, piece, score,
+                 arguments.entropy);
+      negative_log_likelihood -= score.log_probability;
+      ++scored;
     }
-    const llmcc::TokenScore score = llmcc::ScoreToken(
-        std::span<const float>(logits,
-                               static_cast<std::size_t>(vocabulary_size)),
-        static_cast<std::size_t>(target), arguments.entropy);
-    const std::string piece = TokenPiece(vocabulary, target);
-    WriteScore(output, source + 1 - first_observed, target, piece, score,
-               arguments.entropy);
-    negative_log_likelihood -= score.log_probability;
-    ++scored;
   }
 
   if (scored == 0) {
@@ -478,7 +543,6 @@ std::string ScoreEntropyJsonl(const std::filesystem::path& model,
   Arguments arguments;
   arguments.model = model;
   arguments.context_size = options.context_size;
-  arguments.gpu_layers = options.gpu_layers;
   arguments.entropy = true;
   arguments.threads = static_cast<std::int32_t>(
       std::max(1U, std::thread::hardware_concurrency()));

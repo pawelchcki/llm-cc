@@ -28,8 +28,7 @@ std::string JsonEscapeBytes(std::string_view bytes);
 MemoryCheckResult CheckMemory(std::uint64_t model_bytes,
                               std::uint64_t host_available_bytes,
                               std::optional<std::uint64_t> gpu_available_bytes,
-                              std::int32_t gpu_layers, bool override_check);
-
+                              bool use_gpu, bool override_check);
 }  // namespace llmcc
 
 #endif  // LLM_CC_SCORING_H_

@@ -54,15 +54,14 @@ int main() {
                       "partial removed");
 
   bool downloaded = false;
-  const auto resolved = llmcc::ResolveModel(std::nullopt, std::nullopt, false,
-                                            fs::path(temporary), cache,
-                                            [&](const fs::path& target) {
-                                              downloaded = true;
-                                              std::ofstream(target) << "model";
-                                            });
+  const auto resolved =
+      llmcc::ResolveModel(std::nullopt, false, fs::path(temporary), cache,
+                          [&](const fs::path& target) {
+                            downloaded = true;
+                            std::ofstream(target) << "model";
+                          });
   llmcc::test::Expect(downloaded, "missing default downloaded");
-  llmcc::test::ExpectEq(resolved.value_or(fs::path{}),
-                        cache / llmcc::kDefaultModelFile,
+  llmcc::test::ExpectEq(resolved, cache / llmcc::kDefaultModelFile,
                         "cached default resolved");
   return 0;
 }

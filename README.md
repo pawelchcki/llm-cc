@@ -4,8 +4,8 @@
 Rust, C, and C++. It is one C++20 binary built entirely with Bazel.
 
 The analyzer removes comments with tree-sitter, obtains teacher-forced token
-entropy from a llama.cpp-compatible GGUF (or checked-in JSONL), detects semantic
-boundaries, builds the paper's compositional hierarchy, and prints JSON.
+entropy from a llama.cpp-compatible GGUF, detects semantic boundaries, builds
+the paper's compositional hierarchy, and prints JSON.
 
 ## Build
 
@@ -17,9 +17,10 @@ bazel test --config=cpu //...
 ```
 
 The build downloads checksum-pinned LLVM, llama.cpp, tree-sitter and its Rust,
-C, and C++ source bundles, nlohmann/json, curl, and OpenSSL. The default backend
-is ROCm on Linux and Metal on macOS. Select a backend explicitly when building
-for a different machine:
+C, and C++ source bundles, nlohmann/json, curl, and, on non-macOS platforms,
+OpenSSL. macOS curl builds use Apple's Secure Transport and system trust store.
+The default backend is ROCm on Linux and Metal on macOS. Select a backend
+explicitly when building for a different machine:
 
 ```sh
 bazel build --config=release --config=rocm //:llm-cc
@@ -41,10 +42,10 @@ HIP/CUDA host paths are prefix-mapped and optional host ccache discovery is
 disabled. This keeps sandbox locations out of accelerator artifacts.
 
 Metal builds embed the Metal source in the binary instead of producing a
-machine-specific `.metallib`. `--config=metal` pins Xcode 16.4 and a macOS 14.0
-deployment target. Xcode and the Apple SDK are licensed host prerequisites, so
-this boundary is deterministic but cannot be downloaded hermetically by the
-repository.
+machine-specific `.metallib`. Bazel uses the Xcode selected by `xcode-select`,
+while `--config=metal` retains a macOS 14.0 deployment target. Xcode and the
+Apple SDK are licensed host prerequisites and cannot be downloaded hermetically
+by the repository.
 
 The ROCm archive targets Linux x86_64 Radeon `gfx110X`. Use `--config=cpu` on
 other Linux platforms, or change the pinned TheRock artifact and `GPU_TARGETS`
@@ -57,7 +58,11 @@ bazel run //:install
 bazel run //:install -- --prefix /opt/llm-cc
 ```
 
-Accelerator installs keep the executable and its content-addressed Bazel
+On macOS, installation atomically replaces `bin/llm-cc` with the standalone
+Mach-O executable; its llama.cpp and ggml components are statically linked.
+Existing `libexec/llm-cc` payloads from earlier installs are left untouched.
+
+Linux accelerator installs keep the executable and its content-addressed Bazel
 runfiles payload under `libexec/llm-cc`; the `bin/llm-cc` launcher selects that
 immutable payload. This preserves the pinned vendor runtime after installation.
 
@@ -68,17 +73,14 @@ override it:
 
 ```sh
 llm-cc source.cpp --model /path/to/model.gguf
-llm-cc source.rs --entropy-jsonl entropy.jsonl
 ```
 
 Analysis options are:
 
 ```text
 --lang rust|c|cpp
---entropy-jsonl PATH
 --model GGUF
 --no-download
---gpu-layers N
 --context N
 --tau-percentile N
 --alpha N
@@ -87,12 +89,15 @@ Analysis options are:
 The default maximum input context is 131,072 tokens. The runtime allocates the
 KV cache for the tokenized input rather than eagerly reserving the entire
 maximum, so short source files retain a small memory footprint. Use `--context`
-to select a different limit.
+to select a different limit. Inference offloads all model layers when a GPU
+backend is available and otherwise uses the CPU.
 
-Without `--model` or `--entropy-jsonl`, `llm-cc` first checks
+Without `--model`, `llm-cc` first checks
 `models/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf`, then its model cache. If the
 default model is absent it downloads it over HTTPS to a `.partial` file and
-resumes that file on the next attempt. Disable this with `--no-download`.
+resumes that file on the next attempt. Interactive downloads show a progress
+bar, transferred size, and current average speed. Disable downloading with
+`--no-download`.
 
 The cache directory follows this precedence:
 
@@ -123,7 +128,7 @@ llm-cc score --model model.gguf --entropy --file source.cpp
 ```
 
 `score` accepts `--prompt` or `--file`, `--bos auto|always|never`,
-`--context-size`, `--threads`, `--gpu-layers`, `--override-memory-check`, and
+`--context-size`, `--threads`, `--override-memory-check`, and
 `--entropy`. It emits one JSONL object per observed token. It never samples or
 generates a continuation. Its default maximum input context is 131,072 tokens;
 use `--context-size` to override it. Mean negative log-likelihood and perplexity
@@ -147,9 +152,11 @@ tools/check_glibc_version.sh bazel-bin/llm-cc 2.37
 tools/check_static_link.sh bazel-bin/llm-cc
 ```
 
-The hermetic build uses static OpenSSL and curl for model downloads. The CA
-bundle is selected from `SSL_CERT_FILE` first, followed by common Debian,
-Fedora/RHEL, SUSE, and extracted trust-store paths.
+The hermetic Linux build uses static OpenSSL and curl for model downloads. The
+CA bundle is selected from `SSL_CERT_FILE` first, followed by common Debian,
+Fedora/RHEL, SUSE, and extracted trust-store paths. On macOS, curl uses Secure
+Transport and the system trust store by default; `SSL_CERT_FILE` remains an
+explicit override.
 
 ## Development
 

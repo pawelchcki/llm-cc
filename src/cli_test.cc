@@ -1,4 +1,3 @@
-#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -46,7 +45,6 @@ int main() {  // NOLINT(bugprone-exception-escape)
   const fs::path root = fs::path(test_srcdir) / test_workspace;
   const fs::path binary = root / "llm-cc";
   const fs::path fixtures = root / "testdata/cli";
-  const fs::path output = fs::path(test_tmpdir) / "analysis.json";
 
   const fs::path analyze_help = fs::path(test_tmpdir) / "analyze-help.txt";
   llmcc::test::ExpectEq(Run(Quote(binary) + " --help 2>" + Quote(analyze_help)),
@@ -63,54 +61,17 @@ int main() {  // NOLINT(bugprone-exception-escape)
       Read(score_help).find("default: 131072") != std::string::npos,
       "score advertises the large default context");
 
-  const std::string command =
-      Quote(binary) + " " + Quote(fixtures / "realistic.rs") +
-      " --entropy-jsonl " + Quote(fixtures / "realistic.jsonl") + " >" +
-      Quote(output);
-  llmcc::test::ExpectEq(Run(command), 0, "realistic fixture analysis succeeds");
-  const nlohmann::json actual = nlohmann::json::parse(Read(output));
-  const nlohmann::json expected =
-      nlohmann::json::parse(Read(fixtures / "realistic.expected.json"));
-  llmcc::test::ExpectEq(actual, expected, "realistic output matches golden");
-
-  if (fs::exists("/dev/full")) {
-    const fs::path write_error = fs::path(test_tmpdir) / "write-error.txt";
-    const std::string write_error_command =
-        Quote(binary) + " " + Quote(fixtures / "realistic.rs") +
-        " --entropy-jsonl " + Quote(fixtures / "realistic.jsonl") +
-        " >/dev/full 2>" + Quote(write_error);
-    llmcc::test::Expect(Run(write_error_command) != 0,
-                        "analysis output failures are reported");
-    llmcc::test::Expect(
-        Read(write_error).find("failed to write output") != std::string::npos,
-        "analysis output failure is explained");
-  }
-
-  const fs::path sample_output = fs::path(test_tmpdir) / "sample.json";
-  const std::string sample_command =
-      Quote(binary) + " " + Quote(fixtures / "sample.rs") + " --lang rust " +
-      "--entropy-jsonl " + Quote(fixtures / "sample.jsonl") + " >" +
-      Quote(sample_output);
-  llmcc::test::ExpectEq(Run(sample_command), 0,
-                        "sample Rust analysis succeeds");
-  const nlohmann::json sample = nlohmann::json::parse(Read(sample_output));
-  llmcc::test::Expect(std::abs(sample["tau"].get<double>() - 0.736) < 1e-12,
-                      "sample tau");
-  llmcc::test::Expect(std::abs(sample["llm_cc"].get<double>() - 1.4) < 1e-12,
-                      "sample score");
-  llmcc::test::ExpectEq(sample["total_branch"].get<int>(), 1,
-                        "sample branch total");
-
-  const fs::path cpp_output = fs::path(test_tmpdir) / "sample-cpp.json";
-  const std::string cpp_command =
-      Quote(binary) + " " + Quote(fixtures / "sample.cpp") +
-      " --entropy-jsonl " + Quote(fixtures / "sample_cpp.jsonl") + " >" +
-      Quote(cpp_output);
-  llmcc::test::ExpectEq(Run(cpp_command), 0, "sample C++ analysis succeeds");
-  const nlohmann::json cpp = nlohmann::json::parse(Read(cpp_output));
-  llmcc::test::Expect(std::abs(cpp["tau"].get<double>() - 0.535) < 1e-12,
-                      "C++ sample tau");
-  llmcc::test::Expect(!cpp["units"].empty(), "C++ sample has units");
+  const fs::path removed_option_error =
+      fs::path(test_tmpdir) / "removed-option-error.txt";
+  const std::string removed_option_command =
+      Quote(binary) + " " + Quote(fixtures / "sample.rs") +
+      " --entropy-jsonl " + Quote(fixtures / "sample.jsonl") + " 2>" +
+      Quote(removed_option_error);
+  llmcc::test::Expect(Run(removed_option_command) != 0,
+                      "removed entropy option is rejected");
+  llmcc::test::Expect(
+      Read(removed_option_error).find("unknown option") != std::string::npos,
+      "removed entropy option reports an unknown option");
 
   const fs::path cache = fs::path(test_tmpdir) / "model-cache";
   fs::create_directories(cache);
@@ -172,13 +133,5 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::ExpectEq(Read(path_output), cache.string() + "\n",
                         "models path honors override");
 
-  const fs::path read_error = fs::path(test_tmpdir) / "read-error.txt";
-  const std::string read_error_command =
-      Quote(binary) + " " + Quote(fixtures) + " --lang rust --entropy-jsonl " +
-      Quote(fixtures / "sample.jsonl") + " 2>" + Quote(read_error);
-  llmcc::test::Expect(Run(read_error_command) != 0,
-                      "source read failures are reported");
-  llmcc::test::Expect(Read(read_error).find("failed") != std::string::npos,
-                      "source read failure is explained");
   return 0;
 }

@@ -40,13 +40,13 @@ std::string FormatBytes(std::uint64_t bytes) {
 MemoryCheckResult CheckMemory(std::uint64_t model_bytes,
                               std::uint64_t host_available_bytes,
                               std::optional<std::uint64_t> gpu_available_bytes,
-                              std::int32_t gpu_layers, bool override_check) {
+                              bool use_gpu, bool override_check) {
   if (override_check) {
     return {.ok = true, .error = {}};
   }
 
   const std::uint64_t weight_bytes = EstimatedWeightBytes(model_bytes);
-  if (gpu_layers == 0) {
+  if (!use_gpu) {
     const std::uint64_t host_required =
         SaturatingAdd(weight_bytes, kContextOverheadBytes);
     if (host_required <= host_available_bytes) {
@@ -63,7 +63,7 @@ MemoryCheckResult CheckMemory(std::uint64_t model_bytes,
   if (!gpu_available_bytes.has_value()) {
     return {
         .ok = false,
-        .error = "--gpu-layers is nonzero, but the build has no GPU backend"};
+        .error = "GPU acceleration selected, but the build has no GPU backend"};
   }
 
   // Heuristic: when any layers are offloaded, all model weights count against

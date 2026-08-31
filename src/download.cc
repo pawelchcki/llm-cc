@@ -1,13 +1,19 @@
 #include "src/download.h"
 
 #include <curl/curl.h>
+#include <unistd.h>
 
+#include <algorithm>
 #include <array>
+#include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -34,6 +40,123 @@ using Curl = std::unique_ptr<CURL, decltype(&curl_easy_cleanup)>;
 struct WriteContext {
   std::ofstream* output;
   std::string error;
+};
+
+std::string FormatBytes(double bytes) {
+  constexpr std::array<std::string_view, 5> kUnits = {"B", "KiB", "MiB", "GiB",
+                                                      "TiB"};
+  std::size_t unit = 0;
+  while (bytes >= 1024.0 && unit + 1 < kUnits.size()) {
+    bytes /= 1024.0;
+    ++unit;
+  }
+  std::ostringstream output;
+  output << std::fixed << std::setprecision(unit == 0 ? 0 : 1) << bytes << ' '
+         << kUnits[unit];
+  return output.str();
+}
+
+class DownloadProgress {
+ public:
+  explicit DownloadProgress(std::uint64_t resume_offset)
+      : resume_offset_(resume_offset),
+        interactive_(isatty(STDERR_FILENO) != 0),
+        started_(Clock::now()),
+        last_update_(started_) {}
+
+  DownloadProgress(const DownloadProgress&) = delete;
+  DownloadProgress& operator=(const DownloadProgress&) = delete;
+
+  static int Update(void* opaque, curl_off_t download_total,
+                    curl_off_t downloaded, curl_off_t /*upload_total*/,
+                    curl_off_t /*uploaded*/) {
+    auto* progress = static_cast<DownloadProgress*>(opaque);
+    progress->download_total_ = std::max<curl_off_t>(0, download_total);
+    progress->downloaded_ = std::max<curl_off_t>(0, downloaded);
+    const bool complete = progress->download_total_ > 0 &&
+                          progress->downloaded_ >= progress->download_total_;
+    progress->Render(complete);
+    return 0;
+  }
+
+  void Finish() {
+    Render(true);
+    if (interactive_ && rendered_) {
+      std::cerr << '\n';
+    }
+  }
+
+ private:
+  using Clock = std::chrono::steady_clock;
+
+  void Render(bool force) {
+    const auto now = Clock::now();
+    if (force && rendered_ && download_total_ == rendered_total_ &&
+        downloaded_ == rendered_downloaded_) {
+      return;
+    }
+    if (!force && now - last_update_ < std::chrono::milliseconds(100)) {
+      return;
+    }
+    if (!interactive_ && !force) {
+      return;
+    }
+    last_update_ = now;
+
+    const auto elapsed =
+        std::chrono::duration_cast<std::chrono::duration<double>>(now -
+                                                                  started_)
+            .count();
+    const auto transferred = static_cast<std::uint64_t>(downloaded_);
+    const std::uint64_t current = resume_offset_ + transferred;
+    const double speed =
+        elapsed > 0.0 ? static_cast<double>(transferred) / elapsed : 0.0;
+
+    std::ostringstream line;
+    if (download_total_ > 0) {
+      const std::uint64_t total =
+          resume_offset_ + static_cast<std::uint64_t>(download_total_);
+      const double fraction = std::clamp(
+          static_cast<double>(current) / static_cast<double>(total), 0.0, 1.0);
+      constexpr std::size_t kBarWidth = 28;
+      const auto filled =
+          static_cast<std::size_t>(fraction * static_cast<double>(kBarWidth));
+      line << '[' << std::string(filled, '#')
+           << std::string(kBarWidth - filled, '-') << "] " << std::fixed
+           << std::setprecision(1) << (fraction * 100.0) << "% "
+           << FormatBytes(static_cast<double>(current)) << "/"
+           << FormatBytes(static_cast<double>(total));
+    } else {
+      line << FormatBytes(static_cast<double>(current));
+    }
+    line << "  " << FormatBytes(speed) << "/s";
+
+    const std::string rendered = line.str();
+    if (interactive_) {
+      std::cerr << '\r' << rendered;
+      if (rendered.size() < previous_width_) {
+        std::cerr << std::string(previous_width_ - rendered.size(), ' ');
+      }
+      std::cerr.flush();
+      previous_width_ = rendered.size();
+    } else {
+      std::cerr << rendered << '\n';
+    }
+    rendered_ = true;
+    rendered_total_ = download_total_;
+    rendered_downloaded_ = downloaded_;
+  }
+
+  std::uint64_t resume_offset_;
+  bool interactive_;
+  Clock::time_point started_;
+  Clock::time_point last_update_;
+  curl_off_t download_total_ = 0;
+  curl_off_t downloaded_ = 0;
+  curl_off_t rendered_total_ = -1;
+  curl_off_t rendered_downloaded_ = -1;
+  std::size_t previous_width_ = 0;
+  bool rendered_ = false;
 };
 
 std::size_t WriteBytes(char* contents, std::size_t size, std::size_t count,
@@ -180,6 +303,7 @@ void DownloadDefaultModel(const std::filesystem::path& target) {
                                partial.string());
     }
     WriteContext write_context{.output = &output, .error = {}};
+    DownloadProgress progress(resume_offset);
     std::array<char, CURL_ERROR_SIZE> error_buffer{};
     SetOption(curl.get(), CURLOPT_URL, url.c_str());
     SetOption(curl.get(), CURLOPT_FOLLOWLOCATION, 1L);
@@ -188,6 +312,9 @@ void DownloadDefaultModel(const std::filesystem::path& target) {
     SetOption(curl.get(), CURLOPT_ERRORBUFFER, error_buffer.data());
     SetOption(curl.get(), CURLOPT_WRITEFUNCTION, &WriteBytes);
     SetOption(curl.get(), CURLOPT_WRITEDATA, &write_context);
+    SetOption(curl.get(), CURLOPT_NOPROGRESS, 0L);
+    SetOption(curl.get(), CURLOPT_XFERINFOFUNCTION, &DownloadProgress::Update);
+    SetOption(curl.get(), CURLOPT_XFERINFODATA, &progress);
     if (resume_offset > 0) {
       SetOption(curl.get(), CURLOPT_RESUME_FROM_LARGE,
                 static_cast<curl_off_t>(resume_offset));
@@ -200,6 +327,7 @@ void DownloadDefaultModel(const std::filesystem::path& target) {
     }
 
     const CURLcode result = curl_easy_perform(curl.get());
+    progress.Finish();
     long status = 0;
     curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status);
     if (resume_offset > 0 && status == 200) {
