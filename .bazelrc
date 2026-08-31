@@ -10,14 +10,12 @@ build:cuda --//:backend=cuda
 build:rocm --//:backend=rocm
 build:metal --//:backend=metal
 
-# Pin the non-redistributable Apple SDK boundary. Metal kernels are embedded as
-# source, avoiding build-time metallib output that varies between Xcode builds.
-build:metal --xcode_version=16.4
+# Metal kernels are embedded as source, avoiding build-time metallib output
+# that varies between Xcode builds. Bazel discovers the active Xcode toolchain.
 build:metal --macos_minimum_os=14.0
 
 # Applied automatically on macOS by --enable_platform_specific_config so the
-# default auto backend has the same compiler/SDK boundary as --config=metal.
-build:macos --xcode_version=16.4
+# default auto backend has the same deployment target as --config=metal.
 build:macos --macos_minimum_os=14.0
 
 build:release --compilation_mode=opt

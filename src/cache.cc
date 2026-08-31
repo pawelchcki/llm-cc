@@ -249,21 +249,13 @@ void RemoveModel(const std::filesystem::path& cache_dir,
   WriteManifest(cache_dir, manifest);
 }
 
-std::optional<std::filesystem::path> ResolveModel(
-    std::optional<std::filesystem::path> model,
-    const std::optional<std::filesystem::path>& entropy_jsonl, bool no_download,
+std::filesystem::path ResolveModel(
+    std::optional<std::filesystem::path> model, bool no_download,
     const std::filesystem::path& current_dir,
     const std::filesystem::path& cache_dir,
     const std::function<void(const std::filesystem::path&)>& downloader) {
-  if (model.has_value() && entropy_jsonl.has_value()) {
-    throw std::invalid_argument(
-        "provide exactly one of --entropy-jsonl or --model");
-  }
   if (model.has_value()) {
-    return model;
-  }
-  if (entropy_jsonl.has_value()) {
-    return std::nullopt;
+    return *model;
   }
   std::filesystem::path legacy = current_dir / kLegacyModelPath;
   if (std::filesystem::exists(legacy)) {

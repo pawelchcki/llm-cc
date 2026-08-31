@@ -1,5 +1,33 @@
 """Small build helpers for project targets."""
 
+def curl_cmake_options(**tls):
+    options = {
+        "BUILD_CURL_EXE": "OFF",
+        "BUILD_EXAMPLES": "OFF",
+        "BUILD_LIBCURL_DOCS": "OFF",
+        "BUILD_MISC_DOCS": "OFF",
+        "BUILD_SHARED_LIBS": "OFF",
+        "BUILD_TESTING": "OFF",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_DISABLE_FIND_PACKAGE_PkgConfig": "ON",
+        "CMAKE_INSTALL_LIBDIR": "lib",
+        "CURL_BROTLI": "OFF",
+        "CURL_DISABLE_LDAP": "ON",
+        "CURL_USE_GSSAPI": "OFF",
+        "CURL_USE_LIBPSL": "OFF",
+        "CURL_USE_LIBSSH2": "OFF",
+        "CURL_ZLIB": "OFF",
+        "CURL_ZSTD": "OFF",
+        "HTTP_ONLY": "ON",
+        "USE_LIBIDN2": "OFF",
+        "USE_NGHTTP2": "OFF",
+        "USE_NGHTTP3": "OFF",
+        "USE_NGTCP2": "OFF",
+        "USE_QUICHE": "OFF",
+    }
+    options.update(tls)
+    return options
+
 def _install_launcher_impl(ctx):
     launcher = ctx.actions.declare_file(ctx.label.name)
     workspace = ctx.workspace_name

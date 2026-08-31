@@ -34,6 +34,18 @@ if [[ -z "$prefix" ]]; then
   exit 2
 fi
 
+bin_dir="$prefix/bin"
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  mkdir -p "$bin_dir"
+  installed_binary="$(mktemp "$bin_dir/.llm-cc.XXXXXXXX")"
+  trap 'rm -f -- "$installed_binary"' EXIT
+  install -m 0755 "$llm_cc_binary" "$installed_binary"
+  mv "$installed_binary" "$bin_dir/llm-cc"
+  trap - EXIT
+  echo "Installed $("$bin_dir/llm-cc" --version) to $bin_dir/llm-cc"
+  exit 0
+fi
+
 workspace="${BUILD_WORKSPACE_DIRECTORY:-}"
 if [[ -n "$workspace" && -x "$workspace/tools/version.sh" ]]; then
   version_script="$workspace/tools/version.sh"
@@ -41,7 +53,6 @@ else
   version_script="$version_script_runfile"
 fi
 version="$("$version_script")"
-bin_dir="$prefix/bin"
 libexec_root="$prefix/libexec/llm-cc"
 if command -v sha256sum >/dev/null 2>&1; then
   hash_file() { sha256sum "$1" | cut -d' ' -f1; }
