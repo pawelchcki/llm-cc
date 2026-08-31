@@ -113,6 +113,7 @@ cc_import(
 
 filegroup(
     name = "runtime_files",
+    # Source-file labels preserve the SDK-relative paths in runfiles.
     srcs = glob([
         "sdk/lib/libcublas.so*",
         "sdk/lib/libcublasLt.so*",
@@ -124,12 +125,7 @@ cc_library(
     name = "runtime",
     # Vendor libraries are runtime data, not direct link dependencies of
     # llm-cc. libggml-cuda records the subset it needs in DT_NEEDED.
-    data = [
-        ":runtime_files",
-        ":cublas",
-        ":cublas_lt",
-        ":cudart",
-    ],
+    data = [":runtime_files"],
 )
 """,
     )

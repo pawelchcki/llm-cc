@@ -120,7 +120,31 @@ cc_import(
 
 filegroup(
     name = "runtime_files",
-    srcs = glob([
+    # Use source-file labels so Bazel preserves the SDK-relative paths in
+    # runfiles. cc_import targets materialize under _solib instead.
+    srcs = [
+        "lib/libamd_comgr.so.3",
+        "lib/libamdhip64.so.7",
+        "lib/libhipblas.so.3",
+        "lib/libhipblaslt.so.1",
+        "lib/libhsa-runtime64.so.1",
+        "lib/librocblas.so.5",
+        "lib/librocm_kpack.so.0",
+        "lib/librocprofiler-register.so.0",
+        "lib/librocroller.so.1",
+        "lib/librocsolver.so.0",
+        "lib/libroctx64.so.4",
+        "lib/llvm/lib/libLLVM.so.23.0git",
+        "lib/llvm/lib/libclang-cpp.so.23.0git",
+        "lib/rocm_sysdeps/lib/librocm_sysdeps_bz2.so",
+        "lib/rocm_sysdeps/lib/librocm_sysdeps_drm.so.2",
+        "lib/rocm_sysdeps/lib/librocm_sysdeps_drm_amdgpu.so.1",
+        "lib/rocm_sysdeps/lib/librocm_sysdeps_elf.so.1",
+        "lib/rocm_sysdeps/lib/librocm_sysdeps_liblzma.so.5",
+        "lib/rocm_sysdeps/lib/librocm_sysdeps_numa.so.1",
+        "lib/rocm_sysdeps/lib/librocm_sysdeps_z.so.1",
+        "lib/rocm_sysdeps/lib/librocm_sysdeps_zstd.so.1",
+    ] + glob([
         ".kpack/**",
         "lib/hipblaslt/**",
         "lib/rocblas/**",
@@ -131,28 +155,5 @@ cc_library(
     name = "runtime",
     # Vendor libraries are runtime data, not direct link dependencies of
     # llm-cc. libggml-hip records the subset it actually needs in DT_NEEDED.
-    data = [
-        ":runtime_files",
-        ":amd_comgr",
-        ":amdhip",
-        ":clang_cpp",
-        ":hipblas",
-        ":hipblaslt",
-        ":hsa_runtime",
-        ":llvm",
-        ":rocblas",
-        ":rocm_kpack",
-        ":rocprofiler_register",
-        ":rocroller",
-        ":rocsolver",
-        ":roctx",
-        ":sysdeps_bz2",
-        ":sysdeps_drm",
-        ":sysdeps_drm_amdgpu",
-        ":sysdeps_elf",
-        ":sysdeps_liblzma",
-        ":sysdeps_numa",
-        ":sysdeps_z",
-        ":sysdeps_zstd",
-    ],
+    data = [":runtime_files"],
 )
