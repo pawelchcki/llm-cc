@@ -48,6 +48,21 @@ int main() {  // NOLINT(bugprone-exception-escape)
   const fs::path fixtures = root / "testdata/cli";
   const fs::path output = fs::path(test_tmpdir) / "analysis.json";
 
+  const fs::path analyze_help = fs::path(test_tmpdir) / "analyze-help.txt";
+  llmcc::test::ExpectEq(Run(Quote(binary) + " --help 2>" + Quote(analyze_help)),
+                        0, "analysis help succeeds");
+  llmcc::test::Expect(
+      Read(analyze_help).find("default: 131072") != std::string::npos,
+      "analysis advertises the large default context");
+
+  const fs::path score_help = fs::path(test_tmpdir) / "score-help.txt";
+  llmcc::test::ExpectEq(
+      Run(Quote(binary) + " score --help 2>" + Quote(score_help)), 0,
+      "score help succeeds");
+  llmcc::test::Expect(
+      Read(score_help).find("default: 131072") != std::string::npos,
+      "score advertises the large default context");
+
   const std::string command =
       Quote(binary) + " " + Quote(fixtures / "realistic.rs") +
       " --entropy-jsonl " + Quote(fixtures / "realistic.jsonl") + " >" +

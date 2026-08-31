@@ -28,32 +28,37 @@ struct AnalyzeArguments {
   std::optional<std::filesystem::path> model;
   bool no_download = false;
   std::int32_t gpu_layers = 0;
-  std::uint32_t context = 2048;
+  std::uint32_t context = llmcc::kDefaultContextSize;
   bool gpu_layers_set = false;
   bool context_set = false;
   double tau_percentile = 67.0;
   double alpha = 0.8;
 };
 
+constexpr std::string_view kUsageBeforeContext =
+    "Usage:\n"
+    "  llm-cc SOURCE [--lang rust|c|cpp] [--entropy-jsonl PATH | "
+    "--model GGUF] [OPTIONS]\n"
+    "  llm-cc score --model GGUF [--prompt TEXT | --file PATH] [OPTIONS]\n"
+    "  llm-cc models list|remove FILE|path\n\n"
+    "Analysis options:\n"
+    "  --no-download          do not fetch the default model\n"
+    "  --gpu-layers N         transformer layers to offload (-1 means all)\n"
+    "  --context N            maximum input tokens (default: ";
+
+constexpr std::string_view kUsageAfterContext =
+    ")\n"
+    "  --tau-percentile N     entropy percentile (default: 67)\n"
+    "  --alpha N              branching weight (default: 0.8)\n"
+    "  -V, --version          show the program version\n"
+    "  -h, --help             show this help\n";
+
 [[noreturn]] void Usage(std::string_view error = {}) {
   if (!error.empty()) {
     std::cerr << "error: " << error << "\n\n";
   }
-  std::cerr
-      << "Usage:\n"
-      << "  llm-cc SOURCE [--lang rust|c|cpp] [--entropy-jsonl PATH | "
-         "--model GGUF] [OPTIONS]\n"
-      << "  llm-cc score --model GGUF [--prompt TEXT | --file PATH] [OPTIONS]\n"
-      << "  llm-cc models list|remove FILE|path\n\n"
-      << "Analysis options:\n"
-      << "  --no-download          do not fetch the default model\n"
-      << "  --gpu-layers N         transformer layers to offload (-1 means "
-         "all)\n"
-      << "  --context N            maximum inference context (default: 2048)\n"
-      << "  --tau-percentile N     entropy percentile (default: 67)\n"
-      << "  --alpha N              branching weight (default: 0.8)\n"
-      << "  -V, --version          show the program version\n"
-      << "  -h, --help             show this help\n";
+  std::cerr << kUsageBeforeContext << llmcc::kDefaultContextSize
+            << kUsageAfterContext;
   std::exit(error.empty() ? 0 : 2);
 }
 
@@ -67,6 +72,35 @@ Number ParseNumber(std::string_view option, std::string_view value) {
           std::string(value) + "'");
   }
   return result;
+}
+
+void SetAnalyzeOption(AnalyzeArguments& arguments, std::string_view option,
+                      std::string_view value) {
+  if (option == "--lang") {
+    arguments.language = value;
+  } else if (option == "--entropy-jsonl") {
+    arguments.entropy_jsonl = value;
+  } else if (option == "--model") {
+    arguments.model = value;
+  } else if (option == "--gpu-layers") {
+    arguments.gpu_layers = ParseNumber<std::int32_t>(option, value);
+    arguments.gpu_layers_set = true;
+    if (arguments.gpu_layers < -1) {
+      Usage("--gpu-layers must be -1 or greater");
+    }
+  } else if (option == "--context") {
+    arguments.context = ParseNumber<std::uint32_t>(option, value);
+    arguments.context_set = true;
+    if (arguments.context == 0) {
+      Usage("--context must be positive");
+    }
+  } else if (option == "--tau-percentile") {
+    arguments.tau_percentile = ParseNumber<double>(option, value);
+  } else if (option == "--alpha") {
+    arguments.alpha = ParseNumber<double>(option, value);
+  } else {
+    Usage("unknown option: " + std::string(option));
+  }
 }
 
 AnalyzeArguments ParseAnalyzeArguments(int argc, char** argv) {
@@ -94,32 +128,7 @@ AnalyzeArguments ParseAnalyzeArguments(int argc, char** argv) {
     if (index + 1 >= argc) {
       Usage(std::string(option) + " requires a value");
     }
-    const std::string_view value = argv[++index];
-    if (option == "--lang") {
-      arguments.language = value;
-    } else if (option == "--entropy-jsonl") {
-      arguments.entropy_jsonl = value;
-    } else if (option == "--model") {
-      arguments.model = value;
-    } else if (option == "--gpu-layers") {
-      arguments.gpu_layers = ParseNumber<std::int32_t>(option, value);
-      arguments.gpu_layers_set = true;
-      if (arguments.gpu_layers < -1) {
-        Usage("--gpu-layers must be -1 or greater");
-      }
-    } else if (option == "--context") {
-      arguments.context = ParseNumber<std::uint32_t>(option, value);
-      arguments.context_set = true;
-      if (arguments.context == 0) {
-        Usage("--context must be positive");
-      }
-    } else if (option == "--tau-percentile") {
-      arguments.tau_percentile = ParseNumber<double>(option, value);
-    } else if (option == "--alpha") {
-      arguments.alpha = ParseNumber<double>(option, value);
-    } else {
-      Usage("unknown option: " + std::string(option));
-    }
+    SetAnalyzeOption(arguments, option, argv[++index]);
   }
   if (arguments.source.empty()) {
     Usage("a source file is required unless a subcommand is used");
@@ -175,6 +184,22 @@ int RunModels(int argc, char** argv) {
   Usage("invalid models command");
 }
 
+std::string LoadEntropyJsonl(const AnalyzeArguments& arguments,
+                             const std::filesystem::path& cache_dir,
+                             const std::optional<std::filesystem::path>& model,
+                             std::string_view preprocessed) {
+  if (arguments.entropy_jsonl.has_value()) {
+    return ReadFile(*arguments.entropy_jsonl);
+  }
+  if (!model.has_value()) {
+    throw std::logic_error("model resolution returned no model");
+  }
+  llmcc::MarkCachedModelUsed(cache_dir, *model);
+  return llmcc::ScoreEntropyJsonl(
+      *model, preprocessed,
+      {.gpu_layers = arguments.gpu_layers, .context_size = arguments.context});
+}
+
 int RunAnalyze(const AnalyzeArguments& arguments) {
   const std::filesystem::path cache_dir = llmcc::CacheDir();
   const auto model = llmcc::ResolveModel(
@@ -188,20 +213,8 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
   auto [preprocessed, offset_map] = llmcc::StripComments(source, language);
   const auto events = llmcc::StructuralEvents(preprocessed, language);
 
-  std::string jsonl;
-  const std::filesystem::path resolved_model =
-      model.value_or(std::filesystem::path{});
-  if (arguments.entropy_jsonl.has_value()) {
-    jsonl = ReadFile(*arguments.entropy_jsonl);
-  } else {
-    if (resolved_model.empty()) {
-      throw std::logic_error("model resolution returned no model");
-    }
-    llmcc::MarkCachedModelUsed(cache_dir, resolved_model);
-    jsonl = llmcc::ScoreEntropyJsonl(resolved_model, preprocessed,
-                                     {.gpu_layers = arguments.gpu_layers,
-                                      .context_size = arguments.context});
-  }
+  const std::string jsonl =
+      LoadEntropyJsonl(arguments, cache_dir, model, preprocessed);
   const auto records = llmcc::ParseEntropyJsonl(jsonl);
   const auto tokens = llmcc::AlignTokens(preprocessed, records);
   llmcc::Analysis analysis =

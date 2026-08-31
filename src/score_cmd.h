@@ -8,9 +8,11 @@
 
 namespace llmcc {
 
+inline constexpr std::uint32_t kDefaultContextSize = 128U * 1024U;
+
 struct InferenceOptions {
   std::int32_t gpu_layers = 0;
-  std::uint32_t context_size = 2048;
+  std::uint32_t context_size = kDefaultContextSize;
 };
 
 std::string ScoreEntropyJsonl(const std::filesystem::path& model,
