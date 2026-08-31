@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000..c528c5f
 --- /dev/null
 +++ b/x86_64-buildroot-linux-gnu/sysroot/BUILD.bazel
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,43 @@
 +load("@rules_cc//cc:cc_import.bzl", "cc_import")
 +load("@rules_cc//cc:cc_library.bzl", "cc_library")
 +
@@ -11,7 +11,17 @@ index 0000000..c528c5f
 +
 +filegroup(
 +    name = "sysroot",
-+    srcs = ["."],
++    # Keep pseudo-filesystems such as /dev and /proc out of Bazel's input
++    # graph. Only the compiler and linker inputs belong in the hermetic
++    # sysroot closure.
++    srcs = [
++        "lib64",
++        "usr/lib64",
++    ] + glob([
++        "lib/**",
++        "usr/include/**",
++        "usr/lib/**",
++    ]),
 +)
 +
 +cc_import(
