@@ -215,13 +215,19 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
 
 int main(int argc, char** argv) {
   try {
+    int result = 0;
     if (argc > 1 && std::string_view(argv[1]) == "score") {
-      return llmcc::RunScoreCommand(argc - 1, argv + 1);
+      result = llmcc::RunScoreCommand(argc - 1, argv + 1);
+    } else if (argc > 1 && std::string_view(argv[1]) == "models") {
+      result = RunModels(argc, argv);
+    } else {
+      result = RunAnalyze(ParseAnalyzeArguments(argc, argv));
     }
-    if (argc > 1 && std::string_view(argv[1]) == "models") {
-      return RunModels(argc, argv);
+    std::cout.flush();
+    if (!std::cout) {
+      throw std::runtime_error("failed to write output");
     }
-    return RunAnalyze(ParseAnalyzeArguments(argc, argv));
+    return result;
   } catch (const std::exception& error) {
     std::cerr << "error: " << error.what() << '\n';
     return 1;

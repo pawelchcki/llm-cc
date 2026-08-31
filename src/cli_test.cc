@@ -58,6 +58,19 @@ int main() {  // NOLINT(bugprone-exception-escape)
       nlohmann::json::parse(Read(fixtures / "realistic.expected.json"));
   llmcc::test::ExpectEq(actual, expected, "realistic output matches golden");
 
+  if (fs::exists("/dev/full")) {
+    const fs::path write_error = fs::path(test_tmpdir) / "write-error.txt";
+    const std::string write_error_command =
+        Quote(binary) + " " + Quote(fixtures / "realistic.rs") +
+        " --entropy-jsonl " + Quote(fixtures / "realistic.jsonl") +
+        " >/dev/full 2>" + Quote(write_error);
+    llmcc::test::Expect(Run(write_error_command) != 0,
+                        "analysis output failures are reported");
+    llmcc::test::Expect(
+        Read(write_error).find("failed to write output") != std::string::npos,
+        "analysis output failure is explained");
+  }
+
   const fs::path sample_output = fs::path(test_tmpdir) / "sample.json";
   const std::string sample_command =
       Quote(binary) + " " + Quote(fixtures / "sample.rs") + " --lang rust " +
