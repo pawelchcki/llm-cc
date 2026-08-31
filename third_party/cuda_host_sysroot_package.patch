@@ -1,0 +1,49 @@
+diff --git a/x86_64-buildroot-linux-gnu/sysroot/BUILD.bazel b/x86_64-buildroot-linux-gnu/sysroot/BUILD.bazel
+new file mode 100644
+index 0000000..c528c5f
+--- /dev/null
++++ b/x86_64-buildroot-linux-gnu/sysroot/BUILD.bazel
+@@ -0,0 +1,43 @@
++load("@rules_cc//cc:cc_import.bzl", "cc_import")
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
++
++package(default_visibility = ["//visibility:public"])
++
++filegroup(
++    name = "sysroot",
++    # Keep pseudo-filesystems such as /dev and /proc out of Bazel's input
++    # graph. Only the compiler and linker inputs belong in the hermetic
++    # sysroot closure.
++    srcs = [
++        "lib64",
++        "usr/lib64",
++    ] + glob([
++        "lib/**",
++        "usr/include/**",
++        "usr/lib/**",
++    ]),
++)
++
++cc_import(
++    name = "gcc_s",
++    shared_library = "lib/libgcc_s.so.1",
++)
++
++cc_import(
++    name = "libstdcpp",
++    shared_library = "usr/lib/libstdc++.so.6",
++)
++
++filegroup(
++    name = "runtime_files",
++    srcs = [
++        "lib/libgcc_s.so.1",
++        "usr/lib/libstdc++.so.6",
++    ],
++)
++
++cc_library(
++    name = "runtime",
++    data = [":runtime_files"],
++    deps = [":gcc_s", ":libstdcpp"],
++)

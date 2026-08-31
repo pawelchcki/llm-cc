@@ -2,11 +2,14 @@ load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make_variant")
 load(
     "//:build_defs.bzl",
     "install_launcher",
     "llama_cmake_options",
+    "llama_cuda_cmake_options",
     "llama_rocm_cmake_options",
 )
 
@@ -51,34 +54,112 @@ cc_library(
     hdrs = [":version_header"],
 )
 
+string_flag(
+    name = "backend",
+    build_setting_default = "auto",
+    values = [
+        "auto",
+        "cpu",
+        "cuda",
+        "metal",
+        "rocm",
+    ],
+)
+
 config_setting(
     name = "backend_cuda",
-    define_values = {"backend": "cuda"},
+    flag_values = {":backend": "cuda"},
 )
 
 config_setting(
+    name = "backend_metal_explicit",
+    flag_values = {":backend": "metal"},
+)
+
+config_setting(
+    name = "backend_rocm_explicit",
+    flag_values = {":backend": "rocm"},
+)
+
+config_setting(
+    name = "backend_auto",
+    flag_values = {":backend": "auto"},
+)
+
+config_setting(
+    name = "target_linux_x86_64",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+)
+
+config_setting(
+    name = "host_macos",
+    constraint_values = ["@platforms//os:macos"],
+)
+
+selects.config_setting_group(
+    name = "backend_rocm_auto",
+    match_all = [
+        ":backend_auto",
+        ":target_linux_x86_64",
+    ],
+)
+
+selects.config_setting_group(
+    name = "backend_metal_auto",
+    match_all = [
+        ":backend_auto",
+        ":host_macos",
+    ],
+)
+
+selects.config_setting_group(
     name = "backend_rocm",
-    define_values = {"backend": "rocm"},
+    match_any = [
+        ":backend_rocm_auto",
+        ":backend_rocm_explicit",
+    ],
 )
 
-config_setting(
+selects.config_setting_group(
     name = "backend_metal",
-    define_values = {"backend": "metal"},
+    match_any = [
+        ":backend_metal_auto",
+        ":backend_metal_explicit",
+    ],
 )
 
 cmake(
     name = "llama_cpp",
     cache_entries = select({
-        ":backend_cuda": llama_cmake_options(
-            BUILD_SHARED_LIBS = "ON",
-            GGML_CUDA = "ON",
-        ),
+        ":backend_cuda": llama_cuda_cmake_options(),
         ":backend_rocm": llama_rocm_cmake_options(),
         ":backend_metal": llama_cmake_options(
             BUILD_SHARED_LIBS = "ON",
             GGML_METAL = "ON",
+            GGML_METAL_EMBED_LIBRARY = "ON",
+            GGML_METAL_MACOSX_VERSION_MIN = "14.0",
+            GGML_METAL_NDEBUG = "ON",
+            GGML_METAL_STD = "metal3.1",
         ),
         "//conditions:default": llama_cmake_options(),
+    }),
+    build_data = select({
+        ":backend_cuda": [
+            "@cuda_sdk//:nvcc",
+            "@cuda_sdk//:sdk",
+            "@cuda_host_toolchain//:gxx",
+            "@cuda_host_toolchain//:host_toolchain",
+            "//tools:cuda_host_compiler_wrapper.sh",
+        ],
+        ":backend_rocm": [
+            "@cuda_host_toolchain//:gcc_runtime",
+            "@rocm_sdk//:clang",
+            "@rocm_sdk//:sdk",
+        ],
+        "//conditions:default": [],
     }),
     generate_args = ["-GNinja"],
     lib_source = "@llama_cpp//:all",
@@ -155,7 +236,7 @@ configure_make_variant(
         # Install libraries and headers without populating --openssldir.
         "install_sw",
     ],
-    toolchain = "@rules_foreign_cc//toolchains:preinstalled_make_toolchain",
+    toolchain = "@rules_foreign_cc//toolchains:built_make_toolchain",
 )
 
 cmake(
@@ -265,8 +346,26 @@ cc_binary(
     name = "llm-cc",
     srcs = ["src/cli/main.cc"],
     linkopts = select({
-        ":backend_cuda": ["-ldl", "-lpthread"],
-        ":backend_rocm": ["-ldl", "-lpthread"],
+        ":backend_cuda": [
+            "-ldl",
+            "-lpthread",
+            # DT_RPATH is intentionally transitive: vendor libraries have
+            # further dependencies in the same checksum-pinned SDK.
+            "-Wl,--disable-new-dtags",
+            "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+cuda_sdk_repository+cuda_sdk/sdk/lib",
+            "-Wl,-rpath,$$ORIGIN/../+cuda_sdk_repository+cuda_sdk/sdk/lib",
+        ],
+        ":backend_rocm": [
+            "-ldl",
+            "-lpthread",
+            "-Wl,--disable-new-dtags",
+            "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib",
+            "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib/llvm/lib",
+            "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib/rocm_sysdeps/lib",
+            "-Wl,-rpath,$$ORIGIN/../+http_archive+rocm_sdk/lib",
+            "-Wl,-rpath,$$ORIGIN/../+http_archive+rocm_sdk/lib/llvm/lib",
+            "-Wl,-rpath,$$ORIGIN/../+http_archive+rocm_sdk/lib/rocm_sysdeps/lib",
+        ],
         ":backend_metal": [],
         "//conditions:default": ["-ldl", "-lpthread"],
     }),
@@ -278,7 +377,14 @@ cc_binary(
         ":lang",
         ":score_cmd",
         ":version",
-    ],
+    ] + select({
+        ":backend_cuda": ["@cuda_sdk//:runtime"],
+        ":backend_rocm": [
+            "@cuda_host_toolchain//x86_64-buildroot-linux-gnu/sysroot:runtime",
+            "@rocm_sdk//:runtime",
+        ],
+        "//conditions:default": [],
+    }),
 )
 
 install_launcher(

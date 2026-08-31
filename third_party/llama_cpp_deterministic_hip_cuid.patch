@@ -1,0 +1,39 @@
+diff --git a/ggml/src/ggml-hip/CMakeLists.txt b/ggml/src/ggml-hip/CMakeLists.txt
+index 34f12bb..cff2dda 100644
+--- a/ggml/src/ggml-hip/CMakeLists.txt
++++ b/ggml/src/ggml-hip/CMakeLists.txt
+@@ -78,16 +78,32 @@ else()
+     list(APPEND GGML_SOURCES_ROCM
+         ../ggml-cuda/template-instances/fattn-vec-instance-f16-f16.cu
+         ../ggml-cuda/template-instances/fattn-vec-instance-q4_0-q4_0.cu
+         ../ggml-cuda/template-instances/fattn-vec-instance-q8_0-q8_0.cu
+         ../ggml-cuda/template-instances/fattn-vec-instance-bf16-bf16.cu)
+ endif()
+-
++
++# Clang's default HIP CUID hashes the original absolute source path before
++# prefix mapping. Derive a unique ID from the stable repository-relative path
++# so device symbols and code objects are reproducible across sandbox roots.
++foreach(HIP_SOURCE IN LISTS GGML_SOURCES_ROCM)
++    get_filename_component(HIP_SOURCE_ABSOLUTE "${HIP_SOURCE}" ABSOLUTE
++                           BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
++    file(RELATIVE_PATH HIP_SOURCE_RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
++         "${HIP_SOURCE_ABSOLUTE}")
++    string(SHA256 HIP_SOURCE_CUID "${HIP_SOURCE_RELATIVE}")
++    set_property(SOURCE "${HIP_SOURCE}" APPEND PROPERTY
++                 COMPILE_OPTIONS "-cuid=${HIP_SOURCE_CUID}")
++endforeach()
++
+ ggml_add_backend_library(ggml-hip
+                          ${GGML_HEADERS_ROCM}
+                          ${GGML_SOURCES_ROCM}
+                         )
+-
++
++# AMD lld's HIP build ID is not stable even when every loadable section is.
++target_link_options(ggml-hip PRIVATE "-Wl,--build-id=none")
++
+ # TODO: do not use CUDA definitions for HIP
+ if (NOT GGML_BACKEND_DL)
+     target_compile_definitions(ggml PUBLIC GGML_USE_CUDA)
+ endif()

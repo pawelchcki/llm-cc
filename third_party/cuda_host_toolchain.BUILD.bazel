@@ -1,0 +1,28 @@
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "gxx",
+    srcs = ["bin/x86_64-buildroot-linux-gnu-g++"],
+)
+
+# GCC resolves cc1plus, its fixed headers, binutils, libstdc++, and the target
+# sysroot relative to argv[0]. Make that complete closure an explicit CMake
+# action input so NVCC cannot observe any host compiler files.
+filegroup(
+    name = "host_toolchain",
+    srcs = [
+        "bin",
+        "include",
+        "lib",
+        "libexec",
+        "x86_64-buildroot-linux-gnu/bin",
+        "x86_64-buildroot-linux-gnu/include",
+        "x86_64-buildroot-linux-gnu/lib",
+        "x86_64-buildroot-linux-gnu/lib64",
+    ],
+)
+
+filegroup(
+    name = "gcc_runtime",
+    srcs = ["lib/gcc/x86_64-buildroot-linux-gnu/12.3.0"],
+)

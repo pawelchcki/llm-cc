@@ -1,17 +1,24 @@
 common --enable_bzlmod
-build --define=backend=cpu
+common --enable_platform_specific_config
 build --announce_rc
 build --show_timestamps
+build --action_env=SOURCE_DATE_EPOCH=0
 build --workspace_status_command=tools/bazel_status.sh
 
-build:cpu --define=backend=cpu
-build:cuda --define=backend=cuda
-build:rocm --define=backend=rocm
-build:rocm --action_env=ROCM_PATH
-build:rocm --action_env=HIP_PATH
-build:rocm --action_env=HIPCXX
-build:rocm --action_env=GPU_TARGETS
-build:metal --define=backend=metal
+build:cpu --//:backend=cpu
+build:cuda --//:backend=cuda
+build:rocm --//:backend=rocm
+build:metal --//:backend=metal
+
+# Pin the non-redistributable Apple SDK boundary. Metal kernels are embedded as
+# source, avoiding build-time metallib output that varies between Xcode builds.
+build:metal --xcode_version=16.4
+build:metal --macos_minimum_os=14.0
+
+# Applied automatically on macOS by --enable_platform_specific_config so the
+# default auto backend has the same compiler/SDK boundary as --config=metal.
+build:macos --xcode_version=16.4
+build:macos --macos_minimum_os=14.0
 
 build:release --compilation_mode=opt
 build:release --strip=always
@@ -22,9 +29,13 @@ run --compilation_mode=opt
 run --strip=always
 run --stamp
 
-# Build Linux x86_64 binaries against the CentOS 7 (glibc 2.17) sysroot.
-# This toolchain is selected only when the portable profile is requested.
+# Build Linux x86_64 binaries against the compact pinned GCC/glibc sysroot.
+# This alias is retained for callers that already use --config=portable.
 build:portable --extra_toolchains=@llvm_toolchain_portable//:cc-toolchain-x86_64-linux
+
+# Linux is reproducible by default: never discover headers or libraries from
+# the host distribution. Explicit --config=portable remains a useful alias.
+build:linux --extra_toolchains=@llvm_toolchain_portable//:cc-toolchain-x86_64-linux
 
 # BuildBuddy Workflows injects the API key and BES configuration. This named
 # profile enables its shared cache without putting credentials in the repo.

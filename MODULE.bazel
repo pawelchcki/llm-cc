@@ -5,6 +5,8 @@ module(
 
 bazel_dep(name = "rules_cc", version = "0.2.22")
 bazel_dep(name = "rules_foreign_cc", version = "0.15.1")
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "platforms", version = "1.0.0")
 bazel_dep(name = "toolchains_llvm", version = "1.8.0")
 
 single_version_override(
@@ -22,8 +24,8 @@ llvm.toolchain(
 )
 use_repo(llvm, "llvm_toolchain", "llvm_toolchain_llvm")
 
-# A second, opt-in toolchain shares the pinned LLVM distribution but links
-# Linux x86_64 targets against a CentOS 7 (glibc 2.17) sysroot.
+# A second toolchain shares the pinned LLVM distribution but links Linux
+# x86_64 targets against the compact sysroot in the pinned GCC bundle.
 llvm.toolchain(
     name = "llvm_toolchain_portable",
     cxx_standard = {"": "c++20"},
@@ -35,20 +37,18 @@ llvm.toolchain_root(
 )
 llvm.sysroot(
     name = "llvm_toolchain_portable",
-    label = "@portable_linux_sysroot//:sysroot",
+    label = "@cuda_host_toolchain//x86_64-buildroot-linux-gnu/sysroot:sysroot",
     targets = ["linux-x86_64"],
 )
 use_repo(llvm, "llvm_toolchain_portable")
 
 register_toolchains("@llvm_toolchain//:all")
 
-# The CMake rule declares Make, M4, and pkg-config toolchains even when Ninja is
-# selected. llama.cpp does not use them with the configuration below, so resolve
-# those slots to a checked-in fail-fast tool instead of source-built bootstrap
-# tools whose binaries embed their temporary output-base paths.
+# llama.cpp uses pinned CMake and Ninja. OpenSSL genuinely needs GNU Make, while
+# M4 and pkg-config are only declared toolchain slots and must remain unused.
 register_toolchains(
+    "@rules_foreign_cc//toolchains:built_make_toolchain",
     "//tools:unused_m4_toolchain",
-    "//tools:unused_make_toolchain",
     "//tools:unused_pkgconfig_toolchain",
 )
 
@@ -69,18 +69,42 @@ register_toolchains(
 )
 
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+cuda_sdk_repository = use_repo_rule("//tools:gpu_sdk_repositories.bzl", "cuda_sdk_repository")
+
+cuda_sdk_repository(name = "cuda_sdk")
+
+# NVCC requires GNU libstdc++ on x86_64. Pin the host compiler as well as the
+# CUDA SDK so compiler discovery never falls through to /usr/bin/g++.
+http_archive(
+    name = "cuda_host_toolchain",
+    build_file = "//third_party:cuda_host_toolchain.BUILD.bazel",
+    patch_strip = 1,
+    patches = ["//third_party:cuda_host_sysroot_package.patch"],
+    sha256 = "d6eca7f1ea736ef6f868a027a9d0baa875f9513755026aed2badc04a2b9cd7bd",
+    strip_prefix = "x86-64--glibc--stable-2023.08-1",
+    urls = ["https://toolchains.bootlin.com/downloads/releases/toolchains/x86-64/tarballs/x86-64--glibc--stable-2023.08-1.tar.bz2"],
+)
 
 http_archive(
-    name = "portable_linux_sysroot",
-    build_file = "//third_party:portable_linux_sysroot.BUILD.bazel",
-    sha256 = "6063c774b439539a11d61ce33023c38fd9bd022db691eb65266dbc57b6d32614",
-    strip_prefix = "osquery-toolchain",
-    urls = ["https://github.com/osquery/osquery-toolchain/releases/download/1.3.0/osquery-toolchain-1.3.0-x86_64.tar.xz"],
+    name = "rocm_sdk",
+    build_file = "//third_party:rocm_sdk.BUILD.bazel",
+    # TheRock ships multi-gigabyte static LLVM/ROCm archives alongside the
+    # shared compiler and runtime used here. Prune those deterministic dead
+    # inputs before Bazel commits the repository to its contents cache.
+    patch_cmds = [
+        "find . -type f -name '*.a' -delete",
+        "rm -rf lib/llvm/include libexec",
+        "rm -f lib/libMIOpen* lib/libamd_smi* lib/libhipdnn* lib/libhipsparse* lib/libhiptensor* lib/liboam* lib/librccl* lib/librdc* lib/librocalution* lib/librocdecode* lib/librocfft* lib/librocjitsu* lib/librocjpeg* lib/librocm_smi* lib/librocprof-sys* lib/librocprofiler-sdk* lib/librocrand* lib/librocshmem* lib/librocsparse*",
+    ],
+    sha256 = "e78a4445c52d879fbd0765f24e7fa9df1e262a8baf681b118a13e75340120127",
+    urls = ["https://repo.amd.com/rocm/tarball-multi-arch/therock-dist-linux-gfx110X-all-7.14.0.tar.gz"],
 )
 
 http_archive(
     name = "llama_cpp",
     build_file = "//third_party:llama_cpp.BUILD.bazel",
+    patch_strip = 1,
+    patches = ["//third_party:llama_cpp_deterministic_hip_cuid.patch"],
     sha256 = "682bdd1f58907d0bbfbd38bdfd7b8601de804bfda5ee15a739744e59c6585dd8",
     strip_prefix = "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0",
     urls = ["https://github.com/ggml-org/llama.cpp/archive/c589f0ed10c643678c4707dd160c21ac7633ebc0.tar.gz"],
