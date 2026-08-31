@@ -10,7 +10,8 @@ set -euo pipefail
 runfiles_dir="${{RUNFILES_DIR:-$0.runfiles}}"
 exec "$runfiles_dir/{workspace}/{script}" \\
   "$runfiles_dir/{workspace}/{binary}" \\
-  "$runfiles_dir/{workspace}/{version_script}" "$@"
+  "$runfiles_dir/{workspace}/{version_script}" \\
+  "$runfiles_dir" "$@"
 """.format(
             workspace = workspace,
             script = ctx.file.script.short_path,
@@ -19,14 +20,15 @@ exec "$runfiles_dir/{workspace}/{script}" \\
         ),
         is_executable = True,
     )
+    runfiles = ctx.runfiles(files = [
+        ctx.executable.binary,
+        ctx.file.script,
+        ctx.file.version_script,
+        ctx.file._version_file,
+    ]).merge(ctx.attr.binary[DefaultInfo].default_runfiles)
     return [DefaultInfo(
         executable = launcher,
-        runfiles = ctx.runfiles(files = [
-            ctx.executable.binary,
-            ctx.file.script,
-            ctx.file.version_script,
-            ctx.file._version_file,
-        ]),
+        runfiles = runfiles,
     )]
 
 install_launcher = rule(
@@ -70,7 +72,14 @@ def llama_rocm_cmake_options():
     rocm_root = "$$EXT_BUILD_ROOT/external/+http_archive+rocm_sdk"
     llvm_root = "$$EXT_BUILD_ROOT/external/toolchains_llvm++llvm+llvm_toolchain_llvm"
     gcc_root = "$$EXT_BUILD_ROOT/external/+http_archive+cuda_host_toolchain"
-    host_cxx_flags = "-stdlib=libc++ -nostdinc++ -isystem %s/include/c++/v1 -isystem %s/include/x86_64-unknown-linux-gnu/c++/v1 -L%s/lib/gcc/x86_64-buildroot-linux-gnu/12.3.0" % (llvm_root, llvm_root, gcc_root)
+    host_cxx_flags = " ".join([
+        "--sysroot=%s/x86_64-buildroot-linux-gnu/sysroot" % gcc_root,
+        "-stdlib=libc++",
+        "-nostdinc++",
+        "-isystem %s/include/c++/v1" % llvm_root,
+        "-isystem %s/include/x86_64-unknown-linux-gnu/c++/v1" % llvm_root,
+        "-L%s/lib/gcc/x86_64-buildroot-linux-gnu/12.3.0" % gcc_root,
+    ])
     return llama_cmake_options(
         BUILD_SHARED_LIBS = "ON",
         CMAKE_HIP_COMPILER = "$(execpath @rocm_sdk//:clang)",

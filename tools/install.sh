@@ -3,7 +3,8 @@ set -euo pipefail
 
 llm_cc_binary="${1:?missing Bazel llm-cc runfile}"
 version_script_runfile="${2:?missing version script runfile}"
-shift 2
+runfiles_source="${3:?missing Bazel runfiles root}"
+shift 3
 
 prefix="${PREFIX:-${HOME:?HOME is unset}/.local}"
 while (($# > 0)); do
@@ -81,14 +82,8 @@ if [[ ! -x "$payload_dir/llm-cc" ]]; then
 
   # Shared accelerator builds rely on Bazel's checksum-pinned runfiles tree.
   # Copy it beside the executable so the binary's $ORIGIN-relative RPATH stays
-  # valid after installation. CPU builds also work when no tree is present.
-  runfiles_source=""
-  if [[ -n "$workspace" && -d "$workspace/bazel-bin/llm-cc.runfiles" ]]; then
-    runfiles_source="$workspace/bazel-bin/llm-cc.runfiles"
-  elif [[ -d "$llm_cc_binary.runfiles" ]]; then
-    runfiles_source="$llm_cc_binary.runfiles"
-  fi
-  if [[ -n "$runfiles_source" ]]; then
+  # valid after installation, independently of workspace convenience symlinks.
+  if [[ -d "$runfiles_source" ]]; then
     if cp --version >/dev/null 2>&1; then
       cp -aL --reflink=auto "$runfiles_source" "$staging_dir/llm-cc.runfiles"
     else

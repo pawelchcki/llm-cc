@@ -236,7 +236,7 @@ configure_make_variant(
         # Install libraries and headers without populating --openssldir.
         "install_sw",
     ],
-    toolchain = "@rules_foreign_cc//toolchains:preinstalled_make_toolchain",
+    toolchain = "@rules_foreign_cc//toolchains:built_make_toolchain",
 )
 
 cmake(
@@ -353,6 +353,7 @@ cc_binary(
             # further dependencies in the same checksum-pinned SDK.
             "-Wl,--disable-new-dtags",
             "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+cuda_sdk_repository+cuda_sdk/sdk/lib",
+            "-Wl,-rpath,$$ORIGIN/../+cuda_sdk_repository+cuda_sdk/sdk/lib",
         ],
         ":backend_rocm": [
             "-ldl",
@@ -361,6 +362,9 @@ cc_binary(
             "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib",
             "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib/llvm/lib",
             "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib/rocm_sysdeps/lib",
+            "-Wl,-rpath,$$ORIGIN/../+http_archive+rocm_sdk/lib",
+            "-Wl,-rpath,$$ORIGIN/../+http_archive+rocm_sdk/lib/llvm/lib",
+            "-Wl,-rpath,$$ORIGIN/../+http_archive+rocm_sdk/lib/rocm_sysdeps/lib",
         ],
         ":backend_metal": [],
         "//conditions:default": ["-ldl", "-lpthread"],
