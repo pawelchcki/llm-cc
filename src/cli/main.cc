@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -161,6 +162,14 @@ AnalyzeArguments ParseAnalyzeArguments(int argc, char** argv) {
   }
   if (arguments.sources.empty()) {
     Usage("at least one source path is required unless a subcommand is used");
+  }
+  if (!std::isfinite(arguments.tau_percentile) ||
+      arguments.tau_percentile < 0.0 || arguments.tau_percentile > 100.0) {
+    Usage("--tau-percentile must be finite and between 0 and 100");
+  }
+  if (!std::isfinite(arguments.alpha) || arguments.alpha < 0.0 ||
+      arguments.alpha > 1.0) {
+    Usage("--alpha must be finite and between 0 and 1");
   }
   return arguments;
 }

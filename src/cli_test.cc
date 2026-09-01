@@ -89,6 +89,16 @@ int main() {  // NOLINT(bugprone-exception-escape)
           empty_events[3]["type"] == "totals" &&
           empty_events[3]["discovered"] == 0,
       "empty discovery emits a complete zero-file event stream");
+  const fs::path invalid_options_error =
+      fs::path(test_tmpdir) / "invalid-options.txt";
+  llmcc::test::Expect(Run(Quote(binary) + " " + Quote(empty_repository) +
+                          " --alpha 2 2>" + Quote(invalid_options_error)) != 0,
+                      "empty discovery rejects invalid analysis parameters");
+  llmcc::test::Expect(
+      Read(invalid_options_error)
+              .find("--alpha must be finite and between 0 and 1") !=
+          std::string::npos,
+      "invalid global parameter is explained");
 
   const fs::path removed_option_error =
       fs::path(test_tmpdir) / "removed-option-error.txt";
