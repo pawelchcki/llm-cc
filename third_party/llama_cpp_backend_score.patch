@@ -1,0 +1,54 @@
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index d18b9c8..25fb305 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -72,6 +72,7 @@
+ #include <condition_variable>
+ #include <cstddef>
+ #include <cstdint>
++#include <cstring>
+ #include <cfloat>
+ #include <initializer_list>
+ #include <limits>
+@@ -5580,4 +5581,40 @@ ggml_backend_t ggml_backend_cuda_init(int device) {
+     return cuda_backend;
+ }
+-
++
++static int llm_cc_cuda_backend_score() {
++    int count = 0;
++    if (cudaGetDeviceCount(&count) != cudaSuccess) {
++        return 0;
++    }
++    for (int device = 0; device < count; ++device) {
++        cudaDeviceProp properties;
++        if (cudaGetDeviceProperties(&properties, device) != cudaSuccess) {
++            continue;
++        }
++#if defined(GGML_USE_HIP)
++        const char * architecture = properties.gcnArchName;
++        for (const char * supported : {"gfx1100", "gfx1101", "gfx1102"}) {
++            const size_t length = std::strlen(supported);
++            if (std::strncmp(architecture, supported, length) == 0 &&
++                (architecture[length] == '\0' || architecture[length] == ':')) {
++                return 1;
++            }
++        }
++#else
++        const int architecture = properties.major * 10 + properties.minor;
++        switch (architecture) {
++            case 75:
++            case 80:
++            case 86:
++            case 89:
++            case 90:
++            case 120:
++                return 1;
++        }
++#endif
++    }
++    return 0;
++}
++
++GGML_BACKEND_DL_SCORE_IMPL(llm_cc_cuda_backend_score)
+ GGML_BACKEND_DL_IMPL(ggml_backend_cuda_reg)

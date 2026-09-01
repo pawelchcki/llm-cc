@@ -38,6 +38,7 @@ sh_binary(
 
 exports_files([
     "cuda_glibc_compat.h",
+    "cuda_archive.bzl",
     "cuda_host_compiler_wrapper.sh",
     "embed_payloads.cc",
     "format_test.sh",

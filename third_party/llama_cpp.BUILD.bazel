@@ -2,6 +2,7 @@ load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_import.bzl", "cc_import")
 load("@rules_cuda//cuda:defs.bzl", "cuda_library")
+load("@//tools:cuda_archive.bzl", "cuda_pruned_archive")
 load("@//tools:hip_library.bzl", "hip_library")
 
 package(default_visibility = ["//visibility:public"])
@@ -120,14 +121,35 @@ cc_library(
     ],
 )
 
+CUDA_ARCHS = [
+    "sm_75",
+    "sm_80",
+    "sm_86",
+    "sm_89",
+    "sm_90",
+    "sm_120a",
+]
+
+cuda_pruned_archive(
+    name = "cublas_static_archive",
+    archs = CUDA_ARCHS,
+    src = "@cuda_cublas//:cublas/lib/libcublas_static.a",
+)
+
+cuda_pruned_archive(
+    name = "cublas_lt_static_archive",
+    archs = CUDA_ARCHS,
+    src = "@cuda_cublas//:cublas/lib/libcublasLt_static.a",
+)
+
 cc_import(
     name = "cublas_static",
-    static_library = "@cuda_cublas//:cublas/lib/libcublas_static.a",
+    static_library = ":cublas_static_archive",
 )
 
 cc_import(
     name = "cublas_lt_static",
-    static_library = "@cuda_cublas//:cublas/lib/libcublasLt_static.a",
+    static_library = ":cublas_lt_static_archive",
 )
 
 cuda_library(
@@ -175,6 +197,7 @@ cc_binary(
     linkopts = [
         "-Wl,--build-id=none",
         "-Wl,--exclude-libs,ALL",
+        "-Wl,--gc-sections",
         "-Wl,--version-script=$(location @//third_party:backend_module.lds)",
         "-ldl",
         "-lpthread",
@@ -187,6 +210,7 @@ cc_binary(
         ":ggml_cuda",
         "@cuda//:culibos_a",
         "@cuda//:cuda_runtime_static",
+        "@cuda_host_toolchain//:libstdcxx_static",
     ],
 )
 

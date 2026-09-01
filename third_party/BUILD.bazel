@@ -8,6 +8,7 @@ exports_files([
     "tree_sitter.BUILD.bazel",
     "tree_sitter_grammar.BUILD.bazel",
     "llama_cpp.BUILD.bazel",
+    "llama_cpp_backend_score.patch",
     "llama_cpp_deterministic_hip_cuid.patch",
     "llama_cpp_namespaced_backends.patch",
     "openssl_reproducible_buildinfo.patch",

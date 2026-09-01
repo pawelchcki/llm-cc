@@ -138,6 +138,7 @@ http_archive(
     build_file = "//third_party:llama_cpp.BUILD.bazel",
     patch_strip = 1,
     patches = [
+        "//third_party:llama_cpp_backend_score.patch",
         "//third_party:llama_cpp_deterministic_hip_cuid.patch",
         "//third_party:llama_cpp_namespaced_backends.patch",
     ],

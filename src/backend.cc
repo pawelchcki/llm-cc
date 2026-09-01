@@ -16,6 +16,7 @@
 #include "src/payload.h"
 
 #if defined(__linux__)
+#include <dlfcn.h>
 #include <unistd.h>
 #endif
 
@@ -82,9 +83,25 @@ struct LoadedPlugin {
   BackendKind backend;
   ggml_backend_reg_t registry;
   int backing_fd = -1;
+  void* driver_handle = nullptr;
 };
 
 LoadedPlugin LoadPlugin(BackendKind backend, bool required) {
+#if defined(__linux__)
+  void* driver_handle = nullptr;
+  if (backend == BackendKind::kCuda) {
+    driver_handle = dlopen("libcuda.so.1", RTLD_NOW | RTLD_GLOBAL);
+    if (driver_handle == nullptr) {
+      if (required) {
+        const char* error = dlerror();
+        throw std::runtime_error(
+            "could not load NVIDIA driver libcuda.so.1: " +
+            std::string(error != nullptr ? error : "unknown loader error"));
+      }
+      return {.backend = backend, .registry = nullptr};
+    }
+  }
+#endif
   if (std::optional<PreparedPayload> embedded =
           PrepareEmbeddedPayload(BackendName(backend));
       embedded.has_value()) {
@@ -92,11 +109,15 @@ LoadedPlugin LoadPlugin(BackendKind backend, bool required) {
         registry != nullptr) {
       return {.backend = backend,
               .registry = registry,
-              .backing_fd = embedded->backing_fd};
+              .backing_fd = embedded->backing_fd,
+              .driver_handle = driver_handle};
     }
 #if defined(__linux__)
     if (embedded->backing_fd >= 0) {
       close(embedded->backing_fd);
+    }
+    if (driver_handle != nullptr) {
+      dlclose(driver_handle);
     }
 #endif
     if (required) {
@@ -114,14 +135,26 @@ LoadedPlugin LoadPlugin(BackendKind backend, bool required) {
     }
     if (ggml_backend_reg_t registry = ggml_backend_load(candidate.c_str());
         registry != nullptr) {
-      return {.backend = backend, .registry = registry};
+      return {.backend = backend,
+              .registry = registry,
+              .driver_handle = driver_handle};
     }
     if (required) {
+#if defined(__linux__)
+      if (driver_handle != nullptr) {
+        dlclose(driver_handle);
+      }
+#endif
       throw std::runtime_error("could not load " +
                                std::string(BackendName(backend)) +
                                " backend plugin: " + candidate.string());
     }
   }
+#if defined(__linux__)
+  if (driver_handle != nullptr) {
+    dlclose(driver_handle);
+  }
+#endif
   if (required) {
     std::string message = "missing " + std::string(BackendName(backend)) +
                           " backend plugin " + std::string(PluginName(backend));
@@ -142,6 +175,10 @@ void UnloadPlugin(LoadedPlugin& plugin) {
   if (plugin.backing_fd >= 0) {
     close(plugin.backing_fd);
     plugin.backing_fd = -1;
+  }
+  if (plugin.driver_handle != nullptr) {
+    dlclose(plugin.driver_handle);
+    plugin.driver_handle = nullptr;
   }
 #endif
 }

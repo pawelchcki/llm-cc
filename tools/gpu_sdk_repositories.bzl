@@ -8,6 +8,12 @@ _CUDA_COMPONENTS = [
         url = "https://developer.download.nvidia.com/compute/cuda/redist/cuda_nvcc/linux-x86_64/cuda_nvcc-linux-x86_64-13.0.88-archive.tar.xz",
     ),
     struct(
+        name = "nvprune",
+        sha256 = "b182d8b0398ba9ff8ee75fc2ffef3ff1e2069e6bec6938bcf02a6c9e69d40456",
+        strip_prefix = "cuda_nvprune-linux-x86_64-13.0.85-archive",
+        url = "https://developer.download.nvidia.com/compute/cuda/redist/cuda_nvprune/linux-x86_64/cuda_nvprune-linux-x86_64-13.0.85-archive.tar.xz",
+    ),
+    struct(
         name = "nvvm",
         sha256 = "17ef1665b63670887eeba7d908da5669fa8c66bb73b5b4c1367f49929c086353",
         strip_prefix = "libnvvm-linux-x86_64-13.0.88-archive",
@@ -94,6 +100,11 @@ filegroup(
 filegroup(
     name = "nvcc",
     srcs = ["sdk/bin/nvcc"],
+)
+
+filegroup(
+    name = "nvprune",
+    srcs = ["sdk/bin/nvprune"],
 )
 
 cc_import(
