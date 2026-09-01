@@ -38,7 +38,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
   struct stat cuda_status{};
   llmcc::test::Expect(
       fstat(cuda->backing_fd, &cuda_status) == 0 && cuda_status.st_size > 0,
-      "CUDA memfd contains the decompressed module");
+      "CUDA memfd contains the embedded module");
   constexpr int kAllSeals =
       F_SEAL_SEAL | F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE;
   llmcc::test::ExpectEq(fcntl(cuda->backing_fd, F_GET_SEALS), kAllSeals,

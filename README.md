@@ -66,8 +66,8 @@ bazel run //:install -- --prefix /opt/llm-cc
 ```
 
 Installation atomically replaces one `bin/llm-cc` executable. On Linux that
-ELF contains the statically linked application, llama/ggml CPU code, and
-compressed CUDA and ROCm payloads. On macOS it is the standalone static Metal
+ELF contains the statically linked application, llama/ggml CPU code, and raw
+CUDA and ROCm payloads. On macOS it is the standalone static Metal
 Mach-O executable.
 
 Build deterministic release archives with:
@@ -161,8 +161,8 @@ fails clearly when the requested device is unavailable. `cpu` rejects nonzero
 GPU layers. Backend options are invalid with `--entropy-jsonl`, which performs
 no inference.
 
-The release ELF reads its compressed payload footer through `/proc/self/exe`.
-CUDA is decompressed into an immutable sealed memfd and never touches disk.
+The release ELF reads its raw payload footer through `/proc/self/exe`.
+CUDA is copied into an immutable sealed memfd and never touches disk.
 ROCm's exact pinned userspace and architecture-data closure is atomically
 materialized under a content-addressed, owner-only cache. Its location follows
 this precedence:
@@ -171,7 +171,7 @@ this precedence:
 2. `$XDG_CACHE_HOME/llm-cc/runtime`
 3. `$HOME/.cache/llm-cc/runtime`
 
-CPU execution does not inspect, decompress, or extract either GPU payload.
+CPU execution does not inspect or materialize either GPU payload.
 
 ```json
 {"position":0,"token_id":785,"piece":"The","bytes_hex":"546865","probability":null,"log_probability":null,"entropy":null}

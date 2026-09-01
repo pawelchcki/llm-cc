@@ -376,7 +376,6 @@ cc_library(
         "//conditions:default": [
             ":linux_compat",
             ":openssl",
-            "@zstd//:zstd",
         ],
     }),
 )

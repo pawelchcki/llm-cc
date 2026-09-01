@@ -21,7 +21,6 @@ cc_binary(
     deps = [
         "//:linux_compat",
         "//:payload_format",
-        "@zstd//:zstd",
     ],
 )
 

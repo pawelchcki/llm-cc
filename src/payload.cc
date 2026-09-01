@@ -8,7 +8,6 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
-#include <zstd.h>
 
 #include <algorithm>
 #include <array>
@@ -56,7 +55,6 @@ struct ArchiveEntry {
   std::string path;
   std::uint32_t mode;
   std::uint64_t size;
-  std::uint64_t compressed_size;
   std::array<unsigned char, payload::kSha256Size> hash;
   std::uint64_t data_offset;
 };
@@ -282,7 +280,7 @@ std::vector<ArchiveEntry> ReadArchiveEntries(int fd,
   std::vector<ArchiveEntry> entries;
   entries.reserve(count);
   for (std::uint32_t index = 0; index < count; ++index) {
-    constexpr std::size_t kEntryHeaderSize = 56;
+    constexpr std::size_t kEntryHeaderSize = 48;
     std::array<char, kEntryHeaderSize> entry_header{};
     if (cursor > payload.length ||
         payload.length - cursor < entry_header.size()) {
@@ -296,10 +294,8 @@ std::vector<ArchiveEntry> ReadArchiveEntries(int fd,
     const std::uint32_t mode = ReadLittleEndian<std::uint32_t>(entry_header, 4);
     const std::uint64_t file_size =
         ReadLittleEndian<std::uint64_t>(entry_header, 8);
-    const std::uint64_t compressed_size =
-        ReadLittleEndian<std::uint64_t>(entry_header, 16);
     if (path_size == 0 || path_size > 4096 || cursor > payload.length ||
-        path_size > payload.length - cursor || compressed_size == 0) {
+        path_size > payload.length - cursor || file_size == 0) {
       throw std::runtime_error("invalid " + std::string(kind) +
                                " payload path");
     }
@@ -307,18 +303,17 @@ std::vector<ArchiveEntry> ReadArchiveEntries(int fd,
     ReadExact(fd, payload.offset + cursor, path);
     cursor += path_size;
     if (!SafeRelativePath(path) || cursor > payload.length ||
-        compressed_size > payload.length - cursor) {
+        file_size > payload.length - cursor) {
       throw std::runtime_error("unsafe or truncated " + std::string(kind) +
                                " payload entry");
     }
     ArchiveEntry entry{.path = std::move(path),
                        .mode = mode,
                        .size = file_size,
-                       .compressed_size = compressed_size,
                        .data_offset = payload.offset + cursor};
-    std::memcpy(entry.hash.data(), entry_header.data() + 24, entry.hash.size());
+    std::memcpy(entry.hash.data(), entry_header.data() + 16, entry.hash.size());
     entries.push_back(std::move(entry));
-    cursor += compressed_size;
+    cursor += file_size;
   }
   if (cursor != payload.length) {
     throw std::runtime_error(std::string(kind) + " payload has trailing data");
@@ -364,46 +359,22 @@ bool CacheIsValid(const fs::path& directory,
   return true;
 }
 
-void DecompressEntry(int executable_fd, const ArchiveEntry& entry,
-                     int output_fd, std::string_view kind) {
+void CopyEntry(int executable_fd, const ArchiveEntry& entry, int output_fd,
+               std::string_view kind) {
   Digest digest;
-  std::unique_ptr<ZSTD_DCtx, decltype(&ZSTD_freeDCtx)> context(
-      ZSTD_createDCtx(), &ZSTD_freeDCtx);
-  if (!context) {
-    throw std::runtime_error("cannot create zstd decompressor");
+  std::array<char, 1024 * 1024> buffer{};
+  std::uint64_t copied = 0;
+  while (copied < entry.size) {
+    const std::size_t count = static_cast<std::size_t>(
+        std::min<std::uint64_t>(buffer.size(), entry.size - copied));
+    ReadExact(executable_fd, entry.data_offset + copied,
+              std::span<char>(buffer.data(), count));
+    const std::span<const char> bytes(buffer.data(), count);
+    digest.Update(bytes);
+    WriteExact(output_fd, bytes);
+    copied += count;
   }
-  std::vector<char> compressed(ZSTD_DStreamInSize());
-  std::vector<char> decompressed(ZSTD_DStreamOutSize());
-  std::uint64_t consumed = 0;
-  std::uint64_t produced = 0;
-  std::size_t frame_remaining = 1;
-  while (consumed < entry.compressed_size) {
-    const std::size_t count = static_cast<std::size_t>(std::min<std::uint64_t>(
-        compressed.size(), entry.compressed_size - consumed));
-    ReadExact(executable_fd, entry.data_offset + consumed,
-              std::span<char>(compressed.data(), count));
-    consumed += count;
-    ZSTD_inBuffer input = {compressed.data(), count, 0};
-    while (input.pos < input.size) {
-      ZSTD_outBuffer zstd_output = {decompressed.data(), decompressed.size(),
-                                    0};
-      frame_remaining =
-          ZSTD_decompressStream(context.get(), &zstd_output, &input);
-      if (ZSTD_isError(frame_remaining)) {
-        throw std::runtime_error(ZSTD_getErrorName(frame_remaining));
-      }
-      if (zstd_output.pos > entry.size - produced) {
-        throw std::runtime_error(std::string(kind) +
-                                 " entry expands past its size");
-      }
-      const std::span<const char> bytes(decompressed.data(), zstd_output.pos);
-      digest.Update(bytes);
-      WriteExact(output_fd, bytes);
-      produced += zstd_output.pos;
-    }
-  }
-  if (frame_remaining != 0 || produced != entry.size ||
-      digest.Finish() != entry.hash) {
+  if (digest.Finish() != entry.hash) {
     throw std::runtime_error(std::string(kind) +
                              " entry failed validation: " + entry.path);
   }
@@ -421,7 +392,7 @@ void ExtractEntry(int executable_fd, const ArchiveEntry& entry,
     throw std::runtime_error("cannot create " + destination.string() + ": " +
                              std::strerror(errno));
   }
-  DecompressEntry(executable_fd, entry, output.get(), "ROCm runtime");
+  CopyEntry(executable_fd, entry, output.get(), "ROCm runtime");
   if (fsync(output.get()) != 0) {
     throw std::runtime_error("cannot sync ROCm runtime entry: " + entry.path);
   }
@@ -450,7 +421,7 @@ PreparedPayload PrepareCuda(int executable_fd,
   if (ftruncate(memfd.get(), static_cast<off_t>(entry.size)) != 0) {
     throw std::runtime_error("cannot size CUDA memfd");
   }
-  DecompressEntry(executable_fd, entry, memfd.get(), "CUDA");
+  CopyEntry(executable_fd, entry, memfd.get(), "CUDA");
   if (fcntl(memfd.get(), F_ADD_SEALS,
             F_SEAL_SEAL | F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE) != 0) {
     throw std::runtime_error("CUDA payload sealing failed");

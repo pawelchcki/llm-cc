@@ -1,5 +1,4 @@
 #include <sys/stat.h>
-#include <zstd.h>
 
 #include <algorithm>
 #include <array>
@@ -82,67 +81,6 @@ std::uint64_t CopyFile(const fs::path& source, std::ofstream& output,
   return copied;
 }
 
-std::uint64_t CompressFile(const fs::path& source, const fs::path& output) {
-  std::ifstream input(source, std::ios::binary);
-  std::ofstream compressed(output, std::ios::binary | std::ios::trunc);
-  if (!input || !compressed) {
-    throw std::runtime_error("cannot open zstd stream for " + source.string());
-  }
-  std::unique_ptr<ZSTD_CCtx, decltype(&ZSTD_freeCCtx)> context(
-      ZSTD_createCCtx(), &ZSTD_freeCCtx);
-  if (!context) {
-    throw std::runtime_error("cannot create zstd compressor");
-  }
-  auto set_parameter = [&](ZSTD_cParameter parameter, int value) {
-    const std::size_t result =
-        ZSTD_CCtx_setParameter(context.get(), parameter, value);
-    if (ZSTD_isError(result)) {
-      throw std::runtime_error(ZSTD_getErrorName(result));
-    }
-  };
-  set_parameter(ZSTD_c_compressionLevel, 15);
-  set_parameter(ZSTD_c_nbWorkers, 0);
-  set_parameter(ZSTD_c_enableLongDistanceMatching, 1);
-  set_parameter(ZSTD_c_windowLog, 27);
-  set_parameter(ZSTD_c_checksumFlag, 1);
-  set_parameter(ZSTD_c_contentSizeFlag, 0);
-  set_parameter(ZSTD_c_dictIDFlag, 0);
-
-  std::vector<char> input_buffer(ZSTD_CStreamInSize());
-  std::vector<char> output_buffer(ZSTD_CStreamOutSize());
-  std::uint64_t written = 0;
-  bool finished = false;
-  while (!finished) {
-    input.read(input_buffer.data(), input_buffer.size());
-    const std::streamsize count = input.gcount();
-    if (count < 0 || (!input && !input.eof())) {
-      throw std::runtime_error("cannot read " + source.string());
-    }
-    ZSTD_inBuffer zstd_input = {input_buffer.data(),
-                                static_cast<std::size_t>(count), 0};
-    const ZSTD_EndDirective directive =
-        input.eof() ? ZSTD_e_end : ZSTD_e_continue;
-    do {
-      ZSTD_outBuffer zstd_output = {output_buffer.data(), output_buffer.size(),
-                                    0};
-      const std::size_t remaining = ZSTD_compressStream2(
-          context.get(), &zstd_output, &zstd_input, directive);
-      if (ZSTD_isError(remaining)) {
-        throw std::runtime_error(ZSTD_getErrorName(remaining));
-      }
-      compressed.write(output_buffer.data(),
-                       static_cast<std::streamsize>(zstd_output.pos));
-      if (!compressed) {
-        throw std::runtime_error("cannot write zstd stream");
-      }
-      written += zstd_output.pos;
-      finished = directive == ZSTD_e_end && remaining == 0;
-    } while (zstd_input.pos < zstd_input.size ||
-             (directive == ZSTD_e_end && !finished));
-  }
-  return written;
-}
-
 std::string Hex(std::span<const unsigned char> bytes) {
   std::ostringstream output;
   output << std::hex << std::setfill('0');
@@ -204,7 +142,6 @@ bool SafeDestination(std::string_view path) {
 
 BundleResult WriteBundle(std::ofstream& output, std::span<const char, 8> magic,
                          std::span<const BundleEntry> entries,
-                         const fs::path& compressed_entry,
                          std::string_view kind) {
   const std::uint64_t offset = static_cast<std::uint64_t>(output.tellp());
   Digest digest;
@@ -212,13 +149,10 @@ BundleResult WriteBundle(std::ofstream& output, std::span<const char, 8> magic,
   WriteLittleEndian(output, static_cast<std::uint32_t>(entries.size()),
                     &digest);
   for (const BundleEntry& entry : entries) {
-    const std::uint64_t compressed_size =
-        CompressFile(entry.source, compressed_entry);
     WriteLittleEndian(
         output, static_cast<std::uint32_t>(entry.destination.size()), &digest);
     WriteLittleEndian(output, static_cast<std::uint32_t>(0600), &digest);
     WriteLittleEndian(output, entry.size, &digest);
-    WriteLittleEndian(output, compressed_size, &digest);
     Write(
         output,
         std::span<const char>(reinterpret_cast<const char*>(entry.hash.data()),
@@ -228,9 +162,9 @@ BundleResult WriteBundle(std::ofstream& output, std::span<const char, 8> magic,
           std::span<const char>(entry.destination.data(),
                                 entry.destination.size()),
           &digest);
-    const std::uint64_t copied = CopyFile(compressed_entry, output, &digest);
-    if (copied != compressed_size) {
-      throw std::runtime_error("compressed " + std::string(kind) +
+    const std::uint64_t copied = CopyFile(entry.source, output, &digest);
+    if (copied != entry.size) {
+      throw std::runtime_error(std::string(kind) +
                                " input changed while packaging");
     }
   }
@@ -316,21 +250,18 @@ int main(int argc, char** argv) {
     }
     CopyFile(binary, combined);
 
-    const fs::path compressed_entry = output.string() + ".zstd.tmp";
     const BundleEntry cuda_entry = {
         .source = cuda,
         .destination = "libllm-cc-backend-cuda.so",
         .size = static_cast<std::uint64_t>(fs::file_size(cuda)),
         .hash = HashFile(cuda),
     };
-    const BundleResult cuda_bundle = WriteBundle(
-        combined, llmcc::payload::kCudaMagic,
-        std::span<const BundleEntry>(&cuda_entry, 1), compressed_entry, "CUDA");
-    const BundleResult rocm_bundle = WriteBundle(
-        combined, llmcc::payload::kRocmMagic,
-        std::span<const BundleEntry>(rocm_entries), compressed_entry, "ROCm");
-    std::error_code remove_error;
-    fs::remove(compressed_entry, remove_error);
+    const BundleResult cuda_bundle =
+        WriteBundle(combined, llmcc::payload::kCudaMagic,
+                    std::span<const BundleEntry>(&cuda_entry, 1), "CUDA");
+    const BundleResult rocm_bundle =
+        WriteBundle(combined, llmcc::payload::kRocmMagic,
+                    std::span<const BundleEntry>(rocm_entries), "ROCm");
 
     Write(combined, llmcc::payload::kFooterMagic);
     WriteLittleEndian(combined, llmcc::payload::kFooterVersion);
