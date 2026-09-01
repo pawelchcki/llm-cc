@@ -23,7 +23,7 @@ std::vector<llmcc::Token> ByteTokens(
 }
 }  // namespace
 
-int main() {
+int main() {  // NOLINT(bugprone-exception-escape)
   Expect(!llmcc::Percentile({}, 67.0).has_value(), "empty percentile");
   const std::vector<double> pair = {0.0, 10.0};
   Expect(std::abs(llmcc::Percentile(pair, 67.0).value_or(-1.0) - 6.7) < 1e-12,

@@ -9,7 +9,7 @@
 #include "src/cache.h"
 #include "src/test_util.h"
 
-int main() {
+int main() {  // NOLINT(bugprone-exception-escape)
   namespace fs = std::filesystem;
   const fs::path root = std::getenv("TEST_TMPDIR");
   const fs::path target = root / "models/model.gguf";

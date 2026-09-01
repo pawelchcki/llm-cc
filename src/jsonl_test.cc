@@ -5,7 +5,7 @@
 
 #include "src/test_util.h"
 
-int main() {
+int main() {  // NOLINT(bugprone-exception-escape)
   const std::string input =
       "{\"position\":0,\"bytes_hex\":\"61\",\"entropy\":null}\n"
       "{\"position\":1,\"bytes_hex\":\"62\",\"entropy\":0.5}\n";

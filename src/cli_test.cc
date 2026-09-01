@@ -1,11 +1,17 @@
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <nlohmann/json.hpp>
+#include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
+#include <vector>
 
+#include "src/entropy_cache.h"
+#include "src/lang.h"
 #include "src/test_util.h"
 
 namespace {
@@ -132,6 +138,66 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::ExpectEq(Run(models_command), 0, "models path succeeds");
   llmcc::test::ExpectEq(Read(path_output), cache.string() + "\n",
                         "models path honors override");
+
+  const fs::path repository = fs::path(test_tmpdir) / "analysis-repository";
+  fs::create_directories(repository);
+  llmcc::test::ExpectEq(Run("git -C " + Quote(repository) + " init -q"), 0,
+                        "analysis test repository initialized");
+  const fs::path source = repository / "source.rs";
+  const fs::path fake_model = fs::path(test_tmpdir) / "fake.gguf";
+  Write(source, "fn main() { println!(\"cached\"); }\n");
+  Write(fake_model, "not model weights");
+  const auto [preprocessed, offsets] =
+      llmcc::StripComments(Read(source), llmcc::Language::kRust);
+  static_cast<void>(offsets);
+#ifdef LLMCC_TEST_BACKEND_METAL
+  constexpr std::string_view backend = "metal";
+#elif defined LLMCC_TEST_BACKEND_CUDA
+  constexpr std::string_view backend = "cuda";
+#elif defined LLMCC_TEST_BACKEND_ROCM
+  constexpr std::string_view backend = "rocm";
+#else
+  constexpr std::string_view backend = "cpu";
+#endif
+  const auto identity = llmcc::InspectModel(
+      fake_model,
+      "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v1", backend,
+      128U * 1024U);
+  llmcc::WriteEntropyCache(
+      repository, preprocessed, identity,
+      std::vector<llmcc::EntropyRecord>{
+          {.position = 0, .bytes = preprocessed, .entropy = std::nullopt}});
+  const fs::path analysis_output = fs::path(test_tmpdir) / "analysis.jsonl";
+  const std::string analysis_command = Quote(binary) + " " + Quote(source) +
+                                       " --model " + Quote(fake_model) + " >" +
+                                       Quote(analysis_output);
+  llmcc::test::ExpectEq(Run(analysis_command), 0,
+                        "cache-only analysis succeeds without model load");
+  std::istringstream lines(Read(analysis_output));
+  std::vector<nlohmann::json> events;
+  for (std::string line; std::getline(lines, line);) {
+    events.push_back(nlohmann::json::parse(line));
+  }
+  llmcc::test::ExpectEq(events.size(), std::size_t{5},
+                        "analysis emits five JSONL events");
+  llmcc::test::Expect(
+      events[0]["type"] == "start" && events[1]["type"] == "configuration" &&
+          events[2]["type"] == "file_start" && events[3]["type"] == "file" &&
+          events[4]["type"] == "totals",
+      "analysis events are ordered");
+  llmcc::test::Expect(events[3]["entropy_cache_hit"].get<bool>(),
+                      "file reports entropy cache hit");
+  llmcc::test::ExpectEq(events[4]["analyzed"].get<std::uint64_t>(),
+                        std::uint64_t{1}, "totals report analyzed file");
+
+  const fs::path status_output = fs::path(test_tmpdir) / "status.json";
+  llmcc::test::ExpectEq(
+      Run(Quote(binary) + " cache status " + Quote(repository) +
+          " --format json >" + Quote(status_output)),
+      0, "cache status succeeds");
+  const nlohmann::json status = nlohmann::json::parse(Read(status_output));
+  llmcc::test::ExpectEq(status["entries"].get<std::uint64_t>(),
+                        std::uint64_t{1}, "cache status counts entries");
 
   return 0;
 }

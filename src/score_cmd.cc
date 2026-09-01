@@ -24,7 +24,7 @@
 #include <thread>
 #include <vector>
 
-#if defined(__APPLE__)
+#ifdef __APPLE__
 #include <mach/mach.h>
 #endif
 
@@ -278,7 +278,7 @@ std::uint64_t ModelFileSize(const std::filesystem::path& path) {
 }
 
 std::optional<std::uint64_t> HostAvailableMemory() {
-#if defined(__APPLE__)
+#ifdef __APPLE__
   vm_statistics64_data_t statistics{};
   mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
   if (host_statistics64(mach_host_self(), HOST_VM_INFO64,
@@ -537,19 +537,166 @@ int Run(const Arguments& arguments, std::ostream& output,
 
 namespace llmcc {
 
+class EntropyScorer::Impl {
+ public:
+  Impl(const std::filesystem::path& model_path,
+       const InferenceOptions& inference_options)
+      : model_(nullptr, llama_model_free),
+        context_limit_(inference_options.context_size),
+        threads_(static_cast<std::int32_t>(
+            std::max(1U, std::thread::hardware_concurrency()))) {
+    Arguments arguments;
+    arguments.model = model_path;
+    arguments.context_size = context_limit_;
+    arguments.threads = threads_;
+    arguments.entropy = true;
+    const auto gpu_available = GpuAvailableMemory();
+    const bool use_gpu = gpu_available.has_value();
+    CheckAvailableMemory(arguments, use_gpu, gpu_available);
+    llama_model_params parameters = llama_model_default_params();
+    parameters.n_gpu_layers = use_gpu ? -1 : 0;
+    model_.reset(llama_model_load_from_file(model_path.c_str(), parameters));
+    if (!model_) {
+      throw std::runtime_error("could not load model: " + model_path.string());
+    }
+    vocabulary_ = llama_model_get_vocab(model_.get());
+    prepend_bos_ = llama_vocab_get_add_bos(vocabulary_);
+  }
+
+  std::string Score(std::string_view input) {
+    std::vector<llama_token> tokens = Tokenize(vocabulary_, std::string(input));
+    if (prepend_bos_) {
+      const llama_token bos = llama_vocab_bos(vocabulary_);
+      if (bos < 0) {
+        throw std::runtime_error("the model vocabulary has no BOS token");
+      }
+      tokens.insert(tokens.begin(), bos);
+    }
+    if (tokens.size() > context_limit_) {
+      throw std::runtime_error(
+          "input token count " + std::to_string(tokens.size()) +
+          " exceeds --context " + std::to_string(context_limit_));
+    }
+    std::ostringstream output;
+    if (tokens.empty()) {
+      return output.str();
+    }
+    const std::size_t first_observed = prepend_bos_ ? 1 : 0;
+    if (!prepend_bos_) {
+      WriteNullScore(output, 0, tokens.front(),
+                     TokenPiece(vocabulary_, tokens.front()), true);
+    }
+    if (tokens.size() == 1) {
+      return output.str();
+    }
+    const std::size_t batch_size =
+        std::min(kDecodeBatchSize, tokens.size() - 1);
+    llama_context_params parameters = llama_context_default_params();
+    parameters.n_ctx = static_cast<std::uint32_t>(tokens.size());
+    parameters.n_batch = static_cast<std::uint32_t>(batch_size);
+    parameters.n_ubatch = static_cast<std::uint32_t>(batch_size);
+    parameters.n_seq_max = 1;
+    parameters.n_outputs_max = static_cast<std::uint32_t>(batch_size);
+    parameters.n_outputs_max_per_seq = static_cast<std::uint32_t>(batch_size);
+    parameters.n_threads = threads_;
+    parameters.n_threads_batch = threads_;
+    Context context(llama_init_from_model(model_.get(), parameters),
+                    llama_free);
+    if (!context) {
+      throw std::runtime_error("could not create inference context");
+    }
+    const std::int32_t vocabulary_size = llama_vocab_n_tokens(vocabulary_);
+    std::vector<llama_pos> positions(batch_size);
+    std::vector<std::int32_t> sequence_counts(batch_size, 1);
+    llama_seq_id sequence = 0;
+    std::vector<llama_seq_id*> sequences(batch_size, &sequence);
+    std::vector<std::int8_t> output_logits(batch_size, 1);
+    for (std::size_t source = 0; source + 1 < tokens.size();
+         source += batch_size) {
+      const std::size_t count =
+          std::min(batch_size, tokens.size() - 1 - source);
+      for (std::size_t index = 0; index < count; ++index) {
+        positions[index] = static_cast<llama_pos>(source + index);
+      }
+      llama_batch batch = {
+          .n_tokens = static_cast<std::int32_t>(count),
+          .token = tokens.data() + source,
+          .embd = nullptr,
+          .pos = positions.data(),
+          .n_seq_id = sequence_counts.data(),
+          .seq_id = sequences.data(),
+          .logits = output_logits.data(),
+      };
+      const int decode = llama_decode(context.get(), batch);
+      if (decode != 0) {
+        throw std::runtime_error("llama_decode failed at token " +
+                                 std::to_string(source) + " with code " +
+                                 std::to_string(decode));
+      }
+      for (std::size_t index = 0; index < count; ++index) {
+        float* logits = llama_get_logits_ith(context.get(),
+                                             static_cast<std::int32_t>(index));
+        if (!logits) {
+          throw std::runtime_error("model returned no logits");
+        }
+        const std::size_t target_index = source + index + 1;
+        const llama_token target = tokens[target_index];
+        if (target < 0 || target >= vocabulary_size) {
+          throw std::runtime_error(
+              "tokenizer produced a token outside the vocabulary");
+        }
+        const TokenScore score =
+            ScoreToken(std::span<const float>(
+                           logits, static_cast<std::size_t>(vocabulary_size)),
+                       static_cast<std::size_t>(target), true);
+        WriteScore(output, target_index - first_observed, target,
+                   TokenPiece(vocabulary_, target), score, true);
+      }
+    }
+    return output.str();
+  }
+
+ private:
+  Backend backend_;
+  Model model_;
+  const llama_vocab* vocabulary_ = nullptr;
+  std::uint32_t context_limit_;
+  std::int32_t threads_;
+  bool prepend_bos_ = false;
+};
+
+EntropyScorer::EntropyScorer(const std::filesystem::path& model,
+                             const InferenceOptions& options)
+    : implementation_(std::make_unique<Impl>(model, options)) {}
+
+EntropyScorer::~EntropyScorer() = default;
+EntropyScorer::EntropyScorer(EntropyScorer&&) noexcept = default;
+EntropyScorer& EntropyScorer::operator=(EntropyScorer&&) noexcept = default;
+
+std::string EntropyScorer::Score(std::string_view input) {
+  return implementation_->Score(input);
+}
+
+std::string_view InferenceAbi() {
+  return "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v1";
+}
+
+std::string_view CompiledBackend() {
+#ifdef LLMCC_BACKEND_CUDA
+  return "cuda";
+#elif defined LLMCC_BACKEND_ROCM
+  return "rocm";
+#elif defined LLMCC_BACKEND_METAL
+  return "metal";
+#else
+  return "cpu";
+#endif
+}
+
 std::string ScoreEntropyJsonl(const std::filesystem::path& model,
                               std::string_view input,
                               const InferenceOptions& options) {
-  Arguments arguments;
-  arguments.model = model;
-  arguments.context_size = options.context_size;
-  arguments.entropy = true;
-  arguments.threads = static_cast<std::int32_t>(
-      std::max(1U, std::thread::hardware_concurrency()));
-  std::ostringstream output;
-  std::ostringstream diagnostics;
-  static_cast<void>(Run(arguments, output, diagnostics, std::string(input)));
-  return output.str();
+  return EntropyScorer(model, options).Score(input);
 }
 
 int RunScoreCommand(int argc, char** argv) {

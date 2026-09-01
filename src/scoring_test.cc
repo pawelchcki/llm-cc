@@ -28,7 +28,7 @@ double EntropyOrNan(const llmcc::TokenScore& score) {
 
 }  // namespace
 
-int main() {
+int main() {  // NOLINT(bugprone-exception-escape)
   constexpr std::uint64_t kMiB = 1024ULL * 1024;
   constexpr std::uint64_t kGiB = 1024ULL * kMiB;
 
