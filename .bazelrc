@@ -23,7 +23,7 @@ build:release --compilation_mode=opt
 build:release --strip=always
 build:release --stamp
 
-# Build Linux x86_64 binaries against the compact pinned GCC/glibc sysroot.
+# Build Linux x86_64 binaries with pinned Clang and the portable glibc sysroot.
 # This alias is retained for callers that already use --config=portable.
 build:portable --extra_toolchains=@llvm_toolchain_portable//:cc-toolchain-x86_64-linux
 

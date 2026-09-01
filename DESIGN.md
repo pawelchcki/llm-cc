@@ -49,9 +49,16 @@ complete transfer.
 
 All third-party source is checksum-pinned in `MODULE.bazel`. tree-sitter uses
 the runtime unity C source and official complete-source grammar bundles.
-OpenSSL is built by a scoped real make toolchain; curl and llama.cpp use Ninja
-through CMake. This preserves the fail-fast unused-tool guard on llama.cpp.
+llama, ggml CPU, CUDA, HIP, and Metal are native per-source Bazel actions.
+Only stable leaf dependencies such as OpenSSL and curl retain foreign builds.
 
-The `portable` profile swaps in the pinned glibc 2.17 sysroot. CI verifies the
-maximum imported glibc symbol version and rejects unexpected dynamic runtime
-dependencies.
+Linux development keeps GPU modules in runfiles. The release statically links
+the application and CPU stack, exports only the small ggml backend ABI, and
+appends deterministic compressed CUDA and ROCm bundles. CUDA is loaded from a
+sealed memfd; ROCm is extracted into a content-addressed private cache only
+when selected. CPU execution does not touch either payload.
+
+The default Linux toolchain is pinned Clang with a glibc 2.24 sysroot; the
+`portable` profile is an alias for the same hermetic configuration. CI enforces
+the public glibc 2.28 ceiling and rejects project or GPU userspace dynamic
+dependencies from the shipped ELF.

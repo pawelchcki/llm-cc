@@ -136,8 +136,10 @@ cuda_library(
     srcs = CUDA_SOURCES,
     hdrs = glob(["ggml/src/ggml-cuda/*.cuh"]),
     tools = [
+        "@//tools:cuda_glibc_compat.h",
         "@//tools:cuda_host_compiler_wrapper.sh",
         "@cuda_host_toolchain//:clang_cuda_host_files",
+        "@linux_glibc_sysroot//:sysroot",
         "@llvm_toolchain_llvm//:clang",
     ],
     archs = [
@@ -200,8 +202,6 @@ hip_library(
     cxx_anchor = "@llvm_toolchain_llvm//:include/c++/v1/algorithm",
     cxx_headers = "@llvm_toolchain_llvm//:all_includes",
     cxx_libs = "@llvm_toolchain_llvm//:lib",
-    gcc = "@cuda_host_toolchain//:gxx",
-    gcc_files = "@cuda_host_toolchain//:host_toolchain",
     hdrs = GGML_PUBLIC_HEADERS + COMMON_HEADERS + glob(["ggml/src/ggml-cuda/*.cuh"]) + [
         "@rocm_sdk//:hip_headers",
     ],
@@ -213,6 +213,8 @@ hip_library(
     link_files = "@rocm_sdk//:link_files",
     output_name = "libllm-cc-backend-rocm.so",
     srcs = CUDA_SOURCES,
+    sysroot_anchor = "@linux_glibc_sysroot//:usr/include/stdlib.h",
+    sysroot_files = "@linux_glibc_sysroot//:sysroot",
     version_script = "@//third_party:backend_module.lds",
 )
 

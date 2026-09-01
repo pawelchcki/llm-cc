@@ -4,9 +4,31 @@ load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 
 package(default_visibility = ["//visibility:public"])
 
+filegroup(
+    name = "cpp_sources",
+    srcs = glob([
+        "*.cc",
+        "*.h",
+    ]),
+)
+
+cc_binary(
+    name = "embed_payloads",
+    srcs = [
+        "embed_payloads.cc",
+        "sha256.h",
+    ],
+    deps = [
+        "//:linux_compat",
+        "//:payload_format",
+        "@zstd//:zstd",
+    ],
+)
+
 cc_binary(
     name = "materialize_tree",
     srcs = ["materialize_tree.cc"],
+    deps = ["//:linux_compat"],
 )
 
 sh_binary(
@@ -15,7 +37,9 @@ sh_binary(
 )
 
 exports_files([
+    "cuda_glibc_compat.h",
     "cuda_host_compiler_wrapper.sh",
+    "embed_payloads.cc",
     "format_test.sh",
     "hip_library.bzl",
     "hermetic_clang_wrapper.sh",

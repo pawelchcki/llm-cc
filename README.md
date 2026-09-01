@@ -12,16 +12,19 @@ the paper's compositional hierarchy, and prints JSON.
 Bazelisk reads the pinned Bazel version automatically:
 
 ```sh
-bazel build --config=release //:llm-cc
-bazel test --config=cpu //...
+bazel build //:llm-cc
+bazel test //:unit
+bazel test //:integration
 ```
 
 The build downloads checksum-pinned LLVM, llama.cpp, tree-sitter and its Rust,
 C, and C++ source bundles, nlohmann/json, curl, and, on non-macOS platforms,
 OpenSSL. macOS curl builds use Apple's Secure Transport and system trust store.
-On Linux x86-64, the default is a universal CPU + CUDA + ROCm build with
-dynamically loaded private backend plugins. Metal remains the macOS default.
-Smaller, single-family builds remain available:
+On Linux x86-64, `//:llm-cc` is always a universal CPU + CUDA + ROCm
+development executable. Its private GPU modules stay in Bazel runfiles, so an
+application edit recompiles and relinks only affected application actions.
+Metal remains the standalone static macOS default. Smaller diagnostic builds
+remain available:
 
 ```sh
 bazel build --config=release --config=rocm //:llm-cc
@@ -33,10 +36,13 @@ bazel build --config=release --config=cpu //:llm-cc
 ROCm builds download AMD's checksum-pinned TheRock 7.14.0 `gfx110X` SDK and
 compile deterministic code objects for `gfx1100`, `gfx1101`, and `gfx1102`.
 CUDA builds assemble a checksum-pinned CUDA 13.0.2 subset from NVIDIA's
-redistributable component archives and use a pinned GCC 12.3 host compiler,
-fixed architectures, and compiler random seeds. Linux C/C++ builds share that
-compiler bundle's glibc 2.37 sysroot. Neither backend searches the host for a
-vendor SDK, compiler, C library, or GNU Make.
+redistributable component archives. NVCC compiles device code one translation
+unit per Bazel action and delegates its host phase to pinned Clang 22. CUDA's
+x86 headers reject libc++, so that host phase reads pinned libstdc++ headers;
+no GCC executable runs. Application, CPU, and HIP code all compile with pinned
+Clang and libc++. Linux targets use a checksum-pinned Debian Stretch sysroot,
+and neither backend searches the host for a vendor SDK, compiler, C library,
+or GNU Make.
 
 HIP sources receive repository-relative deterministic compilation-unit IDs;
 HIP/CUDA host paths are prefix-mapped and optional host ccache discovery is
@@ -59,24 +65,22 @@ bazel run //:install
 bazel run //:install -- --prefix /opt/llm-cc
 ```
 
-Installs keep a normalized, content-addressed payload under `libexec/llm-cc`;
-the `bin/llm-cc` launcher selects that immutable payload. The payload contains
-only the executable, private llama.cpp libraries and plugins, and pinned vendor
-runtimes, so it can be moved independently of Bazel's runfiles tree.
-
-On macOS, installation atomically replaces `bin/llm-cc` with the standalone
-Mach-O executable; its llama.cpp and ggml components are statically linked.
-Existing `libexec/llm-cc` payloads from earlier installs are left untouched.
+Installation atomically replaces one `bin/llm-cc` executable. On Linux that
+ELF contains the statically linked application, llama/ggml CPU code, and
+compressed CUDA and ROCm payloads. On macOS it is the standalone static Metal
+Mach-O executable.
 
 Build deterministic release archives with:
 
 ```sh
-bazel build --config=release //:universal_archive
-bazel build --config=release --config=cpu //:cpu_static_archive
+bazel build --config=release //dist:linux_x86_64
+bazel build --config=release //dist:macos
 ```
 
-The first produces `llm-cc-0.1-linux-x86_64-universal.tar.gz`; the second is a
-fully static CPU fallback with no ELF dynamic section.
+The Linux target emits `llm-cc-0.1-linux-x86_64` and its SHA-256 checksum.
+Compatibility labels `//:universal_archive` and `//:install_payload` point to
+the same single-file output. `//:cpu_static_archive` remains available as an
+explicit CPU diagnostic artifact; it is never the Linux default.
 
 ## Analyze source
 
@@ -157,6 +161,18 @@ fails clearly when the requested device is unavailable. `cpu` rejects nonzero
 GPU layers. Backend options are invalid with `--entropy-jsonl`, which performs
 no inference.
 
+The release ELF reads its compressed payload footer through `/proc/self/exe`.
+CUDA is decompressed into an immutable sealed memfd and never touches disk.
+ROCm's exact pinned userspace and architecture-data closure is atomically
+materialized under a content-addressed, owner-only cache. Its location follows
+this precedence:
+
+1. `LLM_CC_RUNTIME_DIR`
+2. `$XDG_CACHE_HOME/llm-cc/runtime`
+3. `$HOME/.cache/llm-cc/runtime`
+
+CPU execution does not inspect, decompress, or extract either GPU payload.
+
 ```json
 {"position":0,"token_id":785,"piece":"The","bytes_hex":"546865","probability":null,"log_probability":null,"entropy":null}
 ```
@@ -166,13 +182,15 @@ is involved.
 
 ## Hermetic Linux build
 
-Linux x86_64 builds use the checksum-pinned LLVM, GCC, and glibc sysroot by
-default. The `portable` profile remains as an explicit alias:
+Linux x86-64 builds use checksum-pinned Clang 22 and a Debian Stretch glibc
+2.24 sysroot by default. The shipped ABI contract remains glibc 2.28 or newer;
+CI rejects any imported symbol above that ceiling. The `portable` profile is
+retained as an explicit alias:
 
 ```sh
-bazel build --config=release --config=portable --config=cpu //:llm-cc
-tools/check_glibc_version.sh bazel-bin/llm-cc 2.37
-tools/check_static_link.sh bazel-bin/llm-cc
+bazel build --config=release --config=portable //dist:linux_x86_64
+tools/check_glibc_version.sh bazel-bin/dist/llm-cc-0.1-linux-x86_64 2.28
+tools/check_static_link.sh bazel-bin/dist/llm-cc-0.1-linux-x86_64
 ```
 
 The hermetic Linux build uses static OpenSSL and curl for model downloads. The
@@ -184,7 +202,8 @@ explicit override.
 ## Development
 
 ```sh
-tools/check_format.sh
+bazel test //:unit
+bazel test //:integration
 tools/run_clang_tidy.sh
 ```
 

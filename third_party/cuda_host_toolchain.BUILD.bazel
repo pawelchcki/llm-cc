@@ -36,7 +36,6 @@ filegroup(
     srcs = [
         "lib/gcc/x86_64-buildroot-linux-gnu/12.3.0",
         "x86_64-buildroot-linux-gnu/include/c++/12.3.0",
-        ":sysroot_files",
     ],
 )
 

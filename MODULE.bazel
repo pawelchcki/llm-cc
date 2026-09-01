@@ -10,6 +10,7 @@ bazel_dep(name = "rules_foreign_cc", version = "0.15.1")
 bazel_dep(name = "bazel_skylib", version = "1.8.2")
 bazel_dep(name = "platforms", version = "1.0.0")
 bazel_dep(name = "toolchains_llvm", version = "1.8.0")
+bazel_dep(name = "zstd", version = "1.5.7.bcr.1")
 
 single_version_override(
     module_name = "rules_foreign_cc",
@@ -34,7 +35,7 @@ llvm.toolchain(
 use_repo(llvm, "llvm_toolchain", "llvm_toolchain_llvm")
 
 # A second toolchain shares the pinned LLVM distribution but links Linux
-# x86_64 targets against the compact sysroot in the pinned GCC bundle.
+# x86_64 targets against the checksum-pinned portable glibc sysroot.
 llvm.toolchain(
     name = "llvm_toolchain_portable",
     cxx_standard = {"": "c++20"},
@@ -46,7 +47,7 @@ llvm.toolchain_root(
 )
 llvm.sysroot(
     name = "llvm_toolchain_portable",
-    label = "@cuda_host_toolchain//x86_64-buildroot-linux-gnu/sysroot:sysroot",
+    label = "@linux_glibc_sysroot//:sysroot",
     targets = ["linux-x86_64"],
 )
 use_repo(llvm, "llvm_toolchain_portable")
@@ -99,7 +100,9 @@ cuda_sdk_repository = use_repo_rule("//tools:gpu_sdk_repositories.bzl", "cuda_sd
 
 cuda_sdk_repository(name = "cuda_sdk")
 
-# Compact pinned glibc 2.28 sysroot used by Clang for portable Linux output.
+# Pinned GCC bundle used only for its libstdc++ headers and libraries. CUDA's
+# x86 headers reject libc++, but NVCC still delegates every host compile to
+# pinned Clang.
 http_archive(
     name = "cuda_host_toolchain",
     build_file = "//third_party:cuda_host_toolchain.BUILD.bazel",
@@ -108,6 +111,19 @@ http_archive(
     sha256 = "d6eca7f1ea736ef6f868a027a9d0baa875f9513755026aed2badc04a2b9cd7bd",
     strip_prefix = "x86-64--glibc--stable-2023.08-1",
     urls = ["https://toolchains.bootlin.com/downloads/releases/toolchains/x86-64/tarballs/x86-64--glibc--stable-2023.08-1.tar.bz2"],
+)
+
+# Chromium's checksum-addressed Debian Stretch sysroot supplies glibc 2.24,
+# keeping the release ABI below the documented glibc 2.28 ceiling.
+http_archive(
+    name = "linux_glibc_sysroot",
+    build_file_content = """
+package(default_visibility = ["//visibility:public"])
+filegroup(name = "sysroot", srcs = glob(["**"]))
+exports_files(["usr/include/stdlib.h"])
+""",
+    sha256 = "73d828bf653f8f8548be704ce1ded4d195bf2bf937fc5426dd5636a9940d1969",
+    urls = ["https://commondatastorage.googleapis.com/chrome-linux-sysroot/toolchain/3c248ba4290a5ad07085b7af07e6785bf1ae5b66/debian_stretch_amd64_sysroot.tar.xz"],
 )
 
 http_archive(

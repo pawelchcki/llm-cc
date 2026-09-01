@@ -38,24 +38,18 @@ set -euo pipefail
 runfiles_dir="${{RUNFILES_DIR:-$0.runfiles}}"
 exec "$runfiles_dir/{workspace}/{script}" \\
   "$runfiles_dir/{workspace}/{binary}" \\
-  "$runfiles_dir/{workspace}/{version_script}" \\
-  "$runfiles_dir/{workspace}/{payload}" "$@"
+  "$@"
 """.format(
             workspace = workspace,
             script = ctx.file.script.short_path,
-            binary = ctx.executable.binary.short_path,
-            version_script = ctx.file.version_script.short_path,
-            payload = ctx.file.payload.short_path,
+            binary = ctx.file.binary.short_path,
         ),
         is_executable = True,
     )
     runfiles = ctx.runfiles(files = [
-        ctx.executable.binary,
+        ctx.file.binary,
         ctx.file.script,
-        ctx.file.version_script,
-        ctx.file.payload,
-        ctx.file._version_file,
-    ]).merge(ctx.attr.binary[DefaultInfo].default_runfiles)
+    ])
     return [DefaultInfo(
         executable = launcher,
         runfiles = runfiles,
@@ -65,13 +59,70 @@ install_launcher = rule(
     implementation = _install_launcher_impl,
     executable = True,
     attrs = {
-        "binary": attr.label(executable = True, cfg = "target", mandatory = True),
+        "binary": attr.label(allow_single_file = True, mandatory = True),
         "script": attr.label(allow_single_file = True, mandatory = True),
-        "version_script": attr.label(allow_single_file = True, mandatory = True),
-        "payload": attr.label(allow_single_file = True, mandatory = True),
-        "_version_file": attr.label(
-            allow_single_file = True,
-            default = Label("//:VERSION"),
+    },
+)
+
+def _file_short_path(file):
+    return file.short_path
+
+def _embedded_linux_binary_impl(ctx):
+    binary_files = ctx.attr.binary[DefaultInfo].files.to_list()
+    cuda_files = ctx.attr.cuda_module[DefaultInfo].files.to_list()
+    rocm_module_files = ctx.attr.rocm_module[DefaultInfo].files.to_list()
+    if len(binary_files) != 1 or len(cuda_files) != 1 or len(rocm_module_files) != 1:
+        fail("embedded distribution inputs must each produce exactly one file")
+
+    output = ctx.actions.declare_file(ctx.attr.output_name)
+    checksum = ctx.actions.declare_file(ctx.attr.output_name + ".sha256")
+    args = ctx.actions.args()
+    args.add("--binary", binary_files[0])
+    args.add("--cuda", cuda_files[0])
+    args.add("--rocm-module", rocm_module_files[0])
+    args.add("--output", output)
+    args.add("--checksum-output", checksum)
+
+    runtime_files = ctx.attr.rocm_runtime[DefaultInfo].files.to_list()
+    for source in sorted(runtime_files, key = _file_short_path):
+        marker = "rocm_sdk/"
+        index = source.short_path.find(marker)
+        if index < 0:
+            fail("ROCm runtime input is outside the pinned SDK tree: %s" % source.short_path)
+        destination = source.short_path[index + len(marker):]
+        args.add("--rocm-file", source.path + "=" + destination)
+
+    ctx.actions.run(
+        executable = ctx.executable._packager,
+        arguments = [args],
+        inputs = depset(
+            direct = binary_files + cuda_files + rocm_module_files,
+            transitive = [ctx.attr.rocm_runtime[DefaultInfo].files],
+        ),
+        outputs = [output, checksum],
+        mnemonic = "EmbedLlmCcPayloads",
+        progress_message = "Embedding CUDA and ROCm payloads in %{output}",
+    )
+    return [
+        DefaultInfo(files = depset([output, checksum])),
+        OutputGroupInfo(
+            checksum = depset([checksum]),
+            executable = depset([output]),
+        ),
+    ]
+
+embedded_linux_binary = rule(
+    implementation = _embedded_linux_binary_impl,
+    attrs = {
+        "binary": attr.label(mandatory = True),
+        "cuda_module": attr.label(mandatory = True),
+        "output_name": attr.string(mandatory = True),
+        "rocm_module": attr.label(mandatory = True),
+        "rocm_runtime": attr.label(mandatory = True),
+        "_packager": attr.label(
+            executable = True,
+            cfg = "exec",
+            default = Label("//tools:embed_payloads"),
         ),
     },
 )

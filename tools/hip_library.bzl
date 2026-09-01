@@ -6,8 +6,8 @@ def _hip_library_impl(ctx):
         rocm_root = compiler.path.removesuffix("/bin/hipcc")
     else:
         rocm_root = compiler.path.removesuffix("/lib/llvm/bin/clang++")
-    gcc_root = ctx.executable.gcc.path.removesuffix("/bin/x86_64-buildroot-linux-gnu-g++")
     cxx_root = ctx.file.cxx_anchor.path.removesuffix("/include/c++/v1/algorithm")
+    sysroot_root = ctx.file.sysroot_anchor.path.removesuffix("/usr/include/stdlib.h")
     source_root = ctx.label.workspace_root
     if ctx.label.package:
         source_root += "/" + ctx.label.package
@@ -40,8 +40,7 @@ def _hip_library_impl(ctx):
         "--rocm-device-lib-path=" + rocm_root + "/lib/llvm/amdgcn/bitcode",
         "-resource-dir", rocm_root + "/lib/llvm/lib/clang/23",
         "-include", rocm_root + "/lib/llvm/lib/clang/23/include/__clang_hip_runtime_wrapper.h",
-        "--gcc-toolchain=" + gcc_root,
-        "--sysroot=" + gcc_root + "/x86_64-buildroot-linux-gnu/sysroot",
+        "--sysroot=" + sysroot_root,
         "-stdlib=libc++",
         "-nostdinc++",
         "-isystem", materialized_cxx.path + "/include/c++/v1",
@@ -69,7 +68,7 @@ def _hip_library_impl(ctx):
         direct = ctx.files.hdrs,
         transitive = [
             ctx.attr.compiler_files[DefaultInfo].files,
-            ctx.attr.gcc_files[DefaultInfo].files,
+            ctx.attr.sysroot_files[DefaultInfo].files,
         ],
     )
     objects = []
@@ -103,14 +102,17 @@ def _hip_library_impl(ctx):
     link_args.add(rocm_root + "/lib/llvm/bin/clang++")
     link_args.add_all([
         "--rocm-path=" + rocm_root,
-        "--gcc-toolchain=" + gcc_root,
-        "--sysroot=" + gcc_root + "/x86_64-buildroot-linux-gnu/sysroot",
+        "--sysroot=" + sysroot_root,
         "-nostdlib++",
         "--rtlib=compiler-rt",
         "--unwindlib=libunwind",
         "-shared",
         "-Wl,--build-id=none",
         "-Wl,--exclude-libs,ALL",
+        "-Wl,--disable-new-dtags",
+        "-Wl,-rpath,$ORIGIN/lib",
+        "-Wl,-rpath,$ORIGIN/lib/llvm/lib",
+        "-Wl,-rpath,$ORIGIN/lib/rocm_sysdeps/lib",
         "-Wl,--version-script=" + ctx.file.version_script.path,
     ])
     link_args.add_all(objects)
@@ -135,8 +137,8 @@ def _hip_library_impl(ctx):
             transitive = [
                 ctx.attr.compiler_files[DefaultInfo].files,
                 ctx.attr.cxx_libs[DefaultInfo].files,
-                ctx.attr.gcc_files[DefaultInfo].files,
                 ctx.attr.link_files[DefaultInfo].files,
+                ctx.attr.sysroot_files[DefaultInfo].files,
             ],
         ),
         outputs = [output],
@@ -154,8 +156,6 @@ hip_library = rule(
         "cxx_anchor": attr.label(allow_single_file = True, mandatory = True),
         "cxx_headers": attr.label(mandatory = True),
         "cxx_libs": attr.label(mandatory = True),
-        "gcc": attr.label(executable = True, cfg = "exec", mandatory = True),
-        "gcc_files": attr.label(mandatory = True),
         "hdrs": attr.label_list(allow_files = True),
         "includes": attr.string_list(),
         "link_files": attr.label(mandatory = True),
@@ -166,6 +166,8 @@ hip_library = rule(
         ),
         "output_name": attr.string(mandatory = True),
         "srcs": attr.label_list(allow_files = [".cu"], mandatory = True),
+        "sysroot_anchor": attr.label(allow_single_file = True, mandatory = True),
+        "sysroot_files": attr.label(mandatory = True),
         "version_script": attr.label(allow_single_file = True, mandatory = True),
         "wrapper": attr.label(
             executable = True,

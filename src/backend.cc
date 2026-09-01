@@ -13,6 +13,8 @@
 #include <system_error>
 #include <vector>
 
+#include "src/payload.h"
+
 #if defined(__linux__)
 #include <unistd.h>
 #endif
@@ -79,9 +81,30 @@ std::vector<std::filesystem::path> PluginCandidates(BackendKind backend) {
 struct LoadedPlugin {
   BackendKind backend;
   ggml_backend_reg_t registry;
+  int backing_fd = -1;
 };
 
 LoadedPlugin LoadPlugin(BackendKind backend, bool required) {
+  if (std::optional<PreparedPayload> embedded =
+          PrepareEmbeddedPayload(BackendName(backend));
+      embedded.has_value()) {
+    if (ggml_backend_reg_t registry = ggml_backend_load(embedded->path.c_str());
+        registry != nullptr) {
+      return {.backend = backend,
+              .registry = registry,
+              .backing_fd = embedded->backing_fd};
+    }
+#if defined(__linux__)
+    if (embedded->backing_fd >= 0) {
+      close(embedded->backing_fd);
+    }
+#endif
+    if (required) {
+      throw std::runtime_error("could not load embedded " +
+                               std::string(BackendName(backend)) + " backend");
+    }
+    return {.backend = backend, .registry = nullptr};
+  }
   std::vector<std::filesystem::path> candidates = PluginCandidates(backend);
   std::error_code error;
   for (const auto& candidate : candidates) {
@@ -108,6 +131,19 @@ LoadedPlugin LoadPlugin(BackendKind backend, bool required) {
     throw std::runtime_error(message);
   }
   return {.backend = backend, .registry = nullptr};
+}
+
+void UnloadPlugin(LoadedPlugin& plugin) {
+  if (plugin.registry != nullptr) {
+    ggml_backend_unload(plugin.registry);
+    plugin.registry = nullptr;
+  }
+#if defined(__linux__)
+  if (plugin.backing_fd >= 0) {
+    close(plugin.backing_fd);
+    plugin.backing_fd = -1;
+  }
+#endif
 }
 
 std::vector<BackendDevice> Inventory(std::span<const LoadedPlugin> plugins) {
@@ -158,7 +194,7 @@ BackendRuntime::BackendRuntime(BackendKind requested, std::int32_t gpu_layers) {
   for (std::size_t index = 0; index < gpu_count; ++index) {
     if (gpu_plugins[index].registry != nullptr &&
         gpu_plugins[index].backend != selected_) {
-      ggml_backend_unload(gpu_plugins[index].registry);
+      UnloadPlugin(gpu_plugins[index]);
     }
   }
 #else

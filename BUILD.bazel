@@ -299,6 +299,7 @@ configure_make_variant(
         "install_sw",
     ],
     toolchain = "@rules_foreign_cc//toolchains:built_make_toolchain",
+    visibility = ["//visibility:public"],
 )
 
 cmake(
@@ -311,11 +312,18 @@ cmake(
         "//conditions:default": curl_cmake_options(
             CURL_USE_OPENSSL = "ON",
             CURL_USE_SECTRANSP = "OFF",
+            OPENSSL_CRYPTO_LIBRARY = "$$EXT_BUILD_DEPS/openssl_/lib64/libcrypto.a",
+            OPENSSL_INCLUDE_DIR = "$$EXT_BUILD_DEPS/openssl_/include",
+            OPENSSL_ROOT_DIR = "$$EXT_BUILD_DEPS/openssl_",
+            OPENSSL_SSL_LIBRARY = "$$EXT_BUILD_DEPS/openssl_/lib64/libssl.a",
+            OPENSSL_USE_STATIC_LIBS = "ON",
         ),
     }),
     deps = select({
         ":host_macos": [],
-        "//conditions:default": [":openssl"],
+        "//conditions:default": [
+            ":openssl",
+        ],
     }),
     generate_args = ["-GNinja"],
     lib_source = "@curl//:all",
@@ -330,6 +338,16 @@ cc_library(
 )
 
 cc_library(
+    name = "payload_format",
+    hdrs = ["src/payload_format.h"],
+)
+
+cc_library(
+    name = "linux_compat",
+    srcs = ["src/linux_compat.cc"],
+)
+
+cc_library(
     name = "backend_runtime",
     srcs = ["src/backend.cc"],
     hdrs = ["src/backend.h"],
@@ -341,8 +359,26 @@ cc_library(
     deps = [
         ":backend_policy",
         ":llama",
+        ":payload",
     ],
     tags = ["manual"],
+)
+
+cc_library(
+    name = "payload",
+    srcs = ["src/payload.cc"],
+    hdrs = [
+        "src/payload.h",
+        "src/payload_format.h",
+    ],
+    deps = select({
+        ":host_macos": [],
+        "//conditions:default": [
+            ":linux_compat",
+            ":openssl",
+            "@zstd//:zstd",
+        ],
+    }),
 )
 
 cc_library(
@@ -423,6 +459,10 @@ cc_library(
 cc_library(
     name = "test_util",
     hdrs = ["src/test_util.h"],
+    deps = select({
+        ":host_macos": [],
+        "//conditions:default": [":linux_compat"],
+    }),
 )
 
 cc_binary(
@@ -494,12 +534,38 @@ cc_binary(
     tags = ["manual"],
 )
 
+cc_binary(
+    name = "llm-cc-release-base",
+    srcs = ["src/cli/main.cc"],
+    additional_linker_inputs = ["//third_party:ggml_backend_abi.list"],
+    linkopts = [
+        "-ldl",
+        "-lpthread",
+        "-Wl,--build-id=none",
+        "-Wl,--dynamic-list=$(location //third_party:ggml_backend_abi.list)",
+    ],
+    deps = [
+        ":cache",
+        ":core",
+        ":download",
+        ":jsonl",
+        ":lang",
+        ":score_cmd",
+        ":version",
+    ],
+    tags = ["manual"],
+    target_compatible_with = select({
+        ":backend_universal": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
 filegroup(
     name = "cpp_sources",
     srcs = glob([
         "src/**/*.cc",
         "src/**/*.h",
-    ]),
+    ]) + ["//tools:cpp_sources"],
 )
 
 sh_test(
@@ -531,41 +597,24 @@ build_test(
 
 install_launcher(
     name = "install",
-    binary = ":llm-cc",
-    payload = ":install_payload",
-    script = "//tools:install.sh",
-    version_script = "//tools:version.sh",
-    tags = ["manual"],
-)
-
-payload_archive(
-    name = "install_payload",
-    binary = ":llm-cc",
-    cuda_runtime = "@cuda_sdk//:runtime_files",
-    host_runtime = "@cuda_host_toolchain//x86_64-buildroot-linux-gnu/sysroot:runtime_files",
-    kind = "auto",
-    llama = ":llama_cpp",
-    output_name = "llm-cc-install-payload.tar.gz",
-    rocm_runtime = "@rocm_sdk//:runtime_files",
-    root_name = "llm-cc-payload",
-    tags = ["manual"],
-)
-
-payload_archive(
-    name = "universal_archive",
-    binary = ":llm-cc",
-    cuda_runtime = "@cuda_sdk//:runtime_files",
-    host_runtime = "@cuda_host_toolchain//x86_64-buildroot-linux-gnu/sysroot:runtime_files",
-    kind = "universal",
-    llama = ":llama_cpp",
-    output_name = "llm-cc-%s-linux-x86_64-universal.tar.gz" % DIST_VERSION,
-    rocm_runtime = "@rocm_sdk//:runtime_files",
-    root_name = "llm-cc-%s-linux-x86_64-universal" % DIST_VERSION,
-    tags = ["manual"],
-    target_compatible_with = select({
-        ":backend_universal": [],
-        "//conditions:default": ["@platforms//:incompatible"],
+    binary = select({
+        ":host_macos": ":llm-cc",
+        "//conditions:default": "//dist:linux_x86_64_executable",
     }),
+    script = "//tools:install.sh",
+    tags = ["manual"],
+)
+
+alias(
+    name = "install_payload",
+    actual = "//dist:linux_x86_64",
+    tags = ["manual"],
+)
+
+alias(
+    name = "universal_archive",
+    actual = "//dist:linux_x86_64",
+    tags = ["manual"],
 )
 
 payload_archive(
@@ -657,6 +706,21 @@ cc_test(
 )
 
 cc_test(
+    name = "payload_integration_test",
+    srcs = ["src/payload_integration_test.cc"],
+    data = ["//dist:linux_x86_64_executable"],
+    deps = [
+        ":payload",
+        ":test_util",
+    ],
+    tags = ["manual"],
+    target_compatible_with = select({
+        ":backend_universal": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
+cc_test(
     name = "scoring_test",
     srcs = ["src/scoring_test.cc"],
     deps = [":scoring"],
@@ -680,5 +744,8 @@ test_suite(
 test_suite(
     name = "integration",
     tags = ["manual"],
-    tests = [":cli_test"],
+    tests = [
+        ":cli_test",
+        ":payload_integration_test",
+    ],
 )
