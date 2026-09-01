@@ -37,6 +37,12 @@ Before loading a model, the scorer checks host memory and, when requested, GPU
 memory. The estimate is the model file plus a 10% weight margin and 512 MiB of
 context overhead. `--override-memory-check` bypasses this heuristic.
 
+GPU inference holds a per-user, per-backend advisory lock for the model
+lifetime. Concurrent `llm-cc` processes therefore queue before measuring free
+device memory or loading weights. A zero-memory result inside a detected Codex
+sandbox gets a targeted diagnostic because sandboxed Metal accounting can hide
+the accelerator.
+
 ## Model lifecycle
 
 `src/cache.cc` owns cache selection, `models.json`, timestamps, listing, and

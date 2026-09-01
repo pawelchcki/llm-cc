@@ -120,6 +120,13 @@ maximum, so short source files retain a small memory footprint. Use `--context`
 to select a different limit. Inference offloads all model layers when a GPU
 backend is available and otherwise uses the CPU.
 
+GPU-backed invocations are serialized per user and backend, so concurrent
+`llm-cc` processes wait instead of competing to load the same large model.
+Routine llama.cpp initialization diagnostics are suppressed; actionable
+warnings and errors still go to stderr. If a Codex sandbox reports zero GPU
+memory, `llm-cc` identifies the sandbox and recommends running with permission
+to access the accelerator directly.
+
 Without `--model`, `llm-cc` first checks
 `models/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf`, then its model cache. If the
 default model is absent it downloads it over HTTPS to a `.partial` file and
