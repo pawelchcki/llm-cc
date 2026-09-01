@@ -1,12 +1,17 @@
-#include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <nlohmann/json.hpp>
+#include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
+#include <vector>
 
+#include "src/entropy_cache.h"
+#include "src/lang.h"
 #include "src/test_util.h"
 
 namespace {
@@ -46,7 +51,6 @@ int main() {  // NOLINT(bugprone-exception-escape)
   const fs::path root = fs::path(test_srcdir) / test_workspace;
   const fs::path binary = root / "llm-cc";
   const fs::path fixtures = root / "testdata/cli";
-  const fs::path output = fs::path(test_tmpdir) / "analysis.json";
 
   const fs::path analyze_help = fs::path(test_tmpdir) / "analyze-help.txt";
   llmcc::test::ExpectEq(Run(Quote(binary) + " --help 2>" + Quote(analyze_help)),
@@ -54,6 +58,9 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(
       Read(analyze_help).find("default: 131072") != std::string::npos,
       "analysis advertises the large default context");
+  llmcc::test::Expect(
+      Read(analyze_help).find("auto, cpu, cuda, or rocm") != std::string::npos,
+      "analysis documents runtime backend selection");
 
   const fs::path score_help = fs::path(test_tmpdir) / "score-help.txt";
   llmcc::test::ExpectEq(
@@ -78,67 +85,50 @@ int main() {  // NOLINT(bugprone-exception-escape)
       Read(backend_error).find("--backend cpu") != std::string::npos,
       "CPU backend rejection is explained");
 
-  const std::string command =
-      Quote(binary) + " " + Quote(fixtures / "realistic.rs") +
-      " --entropy-jsonl " + Quote(fixtures / "realistic.jsonl") + " >" +
-      Quote(output);
-  llmcc::test::ExpectEq(Run(command), 0, "realistic fixture analysis succeeds");
-  const nlohmann::json actual = nlohmann::json::parse(Read(output));
-  const nlohmann::json expected =
-      nlohmann::json::parse(Read(fixtures / "realistic.expected.json"));
-  llmcc::test::ExpectEq(actual, expected, "realistic output matches golden");
-
-  const fs::path entropy_backend_error =
-      fs::path(test_tmpdir) / "entropy-backend-error.txt";
-  const std::string entropy_backend_command =
-      Quote(binary) + " " + Quote(fixtures / "realistic.rs") +
-      " --entropy-jsonl " + Quote(fixtures / "realistic.jsonl") +
-      " --backend auto 2>" + Quote(entropy_backend_error);
-  llmcc::test::Expect(Run(entropy_backend_command) != 0,
-                      "backend option is rejected for JSONL analysis");
-  llmcc::test::Expect(
-      Read(entropy_backend_error).find("cannot be used with --entropy-jsonl") !=
-          std::string::npos,
-      "JSONL backend rejection is explained");
-
-  if (fs::exists("/dev/full")) {
-    const fs::path write_error = fs::path(test_tmpdir) / "write-error.txt";
-    const std::string write_error_command =
-        Quote(binary) + " " + Quote(fixtures / "realistic.rs") +
-        " --entropy-jsonl " + Quote(fixtures / "realistic.jsonl") +
-        " >/dev/full 2>" + Quote(write_error);
-    llmcc::test::Expect(Run(write_error_command) != 0,
-                        "analysis output failures are reported");
-    llmcc::test::Expect(
-        Read(write_error).find("failed to write output") != std::string::npos,
-        "analysis output failure is explained");
+  const fs::path empty_repository = fs::path(test_tmpdir) / "empty-repository";
+  fs::create_directories(empty_repository);
+  llmcc::test::ExpectEq(Run("git -C " + Quote(empty_repository) + " init -q"),
+                        0, "empty analysis repository initialized");
+  Write(empty_repository / "only.h", "int declaration;\n");
+  const fs::path empty_output = fs::path(test_tmpdir) / "empty.jsonl";
+  llmcc::test::ExpectEq(Run(Quote(binary) + " " + Quote(empty_repository) +
+                            " --no-download >" + Quote(empty_output)),
+                        0,
+                        "empty discovery does not resolve or download a model");
+  std::istringstream empty_lines(Read(empty_output));
+  std::vector<nlohmann::json> empty_events;
+  for (std::string line; std::getline(empty_lines, line);) {
+    empty_events.push_back(nlohmann::json::parse(line));
   }
+  llmcc::test::Expect(
+      empty_events.size() == 4 && empty_events[0]["type"] == "start" &&
+          empty_events[1]["type"] == "configuration" &&
+          empty_events[2]["type"] == "warning" &&
+          empty_events[3]["type"] == "totals" &&
+          empty_events[3]["discovered"] == 0,
+      "empty discovery emits a complete zero-file event stream");
+  const fs::path invalid_options_error =
+      fs::path(test_tmpdir) / "invalid-options.txt";
+  llmcc::test::Expect(Run(Quote(binary) + " " + Quote(empty_repository) +
+                          " --alpha 2 2>" + Quote(invalid_options_error)) != 0,
+                      "empty discovery rejects invalid analysis parameters");
+  llmcc::test::Expect(
+      Read(invalid_options_error)
+              .find("--alpha must be finite and between 0 and 1") !=
+          std::string::npos,
+      "invalid global parameter is explained");
 
-  const fs::path sample_output = fs::path(test_tmpdir) / "sample.json";
-  const std::string sample_command =
-      Quote(binary) + " " + Quote(fixtures / "sample.rs") + " --lang rust " +
-      "--entropy-jsonl " + Quote(fixtures / "sample.jsonl") + " >" +
-      Quote(sample_output);
-  llmcc::test::ExpectEq(Run(sample_command), 0,
-                        "sample Rust analysis succeeds");
-  const nlohmann::json sample = nlohmann::json::parse(Read(sample_output));
-  llmcc::test::Expect(std::abs(sample["tau"].get<double>() - 0.736) < 1e-12,
-                      "sample tau");
-  llmcc::test::Expect(std::abs(sample["llm_cc"].get<double>() - 1.4) < 1e-12,
-                      "sample score");
-  llmcc::test::ExpectEq(sample["total_branch"].get<int>(), 1,
-                        "sample branch total");
-
-  const fs::path cpp_output = fs::path(test_tmpdir) / "sample-cpp.json";
-  const std::string cpp_command =
-      Quote(binary) + " " + Quote(fixtures / "sample.cpp") +
-      " --entropy-jsonl " + Quote(fixtures / "sample_cpp.jsonl") + " >" +
-      Quote(cpp_output);
-  llmcc::test::ExpectEq(Run(cpp_command), 0, "sample C++ analysis succeeds");
-  const nlohmann::json cpp = nlohmann::json::parse(Read(cpp_output));
-  llmcc::test::Expect(std::abs(cpp["tau"].get<double>() - 0.535) < 1e-12,
-                      "C++ sample tau");
-  llmcc::test::Expect(!cpp["units"].empty(), "C++ sample has units");
+  const fs::path removed_option_error =
+      fs::path(test_tmpdir) / "removed-option-error.txt";
+  const std::string removed_option_command =
+      Quote(binary) + " " + Quote(fixtures / "sample.rs") +
+      " --entropy-jsonl " + Quote(fixtures / "sample.jsonl") + " 2>" +
+      Quote(removed_option_error);
+  llmcc::test::Expect(Run(removed_option_command) != 0,
+                      "removed entropy option is rejected");
+  llmcc::test::Expect(
+      Read(removed_option_error).find("unknown option") != std::string::npos,
+      "removed entropy option reports an unknown option");
 
   const fs::path cache = fs::path(test_tmpdir) / "model-cache";
   fs::create_directories(cache);
@@ -199,6 +189,66 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::ExpectEq(Run(models_command), 0, "models path succeeds");
   llmcc::test::ExpectEq(Read(path_output), cache.string() + "\n",
                         "models path honors override");
+
+  const fs::path repository = fs::path(test_tmpdir) / "analysis-repository";
+  fs::create_directories(repository);
+  llmcc::test::ExpectEq(Run("git -C " + Quote(repository) + " init -q"), 0,
+                        "analysis test repository initialized");
+  const fs::path source = repository / "source.rs";
+  const fs::path fake_model = fs::path(test_tmpdir) / "fake.gguf";
+  Write(source, "fn main() { println!(\"cached\"); }\n");
+  Write(fake_model, "not model weights");
+  const auto [preprocessed, offsets] =
+      llmcc::StripComments(Read(source), llmcc::Language::kRust);
+  static_cast<void>(offsets);
+#ifdef LLMCC_TEST_BACKEND_METAL
+  constexpr std::string_view backend = "metal";
+#elif defined LLMCC_TEST_BACKEND_CUDA
+  constexpr std::string_view backend = "cuda";
+#elif defined LLMCC_TEST_BACKEND_ROCM
+  constexpr std::string_view backend = "rocm";
+#else
+  constexpr std::string_view backend = "cpu";
+#endif
+  const auto identity = llmcc::InspectModel(
+      fake_model,
+      "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v1", backend,
+      128U * 1024U);
+  llmcc::WriteEntropyCache(
+      repository, preprocessed, identity,
+      std::vector<llmcc::EntropyRecord>{
+          {.position = 0, .bytes = preprocessed, .entropy = std::nullopt}});
+  const fs::path analysis_output = fs::path(test_tmpdir) / "analysis.jsonl";
+  const std::string analysis_command = Quote(binary) + " " + Quote(source) +
+                                       " --model " + Quote(fake_model) + " >" +
+                                       Quote(analysis_output);
+  llmcc::test::ExpectEq(Run(analysis_command), 0,
+                        "cache-only analysis succeeds without model load");
+  std::istringstream lines(Read(analysis_output));
+  std::vector<nlohmann::json> events;
+  for (std::string line; std::getline(lines, line);) {
+    events.push_back(nlohmann::json::parse(line));
+  }
+  llmcc::test::ExpectEq(events.size(), std::size_t{5},
+                        "analysis emits five JSONL events");
+  llmcc::test::Expect(
+      events[0]["type"] == "start" && events[1]["type"] == "configuration" &&
+          events[2]["type"] == "file_start" && events[3]["type"] == "file" &&
+          events[4]["type"] == "totals",
+      "analysis events are ordered");
+  llmcc::test::Expect(events[3]["entropy_cache_hit"].get<bool>(),
+                      "file reports entropy cache hit");
+  llmcc::test::ExpectEq(events[4]["analyzed"].get<std::uint64_t>(),
+                        std::uint64_t{1}, "totals report analyzed file");
+
+  const fs::path status_output = fs::path(test_tmpdir) / "status.json";
+  llmcc::test::ExpectEq(
+      Run(Quote(binary) + " cache status " + Quote(repository) +
+          " --format json >" + Quote(status_output)),
+      0, "cache status succeeds");
+  const nlohmann::json status = nlohmann::json::parse(Read(status_output));
+  llmcc::test::ExpectEq(status["entries"].get<std::uint64_t>(),
+                        std::uint64_t{1}, "cache status counts entries");
 
   return 0;
 }

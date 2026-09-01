@@ -212,7 +212,8 @@ Language InferLanguage(std::string_view path) {
   if (EndsWith(path, ".c") || EndsWith(path, ".h")) {
     return Language::kC;
   }
-  for (std::string_view suffix : {".cc", ".cpp", ".cxx", ".hpp", ".hh"}) {
+  for (std::string_view suffix :
+       {".cc", ".cpp", ".cxx", ".c++", ".hpp", ".hh", ".hxx", ".h++"}) {
     if (EndsWith(path, suffix)) {
       return Language::kCpp;
     }
@@ -220,6 +221,35 @@ Language InferLanguage(std::string_view path) {
   throw std::invalid_argument("cannot infer language from source file '" +
                               std::string(path) +
                               "'; pass --lang rust, c, cpp, or c++");
+}
+
+std::string_view LanguageName(Language language) {
+  switch (language) {
+    case Language::kRust:
+      return "rust";
+    case Language::kC:
+      return "c";
+    case Language::kCpp:
+      return "cpp";
+  }
+  throw std::logic_error("unknown source language");
+}
+
+bool IsHeaderPath(std::string_view path) {
+  return std::ranges::any_of(
+      std::initializer_list<std::string_view>{".h", ".hpp", ".hh", ".hxx",
+                                              ".h++"},
+      [path](std::string_view suffix) { return EndsWith(path, suffix); });
+}
+
+bool IsSourcePath(std::string_view path, bool include_headers) {
+  if (IsHeaderPath(path)) {
+    return include_headers;
+  }
+  return std::ranges::any_of(
+      std::initializer_list<std::string_view>{".rs", ".c", ".cc", ".cpp",
+                                              ".cxx", ".c++"},
+      [path](std::string_view suffix) { return EndsWith(path, suffix); });
 }
 
 }  // namespace llmcc

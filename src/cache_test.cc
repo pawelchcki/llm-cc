@@ -8,7 +8,7 @@
 
 #include "src/test_util.h"
 
-int main() {
+int main() {  // NOLINT(bugprone-exception-escape)
   namespace fs = std::filesystem;
   llmcc::test::ExpectEq(
       llmcc::CacheDirFrom(fs::path("/override"), fs::path("/xdg"),

@@ -5,7 +5,7 @@ Rust, C, and C++. It is one C++20 binary built entirely with Bazel.
 
 The analyzer removes comments with tree-sitter, obtains teacher-forced token
 entropy from a llama.cpp-compatible GGUF, detects semantic boundaries, builds
-the paper's compositional hierarchy, and prints JSON.
+the paper's compositional hierarchy, and streams compact JSONL.
 
 ## Build
 
@@ -82,28 +82,55 @@ Compatibility labels `//:universal_archive` and `//:install_payload` point to
 the same single-file output. `//:cpu_static_archive` remains available as an
 explicit CPU diagnostic artifact; it is never the Linux default.
 
-## Analyze source
+## Analyze source and projects
 
-The language is inferred from the file extension. Use `--lang rust|c|cpp` to
-override it:
+Pass any number of files and directories. Directories are searched recursively;
+canonical paths are deduplicated and analyzed in sorted order. The language is
+inferred per file, or can be forced for every input:
 
 ```sh
-llm-cc source.cpp --model /path/to/model.gguf
+llm-cc src include/widget.hpp --include-headers --model /path/to/model.gguf
 ```
 
 Analysis options are:
 
 ```text
---lang rust|c|cpp
+--lang auto|rust|c|cpp
 --model GGUF
---entropy-jsonl PATH
 --no-download
 --gpu-layers N
 --backend auto|cpu|cuda|rocm
+--include-headers
+--no-ignore
+--no-cache
 --context N
 --tau-percentile N
 --alpha N
 ```
+
+Explicit header files are always accepted. Recursive discovery omits headers
+unless `--include-headers` is set. In a Git worktree, discovery uses tracked
+files plus unignored untracked files, including nested ignore rules. If Git is
+unavailable, the analyzer emits a warning and walks the filesystem. Common
+generated and dependency directories are skipped by default. `--no-ignore`
+includes Git-ignored and generated sources; `.git/` and `.llm-cc-cache/` remain
+excluded.
+
+Analysis output is compact JSONL and each line is flushed immediately. The
+event order is:
+
+1. `start`: `discovered` and the requested `model`.
+2. `configuration`: resolved language/discovery options, model, context,
+   percentile, alpha, backend, inference ABI, and cache identity.
+3. Zero or more `warning` events.
+4. A `file_start`, then either `file` or `error`, for each source.
+5. `totals` with additive project metrics, per-language totals, and `partial`.
+
+A `file` event retains `llm_cc`, `total_branch`, `total_comp_level`, `alpha`,
+`tau`, and the complete `units` hierarchy. It also contains the canonical
+`path`, resolved `language`, and `entropy_cache_hit`. An individual file failure
+does not stop later files. Exit status is 0 for complete success, 1 for partial
+results, and 2 for configuration or model failures.
 
 The default maximum input context is 131,072 tokens. The runtime allocates the
 KV cache for the tokenized input rather than eagerly reserving the entire
@@ -158,8 +185,7 @@ go to stderr.
 VRAM for each usable family and chooses the larger aggregate, preferring CUDA
 on a tie. Explicit `cuda` or `rocm` loads only that GPU plugin plus CPU and
 fails clearly when the requested device is unavailable. `cpu` rejects nonzero
-GPU layers. Backend options are invalid with `--entropy-jsonl`, which performs
-no inference.
+GPU layers.
 
 The release ELF reads its raw payload footer through `/proc/self/exe`.
 CUDA is copied into an immutable sealed memfd and never touches disk.
@@ -178,7 +204,43 @@ CPU execution does not inspect or materialize either GPU payload.
 ```
 
 The analyzer calls the same scorer in-process; no subprocess or second runtime
-is involved.
+is involved. One model is loaded per analyzer invocation, on the first entropy
+cache miss. Each missed file receives a bounded inference context; an all-hit
+invocation never loads model weights.
+
+## Repository entropy cache
+
+Within each containing Git repository, token bytes and entropy values are
+stored as versioned CBOR under:
+
+```text
+.llm-cc-cache/llm-cc/v1/entropy/
+```
+
+Non-Git inputs are analyzed without this cache and produce a warning. Cache
+keys cover the SHA-256 of comment-stripped source, canonical model path, model
+size and high-resolution modification time, inference ABI, requested runtime
+backend and GPU-layer policy, and context limit. Alpha and percentile are
+deliberately excluded, so changing them recomputes the inexpensive hierarchy
+from cached entropy.
+
+Reads validate that token bytes cover the complete preprocessed source.
+Corrupt entries become misses, writes use same-directory atomic replacement,
+and cache-directory symlinks are never followed. Hits update entry timestamps
+for LRU accounting. Cleanup runs at most daily: entries unused for seven days
+are removed, then the oldest entries are evicted until the repository cache is
+at most 512 MiB.
+
+Inspect or clean the repository containing `PATH` (the current directory by
+default):
+
+```sh
+llm-cc cache status [PATH] [--format text|json]
+llm-cc cache prune  [PATH] [--format text|json]
+llm-cc cache clear  [PATH] [--format text|json]
+```
+
+`clear` removes only the `llm-cc` namespace below `.llm-cc-cache`.
 
 ## Hermetic Linux build
 

@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <string_view>
 
@@ -17,6 +18,26 @@ struct InferenceOptions {
   std::uint32_t context_size = kDefaultContextSize;
   BackendKind backend = BackendKind::kAuto;
 };
+
+class EntropyScorer {
+ public:
+  EntropyScorer(const std::filesystem::path& model,
+                const InferenceOptions& options = {});
+  ~EntropyScorer();
+  EntropyScorer(const EntropyScorer&) = delete;
+  EntropyScorer& operator=(const EntropyScorer&) = delete;
+  EntropyScorer(EntropyScorer&&) noexcept;
+  EntropyScorer& operator=(EntropyScorer&&) noexcept;
+
+  std::string Score(std::string_view input);
+
+ private:
+  class Impl;
+  std::unique_ptr<Impl> implementation_;
+};
+
+std::string_view InferenceAbi();
+std::string_view CompiledBackend();
 
 std::string ScoreEntropyJsonl(const std::filesystem::path& model,
                               std::string_view input,
