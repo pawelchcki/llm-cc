@@ -173,6 +173,9 @@ filegroup(
     # Use source-file labels so Bazel preserves the SDK-relative paths in
     # runfiles. cc_import targets materialize under _solib instead.
     srcs = [
+        ".kpack/blas_lib_gfx1100.kpack",
+        ".kpack/blas_lib_gfx1101.kpack",
+        ".kpack/blas_lib_gfx1102.kpack",
         "lib/libamd_comgr.so.3",
         "lib/libamdhip64.so.7",
         "lib/libhipblas.so.3",

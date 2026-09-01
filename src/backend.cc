@@ -102,9 +102,21 @@ LoadedPlugin LoadPlugin(BackendKind backend, bool required) {
     }
   }
 #endif
-  if (std::optional<PreparedPayload> embedded =
-          PrepareEmbeddedPayload(BackendName(backend));
-      embedded.has_value()) {
+  std::optional<PreparedPayload> embedded;
+  try {
+    embedded = PrepareEmbeddedPayload(BackendName(backend));
+  } catch (...) {
+#if defined(__linux__)
+    if (driver_handle != nullptr) {
+      dlclose(driver_handle);
+    }
+#endif
+    if (required) {
+      throw;
+    }
+    return {.backend = backend, .registry = nullptr};
+  }
+  if (embedded.has_value()) {
     if (ggml_backend_reg_t registry = ggml_backend_load(embedded->path.c_str());
         registry != nullptr) {
       return {.backend = backend,

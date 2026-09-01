@@ -39,11 +39,9 @@ GGML_BASE_SOURCES = [
     "ggml/src/gguf.cpp",
 ]
 
-GGML_CPU_SOURCES = [
+GGML_CPU_COMMON_SOURCES = [
     "ggml/src/ggml-cpu/amx/amx.cpp",
     "ggml/src/ggml-cpu/amx/mmq.cpp",
-    "ggml/src/ggml-cpu/arch/x86/quants.c",
-    "ggml/src/ggml-cpu/arch/x86/repack.cpp",
     "ggml/src/ggml-cpu/binary-ops.cpp",
     "ggml/src/ggml-cpu/ggml-cpu.c",
     "ggml/src/ggml-cpu/ggml-cpu.cpp",
@@ -56,6 +54,28 @@ GGML_CPU_SOURCES = [
     "ggml/src/ggml-cpu/unary-ops.cpp",
     "ggml/src/ggml-cpu/vec.cpp",
 ]
+
+GGML_CPU_ARCH_SOURCES = select({
+    "@platforms//cpu:aarch64": [
+        "ggml/src/ggml-cpu/arch/arm/quants.c",
+        "ggml/src/ggml-cpu/arch/arm/repack.cpp",
+    ],
+    "@platforms//cpu:ppc64le": [
+        "ggml/src/ggml-cpu/arch/powerpc/quants.c",
+    ],
+    "@platforms//cpu:riscv64": [
+        "ggml/src/ggml-cpu/arch/riscv/quants.c",
+        "ggml/src/ggml-cpu/arch/riscv/repack.cpp",
+    ],
+    "@platforms//cpu:s390x": [
+        "ggml/src/ggml-cpu/arch/s390/quants.c",
+    ],
+    "@platforms//cpu:x86_64": [
+        "ggml/src/ggml-cpu/arch/x86/quants.c",
+        "ggml/src/ggml-cpu/arch/x86/repack.cpp",
+    ],
+    "//conditions:default": [],
+})
 
 LLAMA_SOURCES = [
     "src/llama-adapter.cpp",
@@ -127,6 +147,8 @@ CUDA_ARCHS = [
     "sm_86",
     "sm_89",
     "sm_90",
+    "sm_100",
+    "sm_100a",
     "sm_120a",
 ]
 
@@ -266,7 +288,7 @@ cc_library(
 
 cc_library(
     name = "ggml_cpu",
-    srcs = GGML_CPU_SOURCES,
+    srcs = GGML_CPU_COMMON_SOURCES + GGML_CPU_ARCH_SOURCES,
     hdrs = COMMON_HEADERS,
     defines = [
         "GGML_USE_CPU_REPACK",
