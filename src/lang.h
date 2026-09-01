@@ -21,6 +21,9 @@ std::vector<StructuralEvent> StructuralEvents(std::string_view source,
                                               Language language);
 Language ParseLanguage(std::string_view name);
 Language InferLanguage(std::string_view path);
+std::string_view LanguageName(Language language);
+bool IsHeaderPath(std::string_view path);
+bool IsSourcePath(std::string_view path, bool include_headers);
 
 }  // namespace llmcc
 

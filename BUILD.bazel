@@ -274,6 +274,19 @@ cc_library(
 )
 
 cc_library(
+    name = "analyze",
+    srcs = ["src/analyze.cc"],
+    hdrs = ["src/analyze.h"],
+    deps = [
+        ":core",
+        ":entropy_cache",
+        ":jsonl",
+        ":lang",
+        ":project",
+    ],
+)
+
+cc_library(
     name = "cache",
     srcs = ["src/cache.cc"],
     hdrs = ["src/cache.h"],
@@ -296,6 +309,16 @@ cc_library(
     deps = [
         ":cache",
         ":curl",
+    ],
+)
+
+cc_library(
+    name = "entropy_cache",
+    srcs = ["src/entropy_cache.cc"],
+    hdrs = ["src/entropy_cache.h"],
+    deps = [
+        ":jsonl",
+        "@nlohmann_json//:json",
     ],
 )
 
@@ -324,9 +347,22 @@ cc_library(
 )
 
 cc_library(
+    name = "project",
+    srcs = ["src/project.cc"],
+    hdrs = ["src/project.h"],
+    deps = [":lang"],
+)
+
+cc_library(
     name = "score_cmd",
     srcs = ["src/score_cmd.cc"],
     hdrs = ["src/score_cmd.h"],
+    defines = select({
+        ":backend_cuda": ["LLMCC_BACKEND_CUDA"],
+        ":backend_rocm": ["LLMCC_BACKEND_ROCM"],
+        ":backend_metal": ["LLMCC_BACKEND_METAL"],
+        "//conditions:default": ["LLMCC_BACKEND_CPU"],
+    }),
     deps = [
         ":llama_cpp",
         ":scoring",
@@ -379,11 +415,14 @@ cc_binary(
         "//conditions:default": ["-ldl", "-lpthread"],
     }),
     deps = [
+        ":analyze",
         ":cache",
         ":core",
         ":download",
+        ":entropy_cache",
         ":jsonl",
         ":lang",
+        ":project",
         ":score_cmd",
         ":version",
     ] + select({
@@ -413,12 +452,39 @@ cc_test(
 )
 
 cc_test(
+    name = "analyze_test",
+    srcs = ["src/analyze_test.cc"],
+    deps = [
+        ":analyze",
+        ":test_util",
+    ],
+)
+
+cc_test(
+    name = "entropy_cache_test",
+    srcs = ["src/entropy_cache_test.cc"],
+    deps = [
+        ":entropy_cache",
+        ":test_util",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_test(
     name = "cli_test",
     srcs = ["src/cli_test.cc"],
     data = [
         ":llm-cc",
     ] + glob(["testdata/cli/*"]),
+    defines = select({
+        ":backend_cuda": ["LLMCC_TEST_BACKEND_CUDA"],
+        ":backend_rocm": ["LLMCC_TEST_BACKEND_ROCM"],
+        ":backend_metal": ["LLMCC_TEST_BACKEND_METAL"],
+        "//conditions:default": ["LLMCC_TEST_BACKEND_CPU"],
+    }),
     deps = [
+        ":entropy_cache",
+        ":lang",
         ":test_util",
         "@nlohmann_json//:json",
     ],
@@ -460,6 +526,15 @@ cc_test(
     data = glob(["testdata/lang/*"]),
     deps = [
         ":lang",
+        ":test_util",
+    ],
+)
+
+cc_test(
+    name = "project_test",
+    srcs = ["src/project_test.cc"],
+    deps = [
+        ":project",
         ":test_util",
     ],
 )

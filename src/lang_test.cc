@@ -28,7 +28,7 @@ void CheckComments(std::string_view path, llmcc::Language language) {
 
 }  // namespace
 
-int main() {
+int main() {  // NOLINT(bugprone-exception-escape)
   CheckComments("testdata/lang/comments.rs", llmcc::Language::kRust);
   CheckComments("testdata/lang/comments.c", llmcc::Language::kC);
   CheckComments("testdata/lang/comments.cc", llmcc::Language::kCpp);
