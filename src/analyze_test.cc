@@ -70,5 +70,28 @@ int main() {  // NOLINT(bugprone-exception-escape)
       first_hit.entropy_cache_hit && second_hit.entropy_cache_hit,
       "alpha and percentile reuse cached entropy");
   llmcc::test::ExpectEq(hit_factories, 0, "cache hits load no scorer");
+
+  const llmcc::DiscoveredSource miss{.path = repository / "0-miss.rs",
+                                     .language = llmcc::Language::kRust,
+                                     .repository = repository};
+  int failing_factories = 0;
+  llmcc::ProjectAnalyzer partially_cached(
+      {.model = identity}, [&]() -> std::unique_ptr<llmcc::EntropyProvider> {
+        ++failing_factories;
+        throw std::runtime_error("model load failed");
+      });
+  bool initialization_failed = false;
+  try {
+    static_cast<void>(partially_cached.AnalyzeFile(miss, "fn miss() {}\n"));
+  } catch (const llmcc::ScorerInitializationError&) {
+    initialization_failed = true;
+  }
+  llmcc::test::Expect(initialization_failed,
+                      "cache miss reports scorer initialization failure");
+  llmcc::test::Expect(
+      partially_cached.AnalyzeFile(second, "fn b() {}\n").entropy_cache_hit,
+      "cache hit remains available after initialization failure");
+  llmcc::test::ExpectEq(failing_factories, 1,
+                        "failed scorer initialization is not retried");
   return 0;
 }

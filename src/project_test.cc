@@ -1,5 +1,6 @@
 #include "src/project.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -47,15 +48,22 @@ int main() {  // NOLINT(bugprone-exception-escape)
   Write(repository / "nested/yes.cpp", "int yes;\n");
   Write(repository / "target/generated.rs", "fn generated() {}\n");
   Write(repository / ".llm-cc-cache/never.rs", "fn never() {}\n");
+  const fs::path nested_repository = repository / "nested-repository";
+  fs::create_directories(nested_repository);
+  Run("git -C " + Quote(nested_repository) + " init -q");
+  Write(nested_repository / "nested.rs", "fn nested() {}\n");
+  Run("git -C " + Quote(nested_repository) + " add nested.rs");
   Run("git -C " + Quote(repository) +
       " add .gitignore src nested/yes.cpp target/generated.rs");
 
   const auto normal = llmcc::DiscoverSources({repository});
-  llmcc::test::ExpectEq(normal.sources.size(), std::size_t{3},
+  llmcc::test::ExpectEq(normal.sources.size(), std::size_t{4},
                         "Git discovery filters headers and generated files");
-  llmcc::test::Expect(normal.sources[0].path < normal.sources[1].path &&
-                          normal.sources[1].path < normal.sources[2].path,
-                      "sources are sorted");
+  llmcc::test::Expect(
+      std::ranges::is_sorted(
+          normal.sources, {},
+          [](const auto& source) { return source.path.generic_string(); }),
+      "sources are sorted");
 
   const auto headers = llmcc::DiscoverSources(
       {repository / "src", repository / "src/a.rs"}, {.include_headers = true});
@@ -73,13 +81,20 @@ int main() {  // NOLINT(bugprone-exception-escape)
 
   const auto all = llmcc::DiscoverSources(
       {repository}, {.include_headers = true, .no_ignore = true});
-  llmcc::test::ExpectEq(all.sources.size(), std::size_t{7},
+  llmcc::test::ExpectEq(all.sources.size(), std::size_t{8},
                         "no-ignore includes ignored and generated files");
   for (const auto& source : all.sources) {
     llmcc::test::Expect(
         source.path.string().find(".llm-cc-cache") == std::string::npos,
         "cache directory is permanently excluded");
   }
+  const auto nested_source = std::ranges::find_if(
+      normal.sources,
+      [](const auto& source) { return source.path.filename() == "nested.rs"; });
+  llmcc::test::Expect(
+      nested_source != normal.sources.end() &&
+          nested_source->repository == fs::canonical(nested_repository),
+      "nested Git source uses its own cache repository");
 
   const fs::path plain = fs::path(temporary) / "plain";
   Write(plain / "main.c", "int main(void) {}\n");

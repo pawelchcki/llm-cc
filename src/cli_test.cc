@@ -67,6 +67,29 @@ int main() {  // NOLINT(bugprone-exception-escape)
       Read(score_help).find("default: 131072") != std::string::npos,
       "score advertises the large default context");
 
+  const fs::path empty_repository = fs::path(test_tmpdir) / "empty-repository";
+  fs::create_directories(empty_repository);
+  llmcc::test::ExpectEq(Run("git -C " + Quote(empty_repository) + " init -q"),
+                        0, "empty analysis repository initialized");
+  Write(empty_repository / "only.h", "int declaration;\n");
+  const fs::path empty_output = fs::path(test_tmpdir) / "empty.jsonl";
+  llmcc::test::ExpectEq(Run(Quote(binary) + " " + Quote(empty_repository) +
+                            " --no-download >" + Quote(empty_output)),
+                        0,
+                        "empty discovery does not resolve or download a model");
+  std::istringstream empty_lines(Read(empty_output));
+  std::vector<nlohmann::json> empty_events;
+  for (std::string line; std::getline(empty_lines, line);) {
+    empty_events.push_back(nlohmann::json::parse(line));
+  }
+  llmcc::test::Expect(
+      empty_events.size() == 4 && empty_events[0]["type"] == "start" &&
+          empty_events[1]["type"] == "configuration" &&
+          empty_events[2]["type"] == "warning" &&
+          empty_events[3]["type"] == "totals" &&
+          empty_events[3]["discovered"] == 0,
+      "empty discovery emits a complete zero-file event stream");
+
   const fs::path removed_option_error =
       fs::path(test_tmpdir) / "removed-option-error.txt";
   const std::string removed_option_command =

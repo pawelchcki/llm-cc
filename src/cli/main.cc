@@ -330,6 +330,34 @@ nlohmann::json TotalsJson(const MetricTotals& totals,
                           totals.analyzed != totals.discovered}};
 }
 
+nlohmann::json ConfigurationJson(
+    const AnalyzeArguments& arguments, std::string_view requested_model,
+    const llmcc::ModelIdentity* identity = nullptr) {
+  nlohmann::json configuration = {
+      {"type", "configuration"},
+      {"language", arguments.language_name},
+      {"include_headers", arguments.include_headers},
+      {"no_ignore", arguments.no_ignore},
+      {"no_download", arguments.no_download},
+      {"model", requested_model},
+      {"context", arguments.context},
+      {"tau_percentile", arguments.tau_percentile},
+      {"alpha", arguments.alpha},
+      {"backend", llmcc::CompiledBackend()},
+      {"inference_abi", llmcc::InferenceAbi()},
+      {"cache",
+       {{"enabled", !arguments.no_cache},
+        {"version", 1},
+        {"namespace", ".llm-cc-cache/llm-cc/v1/entropy"},
+        {"limit_bytes", llmcc::kEntropyCacheLimit}}}};
+  if (identity != nullptr) {
+    configuration["model"] = identity->canonical_path.string();
+    configuration["model_size"] = identity->size;
+    configuration["model_modification_time"] = identity->modification_time;
+  }
+  return configuration;
+}
+
 int RunAnalyze(const AnalyzeArguments& arguments) {
   llmcc::DiscoveryResult discovery = llmcc::DiscoverSources(
       arguments.sources, {.language = arguments.language,
@@ -341,6 +369,17 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
         {"discovered", discovery.sources.size()},
         {"model", requested_model}});
 
+  if (discovery.sources.empty()) {
+    Emit(ConfigurationJson(arguments, requested_model));
+    for (const auto& warning : discovery.warnings) {
+      Emit({{"type", "warning"}, {"message", warning}});
+    }
+    Emit({{"type", "warning"},
+          {"message", "no eligible source files were discovered"}});
+    Emit(TotalsJson({}, {}, false));
+    return 0;
+  }
+
   const std::filesystem::path model_cache = llmcc::CacheDir();
   const auto resolved_model = llmcc::ResolveModel(
       arguments.model, arguments.no_download, std::filesystem::current_path(),
@@ -348,24 +387,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
   const auto identity =
       llmcc::InspectModel(resolved_model, llmcc::InferenceAbi(),
                           llmcc::CompiledBackend(), arguments.context);
-  Emit({{"type", "configuration"},
-        {"language", arguments.language_name},
-        {"include_headers", arguments.include_headers},
-        {"no_ignore", arguments.no_ignore},
-        {"no_download", arguments.no_download},
-        {"model", identity.canonical_path.string()},
-        {"context", arguments.context},
-        {"tau_percentile", arguments.tau_percentile},
-        {"alpha", arguments.alpha},
-        {"backend", identity.backend},
-        {"inference_abi", identity.inference_abi},
-        {"model_size", identity.size},
-        {"model_modification_time", identity.modification_time},
-        {"cache",
-         {{"enabled", !arguments.no_cache},
-          {"version", 1},
-          {"namespace", ".llm-cc-cache/llm-cc/v1/entropy"},
-          {"limit_bytes", llmcc::kEntropyCacheLimit}}}});
+  Emit(ConfigurationJson(arguments, requested_model, &identity));
   for (const auto& warning : discovery.warnings) {
     Emit({{"type", "warning"}, {"message", warning}});
   }
@@ -443,7 +465,6 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
             {"message", error.what()},
             {"fatal", true}});
       fatal = true;
-      break;
     } catch (const std::exception& error) {
       ++totals.failed;
       ++languages[language].failed;

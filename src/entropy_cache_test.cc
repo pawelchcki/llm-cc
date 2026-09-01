@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
 
@@ -51,6 +52,25 @@ int main() {  // NOLINT(bugprone-exception-escape)
   Write(entry, "corrupt");
   llmcc::test::Expect(!llmcc::ReadEntropyCache(repository, "ab", identity).hit,
                       "corruption is treated as a miss");
+  llmcc::WriteEntropyCache(repository, "ab", identity, records);
+
+  nlohmann::json invalid_entropy = {
+      {"version", 1},
+      {"source_size", 2},
+      {"records",
+       nlohmann::json::array(
+           {nlohmann::json::array(
+                {nlohmann::json::binary(std::vector<std::uint8_t>{'a'}),
+                 nullptr}),
+            nlohmann::json::array(
+                {nlohmann::json::binary(std::vector<std::uint8_t>{'b'}),
+                 nullptr})})}};
+  const auto invalid_cbor = nlohmann::json::to_cbor(invalid_entropy);
+  Write(entry, std::string(reinterpret_cast<const char*>(invalid_cbor.data()),
+                           invalid_cbor.size()));
+  llmcc::test::Expect(
+      !llmcc::ReadEntropyCache(repository, "ab", identity).hit,
+      "null entropy after the first token is treated as corruption");
   llmcc::WriteEntropyCache(repository, "ab", identity, records);
 
   auto changed_context = identity;

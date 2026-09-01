@@ -4,6 +4,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <fstream>
 #include <limits>
 #include <nlohmann/json.hpp>
@@ -129,6 +130,14 @@ bool IsComplete(std::string_view source,
                 const std::vector<EntropyRecord>& records) {
   try {
     static_cast<void>(AlignTokens(source, records));
+    for (std::size_t position = 0; position < records.size(); ++position) {
+      const auto entropy = records[position].entropy;
+      if ((!entropy.has_value() && position != 0) ||
+          (entropy.has_value() &&
+           (!std::isfinite(*entropy) || *entropy < 0.0))) {
+        return false;
+      }
+    }
     return true;
   } catch (const std::exception&) {
     return false;
@@ -149,11 +158,20 @@ std::vector<EntropyRecord> Decode(const nlohmann::json& value,
     }
     const auto& binary = record[0].get_binary();
     std::optional<double> entropy;
-    if (!record[1].is_null()) {
+    if (record[1].is_null()) {
+      if (!records.empty()) {
+        throw std::invalid_argument(
+            "only the first cached token may have null entropy");
+      }
+    } else {
       if (!record[1].is_number()) {
         throw std::invalid_argument("invalid cached entropy");
       }
       entropy = record[1].get<double>();
+      if (!std::isfinite(*entropy) || *entropy < 0.0) {
+        throw std::invalid_argument(
+            "cached entropy must be finite and non-negative");
+      }
     }
     records.push_back({.position = records.size(),
                        .bytes = std::string(binary.begin(), binary.end()),

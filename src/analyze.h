@@ -3,6 +3,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string_view>
 
@@ -47,6 +48,7 @@ class ProjectAnalyzer {
   ProjectAnalysisOptions options_;
   ProviderFactory factory_;
   std::unique_ptr<EntropyProvider> provider_;
+  std::optional<std::string> initialization_error_;
 };
 
 }  // namespace llmcc

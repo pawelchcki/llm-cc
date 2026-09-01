@@ -23,14 +23,18 @@ FileAnalysisResult ProjectAnalyzer::AnalyzeFile(const DiscoveredSource& source,
     records = std::move(cached.records);
   } else {
     if (!provider_) {
+      if (initialization_error_.has_value()) {
+        throw ScorerInitializationError(*initialization_error_);
+      }
       try {
         provider_ = factory_();
       } catch (const std::exception& error) {
-        throw ScorerInitializationError(error.what());
+        initialization_error_ = error.what();
+        throw ScorerInitializationError(*initialization_error_);
       }
       if (!provider_) {
-        throw ScorerInitializationError(
-            "entropy provider factory returned null");
+        initialization_error_ = "entropy provider factory returned null";
+        throw ScorerInitializationError(*initialization_error_);
       }
     }
     records = provider_->Score(preprocessed);

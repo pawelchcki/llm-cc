@@ -91,6 +91,15 @@ bool GeneratedDirectory(std::string_view name) {
   return names.contains(name) || name.starts_with("bazel-");
 }
 
+bool GeneratedPath(const std::filesystem::path& path,
+                   const std::filesystem::path& repository) {
+  const auto relative = path.lexically_relative(repository);
+  return std::ranges::any_of(relative, [](const auto& component) {
+    return component == ".llm-cc-cache" ||
+           GeneratedDirectory(component.string());
+  });
+}
+
 void AddFile(const std::filesystem::path& path, bool explicit_file,
              const DiscoveryOptions& options,
              const std::optional<std::filesystem::path>& repository,
@@ -174,6 +183,7 @@ bool GitWalk(const std::filesystem::path& input,
   if (result.status != 0) {
     return false;
   }
+  std::set<std::filesystem::path> nested_repositories;
   std::size_t start = 0;
   while (start < result.output.size()) {
     const std::size_t end = result.output.find('\0', start);
@@ -183,21 +193,22 @@ bool GitWalk(const std::filesystem::path& input,
     if (!relative.empty()) {
       const std::filesystem::path candidate = repository / relative;
       std::error_code error;
-      if (std::filesystem::is_regular_file(candidate, error)) {
-        const auto canonical = std::filesystem::canonical(candidate, error);
-        if (!error && IsWithin(canonical, input)) {
-          bool generated = false;
-          const auto relative_path = canonical.lexically_relative(repository);
-          for (const auto& component : relative_path.parent_path()) {
-            if (component == ".llm-cc-cache" ||
-                GeneratedDirectory(component.string())) {
-              generated = true;
-              break;
+      const auto canonical = std::filesystem::canonical(candidate, error);
+      if (!error && IsWithin(canonical, input)) {
+        const bool generated = GeneratedPath(canonical, repository);
+        if (std::filesystem::is_directory(canonical, error) && !error) {
+          const auto nested_repository = FindGitRepository(canonical);
+          if ((options.no_ignore || !generated) &&
+              nested_repository.has_value() &&
+              *nested_repository != repository &&
+              nested_repositories.insert(*nested_repository).second) {
+            if (!GitWalk(canonical, *nested_repository, options, files)) {
+              FilesystemWalk(canonical, options, nested_repository, files);
             }
           }
-          if (options.no_ignore || !generated) {
-            AddFile(canonical, false, options, repository, files);
-          }
+        } else if (!error && std::filesystem::is_regular_file(canonical) &&
+                   (options.no_ignore || !generated)) {
+          AddFile(canonical, false, options, repository, files);
         }
       }
     }
