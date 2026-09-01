@@ -100,8 +100,10 @@ std::uint64_t CompressFile(const fs::path& source, const fs::path& output) {
       throw std::runtime_error(ZSTD_getErrorName(result));
     }
   };
-  set_parameter(ZSTD_c_compressionLevel, 9);
+  set_parameter(ZSTD_c_compressionLevel, 15);
   set_parameter(ZSTD_c_nbWorkers, 0);
+  set_parameter(ZSTD_c_enableLongDistanceMatching, 1);
+  set_parameter(ZSTD_c_windowLog, 27);
   set_parameter(ZSTD_c_checksumFlag, 1);
   set_parameter(ZSTD_c_contentSizeFlag, 0);
   set_parameter(ZSTD_c_dictIDFlag, 0);

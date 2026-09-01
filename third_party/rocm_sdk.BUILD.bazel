@@ -194,9 +194,6 @@ filegroup(
         "lib/rocm_sysdeps/lib/librocm_sysdeps_numa.so.1",
         "lib/rocm_sysdeps/lib/librocm_sysdeps_z.so.1",
         "lib/rocm_sysdeps/lib/librocm_sysdeps_zstd.so.1",
-        ".kpack/blas_lib_gfx1100.kpack",
-        ".kpack/blas_lib_gfx1101.kpack",
-        ".kpack/blas_lib_gfx1102.kpack",
     ] + glob([
         "lib/hipblaslt/**",
         "lib/rocblas/**",

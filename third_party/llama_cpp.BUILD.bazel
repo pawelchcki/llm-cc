@@ -175,6 +175,7 @@ cuda_library(
     copts = [
         "-allow-unsupported-compiler",
         "-ccbin=tools/cuda_host_compiler_wrapper.sh",
+        "--compress-mode=size",
         "-extended-lambda",
         "-use_fast_math",
     ],
