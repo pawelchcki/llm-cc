@@ -339,7 +339,9 @@ std::optional<std::uint64_t> GpuAvailableMemory() {
   bool found = false;
   for (std::size_t i = 0; i < ggml_backend_dev_count(); ++i) {
     ggml_backend_dev_t device = ggml_backend_dev_get(i);
-    if (ggml_backend_dev_type(device) != GGML_BACKEND_DEVICE_TYPE_GPU) {
+    const enum ggml_backend_dev_type type = ggml_backend_dev_type(device);
+    if (type != GGML_BACKEND_DEVICE_TYPE_GPU &&
+        type != GGML_BACKEND_DEVICE_TYPE_IGPU) {
       continue;
     }
     std::size_t free_bytes = 0;
