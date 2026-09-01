@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <linux/memfd.h>
 #include <openssl/evp.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -446,6 +447,19 @@ PreparedPayload PrepareRocm(int executable_fd,
   const fs::path root = RuntimeRoot();
   fs::create_directories(root);
   chmod(root.c_str(), 0700);
+  const fs::path lock_path = root / ("." + hash + ".lock");
+  FileDescriptor lock_fd(
+      open(lock_path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600));
+  if (lock_fd.get() < 0) {
+    throw std::runtime_error("cannot open ROCm runtime cache lock: " +
+                             std::string(std::strerror(errno)));
+  }
+  while (flock(lock_fd.get(), LOCK_EX) != 0) {
+    if (errno != EINTR) {
+      throw std::runtime_error("cannot lock ROCm runtime cache: " +
+                               std::string(std::strerror(errno)));
+    }
+  }
   const fs::path final = root / hash;
   if (!CacheIsValid(final, entries, hash)) {
     if (fs::exists(final)) {

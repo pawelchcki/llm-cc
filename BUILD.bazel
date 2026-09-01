@@ -471,6 +471,7 @@ cc_library(
     srcs = ["src/score_cmd.cc"],
     hdrs = ["src/score_cmd.h"],
     defines = select({
+        ":backend_universal": ["LLMCC_BACKEND_UNIVERSAL"],
         ":backend_cuda": ["LLMCC_BACKEND_CUDA"],
         ":backend_rocm": ["LLMCC_BACKEND_ROCM"],
         ":backend_metal": ["LLMCC_BACKEND_METAL"],
@@ -639,8 +640,8 @@ build_test(
 install_launcher(
     name = "install",
     binary = select({
-        ":host_macos": ":llm-cc",
-        "//conditions:default": "//dist:linux_x86_64_executable",
+        ":backend_universal": "//dist:linux_x86_64_executable",
+        "//conditions:default": ":llm-cc",
     }),
     script = "//tools:install.sh",
     tags = ["manual"],

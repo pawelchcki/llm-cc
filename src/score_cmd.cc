@@ -715,7 +715,9 @@ std::string_view InferenceAbi() {
 }
 
 std::string_view CompiledBackend() {
-#ifdef LLMCC_BACKEND_CUDA
+#ifdef LLMCC_BACKEND_UNIVERSAL
+  return "universal";
+#elif defined LLMCC_BACKEND_CUDA
   return "cuda";
 #elif defined LLMCC_BACKEND_ROCM
   return "rocm";
