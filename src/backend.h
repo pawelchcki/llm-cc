@@ -33,6 +33,9 @@ class BackendRuntime {
 
  private:
   BackendKind selected_ = BackendKind::kCpu;
+  void* plugin_registry_ = nullptr;
+  int plugin_backing_fd_ = -1;
+  void* driver_handle_ = nullptr;
 };
 
 }  // namespace llmcc

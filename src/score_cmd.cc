@@ -359,6 +359,11 @@ void CheckAvailableMemory(const Arguments& arguments, bool use_gpu,
   if (arguments.override_memory_check) {
     return;
   }
+  if (arguments.gpu_layers > 0) {
+    std::cerr << "warning: partial GPU offload memory use depends on model "
+                 "architecture; skipping memory check\n";
+    return;
+  }
 
   const std::uint64_t model_bytes = ModelFileSize(arguments.model);
   const std::optional<std::uint64_t> host_available = HostAvailableMemory();

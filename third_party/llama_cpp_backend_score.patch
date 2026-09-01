@@ -10,7 +10,7 @@ index d18b9c8..25fb305 100644
  #include <cfloat>
  #include <initializer_list>
  #include <limits>
-@@ -5580,4 +5581,40 @@ ggml_backend_t ggml_backend_cuda_init(int device) {
+@@ -5580,4 +5581,41 @@ ggml_backend_t ggml_backend_cuda_init(int device) {
      return cuda_backend;
  }
 -
@@ -42,6 +42,7 @@ index d18b9c8..25fb305 100644
 +            case 86:
 +            case 89:
 +            case 90:
++            case 100:
 +            case 120:
 +                return 1;
 +        }

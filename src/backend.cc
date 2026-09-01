@@ -225,14 +225,31 @@ BackendRuntime::BackendRuntime(BackendKind requested, std::int32_t gpu_layers) {
     gpu_plugins[gpu_count++] =
         LoadPlugin(BackendKind::kRocm, requested == BackendKind::kRocm);
   }
-  selected_ = SelectBackend(
-      requested, gpu_layers,
-      Inventory(std::span<const LoadedPlugin>(gpu_plugins.data(), gpu_count)));
-  for (std::size_t index = 0; index < gpu_count; ++index) {
-    if (gpu_plugins[index].registry != nullptr &&
-        gpu_plugins[index].backend != selected_) {
+  try {
+    selected_ = SelectBackend(requested, gpu_layers,
+                              Inventory(std::span<const LoadedPlugin>(
+                                  gpu_plugins.data(), gpu_count)));
+  } catch (...) {
+    for (std::size_t index = 0; index < gpu_count; ++index) {
       UnloadPlugin(gpu_plugins[index]);
     }
+    throw;
+  }
+  for (std::size_t index = 0; index < gpu_count; ++index) {
+    LoadedPlugin& plugin = gpu_plugins[index];
+    if (plugin.registry == nullptr) {
+      continue;
+    }
+    if (plugin.backend != selected_) {
+      UnloadPlugin(plugin);
+      continue;
+    }
+    plugin_registry_ = plugin.registry;
+    plugin_backing_fd_ = plugin.backing_fd;
+    driver_handle_ = plugin.driver_handle;
+    plugin.registry = nullptr;
+    plugin.backing_fd = -1;
+    plugin.driver_handle = nullptr;
   }
 #else
 #if defined(LLM_CC_BUILTIN_GPU)
@@ -256,6 +273,17 @@ BackendRuntime::BackendRuntime(BackendKind requested, std::int32_t gpu_layers) {
   llama_backend_init();
 }
 
-BackendRuntime::~BackendRuntime() { llama_backend_free(); }
+BackendRuntime::~BackendRuntime() {
+  llama_backend_free();
+#if defined(LLM_CC_DYNAMIC_BACKENDS)
+  LoadedPlugin plugin{
+      .backend = selected_,
+      .registry = static_cast<ggml_backend_reg_t>(plugin_registry_),
+      .backing_fd = plugin_backing_fd_,
+      .driver_handle = driver_handle_,
+  };
+  UnloadPlugin(plugin);
+#endif
+}
 
 }  // namespace llmcc
