@@ -39,6 +39,8 @@ int main() {
 
   ExpectEq(SelectBackend(BackendKind::kAuto, 0, {}), BackendKind::kCpu,
            "auto without offload selects CPU");
+  ExpectEq(SelectBackend(BackendKind::kCpu, 0, {}), BackendKind::kCpu,
+           "explicit CPU without offload selects CPU");
   Expect(ThrowsContaining<std::invalid_argument>(
              [] { SelectBackend(BackendKind::kCpu, 1, {}); }, "--backend cpu"),
          "CPU offload is rejected");

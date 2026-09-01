@@ -45,6 +45,9 @@ BackendKind SelectBackend(BackendKind requested, std::int32_t gpu_layers,
     throw std::invalid_argument(
         "--backend cpu cannot be used with nonzero --gpu-layers");
   }
+  if (requested == BackendKind::kCpu) {
+    return BackendKind::kCpu;
+  }
   if (gpu_layers == 0 && requested == BackendKind::kAuto) {
     return BackendKind::kCpu;
   }
