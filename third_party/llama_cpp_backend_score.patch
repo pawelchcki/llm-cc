@@ -10,7 +10,7 @@ index d18b9c8..25fb305 100644
  #include <cfloat>
  #include <initializer_list>
  #include <limits>
-@@ -5580,4 +5581,41 @@ ggml_backend_t ggml_backend_cuda_init(int device) {
+@@ -5580,4 +5581,48 @@ ggml_backend_t ggml_backend_cuda_init(int device) {
      return cuda_backend;
  }
 -
@@ -23,16 +23,21 @@ index d18b9c8..25fb305 100644
 +    for (int device = 0; device < count; ++device) {
 +        cudaDeviceProp properties;
 +        if (cudaGetDeviceProperties(&properties, device) != cudaSuccess) {
-+            continue;
++            return 0;
 +        }
 +#if defined(GGML_USE_HIP)
 +        const char * architecture = properties.gcnArchName;
++        bool is_supported = false;
 +        for (const char * supported : {"gfx1100", "gfx1101", "gfx1102"}) {
 +            const size_t length = std::strlen(supported);
 +            if (std::strncmp(architecture, supported, length) == 0 &&
 +                (architecture[length] == '\0' || architecture[length] == ':')) {
-+                return 1;
++                is_supported = true;
++                break;
 +            }
++        }
++        if (!is_supported) {
++            return 0;
 +        }
 +#else
 +        const int architecture = properties.major * 10 + properties.minor;
@@ -44,11 +49,13 @@ index d18b9c8..25fb305 100644
 +            case 90:
 +            case 100:
 +            case 120:
-+                return 1;
++                break;
++            default:
++                return 0;
 +        }
 +#endif
 +    }
-+    return 0;
++    return count > 0 ? 1 : 0;
 +}
 +
 +GGML_BACKEND_DL_SCORE_IMPL(llm_cc_cuda_backend_score)

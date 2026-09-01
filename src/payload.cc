@@ -19,6 +19,7 @@
 #include <fstream>
 #include <iomanip>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <sstream>
@@ -433,6 +434,8 @@ PreparedPayload PrepareCuda(int executable_fd,
 
 PreparedPayload PrepareRocm(int executable_fd,
                             const PayloadLocation& location) {
+  static std::mutex cache_mutex;
+  const std::lock_guard lock(cache_mutex);
   if (HashRange(executable_fd, location.offset, location.length) !=
       location.hash) {
     throw std::runtime_error("ROCm payload SHA-256 mismatch");

@@ -320,8 +320,8 @@ class LlamaEntropyProvider : public llmcc::EntropyProvider {
                        std::uint32_t context, std::int32_t gpu_layers,
                        llmcc::BackendKind backend)
       : scorer_((llmcc::MarkCachedModelUsed(cache_dir, model), model),
-                {.gpu_layers = gpu_layers,
-                 .context_size = context,
+                {.context_size = context,
+                 .gpu_layers = gpu_layers,
                  .backend = backend}) {}
 
   std::vector<llmcc::EntropyRecord> Score(std::string_view source) override {
@@ -332,14 +332,22 @@ class LlamaEntropyProvider : public llmcc::EntropyProvider {
   llmcc::EntropyScorer scorer_;
 };
 
-std::string BackendCacheIdentity(const AnalyzeArguments& arguments) {
-  if (arguments.gpu_layers == 0 &&
-      (arguments.backend == llmcc::BackendKind::kAuto ||
-       arguments.backend == llmcc::BackendKind::kCpu)) {
+std::string BackendCacheIdentity(llmcc::BackendKind backend,
+                                 std::int32_t gpu_layers) {
+  if (gpu_layers == 0 && backend == llmcc::BackendKind::kCpu) {
     return "cpu";
   }
-  return std::string(llmcc::BackendName(arguments.backend)) +
-         "/gpu-layers=" + std::to_string(arguments.gpu_layers);
+  return std::string(llmcc::BackendName(backend)) +
+         "/gpu-layers=" + std::to_string(gpu_layers);
+}
+
+std::string RequestedBackendCacheIdentity(const AnalyzeArguments& arguments) {
+  const llmcc::BackendKind backend =
+      arguments.backend == llmcc::BackendKind::kAuto &&
+              arguments.gpu_layers == 0
+          ? llmcc::BackendKind::kCpu
+          : arguments.backend;
+  return BackendCacheIdentity(backend, arguments.gpu_layers);
 }
 
 struct MetricTotals {
@@ -388,7 +396,7 @@ nlohmann::json ConfigurationJson(
       {"context", arguments.context},
       {"tau_percentile", arguments.tau_percentile},
       {"alpha", arguments.alpha},
-      {"backend", BackendCacheIdentity(arguments)},
+      {"backend", RequestedBackendCacheIdentity(arguments)},
       {"gpu_layers", arguments.gpu_layers},
       {"inference_abi", llmcc::InferenceAbi()},
       {"cache",
@@ -400,6 +408,7 @@ nlohmann::json ConfigurationJson(
     configuration["model"] = identity->canonical_path.string();
     configuration["model_size"] = identity->size;
     configuration["model_modification_time"] = identity->modification_time;
+    configuration["backend"] = identity->backend;
   }
   return configuration;
 }
@@ -430,9 +439,15 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
   const auto resolved_model = llmcc::ResolveModel(
       arguments.model, arguments.no_download, std::filesystem::current_path(),
       model_cache, llmcc::DownloadDefaultModel);
+  const llmcc::BackendKind resolved_backend = [&]() {
+    llmcc::BackendRuntime runtime(arguments.backend, arguments.gpu_layers);
+    return runtime.selected();
+  }();
+  const std::string backend_identity =
+      BackendCacheIdentity(resolved_backend, arguments.gpu_layers);
   const auto identity =
       llmcc::InspectModel(resolved_model, llmcc::InferenceAbi(),
-                          BackendCacheIdentity(arguments), arguments.context);
+                          backend_identity, arguments.context);
   Emit(ConfigurationJson(arguments, requested_model, &identity));
   for (const auto& warning : discovery.warnings) {
     Emit({{"type", "warning"}, {"message", warning}});
@@ -471,7 +486,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       [&]() {
         return std::make_unique<LlamaEntropyProvider>(
             model_cache, identity.canonical_path, arguments.context,
-            arguments.gpu_layers, arguments.backend);
+            arguments.gpu_layers, resolved_backend);
       });
 
   MetricTotals totals;
