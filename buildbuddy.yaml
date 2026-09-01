@@ -3,6 +3,7 @@ actions:
     container_image: "ubuntu-24.04"
     resource_requests:
       disk: 40GB
+    timeout: 2h
     allow_concurrent_runs: false
     allow_concurrent_runs_on_branches:
       - "main"
