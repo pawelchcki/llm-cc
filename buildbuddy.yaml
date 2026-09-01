@@ -2,7 +2,7 @@ actions:
   - name: "CPU build and test"
     container_image: "ubuntu-24.04"
     resource_requests:
-      disk: 40GB
+      disk: 80GB
     timeout: 2h
     allow_concurrent_runs: false
     allow_concurrent_runs_on_branches:
