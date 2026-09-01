@@ -224,6 +224,9 @@ std::vector<BackendDevice> Inventory(std::span<const LoadedPlugin> plugins) {
 }  // namespace
 
 BackendRuntime::BackendRuntime(BackendKind requested, std::int32_t gpu_layers) {
+  if (gpu_layers < -1) {
+    throw std::invalid_argument("--gpu-layers must be -1 or greater");
+  }
 #if defined(LLM_CC_DYNAMIC_BACKENDS)
   std::array<LoadedPlugin, 2> gpu_plugins{};
   std::size_t gpu_count = 0;
