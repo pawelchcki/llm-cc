@@ -1,11 +1,26 @@
 load("@rules_foreign_cc//toolchains/native_tools:native_tools_toolchain.bzl", "native_tool_toolchain")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 
 package(default_visibility = ["//visibility:public"])
+
+cc_binary(
+    name = "materialize_tree",
+    srcs = ["materialize_tree.cc"],
+)
+
+sh_binary(
+    name = "hermetic_clang_wrapper",
+    srcs = ["hermetic_clang_wrapper.sh"],
+)
 
 exports_files([
     "cuda_host_compiler_wrapper.sh",
     "format_test.sh",
+    "hip_library.bzl",
+    "hermetic_clang_wrapper.sh",
     "install.sh",
+    "materialize_tree.cc",
     "package_payload.sh",
     "version.sh",
 ])

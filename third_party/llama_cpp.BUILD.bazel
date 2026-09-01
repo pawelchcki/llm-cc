@@ -1,4 +1,8 @@
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_import.bzl", "cc_import")
+load("@rules_cuda//cuda:defs.bzl", "cuda_library")
+load("@//tools:hip_library.bzl", "hip_library")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -15,6 +19,7 @@ GGML_PUBLIC_HEADERS = [
     "ggml/include/ggml-blas.h",
     "ggml/include/ggml-cpp.h",
     "ggml/include/ggml-cpu.h",
+    "ggml/include/ggml-cuda.h",
     "ggml/include/ggml-metal.h",
     "ggml/include/ggml-opt.h",
     "ggml/include/ggml.h",
@@ -91,6 +96,125 @@ COMMON_HEADERS = glob([
     "ggml/src/**/*.hpp",
     "src/**/*.h",
 ])
+
+CUDA_SOURCES = glob([
+    "ggml/src/ggml-cuda/*.cu",
+    "ggml/src/ggml-cuda/template-instances/fattn-mma*.cu",
+    "ggml/src/ggml-cuda/template-instances/fattn-tile*.cu",
+    "ggml/src/ggml-cuda/template-instances/mmf*.cu",
+    "ggml/src/ggml-cuda/template-instances/mmq*.cu",
+]) + [
+    "ggml/src/ggml-cuda/template-instances/fattn-vec-instance-bf16-bf16.cu",
+    "ggml/src/ggml-cuda/template-instances/fattn-vec-instance-f16-f16.cu",
+    "ggml/src/ggml-cuda/template-instances/fattn-vec-instance-q4_0-q4_0.cu",
+    "ggml/src/ggml-cuda/template-instances/fattn-vec-instance-q8_0-q8_0.cu",
+]
+
+cc_library(
+    name = "ggml_headers",
+    hdrs = GGML_PUBLIC_HEADERS + COMMON_HEADERS,
+    includes = [
+        "ggml/include",
+        "ggml/src",
+        "ggml/src/ggml-cuda",
+    ],
+)
+
+cc_import(
+    name = "cublas_static",
+    static_library = "@cuda_cublas//:cublas/lib/libcublas_static.a",
+)
+
+cc_import(
+    name = "cublas_lt_static",
+    static_library = "@cuda_cublas//:cublas/lib/libcublasLt_static.a",
+)
+
+cuda_library(
+    name = "ggml_cuda",
+    alwayslink = True,
+    srcs = CUDA_SOURCES,
+    hdrs = glob(["ggml/src/ggml-cuda/*.cuh"]),
+    tools = [
+        "@//tools:cuda_host_compiler_wrapper.sh",
+        "@cuda_host_toolchain//:clang_cuda_host_files",
+        "@llvm_toolchain_llvm//:clang",
+    ],
+    archs = [
+        "compute_75",
+        "compute_80",
+        "compute_86:sm_86",
+        "compute_89:sm_89",
+        "compute_90",
+        "compute_120a:sm_120a",
+    ],
+    copts = [
+        "-allow-unsupported-compiler",
+        "-ccbin=tools/cuda_host_compiler_wrapper.sh",
+        "-extended-lambda",
+        "-use_fast_math",
+    ],
+    defines = [
+        "GGML_BACKEND_BUILD",
+        "GGML_BACKEND_DL",
+        "GGML_BACKEND_SHARED",
+        "GGML_CUDA_PEER_MAX_BATCH_SIZE=128",
+    ],
+    deps = [
+        ":ggml_headers",
+        "@cuda//:cublas_headers",
+        "@cuda//:cub",
+    ],
+)
+
+cc_binary(
+    name = "libllm-cc-backend-cuda.so",
+    additional_linker_inputs = ["@//third_party:backend_module.lds"],
+    linkopts = [
+        "-Wl,--build-id=none",
+        "-Wl,--exclude-libs,ALL",
+        "-Wl,--version-script=$(location @//third_party:backend_module.lds)",
+        "-ldl",
+        "-lpthread",
+        "-lrt",
+    ],
+    linkshared = True,
+    deps = [
+        ":cublas_lt_static",
+        ":cublas_static",
+        ":ggml_cuda",
+        "@cuda//:culibos_a",
+        "@cuda//:cuda_runtime_static",
+    ],
+)
+
+hip_library(
+    name = "libllm-cc-backend-rocm.so",
+    archs = [
+        "gfx1100",
+        "gfx1101",
+        "gfx1102",
+    ],
+    compiler = "@rocm_sdk//:hipcc",
+    compiler_files = "@rocm_sdk//:compiler_files",
+    cxx_anchor = "@llvm_toolchain_llvm//:include/c++/v1/algorithm",
+    cxx_headers = "@llvm_toolchain_llvm//:all_includes",
+    cxx_libs = "@llvm_toolchain_llvm//:lib",
+    gcc = "@cuda_host_toolchain//:gxx",
+    gcc_files = "@cuda_host_toolchain//:host_toolchain",
+    hdrs = GGML_PUBLIC_HEADERS + COMMON_HEADERS + glob(["ggml/src/ggml-cuda/*.cuh"]) + [
+        "@rocm_sdk//:hip_headers",
+    ],
+    includes = [
+        "ggml/include",
+        "ggml/src",
+        "ggml/src/ggml-cuda",
+    ],
+    link_files = "@rocm_sdk//:link_files",
+    output_name = "libllm-cc-backend-rocm.so",
+    srcs = CUDA_SOURCES,
+    version_script = "@//third_party:backend_module.lds",
+)
 
 cc_library(
     name = "ggml_base",

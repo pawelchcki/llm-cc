@@ -18,6 +18,13 @@ single_version_override(
     version = "0.15.1",
 )
 
+single_version_override(
+    module_name = "rules_cuda",
+    patch_strip = 1,
+    patches = ["//third_party:rules_cuda_explicit_tools.patch"],
+    version = "0.3.0",
+)
+
 llvm = use_extension("@toolchains_llvm//toolchain/extensions:llvm.bzl", "llvm")
 llvm.toolchain(
     name = "llvm_toolchain",
@@ -45,6 +52,23 @@ llvm.sysroot(
 use_repo(llvm, "llvm_toolchain_portable")
 
 register_toolchains("@llvm_toolchain//:all")
+
+# rules_cuda's redist integration downloads the compiler and static runtime
+# closure from NVIDIA's checksum-pinned CUDA 13.0.2 manifest. The toolchain is
+# independent of the host installation and produces one action per .cu file.
+cuda = use_extension("@rules_cuda//cuda:extensions.bzl", "toolchain")
+cuda.redist_json(
+    name = "rules_cuda_redist_json",
+    version = "13.0.2",
+)
+cuda.toolkit(name = "cuda")
+use_repo(
+    cuda,
+    "cuda",
+    cuda_cublas = "cuda_cublas_v13.1.0.3",
+)
+
+register_toolchains("@cuda//toolchain:nvcc-local-toolchain")
 
 # llama.cpp uses pinned CMake and Ninja. OpenSSL genuinely needs GNU Make, while
 # M4 and pkg-config are only declared toolchain slots and must remain unused.
@@ -75,8 +99,7 @@ cuda_sdk_repository = use_repo_rule("//tools:gpu_sdk_repositories.bzl", "cuda_sd
 
 cuda_sdk_repository(name = "cuda_sdk")
 
-# NVCC requires GNU libstdc++ on x86_64. Pin the host compiler as well as the
-# CUDA SDK so compiler discovery never falls through to /usr/bin/g++.
+# Compact pinned glibc 2.28 sysroot used by Clang for portable Linux output.
 http_archive(
     name = "cuda_host_toolchain",
     build_file = "//third_party:cuda_host_toolchain.BUILD.bazel",

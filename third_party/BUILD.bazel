@@ -1,4 +1,6 @@
 exports_files([
+    "backend_module.lds",
+    "ggml_backend_abi.list",
     "all.BUILD.bazel",
     "cuda_host_sysroot_package.patch",
     "cuda_host_toolchain.BUILD.bazel",
@@ -10,4 +12,5 @@ exports_files([
     "llama_cpp_namespaced_backends.patch",
     "openssl_reproducible_buildinfo.patch",
     "rules_foreign_cc_reproducible_logs.patch",
+    "rules_cuda_explicit_tools.patch",
 ])

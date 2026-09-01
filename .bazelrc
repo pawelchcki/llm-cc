@@ -4,6 +4,7 @@ build --announce_rc
 build --show_timestamps
 build --action_env=SOURCE_DATE_EPOCH=0
 build --workspace_status_command=tools/bazel_status.sh
+build --@rules_cuda//cuda:runtime=@cuda//:cuda_runtime_static
 
 build:cpu --//:backend=cpu
 build:cuda --//:backend=cuda

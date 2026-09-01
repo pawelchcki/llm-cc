@@ -60,13 +60,13 @@ std::vector<std::filesystem::path> PluginCandidates(BackendKind backend) {
   std::vector<std::filesystem::path> candidates;
   if (const auto executable = ExecutablePath(); executable.has_value()) {
     candidates.push_back(executable->parent_path() / "lib" / file);
-    // `bazel-bin/llm-cc` and `bazel-bin/llama_cpp/lib/...` during development.
-    candidates.push_back(executable->parent_path() / "llama_cpp" / "lib" /
-                         file);
+    candidates.push_back(executable->parent_path() / "external" /
+                         "+http_archive+llama_cpp" / file);
   }
   if (const char* runfiles = std::getenv("RUNFILES_DIR");
       runfiles != nullptr && *runfiles != '\0') {
     const std::filesystem::path root(runfiles);
+    candidates.push_back(root / "+http_archive+llama_cpp" / file);
     candidates.push_back(root / "_main" / "llama_cpp" / "lib" / file);
     if (const char* workspace = std::getenv("TEST_WORKSPACE");
         workspace != nullptr && *workspace != '\0') {
@@ -140,7 +140,6 @@ std::vector<BackendDevice> Inventory(std::span<const LoadedPlugin> plugins) {
 
 BackendRuntime::BackendRuntime(BackendKind requested, std::int32_t gpu_layers) {
 #if defined(LLM_CC_DYNAMIC_BACKENDS)
-  const LoadedPlugin cpu = LoadPlugin(BackendKind::kCpu, true);
   std::array<LoadedPlugin, 2> gpu_plugins{};
   std::size_t gpu_count = 0;
   if (requested == BackendKind::kCuda ||
@@ -162,7 +161,6 @@ BackendRuntime::BackendRuntime(BackendKind requested, std::int32_t gpu_layers) {
       ggml_backend_unload(gpu_plugins[index].registry);
     }
   }
-  static_cast<void>(cpu);
 #else
 #if defined(LLM_CC_BUILTIN_GPU)
   if (requested == BackendKind::kCuda || requested == BackendKind::kRocm) {

@@ -248,14 +248,13 @@ cmake(
     }),
 )
 
-# Native compilation is used for the static CPU graph. Accelerator/Metal
-# variants keep their existing implementation until their native backend
-# modules are selected below; callers depend on this stable facade.
+# Linux uses the fine-grained native graph for every backend. The standalone
+# macOS Metal build keeps its static embedded-kernel CMake target.
 alias(
     name = "llama",
     actual = select({
-        ":backend_cpu": "@llama_cpp//:llama",
-        "//conditions:default": ":llama_cpp",
+        ":backend_metal": ":llama_cpp",
+        "//conditions:default": "@llama_cpp//:llama",
     }),
     tags = ["manual"],
 )
@@ -429,20 +428,18 @@ cc_library(
 cc_binary(
     name = "llm-cc",
     srcs = ["src/cli/main.cc"],
+    additional_linker_inputs = ["//third_party:ggml_backend_abi.list"],
     data = select({
         ":backend_universal": [
-            ":llama_cpp",
-            "@cuda_sdk//:runtime",
-            "@cuda_host_toolchain//x86_64-buildroot-linux-gnu/sysroot:runtime",
+            "@llama_cpp//:libllm-cc-backend-cuda.so",
+            "@llama_cpp//:libllm-cc-backend-rocm.so",
             "@rocm_sdk//:runtime",
         ],
         ":backend_cuda": [
-            ":llama_cpp",
-            "@cuda_sdk//:runtime",
+            "@llama_cpp//:libllm-cc-backend-cuda.so",
         ],
         ":backend_rocm": [
-            ":llama_cpp",
-            "@cuda_host_toolchain//x86_64-buildroot-linux-gnu/sysroot:runtime",
+            "@llama_cpp//:libllm-cc-backend-rocm.so",
             "@rocm_sdk//:runtime",
         ],
         "//conditions:default": [],
@@ -451,43 +448,25 @@ cc_binary(
         ":backend_universal": [
             "-ldl",
             "-lpthread",
+            "-Wl,--dynamic-list=$(location //third_party:ggml_backend_abi.list)",
             "-Wl,--disable-new-dtags",
-            "-Wl,-rpath,$$ORIGIN/lib",
-            "-Wl,-rpath,$$ORIGIN/lib/cuda",
-            "-Wl,-rpath,$$ORIGIN/lib/rocm",
-            "-Wl,-rpath,$$ORIGIN/lib/rocm/llvm/lib",
-            "-Wl,-rpath,$$ORIGIN/lib/rocm/rocm_sysdeps/lib",
-            "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+cuda_sdk_repository+cuda_sdk/sdk/lib",
             "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib",
             "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib/llvm/lib",
             "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib/rocm_sysdeps/lib",
-            "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+cuda_host_toolchain/x86_64-buildroot-linux-gnu/sysroot/lib",
         ],
         ":backend_cuda": [
             "-ldl",
             "-lpthread",
-            # DT_RPATH is intentionally transitive: vendor libraries have
-            # further dependencies in the same checksum-pinned SDK.
-            "-Wl,--disable-new-dtags",
-            "-Wl,-rpath,$$ORIGIN/lib",
-            "-Wl,-rpath,$$ORIGIN/lib/cuda",
-            "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+cuda_sdk_repository+cuda_sdk/sdk/lib",
-            "-Wl,-rpath,$$ORIGIN/../+cuda_sdk_repository+cuda_sdk/sdk/lib",
+            "-Wl,--dynamic-list=$(location //third_party:ggml_backend_abi.list)",
         ],
         ":backend_rocm": [
             "-ldl",
             "-lpthread",
+            "-Wl,--dynamic-list=$(location //third_party:ggml_backend_abi.list)",
             "-Wl,--disable-new-dtags",
-            "-Wl,-rpath,$$ORIGIN/lib",
-            "-Wl,-rpath,$$ORIGIN/lib/rocm",
-            "-Wl,-rpath,$$ORIGIN/lib/rocm/llvm/lib",
-            "-Wl,-rpath,$$ORIGIN/lib/rocm/rocm_sysdeps/lib",
             "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib",
             "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib/llvm/lib",
             "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib/rocm_sysdeps/lib",
-            "-Wl,-rpath,$$ORIGIN/../+http_archive+rocm_sdk/lib",
-            "-Wl,-rpath,$$ORIGIN/../+http_archive+rocm_sdk/lib/llvm/lib",
-            "-Wl,-rpath,$$ORIGIN/../+http_archive+rocm_sdk/lib/rocm_sysdeps/lib",
         ],
         ":backend_metal": [
             "-framework Accelerate",
