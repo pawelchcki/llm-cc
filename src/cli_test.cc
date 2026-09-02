@@ -342,6 +342,37 @@ int main() {  // NOLINT(bugprone-exception-escape)
                           unsafe_diagnostic.find("\\x1B") != std::string::npos,
                       "text errors escape filename control bytes");
 
+  const fs::path conversion_source = repository / "conversion.cc";
+  const std::string conversion_contents =
+      "struct Convertible {\n"
+      "  explicit operator\n"
+      "      bool() const { return true; }\n"
+      "};\n";
+  Write(conversion_source, conversion_contents);
+  const auto [conversion_preprocessed, conversion_offsets] =
+      llmcc::StripComments(conversion_contents, llmcc::Language::kCpp);
+  static_cast<void>(conversion_offsets);
+  llmcc::WriteEntropyCache(repository, conversion_preprocessed, identity,
+                           std::vector<llmcc::EntropyRecord>{
+                               {.position = 0,
+                                .bytes = conversion_preprocessed.substr(0, 1),
+                                .entropy = std::nullopt},
+                               {.position = 1,
+                                .bytes = conversion_preprocessed.substr(1),
+                                .entropy = 0.2}});
+  const fs::path conversion_output =
+      fs::path(test_tmpdir) / "conversion-output.txt";
+  const std::string conversion_command =
+      Quote(binary) + " " + Quote(conversion_source) + " --model " +
+      Quote(fake_model) + " --format text >" + Quote(conversion_output);
+  llmcc::test::ExpectEq(Run(conversion_command), 0,
+                        "multiline conversion operator analysis succeeds");
+  const std::string conversion_text = Read(conversion_output);
+  llmcc::test::Expect(
+      conversion_text.find("operator\\x0A") != std::string::npos &&
+          conversion_text.find("operator\n") == std::string::npos,
+      "text function names escape embedded newlines");
+
   const fs::path no_hotspots_output =
       fs::path(test_tmpdir) / "no-hotspots.jsonl";
   llmcc::test::ExpectEq(
@@ -368,7 +399,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
       0, "cache status succeeds");
   const nlohmann::json status = nlohmann::json::parse(Read(status_output));
   llmcc::test::ExpectEq(status["entries"].get<std::uint64_t>(),
-                        std::uint64_t{1}, "cache status counts entries");
+                        std::uint64_t{2}, "cache status counts entries");
 
   return 0;
 }

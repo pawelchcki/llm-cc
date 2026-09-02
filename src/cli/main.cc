@@ -621,9 +621,9 @@ void PrintFileText(const llmcc::DiscoveredSource& source,
   }
   std::cout << "   tokens " << metrics.token_count << '\n';
   for (const llmcc::FunctionScore& function : result.functions) {
-    std::cout << "  fn " << std::left << std::setw(18) << function.name
-              << std::right << " L" << function.start_line << "-L"
-              << function.end_line << "   "
+    std::cout << "  fn " << std::left << std::setw(18)
+              << TerminalSafe(function.name) << std::right << " L"
+              << function.start_line << "-L" << function.end_line << "   "
               << FormatScore(function.metrics, score_mode) << '\n';
   }
   if (!result.hotspots.empty()) {
