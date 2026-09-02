@@ -1,7 +1,0 @@
-{"position":0,"bytes_hex":"6e616d6573706163652064656d6f207b0a","entropy":null}
-{"position":1,"bytes_hex":"696e7420747769636528696e742076616c756529207b0a","entropy":0.1}
-{"position":2,"bytes_hex":"202020200a","entropy":0.2}
-{"position":3,"bytes_hex":"202020206175746f206170706c79203d205b76616c75655d28696e7420666163746f7229207b2072657475726e2076616c7565202a20666163746f723b207d3b0a","entropy":1.8}
-{"position":4,"bytes_hex":"2020202072657475726e206170706c792832293b0a","entropy":0.4}
-{"position":5,"bytes_hex":"7d0a","entropy":0.5}
-{"position":6,"bytes_hex":"7d0a","entropy":0.6}

@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <vector>
 
 #include "src/test_util.h"
 
@@ -50,6 +51,64 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(
       llmcc::StructuralEvents(cpp, llmcc::Language::kCpp).size() >= 16,
       "C++ structural events");
+  const auto structure_functions = llmcc::Functions(cpp, llmcc::Language::kCpp);
+  llmcc::test::ExpectEq(structure_functions.size(), std::size_t{1},
+                        "one C++ function, excluding lambda");
+  llmcc::test::ExpectEq(structure_functions.front().name, std::string("run"),
+                        "in-class member name");
+  llmcc::test::ExpectEq(
+      cpp.substr(structure_functions.front().start_byte,
+                 structure_functions.front().end_byte -
+                     structure_functions.front().start_byte),
+      std::string_view("int run(int value) {\n"
+                       "        auto adjust = [value](int step) {\n"
+                       "            for (int item : {1, 2}) {\n"
+                       "                if (item > 0) {\n"
+                       "                    switch (item) {\n"
+                       "                        case 1: value += step; break;\n"
+                       "                        default: break;\n"
+                       "                    }\n"
+                       "                }\n"
+                       "            }\n"
+                       "            return value;\n"
+                       "        };\n"
+                       "        try {\n"
+                       "            return adjust(1);\n"
+                       "        } catch (...) {\n"
+                       "            return 0;\n"
+                       "        }\n"
+                       "    }"),
+      "C++ function span");
+
+  const std::string cpp_functions = Read("testdata/lang/functions.cc");
+  const auto extracted_cpp =
+      llmcc::Functions(cpp_functions, llmcc::Language::kCpp);
+  std::vector<std::string> cpp_names;
+  for (const auto& function : extracted_cpp) {
+    cpp_names.push_back(function.name);
+  }
+  llmcc::test::ExpectEq(
+      cpp_names,
+      std::vector<std::string>({"pointer_result", "reference_result",
+                                "Ns::Cls::~Cls", "operator<<",
+                                "operator bool() const"}),
+      "complex C++ function names");
+
+  const std::string rust_functions = Read("testdata/lang/functions.rs");
+  const auto extracted_rust =
+      llmcc::Functions(rust_functions, llmcc::Language::kRust);
+  std::vector<std::string> rust_names;
+  for (const auto& function : extracted_rust) {
+    rust_names.push_back(function.name);
+  }
+  llmcc::test::ExpectEq(
+      rust_names, std::vector<std::string>({"method", "outer"}),
+      "Rust impl method included and nested function excluded");
+
+  llmcc::test::ExpectEq(llmcc::LineStarts("one\ntwo\n"),
+                        std::vector<std::size_t>({0, 4, 8}), "line starts");
+  llmcc::test::ExpectEq(llmcc::LineStarts(""), std::vector<std::size_t>({0}),
+                        "empty source has first line");
 
   llmcc::test::ExpectEq(llmcc::InferLanguage("source.rs"),
                         llmcc::Language::kRust, "infer Rust");

@@ -104,9 +104,28 @@ Analysis options are:
 --no-ignore
 --no-cache
 --context N
+--score lmcc|density|mean
+--tau N
 --tau-percentile N
+--hotspots N
+--format jsonl|text
 --alpha N
 ```
+
+The default headline score is `lmcc_per_token`, selected with `--score lmcc`.
+It normalizes LM-CC by the number of scored tokens, making it length-invariant
+and suitable for comparing files and functions. The raw `llm_cc` field remains
+available, but it is a length-dependent sum. `--score density` selects the
+fraction of tokens at or above tau, while `--score mean` selects mean token
+entropy. The other metrics remain present regardless of the headline mode.
+
+Tau defaults to an absolute threshold of 0.67 nats. That value was calibrated
+by the paper on CodeLlama-7b and may require `--tau` tuning for other models.
+Use `--tau-percentile N` to opt into a file-relative percentile instead;
+`--tau` and `--tau-percentile` are mutually exclusive. `--hotspots N` controls
+the number of highest-entropy source lines reported per file, and 0 disables
+hotspots. `--format text` prints a human-readable file/function/hotspot report;
+the default `jsonl` format (`json` is an alias) is intended for tooling.
 
 Explicit header files are always accepted. Recursive discovery omits headers
 unless `--include-headers` is set. In a Git worktree, discovery uses tracked
@@ -120,17 +139,19 @@ Analysis output is compact JSONL and each line is flushed immediately. The
 event order is:
 
 1. `start`: `discovered` and the requested `model`.
-2. `configuration`: resolved language/discovery options, model, context,
-   percentile, alpha, backend, inference ABI, and cache identity.
+2. `configuration`: resolved language/discovery options, model, context, score
+   mode, tau rule, hotspot count, alpha, backend, inference ABI, and cache
+   identity.
 3. Zero or more `warning` events.
 4. A `file_start`, then either `file` or `error`, for each source.
 5. `totals` with additive project metrics, per-language totals, and `partial`.
 
 A `file` event retains `llm_cc`, `total_branch`, `total_comp_level`, `alpha`,
-`tau`, and the complete `units` hierarchy. It also contains the canonical
-`path`, resolved `language`, and `entropy_cache_hit`. An individual file failure
-does not stop later files. Exit status is 0 for complete success, 1 for partial
-results, and 2 for configuration or model failures.
+`tau`, and the complete `units` hierarchy. It also contains normalized metrics,
+the selected headline `score`, per-function scores, entropy hotspots, the
+canonical `path`, resolved `language`, and `entropy_cache_hit`. An individual
+file failure does not stop later files. Exit status is 0 for complete success,
+1 for partial results, and 2 for configuration or model failures.
 
 The default maximum input context is 131,072 tokens. The runtime allocates the
 KV cache for the tokenized input rather than eagerly reserving the entire
@@ -220,7 +241,7 @@ stored as versioned CBOR under:
 Non-Git inputs are analyzed without this cache and produce a warning. Cache
 keys cover the SHA-256 of comment-stripped source, canonical model path, model
 size and high-resolution modification time, inference ABI, requested runtime
-backend and GPU-layer policy, and context limit. Alpha and percentile are
+backend and GPU-layer policy, and context limit. Tau, alpha, and score mode are
 deliberately excluded, so changing them recomputes the inexpensive hierarchy
 from cached entropy.
 

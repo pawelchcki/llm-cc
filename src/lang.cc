@@ -74,6 +74,10 @@ bool HasKind(std::span<const std::string_view> kinds, const char* kind) {
   return std::ranges::find(kinds, kind) != kinds.end();
 }
 
+bool IsNodeType(TSNode node, std::string_view type) {
+  return !ts_node_is_null(node) && ts_node_type(node) == type;
+}
+
 using Parser = std::unique_ptr<TSParser, decltype(&ts_parser_delete)>;
 using Tree = std::unique_ptr<TSTree, decltype(&ts_tree_delete)>;
 
@@ -120,6 +124,72 @@ void CollectStructuralEvents(TSNode node, std::size_t structural_depth,
   for (std::uint32_t i = 0; i < ts_node_child_count(node); ++i) {
     CollectStructuralEvents(ts_node_child(node, i), child_depth,
                             structural_kinds, events);
+  }
+}
+
+std::string NodeText(TSNode node, std::string_view source) {
+  if (ts_node_is_null(node)) {
+    return "<anonymous>";
+  }
+  const std::size_t start = ts_node_start_byte(node);
+  const std::size_t end = ts_node_end_byte(node);
+  if (start > end || end > source.size()) {
+    return "<anonymous>";
+  }
+  return std::string(source.substr(start, end - start));
+}
+
+std::string CFunctionName(TSNode function, std::string_view source) {
+  TSNode current = ts_node_child_by_field_name(function, "declarator",
+                                               sizeof("declarator") - 1);
+  constexpr auto kNames = std::to_array<std::string_view>(
+      {"identifier", "field_identifier", "qualified_identifier",
+       "destructor_name", "operator_name", "operator_cast",
+       "template_function"});
+  for (std::size_t steps = 0; steps < 128 && !ts_node_is_null(current);
+       ++steps) {
+    if (HasKind(kNames, ts_node_type(current))) {
+      return NodeText(current, source);
+    }
+    TSNode declarator = ts_node_child_by_field_name(current, "declarator",
+                                                    sizeof("declarator") - 1);
+    if (!ts_node_is_null(declarator)) {
+      current = declarator;
+      continue;
+    }
+    if (IsNodeType(current, "reference_declarator") ||
+        IsNodeType(current, "parenthesized_declarator")) {
+      current = ts_node_named_child(current, 0);
+      continue;
+    }
+    break;
+  }
+  return "<anonymous>";
+}
+
+void CollectFunctions(TSNode node, std::string_view source, Language language,
+                      bool inside_function,
+                      std::vector<FunctionSpan>& functions) {
+  const bool function =
+      IsNodeType(node, language == Language::kRust ? "function_item"
+                                                   : "function_definition");
+  if (function && !inside_function) {
+    std::string name;
+    if (language == Language::kRust) {
+      name = NodeText(
+          ts_node_child_by_field_name(node, "name", sizeof("name") - 1),
+          source);
+    } else {
+      name = CFunctionName(node, source);
+    }
+    functions.push_back({.name = std::move(name),
+                         .start_byte = ts_node_start_byte(node),
+                         .end_byte = ts_node_end_byte(node)});
+  }
+  const bool child_inside_function = inside_function || function;
+  for (std::uint32_t i = 0; i < ts_node_child_count(node); ++i) {
+    CollectFunctions(ts_node_child(node, i), source, language,
+                     child_inside_function, functions);
   }
 }
 
@@ -178,6 +248,16 @@ std::pair<std::string, OffsetMap> StripComments(std::string_view source,
   return {std::move(output), std::move(map)};
 }
 
+std::vector<std::size_t> LineStarts(std::string_view source) {
+  std::vector<std::size_t> starts = {0};
+  for (std::size_t i = 0; i < source.size(); ++i) {
+    if (source[i] == '\n') {
+      starts.push_back(i + 1);
+    }
+  }
+  return starts;
+}
+
 std::vector<StructuralEvent> StructuralEvents(std::string_view source,
                                               Language language) {
   Tree tree = Parse(source, language);
@@ -189,6 +269,15 @@ std::vector<StructuralEvent> StructuralEvents(std::string_view source,
   });
   events.erase(std::ranges::unique(events).begin(), events.end());
   return events;
+}
+
+std::vector<FunctionSpan> Functions(std::string_view preprocessed,
+                                    Language language) {
+  Tree tree = Parse(preprocessed, language);
+  std::vector<FunctionSpan> functions;
+  CollectFunctions(ts_tree_root_node(tree.get()), preprocessed, language, false,
+                   functions);
+  return functions;
 }
 
 Language ParseLanguage(std::string_view name) {

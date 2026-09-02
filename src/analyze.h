@@ -5,7 +5,9 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <string_view>
+#include <vector>
 
 #include "src/entropy_cache.h"
 #include "src/project.h"
@@ -25,14 +27,31 @@ class ScorerInitializationError : public std::runtime_error {
 
 struct ProjectAnalysisOptions {
   ModelIdentity model;
-  double tau_percentile = 67.0;
+  TauRule tau_rule;
   double alpha = 0.8;
   bool cache = true;
+  std::size_t hotspots = 10;
+};
+
+struct FunctionScore {
+  std::string name;
+  std::size_t start_line;
+  std::size_t end_line;
+  Metrics metrics;
+};
+
+struct Hotspot {
+  std::size_t line;
+  double max_entropy;
+  double mean_entropy;
+  std::uint64_t high_tokens;
 };
 
 struct FileAnalysisResult {
   Analysis analysis;
   bool entropy_cache_hit;
+  std::vector<FunctionScore> functions;
+  std::vector<Hotspot> hotspots;
 };
 
 class ProjectAnalyzer {
