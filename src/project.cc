@@ -94,8 +94,6 @@ bool GeneratedDirectory(std::string_view name) {
                                                    "build",
                                                    "build-out",
                                                    "out",
-                                                   "bin",
-                                                   "obj",
                                                    ".nuget",
                                                    "dist",
                                                    "deps",
@@ -105,13 +103,27 @@ bool GeneratedDirectory(std::string_view name) {
   return names.contains(name) || name.starts_with("bazel-");
 }
 
+bool CSharpGeneratedPath(const std::filesystem::path& path,
+                         const std::filesystem::path& root) {
+  const std::string extension = path.extension().string();
+  if (extension != ".cs" && extension != ".csx") {
+    return false;
+  }
+  const auto relative = path.lexically_relative(root);
+  return std::ranges::any_of(relative, [](const auto& component) {
+    return component == "bin" || component == "obj";
+  });
+}
+
 bool GeneratedPath(const std::filesystem::path& path,
                    const std::filesystem::path& repository) {
   const auto relative = path.lexically_relative(repository);
-  return std::ranges::any_of(relative, [](const auto& component) {
-    return component == ".llm-cc-cache" ||
-           GeneratedDirectory(component.string());
-  });
+  return std::ranges::any_of(relative,
+                             [](const auto& component) {
+                               return component == ".llm-cc-cache" ||
+                                      GeneratedDirectory(component.string());
+                             }) ||
+         CSharpGeneratedPath(path, repository);
 }
 
 void AddFile(const std::filesystem::path& path, bool explicit_file,
@@ -174,7 +186,9 @@ void FilesystemWalk(const std::filesystem::path& directory,
     } else if (entry.is_regular_file(error) && !error) {
       const auto canonical = std::filesystem::canonical(entry.path(), error);
       if (!error && IsWithin(canonical, directory)) {
-        AddFile(canonical, false, options, repository, files);
+        if (options.no_ignore || !CSharpGeneratedPath(canonical, directory)) {
+          AddFile(canonical, false, options, repository, files);
+        }
       }
     }
     error.clear();
