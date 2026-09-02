@@ -1,0 +1,30 @@
+diff --git a/ggml/src/CMakeLists.txt b/ggml/src/CMakeLists.txt
+index acf7d46..98a9d02 100644
+--- a/ggml/src/CMakeLists.txt
++++ b/ggml/src/CMakeLists.txt
+@@ -381,14 +381,23 @@ if (CMAKE_SYSTEM_NAME MATCHES "Linux")
+ function(ggml_add_backend_library backend)
++    if (backend STREQUAL "ggml-cpu")
++        set(backend_output_name "llm-cc-backend-cpu")
++    elseif (backend STREQUAL "ggml-cuda")
++        set(backend_output_name "llm-cc-backend-cuda")
++    elseif (backend STREQUAL "ggml-hip")
++        set(backend_output_name "llm-cc-backend-rocm")
++    else()
++        set(backend_output_name "${backend}")
++    endif()
+     if (GGML_BACKEND_DL)
+         add_library(${backend} MODULE ${ARGN})
+         # write the shared library to the output directory
+-        set_target_properties(${backend} PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
++        set_target_properties(${backend} PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_LIBRARY_OUTPUT_DIRECTORY} OUTPUT_NAME ${backend_output_name})
+         target_compile_definitions(${backend} PRIVATE GGML_BACKEND_DL)
+         add_dependencies(ggml ${backend})
+         if (GGML_BACKEND_DIR)
+             install(TARGETS ${backend} LIBRARY DESTINATION ${GGML_BACKEND_DIR})
+         else()
+-            install(TARGETS ${backend} LIBRARY DESTINATION ${CMAKE_INSTALL_BINDIR})
++            install(TARGETS ${backend} LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+         endif()
+     else()
+         add_library(${backend} ${ARGN})

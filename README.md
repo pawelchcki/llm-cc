@@ -12,15 +12,19 @@ the paper's compositional hierarchy, and streams compact JSONL.
 Bazelisk reads the pinned Bazel version automatically:
 
 ```sh
-bazel build --config=release //:llm-cc
-bazel test --config=cpu //...
+bazel build //:llm-cc
+bazel test //:unit
+bazel test //:integration
 ```
 
 The build downloads checksum-pinned LLVM, llama.cpp, tree-sitter and its Rust,
 C, and C++ source bundles, nlohmann/json, curl, and, on non-macOS platforms,
 OpenSSL. macOS curl builds use Apple's Secure Transport and system trust store.
-The default backend is ROCm on Linux and Metal on macOS. Select a backend
-explicitly when building for a different machine:
+On Linux x86-64, `//:llm-cc` is always a universal CPU + CUDA + ROCm
+development executable. Its private GPU modules stay in Bazel runfiles, so an
+application edit recompiles and relinks only affected application actions.
+Metal remains the standalone static macOS default. Smaller diagnostic builds
+remain available:
 
 ```sh
 bazel build --config=release --config=rocm //:llm-cc
@@ -32,10 +36,13 @@ bazel build --config=release --config=cpu //:llm-cc
 ROCm builds download AMD's checksum-pinned TheRock 7.14.0 `gfx110X` SDK and
 compile deterministic code objects for `gfx1100`, `gfx1101`, and `gfx1102`.
 CUDA builds assemble a checksum-pinned CUDA 13.0.2 subset from NVIDIA's
-redistributable component archives and use a pinned GCC 12.3 host compiler,
-fixed architectures, and compiler random seeds. Linux C/C++ builds share that
-compiler bundle's glibc 2.37 sysroot. Neither backend searches the host for a
-vendor SDK, compiler, C library, or GNU Make.
+redistributable component archives. NVCC compiles device code one translation
+unit per Bazel action and delegates its host phase to pinned Clang 22. CUDA's
+x86 headers reject libc++, so that host phase reads pinned libstdc++ headers;
+no GCC executable runs. Application, CPU, and HIP code all compile with pinned
+Clang and libc++. Linux targets use a checksum-pinned Debian Stretch sysroot,
+and neither backend searches the host for a vendor SDK, compiler, C library,
+or GNU Make.
 
 HIP sources receive repository-relative deterministic compilation-unit IDs;
 HIP/CUDA host paths are prefix-mapped and optional host ccache discovery is
@@ -58,13 +65,22 @@ bazel run //:install
 bazel run //:install -- --prefix /opt/llm-cc
 ```
 
-On macOS, installation atomically replaces `bin/llm-cc` with the standalone
-Mach-O executable; its llama.cpp and ggml components are statically linked.
-Existing `libexec/llm-cc` payloads from earlier installs are left untouched.
+Installation atomically replaces one `bin/llm-cc` executable. On Linux that
+ELF contains the statically linked application, llama/ggml CPU code, and raw
+CUDA and ROCm payloads. On macOS it is the standalone static Metal
+Mach-O executable.
 
-Linux accelerator installs keep the executable and its content-addressed Bazel
-runfiles payload under `libexec/llm-cc`; the `bin/llm-cc` launcher selects that
-immutable payload. This preserves the pinned vendor runtime after installation.
+Build deterministic release archives with:
+
+```sh
+bazel build --config=release //dist:linux_x86_64
+bazel build --config=release //dist:macos
+```
+
+The Linux target emits `llm-cc-0.1-linux-x86_64` and its SHA-256 checksum.
+Compatibility labels `//:universal_archive` and `//:install_payload` point to
+the same single-file output. `//:cpu_static_archive` remains available as an
+explicit CPU diagnostic artifact; it is never the Linux default.
 
 ## Analyze source and projects
 
@@ -82,6 +98,8 @@ Analysis options are:
 --lang auto|rust|c|cpp
 --model GGUF
 --no-download
+--gpu-layers N
+--backend auto|cpu|cuda|rocm
 --include-headers
 --no-ignore
 --no-cache
@@ -117,8 +135,8 @@ results, and 2 for configuration or model failures.
 The default maximum input context is 131,072 tokens. The runtime allocates the
 KV cache for the tokenized input rather than eagerly reserving the entire
 maximum, so short source files retain a small memory footprint. Use `--context`
-to select a different limit. Inference offloads all model layers when a GPU
-backend is available and otherwise uses the CPU.
+to select a different limit. Inference uses the CPU by default; request GPU
+offload with `--gpu-layers`.
 
 Without `--model`, `llm-cc` first checks
 `models/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf`, then its model cache. If the
@@ -156,11 +174,30 @@ llm-cc score --model model.gguf --entropy --file source.cpp
 ```
 
 `score` accepts `--prompt` or `--file`, `--bos auto|always|never`,
-`--context-size`, `--threads`, `--override-memory-check`, and
-`--entropy`. It emits one JSONL object per observed token. It never samples or
+`--context-size`, `--threads`, `--gpu-layers`, `--backend`,
+`--override-memory-check`, and `--entropy`. It emits one JSONL object per
+observed token. It never samples or
 generates a continuation. Its default maximum input context is 131,072 tokens;
 use `--context-size` to override it. Mean negative log-likelihood and perplexity
 go to stderr.
+
+`--backend auto` is the default. When GPU layers are requested it totals free
+VRAM for each usable family and chooses the larger aggregate, preferring CUDA
+on a tie. Explicit `cuda` or `rocm` loads only that GPU plugin plus CPU and
+fails clearly when the requested device is unavailable. `cpu` rejects nonzero
+GPU layers.
+
+The release ELF reads its raw payload footer through `/proc/self/exe`.
+CUDA is copied into an immutable sealed memfd and never touches disk.
+ROCm's exact pinned userspace and architecture-data closure is atomically
+materialized under a content-addressed, owner-only cache. Its location follows
+this precedence:
+
+1. `LLM_CC_RUNTIME_DIR`
+2. `$XDG_CACHE_HOME/llm-cc/runtime`
+3. `$HOME/.cache/llm-cc/runtime`
+
+CPU execution does not inspect or materialize either GPU payload.
 
 ```json
 {"position":0,"token_id":785,"piece":"The","bytes_hex":"546865","probability":null,"log_probability":null,"entropy":null}
@@ -182,9 +219,10 @@ stored as versioned CBOR under:
 
 Non-Git inputs are analyzed without this cache and produce a warning. Cache
 keys cover the SHA-256 of comment-stripped source, canonical model path, model
-size and high-resolution modification time, inference ABI, compiled backend,
-and context limit. Alpha and percentile are deliberately excluded, so changing
-them recomputes the inexpensive hierarchy from cached entropy.
+size and high-resolution modification time, inference ABI, requested runtime
+backend and GPU-layer policy, and context limit. Alpha and percentile are
+deliberately excluded, so changing them recomputes the inexpensive hierarchy
+from cached entropy.
 
 Reads validate that token bytes cover the complete preprocessed source.
 Corrupt entries become misses, writes use same-directory atomic replacement,
@@ -206,13 +244,15 @@ llm-cc cache clear  [PATH] [--format text|json]
 
 ## Hermetic Linux build
 
-Linux x86_64 builds use the checksum-pinned LLVM, GCC, and glibc sysroot by
-default. The `portable` profile remains as an explicit alias:
+Linux x86-64 builds use checksum-pinned Clang 22 and a Debian Stretch glibc
+2.24 sysroot by default. The shipped ABI contract remains glibc 2.28 or newer;
+CI rejects any imported symbol above that ceiling. The `portable` profile is
+retained as an explicit alias:
 
 ```sh
-bazel build --config=release --config=portable --config=cpu //:llm-cc
-tools/check_glibc_version.sh bazel-bin/llm-cc 2.37
-tools/check_static_link.sh bazel-bin/llm-cc
+bazel build --config=release --config=portable //dist:linux_x86_64
+tools/check_glibc_version.sh bazel-bin/dist/llm-cc-0.1-linux-x86_64 2.28
+tools/check_static_link.sh bazel-bin/dist/llm-cc-0.1-linux-x86_64
 ```
 
 The hermetic Linux build uses static OpenSSL and curl for model downloads. The
@@ -224,7 +264,8 @@ explicit override.
 ## Development
 
 ```sh
-tools/check_format.sh
+bazel test //:unit
+bazel test //:integration
 tools/run_clang_tidy.sh
 ```
 

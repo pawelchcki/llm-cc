@@ -7,12 +7,16 @@
 #include <string>
 #include <string_view>
 
+#include "src/backend.h"
+
 namespace llmcc {
 
 inline constexpr std::uint32_t kDefaultContextSize = 128U * 1024U;
 
 struct InferenceOptions {
   std::uint32_t context_size = kDefaultContextSize;
+  std::int32_t gpu_layers = 0;
+  BackendKind backend = BackendKind::kAuto;
 };
 
 class EntropyScorer {

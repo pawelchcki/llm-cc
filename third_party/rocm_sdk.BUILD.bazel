@@ -13,6 +13,56 @@ filegroup(
     srcs = ["lib/llvm/bin/clang++"],
 )
 
+filegroup(
+    name = "hipcc",
+    srcs = ["bin/hipcc"],
+)
+
+# Narrow providers keep unrelated SDK components out of HIP action keys while
+# retaining the complete pinned SDK repository for runtime closure resolution.
+filegroup(
+    name = "compiler_files",
+    srcs = [
+        "bin/hipcc",
+        "lib/llvm/bin/clang",
+        "lib/llvm/bin/clang++",
+        "lib/llvm/bin/clang-23",
+        "lib/llvm/bin/clang-linker-wrapper",
+        "lib/llvm/bin/clang-offload-bundler",
+        "lib/llvm/bin/clang-offload-packager",
+        "lib/llvm/bin/ld.lld",
+        "lib/llvm/bin/lld",
+        "lib/llvm/bin/llvm-link",
+        "lib/llvm/bin/llvm-mc",
+        "lib/llvm/bin/opt",
+    ] + glob([
+        "lib/llvm/amdgcn/**",
+        "lib/llvm/lib/clang/23/**",
+    ]),
+)
+
+filegroup(
+    name = "hip_headers",
+    srcs = glob([
+        "include/hip/**",
+        "include/hipblas/**",
+        "include/hipblas-common/**",
+        "include/hipcub/**",
+        "include/hsa/**",
+        "include/rocblas/**",
+        "include/rocm-core/**",
+    ]),
+)
+
+filegroup(
+    name = "link_files",
+    srcs = [
+        "lib/libamdhip64.so.7.14.60850-0000000",
+        "lib/libhipblas.so.3.5",
+        "lib/librocblas.so.5.5",
+    ],
+)
+
 cc_import(
     name = "amdhip",
     shared_library = "lib/libamdhip64.so.7",
@@ -123,6 +173,9 @@ filegroup(
     # Use source-file labels so Bazel preserves the SDK-relative paths in
     # runfiles. cc_import targets materialize under _solib instead.
     srcs = [
+        ".kpack/blas_lib_gfx1100.kpack",
+        ".kpack/blas_lib_gfx1101.kpack",
+        ".kpack/blas_lib_gfx1102.kpack",
         "lib/libamd_comgr.so.3",
         "lib/libamdhip64.so.7",
         "lib/libhipblas.so.3",
@@ -145,9 +198,13 @@ filegroup(
         "lib/rocm_sysdeps/lib/librocm_sysdeps_z.so.1",
         "lib/rocm_sysdeps/lib/librocm_sysdeps_zstd.so.1",
     ] + glob([
-        ".kpack/**",
         "lib/hipblaslt/**",
         "lib/rocblas/**",
+    ], exclude = [
+        "lib/hipblaslt/**/gfx1103/**",
+        "lib/hipblaslt/**/*gfx1103*",
+        "lib/rocblas/**/gfx1103/**",
+        "lib/rocblas/**/*gfx1103*",
     ]),
 )
 

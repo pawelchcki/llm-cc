@@ -1,0 +1,71 @@
+diff --git a/cuda/private/actions/compile.bzl b/cuda/private/actions/compile.bzl
+index cbbf9c2..b95c8f0 100644
+--- a/cuda/private/actions/compile.bzl
++++ b/cuda/private/actions/compile.bzl
+@@ -100,7 +100,7 @@ def compile(
+             executable = cuda_compiler,
+             arguments = [args],
+             outputs = [obj_file],
+-            inputs = depset([src], transitive = [common.headers, cc_toolchain.all_files, cuda_toolchain.all_files]),
++            inputs = depset([src], transitive = [common.headers, common.tool_files, cc_toolchain.all_files, cuda_toolchain.all_files]),
+             env = env,
+             mnemonic = "CudaCompile",
+             progress_message = "Compiling %s" % src.path,
+diff --git a/cuda/private/cuda_helper.bzl b/cuda/private/cuda_helper.bzl
+index e2a69e2..6a4c05f 100644
+--- a/cuda/private/cuda_helper.bzl
++++ b/cuda/private/cuda_helper.bzl
+@@ -190,6 +190,7 @@ def _create_common_info(
+         external_includes = [],
+         headers = [],
+         transitive_headers = [],
++        tool_files = [],
+         defines = [],
+         local_defines = [],
+         compile_flags = [],
+@@ -218,6 +219,7 @@ def _create_common_info(
+         external_includes: include paths for external dependencies (when external_include_paths feature is enabled).
+         headers: headers directly relate with this target.
+         transitive_headers: headers transitively gather from `deps`.
++        tool_files: files needed by user-supplied compiler wrappers.
+         defines: public `#define`s. Pass to compiler driver directly. Will be seen by downstream targets.
+         local_defines: private `#define`s. Pass to compiler driver directly. Will not be seen by downstream targets.
+         compile_flags: flags pass to compiler driver directly.
+@@ -244,6 +246,7 @@ def _create_common_info(
+         external_includes = external_includes,
+         headers = depset(headers, transitive = transitive_headers),
++        tool_files = depset(tool_files),
+         defines = defines,
+         local_defines = local_defines,
+         compile_flags = compile_flags,
+@@ -361,6 +364,10 @@ def _create_common(ctx):
+     headers = public_headers + private_headers
+     transitive_headers = [merged_cc_info.compilation_context.headers]
+ 
++    tool_files = []
++    for tool in getattr(attr, "tools", []):
++        tool_files.extend(tool[DefaultInfo].files.to_list())
++
+     # gather linker info
+     transitive_linking_contexts = [merged_cc_info.linking_context]
+ 
+@@ -403,6 +410,7 @@ def _create_common(ctx):
+         headers = headers,
+         transitive_headers = transitive_headers,
++        tool_files = tool_files,
+         defines = defines,
+         local_defines = local_defines,
+         compile_flags = compile_flags,
+         link_flags = link_flags,
+diff --git a/cuda/private/rules/cuda_library.bzl b/cuda/private/rules/cuda_library.bzl
+index 8ec2cef..95db00c 100644
+--- a/cuda/private/rules/cuda_library.bzl
++++ b/cuda/private/rules/cuda_library.bzl
+@@ -166,6 +166,7 @@ cuda_library = rule(
+         "srcs": attr.label_list(allow_files = ALLOW_CUDA_SRCS + ALLOW_CUDA_HDRS),
+         "hdrs": attr.label_list(allow_files = ALLOW_CUDA_HDRS),
++        "tools": attr.label_list(allow_files = True),
+         "deps": attr.label_list(providers = [[CcInfo], [CudaInfo]]),
+         "alwayslink": attr.bool(default = False),
+         "rdc": attr.bool(
+             default = False,

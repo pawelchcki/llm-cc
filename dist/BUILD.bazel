@@ -1,0 +1,33 @@
+load("//:build_defs.bzl", "embedded_linux_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+embedded_linux_binary(
+    name = "linux_x86_64",
+    binary = "//:llm-cc-release-base",
+    cuda_module = "@llama_cpp//:libllm-cc-backend-cuda.so",
+    output_name = "llm-cc-0.1-linux-x86_64",
+    rocm_module = "@llama_cpp//:libllm-cc-backend-rocm.so",
+    rocm_runtime = "@rocm_sdk//:runtime_files",
+    tags = ["manual"],
+    target_compatible_with = select({
+        "//:backend_universal": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
+filegroup(
+    name = "linux_x86_64_executable",
+    srcs = [":linux_x86_64"],
+    output_group = "executable",
+)
+
+filegroup(
+    name = "macos",
+    srcs = ["//:llm-cc"],
+    tags = ["manual"],
+    target_compatible_with = select({
+        "//:host_macos": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
