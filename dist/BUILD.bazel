@@ -1,6 +1,33 @@
-load("//:build_defs.bzl", "embedded_linux_binary")
+load("//:build_defs.bzl", "backend_bundle", "embedded_linux_binary")
 
 package(default_visibility = ["//visibility:public"])
+
+backend_bundle(
+    name = "backend_cuda",
+    backend = "cuda",
+    module = "@llama_cpp//:libllm-cc-backend-cuda.so",
+    output_name = "llm-cc-backend-cuda-linux-x86_64.bundle",
+    tags = ["manual"],
+    target_compatible_with = select({
+        "//:backend_cuda": [],
+        "//:backend_universal": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
+backend_bundle(
+    name = "backend_rocm",
+    backend = "rocm",
+    module = "@llama_cpp//:libllm-cc-backend-rocm.so",
+    output_name = "llm-cc-backend-rocm-linux-x86_64.bundle",
+    runtime = "@rocm_sdk//:runtime_files",
+    tags = ["manual"],
+    target_compatible_with = select({
+        "//:backend_rocm": [],
+        "//:backend_universal": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
 
 embedded_linux_binary(
     name = "linux_x86_64",

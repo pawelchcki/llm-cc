@@ -67,6 +67,13 @@ install_launcher = rule(
 def _file_short_path(file):
     return file.short_path
 
+def _rocm_runtime_destination(source):
+    marker = "rocm_sdk/"
+    index = source.short_path.find(marker)
+    if index < 0:
+        fail("ROCm runtime input is outside the pinned SDK tree: %s" % source.short_path)
+    return source.short_path[index + len(marker):]
+
 def _embedded_linux_binary_impl(ctx):
     binary_files = ctx.attr.binary[DefaultInfo].files.to_list()
     cuda_files = ctx.attr.cuda_module[DefaultInfo].files.to_list()
@@ -85,11 +92,7 @@ def _embedded_linux_binary_impl(ctx):
 
     runtime_files = ctx.attr.rocm_runtime[DefaultInfo].files.to_list()
     for source in sorted(runtime_files, key = _file_short_path):
-        marker = "rocm_sdk/"
-        index = source.short_path.find(marker)
-        if index < 0:
-            fail("ROCm runtime input is outside the pinned SDK tree: %s" % source.short_path)
-        destination = source.short_path[index + len(marker):]
+        destination = _rocm_runtime_destination(source)
         args.add("--rocm-file", source.path + "=" + destination)
 
     ctx.actions.run(
@@ -119,6 +122,113 @@ embedded_linux_binary = rule(
         "output_name": attr.string(mandatory = True),
         "rocm_module": attr.label(mandatory = True),
         "rocm_runtime": attr.label(mandatory = True),
+        "_packager": attr.label(
+            executable = True,
+            cfg = "exec",
+            default = Label("//tools:embed_payloads"),
+        ),
+    },
+)
+
+def _backend_bundle_impl(ctx):
+    module_files = ctx.attr.module[DefaultInfo].files.to_list()
+    if len(module_files) != 1:
+        fail("backend bundle module must produce exactly one file")
+
+    runtime_files = []
+    if ctx.attr.runtime:
+        runtime_files = ctx.attr.runtime[DefaultInfo].files.to_list()
+    if ctx.attr.backend != "rocm" and runtime_files:
+        fail("backend bundle runtime files are only supported for ROCm")
+
+    output_dir = ctx.label.name
+    output = ctx.actions.declare_file(output_dir + "/" + ctx.attr.output_name)
+    checksum = ctx.actions.declare_file(output_dir + "/" + ctx.attr.output_name + ".sha256")
+    manifest = ctx.actions.declare_file(output_dir + "/manifest.json")
+
+    args = ctx.actions.args()
+    args.add(
+        "--file",
+        module_files[0].path + "=libllm-cc-backend-%s.so" % ctx.attr.backend,
+    )
+    if ctx.attr.backend == "rocm":
+        for source in sorted(runtime_files, key = _file_short_path):
+            args.add(
+                "--file",
+                source.path + "=" + _rocm_runtime_destination(source),
+            )
+
+    # TODO: Pass the pinned llama.cpp commit and GGML backend ABI when those
+    # values are exposed to this Bazel graph without duplicating them.
+    ctx.actions.run_shell(
+        arguments = [
+            ctx.version_file.path,
+            ctx.info_file.path,
+            ctx.executable._packager.path,
+            output.path,
+            checksum.path,
+            manifest.path,
+            ctx.attr.backend,
+            args,
+        ],
+        command = """
+set -euo pipefail
+version_status="$1"
+info_status="$2"
+packager="$3"
+output="$4"
+checksum="$5"
+manifest="$6"
+backend="$7"
+shift 7
+version=""
+git_sha=""
+read_status() {
+  while IFS=' ' read -r key value; do
+    case "$key" in
+      STABLE_LLM_CC_VERSION) version="$value" ;;
+      STABLE_LLM_CC_GIT_SHA) git_sha="$value" ;;
+    esac
+  done < "$1"
+}
+read_status "$version_status"
+read_status "$info_status"
+exec "$packager" \
+  --write-bundle "$output" \
+  --name "$backend" \
+  --manifest "$manifest" \
+  --checksum-output "$checksum" \
+  --version "$version" \
+  --git-sha "$git_sha" \
+  --llama-commit "" \
+  --ggml-abi "" \
+  "$@"
+""",
+        inputs = depset(
+            direct = module_files + [ctx.version_file, ctx.info_file],
+            transitive = [ctx.attr.runtime[DefaultInfo].files] if ctx.attr.runtime else [],
+        ),
+        outputs = [output, checksum, manifest],
+        tools = [ctx.executable._packager],
+        mnemonic = "LlmCcBackendBundle",
+        progress_message = "Creating %{label} backend bundle",
+    )
+    return [
+        DefaultInfo(files = depset([output, checksum, manifest])),
+        OutputGroupInfo(
+            bundle = depset([output]),
+            checksum = depset([checksum]),
+            manifest = depset([manifest]),
+        ),
+    ]
+
+backend_bundle = rule(
+    implementation = _backend_bundle_impl,
+    attrs = {
+        "backend": attr.string(mandatory = True, values = ["cuda", "rocm"]),
+        "module": attr.label(mandatory = True),
+        "output_name": attr.string(mandatory = True),
+        "runtime": attr.label(),
         "_packager": attr.label(
             executable = True,
             cfg = "exec",
