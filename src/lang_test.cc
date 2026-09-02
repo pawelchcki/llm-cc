@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -17,14 +18,68 @@ std::string Read(std::string_view path) {
           std::istreambuf_iterator<char>()};
 }
 
-void CheckComments(std::string_view path, llmcc::Language language) {
+void CheckComments(std::string_view path, llmcc::Language language,
+                   bool check_literals = false) {
   const std::string source = Read(path);
   const auto [stripped, map] = llmcc::StripComments(source, language);
   llmcc::test::Expect(stripped.find("block comment") == std::string::npos,
                       "block comment removed");
+  if (source.find("html comment") != std::string::npos) {
+    llmcc::test::Expect(stripped.find("html comment") == std::string::npos,
+                        "JavaScript HTML comment removed");
+  }
   llmcc::test::ExpectEq(map.size(), stripped.size() + 1,
                         "offset map has every boundary");
   llmcc::test::ExpectEq(map.back(), source.size(), "offset map ends at source");
+  llmcc::test::ExpectEq(std::ranges::count(stripped, '\n'),
+                        std::ranges::count(source, '\n'),
+                        "comment removal preserves newlines");
+  llmcc::test::Expect(std::ranges::is_sorted(map), "offset map is monotonic");
+  if (check_literals) {
+    llmcc::test::Expect(stripped.find("not a comment") != std::string::npos &&
+                            stripped.find("still text") != std::string::npos,
+                        "comment markers inside literals are preserved");
+  }
+}
+
+void CheckStructure(std::string_view path, llmcc::Language language,
+                    std::size_t minimum_events, std::size_t minimum_depth) {
+  const auto events = llmcc::StructuralEvents(Read(path), language);
+  llmcc::test::Expect(events.size() >= minimum_events,
+                      std::string(path) + " emitted " +
+                          std::to_string(events.size()) + " structural events");
+  llmcc::test::Expect(std::ranges::any_of(events,
+                                          [minimum_depth](const auto& event) {
+                                            return event.depth >= minimum_depth;
+                                          }),
+                      std::string(path) + " preserves nested structural depth");
+}
+
+void CheckFunctionNames(std::string_view path, llmcc::Language language,
+                        const std::vector<std::string>& expected) {
+  const std::string source = Read(path);
+  const auto functions = llmcc::Functions(source, language);
+  std::vector<std::string> names;
+  for (const auto& function : functions) {
+    names.push_back(function.name);
+    llmcc::test::Expect(function.start_byte < function.end_byte &&
+                            function.end_byte <= source.size(),
+                        "callable span is within the source");
+  }
+  llmcc::test::ExpectEq(names, expected,
+                        "only outermost named callables are reported");
+}
+
+void CheckFunctionSpan(std::string_view path, llmcc::Language language,
+                       std::size_t index, std::string_view expected) {
+  const std::string source = Read(path);
+  const auto functions = llmcc::Functions(source, language);
+  llmcc::test::Expect(index < functions.size(), "callable span exists");
+  const auto& function = functions[index];
+  llmcc::test::ExpectEq(source.substr(function.start_byte,
+                                      function.end_byte - function.start_byte),
+                        std::string(expected),
+                        "callable span matches its exact declaration");
 }
 
 }  // namespace
@@ -33,6 +88,12 @@ int main() {  // NOLINT(bugprone-exception-escape)
   CheckComments("testdata/lang/comments.rs", llmcc::Language::kRust);
   CheckComments("testdata/lang/comments.c", llmcc::Language::kC);
   CheckComments("testdata/lang/comments.cc", llmcc::Language::kCpp);
+  CheckComments("testdata/lang/comments.java", llmcc::Language::kJava, true);
+  CheckComments("testdata/lang/comments.py", llmcc::Language::kPython, true);
+  CheckComments("testdata/lang/comments.go", llmcc::Language::kGo, true);
+  CheckComments("testdata/lang/comments.js", llmcc::Language::kJavaScript,
+                true);
+  CheckComments("testdata/lang/comments.cs", llmcc::Language::kCSharp, true);
 
   const std::string rust = Read("testdata/lang/structure.rs");
   const auto rust_events =
@@ -51,6 +112,12 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(
       llmcc::StructuralEvents(cpp, llmcc::Language::kCpp).size() >= 16,
       "C++ structural events");
+  CheckStructure("testdata/lang/structure.java", llmcc::Language::kJava, 18, 6);
+  CheckStructure("testdata/lang/structure.py", llmcc::Language::kPython, 18, 6);
+  CheckStructure("testdata/lang/structure.go", llmcc::Language::kGo, 12, 5);
+  CheckStructure("testdata/lang/structure.js", llmcc::Language::kJavaScript, 18,
+                 6);
+  CheckStructure("testdata/lang/structure.cs", llmcc::Language::kCSharp, 18, 6);
   const auto structure_functions = llmcc::Functions(cpp, llmcc::Language::kCpp);
   llmcc::test::ExpectEq(structure_functions.size(), std::size_t{1},
                         "one C++ function, excluding lambda");
@@ -105,6 +172,35 @@ int main() {  // NOLINT(bugprone-exception-escape)
       rust_names, std::vector<std::string>({"method", "outer"}),
       "Rust impl method included and nested function excluded");
 
+  CheckFunctionNames("testdata/lang/functions.java", llmcc::Language::kJava,
+                     {"Point", "Widget", "compute"});
+  CheckFunctionSpan("testdata/lang/functions.java", llmcc::Language::kJava, 0,
+                    "Point {\n        if (x < 0) throw new "
+                    "IllegalArgumentException();\n    }");
+  CheckFunctionNames("testdata/lang/functions.py", llmcc::Language::kPython,
+                     {"decorated", "method"});
+  const auto python_functions = llmcc::Functions(
+      Read("testdata/lang/functions.py"), llmcc::Language::kPython);
+  llmcc::test::ExpectEq(
+      python_functions.front().start_byte, std::size_t{0},
+      "decorated Python function span starts at its first decorator");
+  CheckFunctionSpan("testdata/lang/functions.py", llmcc::Language::kPython, 0,
+                    "@first\n@second(value=1)\ndef decorated(value):\n"
+                    "    def hidden():\n        return 0\n    return value");
+  CheckFunctionNames("testdata/lang/functions.go", llmcc::Language::kGo,
+                     {"top", "Method"});
+  CheckFunctionSpan("testdata/lang/functions.go", llmcc::Language::kGo, 1,
+                    "func (Widget) Method() int { return 1 }");
+  CheckFunctionNames("testdata/lang/functions.js", llmcc::Language::kJavaScript,
+                     {"top", "generate", "method", "objectMethod"});
+  CheckFunctionSpan("testdata/lang/functions.js", llmcc::Language::kJavaScript,
+                    3, "objectMethod() {\n    const hidden = () => {};\n  }");
+  CheckFunctionNames(
+      "testdata/lang/functions.cs", llmcc::Language::kCSharp,
+      {"Number", "~Number", "operator +", "implicit operator int", "Run"});
+  CheckFunctionSpan("testdata/lang/functions.cs", llmcc::Language::kCSharp, 3,
+                    "public static implicit operator int(Number value) => 0;");
+
   llmcc::test::ExpectEq(llmcc::LineStarts("one\ntwo\n"),
                         std::vector<std::size_t>({0, 4, 8}), "line starts");
   llmcc::test::ExpectEq(llmcc::LineStarts(""), std::vector<std::size_t>({0}),
@@ -114,5 +210,58 @@ int main() {  // NOLINT(bugprone-exception-escape)
                         llmcc::Language::kRust, "infer Rust");
   llmcc::test::ExpectEq(llmcc::ParseLanguage("c++"), llmcc::Language::kCpp,
                         "parse C++ alias");
+  const std::vector<std::pair<std::string_view, llmcc::Language>> aliases = {
+      {"java", llmcc::Language::kJava},
+      {"python", llmcc::Language::kPython},
+      {"py", llmcc::Language::kPython},
+      {"go", llmcc::Language::kGo},
+      {"golang", llmcc::Language::kGo},
+      {"javascript", llmcc::Language::kJavaScript},
+      {"js", llmcc::Language::kJavaScript},
+      {"node", llmcc::Language::kJavaScript},
+      {"nodejs", llmcc::Language::kJavaScript},
+      {"node.js", llmcc::Language::kJavaScript},
+      {"csharp", llmcc::Language::kCSharp},
+      {"cs", llmcc::Language::kCSharp},
+      {"c#", llmcc::Language::kCSharp},
+  };
+  for (const auto& [alias, language] : aliases) {
+    llmcc::test::ExpectEq(llmcc::ParseLanguage(alias), language,
+                          "language alias parses");
+    llmcc::test::ExpectEq(llmcc::ParseLanguage(llmcc::LanguageName(language)),
+                          language, "canonical language name round trips");
+  }
+  const std::vector<std::pair<std::string_view, llmcc::Language>> extensions = {
+      {"Source.java", llmcc::Language::kJava},
+      {"source.py", llmcc::Language::kPython},
+      {"source.pyw", llmcc::Language::kPython},
+      {"source.pyi", llmcc::Language::kPython},
+      {"source.go", llmcc::Language::kGo},
+      {"source.js", llmcc::Language::kJavaScript},
+      {"source.mjs", llmcc::Language::kJavaScript},
+      {"source.cjs", llmcc::Language::kJavaScript},
+      {"source.cs", llmcc::Language::kCSharp},
+      {"source.csx", llmcc::Language::kCSharp},
+  };
+  for (const auto& [path, language] : extensions) {
+    llmcc::test::ExpectEq(llmcc::InferLanguage(path), language,
+                          "source extension is inferred");
+  }
+  llmcc::test::Expect(!llmcc::IsSourcePath("component.jsx", false) &&
+                          !llmcc::IsSourcePath("component.ts", false) &&
+                          !llmcc::IsSourcePath("component.tsx", false) &&
+                          !llmcc::IsSourcePath("Main.JAVA", false),
+                      "unsupported and case-mismatched extensions are omitted");
+  try {
+    static_cast<void>(llmcc::ParseLanguage("typescript"));
+    llmcc::test::Expect(false, "unsupported language is rejected");
+  } catch (const std::invalid_argument& error) {
+    llmcc::test::Expect(
+        std::string(error.what())
+                .find(
+                    "rust, c, cpp, java, python, go, javascript, or csharp") !=
+            std::string::npos,
+        "language validation error lists canonical names");
+  }
   return 0;
 }

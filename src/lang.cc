@@ -17,6 +17,11 @@ extern "C" {
 const TSLanguage* tree_sitter_rust();
 const TSLanguage* tree_sitter_c();
 const TSLanguage* tree_sitter_cpp();
+const TSLanguage* tree_sitter_java();
+const TSLanguage* tree_sitter_python();
+const TSLanguage* tree_sitter_go();
+const TSLanguage* tree_sitter_javascript();
+const TSLanguage* tree_sitter_c_sharp();
 }
 
 namespace llmcc {
@@ -38,37 +43,214 @@ constexpr auto kCppStructural = std::to_array<std::string_view>(
      "while_statement", "do_statement", "if_statement", "switch_statement",
      "for_range_loop", "lambda_expression", "try_statement",
      "namespace_definition", "field_declaration_list", "enumerator_list"});
+constexpr auto kJavaComments =
+    std::to_array<std::string_view>({"line_comment", "block_comment"});
+constexpr auto kJavaStructural =
+    std::to_array<std::string_view>({"method_declaration",
+                                     "constructor_declaration",
+                                     "compact_constructor_declaration",
+                                     "lambda_expression",
+                                     "block",
+                                     "constructor_body",
+                                     "class_body",
+                                     "interface_body",
+                                     "enum_body",
+                                     "annotation_type_body",
+                                     "if_statement",
+                                     "for_statement",
+                                     "enhanced_for_statement",
+                                     "while_statement",
+                                     "do_statement",
+                                     "switch_expression",
+                                     "switch_block",
+                                     "switch_block_statement_group",
+                                     "switch_rule",
+                                     "try_statement",
+                                     "try_with_resources_statement",
+                                     "catch_clause",
+                                     "finally_clause",
+                                     "synchronized_statement"});
+constexpr auto kPythonComments = std::to_array<std::string_view>({"comment"});
+constexpr auto kPythonStructural = std::to_array<std::string_view>(
+    {"function_definition", "lambda", "block", "class_definition",
+     "if_statement", "elif_clause", "else_clause", "for_statement",
+     "while_statement", "match_statement", "case_clause", "try_statement",
+     "except_clause", "finally_clause", "with_statement"});
+constexpr auto kGoComments = std::to_array<std::string_view>({"comment"});
+constexpr auto kGoStructural = std::to_array<std::string_view>(
+    {"function_declaration", "method_declaration", "func_literal", "block",
+     "field_declaration_list", "if_statement", "for_statement",
+     "expression_switch_statement", "type_switch_statement", "select_statement",
+     "expression_case", "type_case", "communication_case"});
+constexpr auto kJavaScriptComments =
+    std::to_array<std::string_view>({"comment", "html_comment"});
+constexpr auto kJavaScriptStructural = std::to_array<std::string_view>(
+    {"function_declaration", "generator_function_declaration",
+     "method_definition",    "function_expression",
+     "generator_function",   "arrow_function",
+     "statement_block",      "class_body",
+     "class_static_block",   "if_statement",
+     "for_statement",        "for_in_statement",
+     "while_statement",      "do_statement",
+     "switch_statement",     "switch_body",
+     "switch_case",          "switch_default",
+     "try_statement",        "catch_clause",
+     "finally_clause",       "with_statement"});
+constexpr auto kCSharpComments = std::to_array<std::string_view>({"comment"});
+constexpr auto kCSharpStructural =
+    std::to_array<std::string_view>({"method_declaration",
+                                     "constructor_declaration",
+                                     "destructor_declaration",
+                                     "operator_declaration",
+                                     "conversion_operator_declaration",
+                                     "local_function_statement",
+                                     "lambda_expression",
+                                     "anonymous_method_expression",
+                                     "block",
+                                     "arrow_expression_clause",
+                                     "declaration_list",
+                                     "enum_member_declaration_list",
+                                     "accessor_declaration",
+                                     "if_statement",
+                                     "for_statement",
+                                     "foreach_statement",
+                                     "while_statement",
+                                     "do_statement",
+                                     "switch_statement",
+                                     "switch_body",
+                                     "switch_section",
+                                     "switch_expression",
+                                     "switch_expression_arm",
+                                     "try_statement",
+                                     "catch_clause",
+                                     "finally_clause",
+                                     "using_statement",
+                                     "lock_statement",
+                                     "checked_statement",
+                                     "unsafe_statement",
+                                     "fixed_statement"});
 
-const TSLanguage* Grammar(Language language) {
-  switch (language) {
-    case Language::kRust:
-      return tree_sitter_rust();
-    case Language::kC:
-      return tree_sitter_c();
-    case Language::kCpp:
-      return tree_sitter_cpp();
+constexpr auto kRustAliases = std::to_array<std::string_view>({"rust"});
+constexpr auto kCAliases = std::to_array<std::string_view>({"c"});
+constexpr auto kCppAliases = std::to_array<std::string_view>({"cpp", "c++"});
+constexpr auto kJavaAliases = std::to_array<std::string_view>({"java"});
+constexpr auto kPythonAliases =
+    std::to_array<std::string_view>({"python", "py"});
+constexpr auto kGoAliases = std::to_array<std::string_view>({"go", "golang"});
+constexpr auto kJavaScriptAliases = std::to_array<std::string_view>(
+    {"javascript", "js", "node", "nodejs", "node.js"});
+constexpr auto kCSharpAliases =
+    std::to_array<std::string_view>({"csharp", "cs", "c#"});
+
+constexpr auto kRustExtensions = std::to_array<std::string_view>({".rs"});
+constexpr auto kCExtensions = std::to_array<std::string_view>({".c", ".h"});
+constexpr auto kCppExtensions = std::to_array<std::string_view>(
+    {".cc", ".cpp", ".cxx", ".c++", ".hpp", ".hh", ".hxx", ".h++"});
+constexpr auto kJavaExtensions = std::to_array<std::string_view>({".java"});
+constexpr auto kPythonExtensions =
+    std::to_array<std::string_view>({".py", ".pyw", ".pyi"});
+constexpr auto kGoExtensions = std::to_array<std::string_view>({".go"});
+constexpr auto kJavaScriptExtensions =
+    std::to_array<std::string_view>({".js", ".mjs", ".cjs"});
+constexpr auto kCSharpExtensions =
+    std::to_array<std::string_view>({".cs", ".csx"});
+
+constexpr auto kRustFunctions =
+    std::to_array<std::string_view>({"function_item"});
+constexpr auto kRustCallables =
+    std::to_array<std::string_view>({"function_item", "closure_expression"});
+constexpr auto kCFunctions =
+    std::to_array<std::string_view>({"function_definition"});
+constexpr auto kCCallables = kCFunctions;
+constexpr auto kCppCallables = std::to_array<std::string_view>(
+    {"function_definition", "lambda_expression"});
+constexpr auto kJavaFunctions = std::to_array<std::string_view>(
+    {"method_declaration", "constructor_declaration",
+     "compact_constructor_declaration"});
+constexpr auto kJavaCallables = std::to_array<std::string_view>(
+    {"method_declaration", "constructor_declaration",
+     "compact_constructor_declaration", "lambda_expression"});
+constexpr auto kPythonFunctions =
+    std::to_array<std::string_view>({"function_definition"});
+constexpr auto kPythonCallables =
+    std::to_array<std::string_view>({"function_definition", "lambda"});
+constexpr auto kGoFunctions = std::to_array<std::string_view>(
+    {"function_declaration", "method_declaration"});
+constexpr auto kGoCallables = std::to_array<std::string_view>(
+    {"function_declaration", "method_declaration", "func_literal"});
+constexpr auto kJavaScriptFunctions = std::to_array<std::string_view>(
+    {"function_declaration", "generator_function_declaration",
+     "method_definition"});
+constexpr auto kJavaScriptCallables = std::to_array<std::string_view>(
+    {"function_declaration", "generator_function_declaration",
+     "method_definition", "function_expression", "generator_function",
+     "arrow_function"});
+constexpr auto kCSharpFunctions = std::to_array<std::string_view>(
+    {"method_declaration", "constructor_declaration", "destructor_declaration",
+     "operator_declaration", "conversion_operator_declaration"});
+constexpr auto kCSharpCallables = std::to_array<std::string_view>(
+    {"method_declaration", "constructor_declaration", "destructor_declaration",
+     "operator_declaration", "conversion_operator_declaration",
+     "local_function_statement", "lambda_expression",
+     "anonymous_method_expression"});
+
+using GrammarFunction = const TSLanguage* (*)();
+
+struct LanguageMetadata {
+  Language language;
+  std::string_view canonical_name;
+  GrammarFunction grammar;
+  std::span<const std::string_view> aliases;
+  std::span<const std::string_view> extensions;
+  std::span<const std::string_view> comments;
+  std::span<const std::string_view> structural;
+  std::span<const std::string_view> functions;
+  std::span<const std::string_view> callables;
+};
+
+const LanguageMetadata& Metadata(Language language) {
+  static const std::array metadata = {
+      LanguageMetadata{Language::kRust, "rust", tree_sitter_rust, kRustAliases,
+                       kRustExtensions, kRustComments, kRustStructural,
+                       kRustFunctions, kRustCallables},
+      LanguageMetadata{Language::kC, "c", tree_sitter_c, kCAliases,
+                       kCExtensions, kCComments, kCStructural, kCFunctions,
+                       kCCallables},
+      LanguageMetadata{Language::kCpp, "cpp", tree_sitter_cpp, kCppAliases,
+                       kCppExtensions, kCComments, kCppStructural, kCFunctions,
+                       kCppCallables},
+      LanguageMetadata{Language::kJava, "java", tree_sitter_java, kJavaAliases,
+                       kJavaExtensions, kJavaComments, kJavaStructural,
+                       kJavaFunctions, kJavaCallables},
+      LanguageMetadata{Language::kPython, "python", tree_sitter_python,
+                       kPythonAliases, kPythonExtensions, kPythonComments,
+                       kPythonStructural, kPythonFunctions, kPythonCallables},
+      LanguageMetadata{Language::kGo, "go", tree_sitter_go, kGoAliases,
+                       kGoExtensions, kGoComments, kGoStructural, kGoFunctions,
+                       kGoCallables},
+      LanguageMetadata{
+          Language::kJavaScript, "javascript", tree_sitter_javascript,
+          kJavaScriptAliases, kJavaScriptExtensions, kJavaScriptComments,
+          kJavaScriptStructural, kJavaScriptFunctions, kJavaScriptCallables},
+      LanguageMetadata{Language::kCSharp, "csharp", tree_sitter_c_sharp,
+                       kCSharpAliases, kCSharpExtensions, kCSharpComments,
+                       kCSharpStructural, kCSharpFunctions, kCSharpCallables},
+  };
+  const auto match =
+      std::ranges::find(metadata, language, &LanguageMetadata::language);
+  if (match == metadata.end()) {
+    throw std::logic_error("unknown source language");
   }
-  throw std::logic_error("unknown source language");
+  return *match;
 }
 
-std::span<const std::string_view> CommentKinds(Language language) {
-  if (language == Language::kRust) {
-    return kRustComments;
-  }
-  return kCComments;
-}
+const std::array<Language, 8> kLanguages = {
+    Language::kRust,   Language::kC,  Language::kCpp,        Language::kJava,
+    Language::kPython, Language::kGo, Language::kJavaScript, Language::kCSharp,
+};
 
-std::span<const std::string_view> StructuralKinds(Language language) {
-  switch (language) {
-    case Language::kRust:
-      return kRustStructural;
-    case Language::kC:
-      return kCStructural;
-    case Language::kCpp:
-      return kCppStructural;
-  }
-  throw std::logic_error("unknown source language");
-}
+constexpr std::string_view kCanonicalLanguageNames =
+    "rust, c, cpp, java, python, go, javascript, or csharp";
 
 bool HasKind(std::span<const std::string_view> kinds, const char* kind) {
   return std::ranges::find(kinds, kind) != kinds.end();
@@ -86,7 +268,8 @@ Tree Parse(std::string_view source, Language language) {
     throw std::runtime_error("source is too large for tree-sitter");
   }
   Parser parser(ts_parser_new(), ts_parser_delete);
-  if (!parser || !ts_parser_set_language(parser.get(), Grammar(language))) {
+  if (!parser ||
+      !ts_parser_set_language(parser.get(), Metadata(language).grammar())) {
     throw std::runtime_error("tree-sitter language ABI is incompatible");
   }
   Tree tree(ts_parser_parse_string(parser.get(), nullptr, source.data(),
@@ -167,26 +350,74 @@ std::string CFunctionName(TSNode function, std::string_view source) {
   return "<anonymous>";
 }
 
+TSNode Field(TSNode node, std::string_view name) {
+  return ts_node_child_by_field_name(node, name.data(),
+                                     static_cast<std::uint32_t>(name.size()));
+}
+
+bool HasBody(TSNode function) {
+  return !ts_node_is_null(Field(function, "body"));
+}
+
+bool IsDefinition(TSNode function, Language language) {
+  if (language == Language::kRust || language == Language::kC ||
+      language == Language::kCpp) {
+    return true;
+  }
+  return HasBody(function);
+}
+
+std::string CallableName(TSNode function, std::string_view source,
+                         Language language) {
+  if (language == Language::kC || language == Language::kCpp) {
+    return CFunctionName(function, source);
+  }
+  if (language == Language::kCSharp) {
+    if (IsNodeType(function, "destructor_declaration")) {
+      return "~" + NodeText(Field(function, "name"), source);
+    }
+    if (IsNodeType(function, "operator_declaration")) {
+      return "operator " + NodeText(Field(function, "operator"), source);
+    }
+    if (IsNodeType(function, "conversion_operator_declaration")) {
+      std::string kind = "conversion";
+      for (std::uint32_t i = 0; i < ts_node_child_count(function); ++i) {
+        const TSNode child = ts_node_child(function, i);
+        if (IsNodeType(child, "implicit") || IsNodeType(child, "explicit")) {
+          kind = NodeText(child, source);
+          break;
+        }
+      }
+      return kind + " operator " + NodeText(Field(function, "type"), source);
+    }
+  }
+  return NodeText(Field(function, "name"), source);
+}
+
+std::pair<std::size_t, std::size_t> CallableSpan(TSNode function,
+                                                 Language language) {
+  if (language == Language::kPython) {
+    const TSNode parent = ts_node_parent(function);
+    if (IsNodeType(parent, "decorated_definition")) {
+      return {ts_node_start_byte(parent), ts_node_end_byte(parent)};
+    }
+  }
+  return {ts_node_start_byte(function), ts_node_end_byte(function)};
+}
+
 void CollectFunctions(TSNode node, std::string_view source, Language language,
                       bool inside_function,
                       std::vector<FunctionSpan>& functions) {
-  const bool function =
-      IsNodeType(node, language == Language::kRust ? "function_item"
-                                                   : "function_definition");
-  if (function && !inside_function) {
-    std::string name;
-    if (language == Language::kRust) {
-      name = NodeText(
-          ts_node_child_by_field_name(node, "name", sizeof("name") - 1),
-          source);
-    } else {
-      name = CFunctionName(node, source);
-    }
-    functions.push_back({.name = std::move(name),
-                         .start_byte = ts_node_start_byte(node),
-                         .end_byte = ts_node_end_byte(node)});
+  const LanguageMetadata& metadata = Metadata(language);
+  const bool reportable = HasKind(metadata.functions, ts_node_type(node));
+  const bool callable = HasKind(metadata.callables, ts_node_type(node));
+  if (reportable && !inside_function && IsDefinition(node, language)) {
+    auto [start, end] = CallableSpan(node, language);
+    functions.push_back({.name = CallableName(node, source, language),
+                         .start_byte = start,
+                         .end_byte = end});
   }
-  const bool child_inside_function = inside_function || function;
+  const bool child_inside_function = inside_function || callable;
   for (std::uint32_t i = 0; i < ts_node_child_count(node); ++i) {
     CollectFunctions(ts_node_child(node, i), source, language,
                      child_inside_function, functions);
@@ -212,8 +443,8 @@ std::pair<std::string, OffsetMap> StripComments(std::string_view source,
                                                 Language language) {
   Tree tree = Parse(source, language);
   std::vector<std::pair<std::size_t, std::size_t>> ranges;
-  CollectCommentRanges(ts_tree_root_node(tree.get()), CommentKinds(language),
-                       ranges);
+  CollectCommentRanges(ts_tree_root_node(tree.get()),
+                       Metadata(language).comments, ranges);
   std::ranges::sort(ranges);
 
   std::string output;
@@ -263,7 +494,7 @@ std::vector<StructuralEvent> StructuralEvents(std::string_view source,
   Tree tree = Parse(source, language);
   std::vector<StructuralEvent> events;
   CollectStructuralEvents(ts_tree_root_node(tree.get()), 0,
-                          StructuralKinds(language), events);
+                          Metadata(language).structural, events);
   std::ranges::sort(events, {}, [](const StructuralEvent& event) {
     return std::tuple(event.byte_offset, event.depth, event.scope_start);
   });
@@ -281,47 +512,32 @@ std::vector<FunctionSpan> Functions(std::string_view preprocessed,
 }
 
 Language ParseLanguage(std::string_view name) {
-  if (name == "rust") {
-    return Language::kRust;
-  }
-  if (name == "c") {
-    return Language::kC;
-  }
-  if (name == "cpp" || name == "c++") {
-    return Language::kCpp;
+  for (Language language : kLanguages) {
+    const auto& aliases = Metadata(language).aliases;
+    if (std::ranges::find(aliases, name) != aliases.end()) {
+      return language;
+    }
   }
   throw std::invalid_argument("unsupported language '" + std::string(name) +
-                              "'; expected rust, c, cpp, or c++");
+                              "'; expected " +
+                              std::string(kCanonicalLanguageNames));
 }
 
 Language InferLanguage(std::string_view path) {
-  if (EndsWith(path, ".rs")) {
-    return Language::kRust;
-  }
-  if (EndsWith(path, ".c") || EndsWith(path, ".h")) {
-    return Language::kC;
-  }
-  for (std::string_view suffix :
-       {".cc", ".cpp", ".cxx", ".c++", ".hpp", ".hh", ".hxx", ".h++"}) {
-    if (EndsWith(path, suffix)) {
-      return Language::kCpp;
+  for (Language language : kLanguages) {
+    for (std::string_view extension : Metadata(language).extensions) {
+      if (EndsWith(path, extension)) {
+        return language;
+      }
     }
   }
   throw std::invalid_argument("cannot infer language from source file '" +
-                              std::string(path) +
-                              "'; pass --lang rust, c, cpp, or c++");
+                              std::string(path) + "'; pass --lang " +
+                              std::string(kCanonicalLanguageNames));
 }
 
 std::string_view LanguageName(Language language) {
-  switch (language) {
-    case Language::kRust:
-      return "rust";
-    case Language::kC:
-      return "c";
-    case Language::kCpp:
-      return "cpp";
-  }
-  throw std::logic_error("unknown source language");
+  return Metadata(language).canonical_name;
 }
 
 bool IsHeaderPath(std::string_view path) {
@@ -335,10 +551,12 @@ bool IsSourcePath(std::string_view path, bool include_headers) {
   if (IsHeaderPath(path)) {
     return include_headers;
   }
-  return std::ranges::any_of(
-      std::initializer_list<std::string_view>{".rs", ".c", ".cc", ".cpp",
-                                              ".cxx", ".c++"},
-      [path](std::string_view suffix) { return EndsWith(path, suffix); });
+  return std::ranges::any_of(kLanguages, [path](Language language) {
+    return std::ranges::any_of(Metadata(language).extensions,
+                               [path](std::string_view extension) {
+                                 return EndsWith(path, extension);
+                               });
+  });
 }
 
 }  // namespace llmcc

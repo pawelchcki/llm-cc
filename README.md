@@ -1,7 +1,8 @@
 # llm-cc
 
 `llm-cc` computes entropy-guided language-model code complexity (LM-CC) for
-Rust, C, and C++. It is one C++20 binary built entirely with Bazel.
+Rust, C, C++, Java, Python, Go, Node.js JavaScript, and C#. It is one C++20
+binary built entirely with Bazel.
 
 The analyzer removes comments with tree-sitter, obtains teacher-forced token
 entropy from a llama.cpp-compatible GGUF, detects semantic boundaries, builds
@@ -18,8 +19,9 @@ bazel test //:integration
 ```
 
 The build downloads checksum-pinned LLVM, llama.cpp, tree-sitter and its Rust,
-C, and C++ source bundles, nlohmann/json, curl, and, on non-macOS platforms,
-OpenSSL. macOS curl builds use Apple's Secure Transport and system trust store.
+C, C++, Java, Python, Go, JavaScript, and C# source bundles, nlohmann/json,
+curl, and, on non-macOS platforms, OpenSSL. macOS curl builds use Apple's
+Secure Transport and system trust store.
 On Linux x86-64, `//:llm-cc` is always a universal CPU + CUDA + ROCm
 development executable. Its private GPU modules stay in Bazel runfiles, so an
 application edit recompiles and relinks only affected application actions.
@@ -95,7 +97,7 @@ llm-cc src include/widget.hpp --include-headers --model /path/to/model.gguf
 Analysis options are:
 
 ```text
---lang auto|rust|c|cpp
+--lang auto|rust|c|cpp|java|python|go|javascript|csharp
 --model GGUF
 --no-download
 --gpu-layers N
@@ -111,6 +113,13 @@ Analysis options are:
 --format jsonl|text
 --alpha N
 ```
+
+Automatic detection recognizes `.rs`; `.c`; C/C++ headers and `.cc`, `.cpp`,
+`.cxx`, `.c++`; `.java`; `.py`, `.pyw`, `.pyi`; `.go`; `.js`, `.mjs`, `.cjs`;
+and `.cs`, `.csx`. In addition to the canonical `--lang` names above, `c++`,
+`py`, `golang`, `js`, `node`, `nodejs`, `node.js`, `cs`, and `c#` are accepted
+as aliases. JavaScript support is for Node.js runtime files only; JSX and all
+TypeScript variants are intentionally excluded.
 
 The default headline score is `lmcc_per_token`, selected with `--score lmcc`.
 It normalizes LM-CC by the number of scored tokens, making it length-invariant

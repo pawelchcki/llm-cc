@@ -1,10 +1,12 @@
 #include <sys/wait.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <sstream>
@@ -81,6 +83,11 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(
       Read(analyze_help).find("auto, cpu, cuda, or rocm") != std::string::npos,
       "analysis documents runtime backend selection");
+  llmcc::test::Expect(
+      Read(analyze_help).find("rust, c, cpp, java, python, go, javascript") !=
+              std::string::npos &&
+          Read(analyze_help).find("or csharp") != std::string::npos,
+      "analysis help lists every canonical source language");
 
   const fs::path score_help = fs::path(test_tmpdir) / "score-help.txt";
   llmcc::test::ExpectEq(
@@ -288,6 +295,79 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::ExpectEq(events[4]["analyzed"].get<std::uint64_t>(),
                         std::uint64_t{1}, "totals report analyzed file");
 
+  const std::map<std::string, std::pair<llmcc::Language, std::string>>
+      additional_sources = {
+          {"Main.java",
+           {llmcc::Language::kJava,
+            "class Main { int javaMethod() { return 1; } }\n"}},
+          {"module.py",
+           {llmcc::Language::kPython,
+            "def python_function():\n    return 1\n"}},
+          {"main.go",
+           {llmcc::Language::kGo,
+            "package main\nfunc goFunction() int { return 1 }\n"}},
+          {"module.mjs",
+           {llmcc::Language::kJavaScript,
+            "export function jsFunction() { return 1; }\n"}},
+          {"Main.cs",
+           {llmcc::Language::kCSharp,
+            "class Main { int CSharpMethod() { return 1; } }\n"}},
+      };
+  std::string multi_command = Quote(binary);
+  for (const auto& [filename, specification] : additional_sources) {
+    const auto& [language, contents] = specification;
+    const fs::path path = repository / filename;
+    Write(path, contents);
+    const auto [prepared, prepared_offsets] =
+        llmcc::StripComments(contents, language);
+    static_cast<void>(prepared_offsets);
+    llmcc::WriteEntropyCache(
+        repository, prepared, identity,
+        std::vector<llmcc::EntropyRecord>{
+            {.position = 0,
+             .bytes = prepared.substr(0, 1),
+             .entropy = std::nullopt},
+            {.position = 1, .bytes = prepared.substr(1), .entropy = 0.4}});
+    multi_command += " " + Quote(path);
+  }
+  const fs::path multi_output = fs::path(test_tmpdir) / "multi-language.jsonl";
+  multi_command += " --model " + Quote(fake_model) + " >" + Quote(multi_output);
+  llmcc::test::ExpectEq(Run(multi_command), 0,
+                        "cache-only multi-language analysis succeeds");
+  const auto multi_events = ReadEvents(multi_output);
+  llmcc::test::ExpectEq(multi_events.size(), std::size_t{13},
+                        "five files emit a complete event stream");
+  const auto& multi_totals = multi_events.back();
+  llmcc::test::Expect(
+      multi_totals["type"] == "totals" && multi_totals["analyzed"] == 5,
+      "multi-language totals include every file");
+  for (const auto& [filename, specification] : additional_sources) {
+    const std::string canonical =
+        std::string(llmcc::LanguageName(specification.first));
+    llmcc::test::Expect(multi_totals["languages"].contains(canonical),
+                        "totals use canonical language names");
+    const auto event =
+        std::ranges::find_if(multi_events, [&](const auto& item) {
+          return item.value("type", "") == "file" &&
+                 fs::path(item.value("path", "")).filename() == filename;
+        });
+    llmcc::test::Expect(event != multi_events.end() &&
+                            (*event)["language"] == canonical &&
+                            !(*event)["functions"].empty(),
+                        "file event has canonical language and function data");
+  }
+
+  const fs::path alias_output = fs::path(test_tmpdir) / "language-alias.jsonl";
+  const fs::path javascript_source = repository / "module.mjs";
+  llmcc::test::ExpectEq(
+      Run(Quote(binary) + " " + Quote(javascript_source) + " --lang node.js" +
+          " --model " + Quote(fake_model) + " >" + Quote(alias_output)),
+      0, "language alias can force CLI selection");
+  const auto alias_events = ReadEvents(alias_output);
+  llmcc::test::Expect(alias_events[1]["language"] == "javascript" &&
+                          FileEvent(alias_events)["language"] == "javascript",
+                      "forced alias is canonicalized in output");
+
   const fs::path density_output = fs::path(test_tmpdir) / "density.jsonl";
   llmcc::test::ExpectEq(
       Run(analysis_command.substr(0, analysis_command.rfind('>')) +
@@ -430,7 +510,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
       0, "cache status succeeds");
   const nlohmann::json status = nlohmann::json::parse(Read(status_output));
   llmcc::test::ExpectEq(status["entries"].get<std::uint64_t>(),
-                        std::uint64_t{3}, "cache status counts entries");
+                        std::uint64_t{8}, "cache status counts entries");
 
   return 0;
 }
