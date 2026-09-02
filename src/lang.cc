@@ -75,14 +75,14 @@ constexpr auto kPythonStructural = std::to_array<std::string_view>(
     {"function_definition", "lambda", "block", "class_definition",
      "if_statement", "elif_clause", "else_clause", "for_statement",
      "for_in_clause", "if_clause", "while_statement", "match_statement",
-     "case_clause", "try_statement", "except_clause", "finally_clause",
-     "with_statement"});
+     "case_clause", "try_statement", "except_clause", "except_group_clause",
+     "finally_clause", "with_statement"});
 constexpr auto kGoComments = std::to_array<std::string_view>({"comment"});
 constexpr auto kGoStructural = std::to_array<std::string_view>(
     {"function_declaration", "method_declaration", "func_literal", "block",
      "field_declaration_list", "if_statement", "for_statement",
      "expression_switch_statement", "type_switch_statement", "select_statement",
-     "expression_case", "type_case", "communication_case"});
+     "expression_case", "type_case", "communication_case", "default_case"});
 constexpr auto kJavaScriptComments = std::to_array<std::string_view>(
     {"comment", "html_comment", "hash_bang_line"});
 constexpr auto kJavaScriptStructural = std::to_array<std::string_view>(
@@ -129,7 +129,15 @@ constexpr auto kCSharpStructural =
                                      "lock_statement",
                                      "checked_statement",
                                      "unsafe_statement",
-                                     "fixed_statement"});
+                                     "fixed_statement",
+                                     "from_clause",
+                                     "join_clause",
+                                     "join_into_clause",
+                                     "let_clause",
+                                     "where_clause",
+                                     "order_by_clause",
+                                     "select_clause",
+                                     "group_clause"});
 
 constexpr auto kRustAliases = std::to_array<std::string_view>({"rust"});
 constexpr auto kCAliases = std::to_array<std::string_view>({"c"});

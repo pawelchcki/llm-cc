@@ -92,7 +92,6 @@ bool GeneratedDirectory(std::string_view name) {
                                                    "third_party",
                                                    "build",
                                                    "build-out",
-                                                   "out",
                                                    ".nuget",
                                                    "dist",
                                                    "deps",
@@ -100,6 +99,12 @@ bool GeneratedDirectory(std::string_view name) {
                                                    "cmake-build-debug",
                                                    "cmake-build-release"};
   return names.contains(name) || name.starts_with("bazel-");
+}
+
+bool TopLevelOutPath(const std::filesystem::path& path,
+                     const std::filesystem::path& root) {
+  const auto relative = path.lexically_relative(root);
+  return relative.begin() != relative.end() && *relative.begin() == "out";
 }
 
 bool CSharpGeneratedPath(const std::filesystem::path& path,
@@ -122,6 +127,7 @@ bool GeneratedPath(const std::filesystem::path& path,
                                return component == ".llm-cc-cache" ||
                                       GeneratedDirectory(component.string());
                              }) ||
+         TopLevelOutPath(path, repository) ||
          CSharpGeneratedPath(path, repository);
 }
 
@@ -180,7 +186,10 @@ void FilesystemWalk(const std::filesystem::path& directory,
     }
     if (directory_entry &&
         (name == ".llm-cc-cache" ||
-         (!options.no_ignore && GeneratedDirectory(name)) || name == ".git")) {
+         (!options.no_ignore &&
+          (GeneratedDirectory(name) ||
+           (name == "out" && entry.path().parent_path() == directory))) ||
+         name == ".git")) {
       iterator.disable_recursion_pending();
     } else if (entry.is_regular_file(error) && !error) {
       const auto canonical = std::filesystem::canonical(entry.path(), error);

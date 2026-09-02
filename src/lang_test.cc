@@ -122,10 +122,25 @@ int main() {  // NOLINT(bugprone-exception-escape)
       "[f(x) for xs in groups for x in xs if x]", llmcc::Language::kPython);
   llmcc::test::ExpectEq(comprehension_events.size(), std::size_t{3},
                         "Python comprehension loops and branch are structural");
+  const auto exception_group_events =
+      llmcc::StructuralEvents("try:\n    pass\nexcept* ValueError:\n    pass\n",
+                              llmcc::Language::kPython);
+  llmcc::test::ExpectEq(exception_group_events.size(), std::size_t{4},
+                        "Python exception-group handler is structural");
   CheckStructure("testdata/lang/structure.go", llmcc::Language::kGo, 12, 5);
+  const auto go_default_events = llmcc::StructuralEvents(
+      "package p\nfunc run() { switch { default: return } }",
+      llmcc::Language::kGo);
+  llmcc::test::ExpectEq(go_default_events.size(), std::size_t{4},
+                        "Go default case is structural");
   CheckStructure("testdata/lang/structure.js", llmcc::Language::kJavaScript, 18,
                  6);
   CheckStructure("testdata/lang/structure.cs", llmcc::Language::kCSharp, 18, 6);
+  const auto csharp_query_events = llmcc::StructuralEvents(
+      "class Q { void M() { var q = from x in xs where x > 0 select x; } }",
+      llmcc::Language::kCSharp);
+  llmcc::test::ExpectEq(csharp_query_events.size(), std::size_t{6},
+                        "C# query clauses are structural");
   const auto structure_functions = llmcc::Functions(cpp, llmcc::Language::kCpp);
   llmcc::test::ExpectEq(structure_functions.size(), std::size_t{1},
                         "one C++ function, excluding lambda");

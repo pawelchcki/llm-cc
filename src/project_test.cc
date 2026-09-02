@@ -46,6 +46,9 @@ int main() {  // NOLINT(bugprone-exception-escape)
   Write(repository / "src/b.c", "int b;\n");
   Write(repository / "src/z.h", "int z;\n");
   Write(repository / "src/Main.java", "class Main {}\n");
+  Write(repository /
+            "src/main/java/com/example/adapter/out/persistence/Repository.java",
+        "class Repository {}\n");
   Write(repository / "src/tool.py", "def tool(): pass\n");
   Write(repository / "src/window.pyw", "def window(): pass\n");
   Write(repository / "src/types.pyi", "def typed() -> None: ...\n");
@@ -67,6 +70,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
   Write(repository / "bin/Hidden.cs", "class Hidden {}\n");
   Write(repository / "obj/Hidden.cs", "class Hidden {}\n");
   Write(repository / ".gradle/Hidden.java", "class Hidden {}\n");
+  Write(repository / "out/Hidden.java", "class Hidden {}\n");
   Write(repository / ".llm-cc-cache/never.rs", "fn never() {}\n");
   const fs::path nested_repository = repository / "nested-repository";
   fs::create_directories(nested_repository);
@@ -78,7 +82,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
       "target/generated.rs");
 
   const auto normal = llmcc::DiscoverSources({repository});
-  llmcc::test::ExpectEq(normal.sources.size(), std::size_t{17},
+  llmcc::test::ExpectEq(normal.sources.size(), std::size_t{18},
                         "Git discovery filters headers and generated files");
   llmcc::test::Expect(
       std::ranges::is_sorted(
@@ -108,7 +112,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
 
   const auto headers = llmcc::DiscoverSources(
       {repository / "src", repository / "src/a.rs"}, {.include_headers = true});
-  llmcc::test::ExpectEq(headers.sources.size(), std::size_t{14},
+  llmcc::test::ExpectEq(headers.sources.size(), std::size_t{15},
                         "overlap is deduplicated and headers can be included");
 
   const auto explicit_header = llmcc::DiscoverSources({repository / "src/z.h"});
@@ -122,7 +126,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
 
   const auto all = llmcc::DiscoverSources(
       {repository}, {.include_headers = true, .no_ignore = true});
-  llmcc::test::ExpectEq(all.sources.size(), std::size_t{26},
+  llmcc::test::ExpectEq(all.sources.size(), std::size_t{28},
                         "no-ignore includes ignored and generated files");
   for (const auto& source : all.sources) {
     llmcc::test::Expect(
