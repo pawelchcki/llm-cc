@@ -30,7 +30,10 @@
 
 #include "generated/version.h"
 #include "src/backend.h"
+#include "src/cache.h"
+#include "src/download.h"
 #include "src/inference_guard.h"
+#include "src/models.h"
 #include "src/scoring.h"
 
 namespace {
@@ -41,6 +44,7 @@ constexpr std::size_t kDecodeBatchSize = 64;
 
 struct Arguments {
   std::filesystem::path model;
+  std::optional<std::string> model_name;
   std::optional<std::string> prompt;
   std::optional<std::filesystem::path> file;
   BosMode bos = BosMode::kAuto;
@@ -49,11 +53,13 @@ struct Arguments {
   std::int32_t gpu_layers = 0;
   llmcc::BackendKind backend = llmcc::BackendKind::kAuto;
   bool entropy = false;
+  bool no_download = false;
   bool override_memory_check = false;
 };
 
 constexpr std::string_view kUsageBeforeContext =
-    "Usage: llm-cc --model MODEL.gguf [INPUT] [OPTIONS]\n\n"
+    "Usage: llm-cc score (--model MODEL.gguf | --model-name NAME) "
+    "[INPUT] [OPTIONS]\n\n"
     "Teacher-force input through a GGUF model and emit observed-token "
     "probabilities.\n"
     "No continuation is generated. Output is JSONL on stdout.\n\n"
@@ -61,7 +67,9 @@ constexpr std::string_view kUsageBeforeContext =
     "  --prompt TEXT          score literal text\n"
     "  --file PATH            score the contents of a file\n\n"
     "Options:\n"
-    "  --model PATH           local llama.cpp-compatible GGUF (required)\n"
+    "  --model PATH           local llama.cpp-compatible GGUF\n"
+    "  --model-name NAME      registered model name\n"
+    "  --no-download          do not fetch a selected registered model\n"
     "  --bos auto|always|never  beginning-of-stream policy (default: auto)\n"
     "  --context-size N       maximum tokens in the input (default: ";
 
@@ -96,6 +104,19 @@ Integer ParseInteger(std::string_view name, std::string_view value) {
   return parsed;
 }
 
+std::string ValidModelNames() {
+  std::string result = "valid model names: ";
+  bool first = true;
+  for (const llmcc::ModelSpec& model : llmcc::Models()) {
+    if (!first) {
+      result += ", ";
+    }
+    result += model.name;
+    first = false;
+  }
+  return result;
+}
+
 void SetOption(Arguments& arguments, std::string_view option,
                std::string_view value) {
   if ((option == "--prompt" && arguments.file.has_value()) ||
@@ -104,6 +125,8 @@ void SetOption(Arguments& arguments, std::string_view option,
   }
   if (option == "--model") {
     arguments.model = value;
+  } else if (option == "--model-name") {
+    arguments.model_name = value;
   } else if (option == "--prompt") {
     arguments.prompt = value;
   } else if (option == "--file") {
@@ -159,6 +182,10 @@ Arguments ParseArguments(int argc, char** argv) {
       arguments.entropy = true;
       continue;
     }
+    if (option == "--no-download") {
+      arguments.no_download = true;
+      continue;
+    }
     if (option == "--override-memory-check") {
       arguments.override_memory_check = true;
       continue;
@@ -168,8 +195,16 @@ Arguments ParseArguments(int argc, char** argv) {
     }
     SetOption(arguments, option, argv[++i]);
   }
-  if (arguments.model.empty()) {
-    Usage("--model is required");
+  if (!arguments.model.empty() && arguments.model_name.has_value()) {
+    Usage("--model-name and --model are mutually exclusive");
+  }
+  if (arguments.model_name.has_value() &&
+      llmcc::FindModel(*arguments.model_name) == nullptr) {
+    Usage("unknown model name '" + *arguments.model_name + "'; " +
+          ValidModelNames());
+  }
+  if (arguments.model.empty() && !arguments.model_name.has_value()) {
+    Usage("--model or --model-name is required");
   }
   if (arguments.threads == 0) {
     arguments.threads = static_cast<std::int32_t>(
@@ -680,7 +715,14 @@ std::string ScoreEntropyJsonl(const std::filesystem::path& model,
 
 int RunScoreCommand(int argc, char** argv) {
   try {
-    return Run(ParseArguments(argc, argv), std::cout, std::cerr);
+    Arguments arguments = ParseArguments(argc, argv);
+    if (arguments.model_name.has_value()) {
+      arguments.model =
+          ResolveModel(std::nullopt, *FindModel(*arguments.model_name),
+                       arguments.no_download, std::filesystem::current_path(),
+                       CacheDir(), DownloadModel);
+    }
+    return Run(arguments, std::cout, std::cerr);
   } catch (const std::exception& error) {
     std::cerr << "error: " << error.what() << '\n';
     return 1;

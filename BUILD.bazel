@@ -427,10 +427,19 @@ cc_library(
 )
 
 cc_library(
+    name = "models",
+    srcs = ["src/models.cc"],
+    hdrs = ["src/models.h"],
+)
+
+cc_library(
     name = "cache",
     srcs = ["src/cache.cc"],
     hdrs = ["src/cache.h"],
-    deps = ["@nlohmann_json//:json"],
+    deps = [
+        ":models",
+        "@nlohmann_json//:json",
+    ],
 )
 
 cc_library(
@@ -449,6 +458,7 @@ cc_library(
     deps = [
         ":cache",
         ":curl",
+        ":models",
     ],
 )
 
@@ -517,8 +527,11 @@ cc_library(
     }),
     deps = [
         ":backend_runtime",
+        ":cache",
+        ":download",
         ":inference_guard",
         ":llama",
+        ":models",
         ":scoring",
         ":version",
     ],
@@ -605,6 +618,7 @@ cc_binary(
         ":entropy_cache",
         ":jsonl",
         ":lang",
+        ":models",
         ":project",
         ":score_cmd",
         ":version",
@@ -630,6 +644,7 @@ cc_binary(
         ":entropy_cache",
         ":jsonl",
         ":lang",
+        ":models",
         ":project",
         ":score_cmd",
         ":version",
@@ -823,6 +838,15 @@ cc_test(
 )
 
 cc_test(
+    name = "models_test",
+    srcs = ["src/models_test.cc"],
+    deps = [
+        ":models",
+        ":test_util",
+    ],
+)
+
+cc_test(
     name = "payload_integration_test",
     srcs = ["src/payload_integration_test.cc"],
     data = ["//dist:linux_x86_64_executable"],
@@ -864,6 +888,7 @@ test_suite(
         ":format_test",
         ":jsonl_test",
         ":lang_test",
+        ":models_test",
         ":project_test",
         ":scoring_test",
         ":starlark_test",

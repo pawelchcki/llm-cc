@@ -28,6 +28,7 @@
 #include "src/entropy_cache.h"
 #include "src/jsonl.h"
 #include "src/lang.h"
+#include "src/models.h"
 #include "src/project.h"
 #include "src/score_cmd.h"
 
@@ -38,6 +39,7 @@ struct AnalyzeArguments {
   std::optional<llmcc::Language> language;
   std::string language_name = "auto";
   std::optional<std::filesystem::path> model;
+  std::optional<std::string> model_name;
   bool no_download = false;
   bool include_headers = false;
   bool no_ignore = false;
@@ -57,8 +59,9 @@ constexpr std::string_view kUsageBeforeContext =
     "Usage:\n"
     "  llm-cc PATH... [--lang "
     "auto|rust|c|cpp|java|python|go|javascript|csharp] [OPTIONS]\n"
-    "  llm-cc score --model GGUF [--prompt TEXT | --file PATH] [OPTIONS]\n"
-    "  llm-cc models list|remove FILE|path\n"
+    "  llm-cc score (--model GGUF | --model-name NAME) "
+    "[--prompt TEXT | --file PATH] [OPTIONS]\n"
+    "  llm-cc models list [--available]|remove FILE|path\n"
     "  llm-cc cache status|prune|clear [PATH] [--format text|json]\n\n"
     "Analysis options:\n"
     "  --lang NAME          auto, rust, c, cpp, java, python, go, javascript,\n"
@@ -66,8 +69,10 @@ constexpr std::string_view kUsageBeforeContext =
     "  --include-headers     include headers during recursive discovery\n"
     "  --no-ignore           include ignored and generated source files\n"
     "  --no-cache            disable repository-local entropy caching\n"
-    "  --no-download         do not fetch the default model\n"
+    "  --no-download         do not fetch the selected model\n"
     "  --model GGUF          llama.cpp-compatible model\n"
+    "  --model-name NAME     registered model (default: "
+    "deepseek-coder-v2-lite-base-q6_k)\n"
     "  --score lmcc|density|mean  headline score mode (default: lmcc)\n"
     "  --tau N               absolute entropy threshold in nats (default: "
     "0.67)\n"
@@ -114,6 +119,19 @@ Number ParseNumber(std::string_view option, std::string_view value) {
   return result;
 }
 
+std::string ValidModelNames() {
+  std::string result = "valid model names: ";
+  bool first = true;
+  for (const llmcc::ModelSpec& model : llmcc::Models()) {
+    if (!first) {
+      result += ", ";
+    }
+    result += model.name;
+    first = false;
+  }
+  return result;
+}
+
 void SetAnalyzeOption(AnalyzeArguments& arguments, std::string_view option,
                       std::string_view value) {
   if (option == "--lang") {
@@ -126,6 +144,8 @@ void SetAnalyzeOption(AnalyzeArguments& arguments, std::string_view option,
     }
   } else if (option == "--model") {
     arguments.model = value;
+  } else if (option == "--model-name") {
+    arguments.model_name = value;
   } else if (option == "--gpu-layers") {
     arguments.gpu_layers = ParseNumber<std::int32_t>(option, value);
     if (arguments.gpu_layers < -1) {
@@ -202,6 +222,14 @@ AnalyzeArguments ParseAnalyzeArguments(int argc, char** argv) {
     }
     SetAnalyzeOption(arguments, option, argv[++index]);
   }
+  if (arguments.model.has_value() && arguments.model_name.has_value()) {
+    Usage("--model-name and --model are mutually exclusive");
+  }
+  if (arguments.model_name.has_value() &&
+      llmcc::FindModel(*arguments.model_name) == nullptr) {
+    Usage("unknown model name '" + *arguments.model_name + "'; " +
+          ValidModelNames());
+  }
   if (arguments.sources.empty()) {
     Usage("at least one source path is required unless a subcommand is used");
   }
@@ -270,6 +298,17 @@ int RunModels(int argc, char** argv) {
   const std::string_view action = argv[2];
   if (action == "list" && argc == 3) {
     llmcc::ListModels(cache_dir, std::cout);
+    return 0;
+  }
+  if (action == "list" && argc == 4 &&
+      std::string_view(argv[3]) == "--available") {
+    for (const llmcc::ModelSpec& model : llmcc::Models()) {
+      const bool cached =
+          std::filesystem::is_regular_file(cache_dir / model.file);
+      std::cout << model.name << '\t'
+                << llmcc::FormatApproxSize(model.approx_bytes) << '\t'
+                << (cached ? "cached" : "not cached") << '\n';
+    }
     return 0;
   }
   if (action == "path" && argc == 3) {
@@ -737,7 +776,8 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
                           .include_headers = arguments.include_headers,
                           .no_ignore = arguments.no_ignore});
   const std::string requested_model =
-      arguments.model.has_value() ? arguments.model->string() : "default";
+      arguments.model.has_value() ? arguments.model->string()
+                                  : arguments.model_name.value_or("default");
   if (!text) {
     Emit({{"type", "start"},
           {"discovered", discovery.sources.size()},
@@ -761,9 +801,13 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
   }
 
   const std::filesystem::path model_cache = llmcc::CacheDir();
+  const llmcc::ModelSpec& model_spec =
+      arguments.model_name.has_value()
+          ? *llmcc::FindModel(*arguments.model_name)
+          : llmcc::DefaultModel();
   const auto resolved_model = llmcc::ResolveModel(
-      arguments.model, arguments.no_download, std::filesystem::current_path(),
-      model_cache, llmcc::DownloadDefaultModel);
+      arguments.model, model_spec, arguments.no_download,
+      std::filesystem::current_path(), model_cache, llmcc::DownloadModel);
   const llmcc::BackendKind resolved_backend = [&]() {
     llmcc::BackendRuntime runtime(arguments.backend, arguments.gpu_layers);
     return runtime.selected();

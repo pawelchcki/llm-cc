@@ -99,6 +99,9 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(
       Read(score_help).find("auto, cpu, cuda, or rocm") != std::string::npos,
       "score documents runtime backend selection");
+  llmcc::test::Expect(
+      Read(score_help).find("--model-name NAME") != std::string::npos,
+      "score documents registered model selection");
 
   const fs::path backend_error = fs::path(test_tmpdir) / "backend-error.txt";
   const std::string cpu_gpu_command =
@@ -157,6 +160,62 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(
       Read(removed_option_error).find("unknown option") != std::string::npos,
       "removed entropy option reports an unknown option");
+
+  const fs::path available_cache =
+      fs::path(test_tmpdir) / "available-model-cache";
+  fs::create_directories(available_cache);
+  const fs::path available_output =
+      fs::path(test_tmpdir) / "available-models.txt";
+  const std::string available_command =
+      "LLM_CC_CACHE_DIR=" + Quote(available_cache) + " " + Quote(binary) +
+      " models list --available >" + Quote(available_output);
+  llmcc::test::ExpectEq(Run(available_command), 0,
+                        "available models list succeeds");
+  const std::string available = Read(available_output);
+  for (std::string_view name :
+       {"deepseek-coder-v2-lite-base-q6_k", "deepseek-coder-6.7b-base-q6_k",
+        "qwen2.5-coder-1.5b-q6_k", "qwen2.5-coder-0.5b-q4_k_m"}) {
+    const std::size_t position = available.find(name);
+    llmcc::test::Expect(
+        position != std::string::npos &&
+            available.find("not cached", position) != std::string::npos,
+        "available registry model is listed as not cached");
+  }
+
+  const fs::path model_option_error =
+      fs::path(test_tmpdir) / "model-option-error.txt";
+  const int conflicting_model =
+      Run(Quote(binary) + " " + Quote(fixtures / "sample.rs") +
+          " --model-name x --model y 2>" + Quote(model_option_error));
+  llmcc::test::Expect(
+      WIFEXITED(conflicting_model) && WEXITSTATUS(conflicting_model) == 2,
+      "model selectors are rejected with exit 2");
+  llmcc::test::Expect(
+      Read(model_option_error).find("mutually exclusive") != std::string::npos,
+      "conflicting model selectors are explained");
+
+  const int unknown_model =
+      Run(Quote(binary) + " " + Quote(fixtures / "sample.rs") +
+          " --model-name nonsense 2>" + Quote(model_option_error));
+  llmcc::test::Expect(
+      WIFEXITED(unknown_model) && WEXITSTATUS(unknown_model) == 2,
+      "unknown registered model exits 2");
+  llmcc::test::Expect(
+      Read(model_option_error).find("valid model names") != std::string::npos,
+      "unknown registered model lists valid names");
+
+  const int uncached_model =
+      Run("LLM_CC_CACHE_DIR=" + Quote(available_cache) + " " + Quote(binary) +
+          " " + Quote(fixtures / "sample.rs") +
+          " --model-name qwen2.5-coder-0.5b-q4_k_m --no-download 2>" +
+          Quote(model_option_error) + " >/dev/null");
+  llmcc::test::Expect(
+      WIFEXITED(uncached_model) && WEXITSTATUS(uncached_model) == 2,
+      "uncached registered model fails without downloading");
+  llmcc::test::Expect(
+      Read(model_option_error).find("qwen2.5-coder-0.5b-q4_k_m") !=
+          std::string::npos,
+      "uncached model error names the selected model");
 
   const fs::path cache = fs::path(test_tmpdir) / "model-cache";
   fs::create_directories(cache);

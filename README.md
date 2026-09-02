@@ -102,6 +102,7 @@ Analysis options are:
 ```text
 --lang auto|rust|c|cpp|java|python|go|javascript|csharp
 --model GGUF
+--model-name NAME
 --no-download
 --gpu-layers N
 --backend auto|cpu|cuda|rocm
@@ -178,12 +179,13 @@ warnings and errors still go to stderr. If a Codex sandbox reports zero GPU
 memory, `llm-cc` identifies the sandbox and recommends running with permission
 to access the accelerator directly.
 
-Without `--model`, `llm-cc` first checks
-`models/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf`, then its model cache. If the
-default model is absent it downloads it over HTTPS to a `.partial` file and
-resumes that file on the next attempt. Interactive downloads show a progress
-bar, transferred size, and current average speed. Disable downloading with
-`--no-download`.
+Without `--model`, `llm-cc` uses the registered
+`deepseek-coder-v2-lite-base-q6_k` model. Select another built-in model with
+`--model-name NAME`; `--model-name` and `--model` are mutually exclusive. The
+tool first checks `models/<registered file>`, then its model cache. If the model
+is absent it downloads it over HTTPS to a `.partial` file and resumes that file
+on the next attempt. Interactive downloads show a progress bar, transferred
+size, and current average speed. Disable downloading with `--no-download`.
 
 The cache directory follows this precedence:
 
@@ -196,8 +198,13 @@ Inspect it with:
 ```sh
 llm-cc models path
 llm-cc models list
+llm-cc models list --available
 llm-cc models remove MODEL.gguf
 ```
+
+`models list` shows cached GGUF files and their timestamps. Add `--available`
+to show every built-in model, its approximate download size, and whether its
+registered file is cached.
 
 The default model is
 [DeepSeek-Coder-V2-Lite-Base Q6_K](https://huggingface.co/bartowski/DeepSeek-Coder-V2-Lite-Base-GGUF).
@@ -213,10 +220,10 @@ llm-cc score --model model.gguf --entropy --prompt 'The quick brown fox'
 llm-cc score --model model.gguf --entropy --file source.cpp
 ```
 
-`score` accepts `--prompt` or `--file`, `--bos auto|always|never`,
-`--context-size`, `--threads`, `--gpu-layers`, `--backend`,
-`--override-memory-check`, and `--entropy`. It emits one JSONL object per
-observed token. It never samples or
+`score` accepts a local `--model` or a registered `--model-name`, plus
+`--prompt` or `--file`, `--bos auto|always|never`, `--context-size`, `--threads`,
+`--gpu-layers`, `--backend`, `--no-download`, `--override-memory-check`, and
+`--entropy`. It emits one JSONL object per observed token. It never samples or
 generates a continuation. Its default maximum input context is 131,072 tokens;
 use `--context-size` to override it. Mean negative log-likelihood and perplexity
 go to stderr.

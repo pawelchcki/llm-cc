@@ -271,8 +271,9 @@ void StreamDownload(std::istream& input, const std::filesystem::path& target,
   std::filesystem::rename(partial, target);
 }
 
-void DownloadDefaultModel(const std::filesystem::path& target) {
-  const std::string url(kDefaultModelUrl);
+void DownloadModel(std::string_view model_url,
+                   const std::filesystem::path& target) {
+  const std::string url(model_url);
   if (target.has_parent_path()) {
     std::filesystem::create_directories(target.parent_path());
   }
@@ -287,7 +288,7 @@ void DownloadDefaultModel(const std::filesystem::path& target) {
   for (;;) {
     std::cerr << (resume_offset == 0 ? "Downloading model from "
                                      : "Resuming model download from ")
-              << (resume_offset == 0 ? std::string(kDefaultModelUrl)
+              << (resume_offset == 0 ? url
                                      : std::to_string(resume_offset) + " bytes")
               << '\n';
 
@@ -343,8 +344,7 @@ void DownloadDefaultModel(const std::filesystem::path& target) {
         detail = error_buffer[0] != '\0' ? error_buffer.data()
                                          : curl_easy_strerror(result);
       }
-      throw std::runtime_error("download failed for " +
-                               std::string(kDefaultModelUrl) + ": " + detail);
+      throw std::runtime_error("download failed for " + url + ": " + detail);
     }
     if ((resume_offset > 0 && status != 206) ||
         (resume_offset == 0 && status != 200)) {
@@ -358,6 +358,10 @@ void DownloadDefaultModel(const std::filesystem::path& target) {
   }
   std::filesystem::rename(partial, target);
   MarkModelDownloaded(target);
+}
+
+void DownloadDefaultModel(const std::filesystem::path& target) {
+  DownloadModel(DefaultModel().url, target);
 }
 
 }  // namespace llmcc

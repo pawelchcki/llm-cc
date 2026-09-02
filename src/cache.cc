@@ -15,8 +15,6 @@ namespace llmcc {
 namespace {
 
 constexpr std::string_view kManifestFile = "models.json";
-constexpr std::string_view kLegacyModelPath =
-    "models/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf";
 
 std::optional<std::filesystem::path> EnvironmentPath(const char* name) {
   const char* value = std::getenv(name);
@@ -250,27 +248,41 @@ void RemoveModel(const std::filesystem::path& cache_dir,
 }
 
 std::filesystem::path ResolveModel(
+    std::optional<std::filesystem::path> model, const ModelSpec& spec,
+    bool no_download, const std::filesystem::path& current_dir,
+    const std::filesystem::path& cache_dir,
+    const std::function<void(std::string_view, const std::filesystem::path&)>&
+        downloader) {
+  if (model.has_value()) {
+    return *model;
+  }
+  const std::filesystem::path legacy = current_dir / "models" / spec.file;
+  if (std::filesystem::exists(legacy)) {
+    return legacy;
+  }
+  const std::filesystem::path cached = cache_dir / spec.file;
+  if (!std::filesystem::exists(cached)) {
+    if (no_download) {
+      throw std::runtime_error("model " + std::string(spec.name) +
+                               " is not cached at " + cached.string() +
+                               "; remove --no-download to fetch it "
+                               "automatically");
+    }
+    downloader(spec.url, cached);
+  }
+  return cached;
+}
+
+std::filesystem::path ResolveModel(
     std::optional<std::filesystem::path> model, bool no_download,
     const std::filesystem::path& current_dir,
     const std::filesystem::path& cache_dir,
     const std::function<void(const std::filesystem::path&)>& downloader) {
-  if (model.has_value()) {
-    return *model;
-  }
-  std::filesystem::path legacy = current_dir / kLegacyModelPath;
-  if (std::filesystem::exists(legacy)) {
-    return legacy;
-  }
-  std::filesystem::path cached = cache_dir / kDefaultModelFile;
-  if (!std::filesystem::exists(cached)) {
-    if (no_download) {
-      throw std::runtime_error(
-          "default model is not cached at " + cached.string() +
-          "; remove --no-download to fetch it automatically");
-    }
-    downloader(cached);
-  }
-  return cached;
+  return ResolveModel(
+      std::move(model), DefaultModel(), no_download, current_dir, cache_dir,
+      [&](std::string_view, const std::filesystem::path& target) {
+        downloader(target);
+      });
 }
 
 }  // namespace llmcc

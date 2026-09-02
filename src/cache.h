@@ -10,10 +10,11 @@
 #include <string>
 #include <string_view>
 
+#include "src/models.h"
+
 namespace llmcc {
 
-inline constexpr std::string_view kDefaultModelFile =
-    "DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf";
+inline constexpr std::string_view kDefaultModelFile = kModels.front().file;
 
 struct ModelTimestamps {
   std::optional<std::uint64_t> downloaded_at;
@@ -35,6 +36,13 @@ void ListModels(const std::filesystem::path& cache_dir, std::ostream& output);
 void RemoveModel(const std::filesystem::path& cache_dir,
                  std::string_view file_name);
 std::string FormatTimestamp(std::optional<std::uint64_t> timestamp);
+
+std::filesystem::path ResolveModel(
+    std::optional<std::filesystem::path> model, const ModelSpec& spec,
+    bool no_download, const std::filesystem::path& current_dir,
+    const std::filesystem::path& cache_dir,
+    const std::function<void(std::string_view, const std::filesystem::path&)>&
+        downloader);
 
 std::filesystem::path ResolveModel(
     std::optional<std::filesystem::path> model, bool no_download,
