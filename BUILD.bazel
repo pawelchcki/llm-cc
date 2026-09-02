@@ -454,7 +454,12 @@ cc_library(
         ":core",
         "@tree_sitter//:tree_sitter",
         "@tree_sitter_c//:grammar",
+        "@tree_sitter_c_sharp//:grammar",
         "@tree_sitter_cpp//:grammar",
+        "@tree_sitter_go//:grammar",
+        "@tree_sitter_java//:grammar",
+        "@tree_sitter_javascript//:grammar",
+        "@tree_sitter_python//:grammar",
         "@tree_sitter_rust//:grammar",
     ],
 )

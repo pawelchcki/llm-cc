@@ -9,10 +9,14 @@ has three entry points:
 
 ## Analysis pipeline
 
-1. `src/lang.cc` parses Rust, C, or C++ through tree-sitter's C API. Comment
-   ranges are removed while an offset map preserves every boundary back to the
-   original UTF-8 byte stream. The same frontend emits sorted structural scope
-   termination events and their nesting depth.
+1. `src/lang.cc` parses Rust, C, C++, Java, Python, Go, JavaScript, or C#
+   through tree-sitter's C API. Exhaustive language metadata owns each
+   grammar, canonical name, aliases, extensions, comment nodes, structural
+   nodes, and callable kinds. Comment ranges are removed while an offset map
+   preserves every boundary back to the original UTF-8 byte stream. The same
+   frontend emits sorted structural scope termination events and their nesting
+   depth. JavaScript covers Node.js `.js`, `.mjs`, and `.cjs` files, not JSX or
+   TypeScript.
 2. `src/score_cmd.cc` loads a GGUF with llama.cpp and teacher-forces the
    preprocessed source. Analysis uses this API in-process. `llm-cc score`
    exposes the byte-exact JSONL form for interoperability and debugging.

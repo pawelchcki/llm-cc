@@ -79,10 +79,19 @@ bool GeneratedDirectory(std::string_view name) {
                                                    ".svn",
                                                    "target",
                                                    "node_modules",
+                                                   ".gradle",
+                                                   ".venv",
+                                                   "__pycache__",
+                                                   ".tox",
+                                                   ".nox",
+                                                   ".mypy_cache",
+                                                   ".pytest_cache",
+                                                   ".ruff_cache",
                                                    "vendor",
                                                    "third_party",
                                                    "build",
                                                    "build-out",
+                                                   ".nuget",
                                                    "dist",
                                                    "deps",
                                                    "_build",
@@ -91,13 +100,55 @@ bool GeneratedDirectory(std::string_view name) {
   return names.contains(name) || name.starts_with("bazel-");
 }
 
+bool PythonVirtualEnvironment(const std::filesystem::path& directory) {
+  std::error_code error;
+  return std::filesystem::is_regular_file(directory / "pyvenv.cfg", error) &&
+         !error;
+}
+
+bool PythonVirtualEnvironmentPath(const std::filesystem::path& path,
+                                  const std::filesystem::path& root) {
+  if (PythonVirtualEnvironment(root)) {
+    return true;
+  }
+  std::filesystem::path directory = root;
+  for (const auto& component : path.lexically_relative(root)) {
+    directory /= component;
+    if (PythonVirtualEnvironment(directory)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool TopLevelOutPath(const std::filesystem::path& path,
+                     const std::filesystem::path& root) {
+  const auto relative = path.lexically_relative(root);
+  return relative.begin() != relative.end() && *relative.begin() == "out";
+}
+
+bool CSharpGeneratedPath(const std::filesystem::path& path,
+                         const std::filesystem::path& root) {
+  if (path.extension() != ".cs") {
+    return false;
+  }
+  const auto relative = path.lexically_relative(root);
+  return std::ranges::any_of(relative, [](const auto& component) {
+    return component == "bin" || component == "obj";
+  });
+}
+
 bool GeneratedPath(const std::filesystem::path& path,
                    const std::filesystem::path& repository) {
   const auto relative = path.lexically_relative(repository);
-  return std::ranges::any_of(relative, [](const auto& component) {
-    return component == ".llm-cc-cache" ||
-           GeneratedDirectory(component.string());
-  });
+  return std::ranges::any_of(relative,
+                             [](const auto& component) {
+                               return component == ".llm-cc-cache" ||
+                                      GeneratedDirectory(component.string());
+                             }) ||
+         PythonVirtualEnvironmentPath(path, repository) ||
+         TopLevelOutPath(path, repository) ||
+         CSharpGeneratedPath(path, repository);
 }
 
 void AddFile(const std::filesystem::path& path, bool explicit_file,
@@ -135,6 +186,9 @@ void FilesystemWalk(const std::filesystem::path& directory,
                     const DiscoveryOptions& options,
                     const std::optional<std::filesystem::path>& repository,
                     std::map<std::string, DiscoveredSource>& files) {
+  if (!options.no_ignore && PythonVirtualEnvironment(directory)) {
+    return;
+  }
   std::error_code error;
   std::filesystem::recursive_directory_iterator iterator(
       directory, std::filesystem::directory_options::skip_permission_denied,
@@ -155,12 +209,17 @@ void FilesystemWalk(const std::filesystem::path& directory,
     }
     if (directory_entry &&
         (name == ".llm-cc-cache" ||
-         (!options.no_ignore && GeneratedDirectory(name)) || name == ".git")) {
+         (!options.no_ignore &&
+          (GeneratedDirectory(name) || PythonVirtualEnvironment(entry.path()) ||
+           (name == "out" && entry.path().parent_path() == directory))) ||
+         name == ".git")) {
       iterator.disable_recursion_pending();
     } else if (entry.is_regular_file(error) && !error) {
       const auto canonical = std::filesystem::canonical(entry.path(), error);
       if (!error && IsWithin(canonical, directory)) {
-        AddFile(canonical, false, options, repository, files);
+        if (options.no_ignore || !CSharpGeneratedPath(canonical, directory)) {
+          AddFile(canonical, false, options, repository, files);
+        }
       }
     }
     error.clear();

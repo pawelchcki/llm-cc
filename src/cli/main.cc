@@ -55,12 +55,14 @@ struct AnalyzeArguments {
 
 constexpr std::string_view kUsageBeforeContext =
     "Usage:\n"
-    "  llm-cc PATH... [--lang auto|rust|c|cpp] [OPTIONS]\n"
+    "  llm-cc PATH... [--lang "
+    "auto|rust|c|cpp|java|python|go|javascript|csharp] [OPTIONS]\n"
     "  llm-cc score --model GGUF [--prompt TEXT | --file PATH] [OPTIONS]\n"
     "  llm-cc models list|remove FILE|path\n"
     "  llm-cc cache status|prune|clear [PATH] [--format text|json]\n\n"
     "Analysis options:\n"
-    "  --lang auto|rust|c|cpp  infer language or force it (default: auto)\n"
+    "  --lang NAME          auto, rust, c, cpp, java, python, go, javascript,\n"
+    "                       or csharp (default: auto)\n"
     "  --include-headers     include headers during recursive discovery\n"
     "  --no-ignore           include ignored and generated source files\n"
     "  --no-cache            disable repository-local entropy caching\n"
