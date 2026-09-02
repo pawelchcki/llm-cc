@@ -1,5 +1,29 @@
 #include "src/payload.h"
 
+#include <cstdlib>
+#include <stdexcept>
+
+namespace llmcc {
+
+std::filesystem::path RuntimeRoot() {
+  if (const char* override = std::getenv("LLM_CC_RUNTIME_DIR");
+      override != nullptr && *override != '\0') {
+    return override;
+  }
+  if (const char* xdg = std::getenv("XDG_CACHE_HOME");
+      xdg != nullptr && *xdg != '\0') {
+    return std::filesystem::path(xdg) / "llm-cc" / "runtime";
+  }
+  if (const char* home = std::getenv("HOME");
+      home != nullptr && *home != '\0') {
+    return std::filesystem::path(home) / ".cache" / "llm-cc" / "runtime";
+  }
+  throw std::runtime_error(
+      "HOME is unset; set LLM_CC_RUNTIME_DIR for the runtime cache");
+}
+
+}  // namespace llmcc
+
 #if defined(__linux__)
 
 #include <fcntl.h>
@@ -14,7 +38,6 @@
 #include <array>
 #include <cerrno>
 #include <cstdint>
-#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -24,7 +47,6 @@
 #include <optional>
 #include <span>
 #include <sstream>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -249,6 +271,60 @@ std::optional<PayloadLocation> FindPayload(int fd, std::string_view name) {
   throw std::runtime_error("embedded payload is missing: " + std::string(name));
 }
 
+const std::array<char, 8>& PayloadMagic(std::string_view name) {
+  if (name == "cuda") {
+    return payload::kCudaMagic;
+  }
+  if (name == "rocm") {
+    return payload::kRocmMagic;
+  }
+  throw std::runtime_error("unknown embedded payload: " + std::string(name));
+}
+
+std::optional<PayloadLocation> FindStandalonePayload(int fd,
+                                                     std::string_view name) {
+  struct stat status{};
+  if (fstat(fd, &status) != 0 || !S_ISREG(status.st_mode)) {
+    throw std::runtime_error("bundle is not a regular file");
+  }
+  const std::uint64_t size = static_cast<std::uint64_t>(status.st_size);
+  const auto& magic = PayloadMagic(name);
+  if (size < magic.size()) {
+    return std::nullopt;
+  }
+  std::array<char, 8> actual_magic{};
+  ReadExact(fd, 0, actual_magic);
+  if (!std::equal(magic.begin(), magic.end(), actual_magic.begin())) {
+    return std::nullopt;
+  }
+  if (size < payload::kFooterEntrySize + magic.size()) {
+    throw std::runtime_error("truncated standalone bundle footer");
+  }
+
+  const std::uint64_t body_length = size - payload::kFooterEntrySize;
+  std::array<char, payload::kFooterEntrySize> footer{};
+  ReadExact(fd, body_length, footer);
+  const std::size_t name_length =
+      strnlen(footer.data(), payload::kPayloadNameSize);
+  if (name_length == payload::kPayloadNameSize ||
+      std::string_view(footer.data(), name_length) != name ||
+      !std::all_of(footer.begin() + name_length, footer.begin() + 16,
+                   [](char byte) { return byte == '\0'; })) {
+    throw std::runtime_error("standalone bundle footer name mismatch");
+  }
+  const std::uint64_t offset = ReadLittleEndian<std::uint64_t>(footer, 16);
+  const std::uint64_t length = ReadLittleEndian<std::uint64_t>(footer, 24);
+  if (offset != 0 || length != body_length) {
+    throw std::runtime_error("standalone bundle footer range is invalid");
+  }
+  PayloadLocation location{.offset = offset, .length = length};
+  std::memcpy(location.hash.data(), footer.data() + 32, location.hash.size());
+  if (HashRange(fd, 0, body_length) != location.hash) {
+    throw std::runtime_error("standalone bundle footer SHA-256 mismatch");
+  }
+  return location;
+}
+
 bool SafeRelativePath(std::string_view value) {
   if (value.empty() || value.front() == '/') {
     return false;
@@ -321,23 +397,6 @@ std::vector<ArchiveEntry> ReadArchiveEntries(int fd,
     throw std::runtime_error(std::string(kind) + " payload has trailing data");
   }
   return entries;
-}
-
-fs::path RuntimeRoot() {
-  if (const char* override = std::getenv("LLM_CC_RUNTIME_DIR");
-      override != nullptr && *override != '\0') {
-    return override;
-  }
-  if (const char* xdg = std::getenv("XDG_CACHE_HOME");
-      xdg != nullptr && *xdg != '\0') {
-    return fs::path(xdg) / "llm-cc" / "runtime";
-  }
-  if (const char* home = std::getenv("HOME");
-      home != nullptr && *home != '\0') {
-    return fs::path(home) / ".cache" / "llm-cc" / "runtime";
-  }
-  throw std::runtime_error(
-      "HOME is unset; set LLM_CC_RUNTIME_DIR for the ROCm runtime cache");
 }
 
 bool CacheIsValid(const fs::path& directory,
@@ -508,6 +567,17 @@ PreparedPayload PrepareRocm(int executable_fd,
   return {.path = final / "libllm-cc-backend-rocm.so"};
 }
 
+PreparedPayload PreparePayload(int fd, const PayloadLocation& location,
+                               std::string_view name) {
+  if (name == "cuda") {
+    return PrepareCuda(fd, location);
+  }
+  if (name == "rocm") {
+    return PrepareRocm(fd, location);
+  }
+  throw std::runtime_error("unknown embedded payload: " + std::string(name));
+}
+
 }  // namespace
 
 std::optional<PreparedPayload> PrepareEmbeddedPayloadFromExecutable(
@@ -522,13 +592,30 @@ std::optional<PreparedPayload> PrepareEmbeddedPayloadFromExecutable(
   if (!location.has_value()) {
     return std::nullopt;
   }
-  if (name == "cuda") {
-    return PrepareCuda(executable.get(), *location);
+  return PreparePayload(executable.get(), *location, name);
+}
+
+std::optional<PreparedPayload> PrepareEmbeddedPayloadFromFile(
+    const fs::path& bundle, std::string_view name) {
+  FileDescriptor input(open(bundle.c_str(), O_RDONLY | O_CLOEXEC));
+  if (input.get() < 0) {
+    if (errno == ENOENT) {
+      return std::nullopt;
+    }
+    throw std::runtime_error("cannot open backend bundle " + bundle.string() +
+                             ": " + std::strerror(errno));
   }
-  if (name == "rocm") {
-    return PrepareRocm(executable.get(), *location);
+  try {
+    const std::optional<PayloadLocation> location =
+        FindStandalonePayload(input.get(), name);
+    if (!location.has_value()) {
+      return std::nullopt;
+    }
+    return PreparePayload(input.get(), *location, name);
+  } catch (const std::exception& error) {
+    throw std::runtime_error("invalid backend bundle " + bundle.string() +
+                             ": " + error.what());
   }
-  throw std::runtime_error("unknown embedded payload: " + std::string(name));
 }
 
 std::optional<PreparedPayload> PrepareEmbeddedPayload(std::string_view name) {
@@ -546,6 +633,11 @@ std::optional<PreparedPayload> PrepareEmbeddedPayload(std::string_view) {
 }
 
 std::optional<PreparedPayload> PrepareEmbeddedPayloadFromExecutable(
+    const std::filesystem::path&, std::string_view) {
+  return std::nullopt;
+}
+
+std::optional<PreparedPayload> PrepareEmbeddedPayloadFromFile(
     const std::filesystem::path&, std::string_view) {
   return std::nullopt;
 }

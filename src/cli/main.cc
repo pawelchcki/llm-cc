@@ -18,6 +18,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <type_traits>
 #include <vector>
 
@@ -46,6 +47,7 @@ struct AnalyzeArguments {
   bool no_cache = false;
   std::int32_t gpu_layers = 0;
   llmcc::BackendKind backend = llmcc::BackendKind::kAuto;
+  std::optional<std::filesystem::path> backend_directory;
   std::uint32_t context = llmcc::kDefaultContextSize;
   std::optional<double> tau;
   std::optional<double> tau_percentile;
@@ -78,6 +80,7 @@ constexpr std::string_view kUsageBeforeContext =
     "0.67)\n"
     "  --gpu-layers N        transformer layers to offload (-1 means all)\n"
     "  --backend NAME        auto, cpu, cuda, or rocm (default: auto)\n"
+    "  --backend-dir DIR     GPU backend bundle/shared-library directory\n"
     "  --context N           maximum input tokens (default: ";
 
 constexpr std::string_view kUsageAfterContext =
@@ -157,6 +160,8 @@ void SetAnalyzeOption(AnalyzeArguments& arguments, std::string_view option,
     } catch (const std::invalid_argument& error) {
       Usage(error.what());
     }
+  } else if (option == "--backend-dir") {
+    arguments.backend_directory = value;
   } else if (option == "--context") {
     arguments.context = ParseNumber<std::uint32_t>(option, value);
     if (arguments.context == 0) {
@@ -232,6 +237,13 @@ AnalyzeArguments ParseAnalyzeArguments(int argc, char** argv) {
   }
   if (arguments.sources.empty()) {
     Usage("at least one source path is required unless a subcommand is used");
+  }
+  if (arguments.backend_directory.has_value()) {
+    std::error_code error;
+    if (!std::filesystem::is_directory(*arguments.backend_directory, error)) {
+      Usage("--backend-dir is not a directory: " +
+            arguments.backend_directory->string());
+    }
   }
   if (arguments.tau.has_value() && arguments.tau_percentile.has_value()) {
     Usage("--tau and --tau-percentile are mutually exclusive");
@@ -389,14 +401,16 @@ int RunCache(int argc, char** argv) {
 
 class LlamaEntropyProvider : public llmcc::EntropyProvider {
  public:
-  LlamaEntropyProvider(const std::filesystem::path& cache_dir,
-                       const std::filesystem::path& model,
-                       std::uint32_t context, std::int32_t gpu_layers,
-                       llmcc::BackendKind backend)
+  LlamaEntropyProvider(
+      const std::filesystem::path& cache_dir,
+      const std::filesystem::path& model, std::uint32_t context,
+      std::int32_t gpu_layers, llmcc::BackendKind backend,
+      const std::optional<std::filesystem::path>& backend_directory)
       : scorer_((llmcc::MarkCachedModelUsed(cache_dir, model), model),
                 {.context_size = context,
                  .gpu_layers = gpu_layers,
-                 .backend = backend}) {}
+                 .backend = backend,
+                 .backend_directory = backend_directory}) {}
 
   std::vector<llmcc::EntropyRecord> Score(std::string_view source) override {
     return llmcc::ParseEntropyJsonl(scorer_.Score(source));
@@ -809,7 +823,8 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       arguments.model, model_spec, arguments.no_download,
       std::filesystem::current_path(), model_cache, llmcc::DownloadModel);
   const llmcc::BackendKind resolved_backend = [&]() {
-    llmcc::BackendRuntime runtime(arguments.backend, arguments.gpu_layers);
+    llmcc::BackendRuntime runtime(arguments.backend, arguments.gpu_layers,
+                                  LLM_CC_VERSION, arguments.backend_directory);
     return runtime.selected();
   }();
   const std::string backend_identity =
@@ -860,7 +875,8 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       [&]() {
         return std::make_unique<LlamaEntropyProvider>(
             model_cache, identity.canonical_path, arguments.context,
-            arguments.gpu_layers, resolved_backend);
+            arguments.gpu_layers, resolved_backend,
+            arguments.backend_directory);
       });
 
   MetricTotals totals;

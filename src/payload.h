@@ -21,6 +21,15 @@ std::optional<PreparedPayload> PrepareEmbeddedPayload(std::string_view name);
 std::optional<PreparedPayload> PrepareEmbeddedPayloadFromExecutable(
     const std::filesystem::path& executable, std::string_view name);
 
+// Opens a standalone backend bundle whose archive begins at byte zero. Returns
+// nullopt when the file is absent or has a different archive magic, and throws
+// when a matching bundle is corrupt.
+std::optional<PreparedPayload> PrepareEmbeddedPayloadFromFile(
+    const std::filesystem::path& bundle, std::string_view name);
+
+// Root shared by extracted runtime payloads and downloaded backend bundles.
+std::filesystem::path RuntimeRoot();
+
 }  // namespace llmcc
 
 #endif  // LLM_CC_PAYLOAD_H_

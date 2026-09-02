@@ -21,6 +21,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -52,6 +53,7 @@ struct Arguments {
   std::int32_t threads = 0;
   std::int32_t gpu_layers = 0;
   llmcc::BackendKind backend = llmcc::BackendKind::kAuto;
+  std::optional<std::filesystem::path> backend_directory;
   bool entropy = false;
   bool no_download = false;
   bool override_memory_check = false;
@@ -78,6 +80,7 @@ constexpr std::string_view kUsageAfterContext =
     "  --threads N            inference threads (default: hardware count)\n"
     "  --gpu-layers N         layers to offload; -1 means all (default: 0)\n"
     "  --backend NAME         auto, cpu, cuda, or rocm (default: auto)\n"
+    "  --backend-dir DIR      GPU backend bundle/shared-library directory\n"
     "  --override-memory-check  bypass the preflight memory check\n"
     "  --entropy              emit full-vocabulary next-token entropy\n"
     "  -V, --version          show the program version\n"
@@ -162,6 +165,8 @@ void SetOption(Arguments& arguments, std::string_view option,
     } catch (const std::invalid_argument& error) {
       Usage(error.what());
     }
+  } else if (option == "--backend-dir") {
+    arguments.backend_directory = value;
   } else {
     Usage("unknown option: " + std::string(option));
   }
@@ -205,6 +210,13 @@ Arguments ParseArguments(int argc, char** argv) {
   }
   if (arguments.model.empty() && !arguments.model_name.has_value()) {
     Usage("--model or --model-name is required");
+  }
+  if (arguments.backend_directory.has_value()) {
+    std::error_code error;
+    if (!std::filesystem::is_directory(*arguments.backend_directory, error)) {
+      Usage("--backend-dir is not a directory: " +
+            arguments.backend_directory->string());
+    }
   }
   if (arguments.threads == 0) {
     arguments.threads = static_cast<std::int32_t>(
@@ -593,7 +605,8 @@ int Run(const Arguments& arguments, std::ostream& output,
   const std::string input =
       input_override.has_value() ? *input_override : ReadInput(arguments);
   BackendLogCapture backend_log;
-  llmcc::BackendRuntime backend(arguments.backend, arguments.gpu_layers);
+  llmcc::BackendRuntime backend(arguments.backend, arguments.gpu_layers,
+                                LLM_CC_VERSION, arguments.backend_directory);
   llmcc::InferenceGuard inference_guard(llmcc::BackendName(backend.selected()));
   const bool use_gpu = arguments.gpu_layers != 0;
   const std::optional<std::uint64_t> gpu_available =
@@ -629,7 +642,8 @@ class EntropyScorer::Impl {
  public:
   Impl(const std::filesystem::path& model_path,
        const InferenceOptions& inference_options)
-      : backend_(inference_options.backend, inference_options.gpu_layers),
+      : backend_(inference_options.backend, inference_options.gpu_layers,
+                 LLM_CC_VERSION, inference_options.backend_directory),
         inference_guard_(BackendName(backend_.selected())),
         model_(nullptr, llama_model_free),
         context_limit_(inference_options.context_size),
@@ -641,6 +655,7 @@ class EntropyScorer::Impl {
     arguments.threads = threads_;
     arguments.gpu_layers = inference_options.gpu_layers;
     arguments.backend = inference_options.backend;
+    arguments.backend_directory = inference_options.backend_directory;
     arguments.entropy = true;
     const bool use_gpu = inference_options.gpu_layers != 0;
     const auto gpu_available = use_gpu ? GpuAvailableMemory() : std::nullopt;

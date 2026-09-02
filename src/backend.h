@@ -3,6 +3,8 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
+#include <optional>
 #include <span>
 #include <string_view>
 
@@ -20,11 +22,37 @@ std::string_view BackendName(BackendKind backend);
 BackendKind SelectBackend(BackendKind requested, std::int32_t gpu_layers,
                           std::span<const BackendDevice> devices);
 
+enum class BackendPluginSource : std::uint8_t {
+  kBundle,
+  kEmbedded,
+  kSharedLibrary,
+};
+
+struct ResolvedBackendPlugin {
+  BackendPluginSource source;
+  std::filesystem::path path;
+};
+
+// Resolves a GPU plugin in production order. The callback keeps the embedded
+// payload probe at step 2 without making filesystem-only unit tests load it.
+// fetch_backend is the intentionally empty seam for the future network step 5.
+ResolvedBackendPlugin ResolveBackendPlugin(
+    BackendKind backend,
+    const std::optional<std::filesystem::path>& backend_directory,
+    std::span<const std::filesystem::path> runfile_candidates,
+    const std::function<bool()>& has_embedded_payload,
+    const std::function<std::filesystem::path()>& runtime_root,
+    std::string_view version,
+    const std::function<std::optional<ResolvedBackendPlugin>()>& fetch_backend =
+        {});
+
 // Loads exactly the backend plugins needed by this inference invocation. The
 // object must outlive all llama.cpp objects created by the caller.
 class BackendRuntime {
  public:
-  BackendRuntime(BackendKind requested, std::int32_t gpu_layers);
+  BackendRuntime(
+      BackendKind requested, std::int32_t gpu_layers, std::string_view version,
+      std::optional<std::filesystem::path> backend_directory = std::nullopt);
   BackendRuntime(const BackendRuntime&) = delete;
   BackendRuntime& operator=(const BackendRuntime&) = delete;
   ~BackendRuntime();

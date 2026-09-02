@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -17,6 +18,7 @@ struct InferenceOptions {
   std::uint32_t context_size = kDefaultContextSize;
   std::int32_t gpu_layers = 0;
   BackendKind backend = BackendKind::kAuto;
+  std::optional<std::filesystem::path> backend_directory;
 };
 
 class EntropyScorer {
