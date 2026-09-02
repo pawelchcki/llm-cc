@@ -117,11 +117,27 @@ int main() {  // NOLINT(bugprone-exception-escape)
       llmcc::StructuralEvents(cpp, llmcc::Language::kCpp).size() >= 16,
       "C++ structural events");
   CheckStructure("testdata/lang/structure.java", llmcc::Language::kJava, 18, 6);
+  const auto guarded_switch = llmcc::StructuralEvents(
+      "class G { void m(Object v) { switch (v) { case String s when "
+      "!s.isEmpty() -> {} } } }",
+      llmcc::Language::kJava);
+  const auto unguarded_switch = llmcc::StructuralEvents(
+      "class G { void m(Object v) { switch (v) { case String s -> {} } } }",
+      llmcc::Language::kJava);
+  llmcc::test::ExpectEq(guarded_switch.size(), unguarded_switch.size() + 1,
+                        "Java switch guard is structural");
   CheckStructure("testdata/lang/structure.py", llmcc::Language::kPython, 18, 6);
   const auto comprehension_events = llmcc::StructuralEvents(
       "[f(x) for xs in groups for x in xs if x]", llmcc::Language::kPython);
   llmcc::test::ExpectEq(comprehension_events.size(), std::size_t{3},
                         "Python comprehension loops and branch are structural");
+  std::vector<std::size_t> comprehension_depths;
+  std::ranges::transform(comprehension_events,
+                         std::back_inserter(comprehension_depths),
+                         [](const auto& event) { return event.depth; });
+  llmcc::test::ExpectEq(comprehension_depths,
+                        std::vector<std::size_t>({0, 1, 2}),
+                        "Python comprehension clauses preserve nesting");
   const auto exception_group_events =
       llmcc::StructuralEvents("try:\n    pass\nexcept* ValueError:\n    pass\n",
                               llmcc::Language::kPython);
@@ -141,6 +157,14 @@ int main() {  // NOLINT(bugprone-exception-escape)
       llmcc::Language::kCSharp);
   llmcc::test::ExpectEq(csharp_query_events.size(), std::size_t{6},
                         "C# query clauses are structural");
+  const auto filtered_catch = llmcc::StructuralEvents(
+      "class Q { void M() { try {} catch (Exception e) when (P(e)) {} } }",
+      llmcc::Language::kCSharp);
+  const auto unfiltered_catch = llmcc::StructuralEvents(
+      "class Q { void M() { try {} catch (Exception e) {} } }",
+      llmcc::Language::kCSharp);
+  llmcc::test::ExpectEq(filtered_catch.size(), unfiltered_catch.size() + 1,
+                        "C# catch filter is structural");
   const auto structure_functions = llmcc::Functions(cpp, llmcc::Language::kCpp);
   llmcc::test::ExpectEq(structure_functions.size(), std::size_t{1},
                         "one C++ function, excluding lambda");

@@ -65,6 +65,7 @@ constexpr auto kJavaStructural =
                                      "switch_block",
                                      "switch_block_statement_group",
                                      "switch_rule",
+                                     "guard",
                                      "try_statement",
                                      "try_with_resources_statement",
                                      "catch_clause",
@@ -77,6 +78,9 @@ constexpr auto kPythonStructural = std::to_array<std::string_view>(
      "for_in_clause", "if_clause", "while_statement", "match_statement",
      "case_clause", "try_statement", "except_clause", "except_group_clause",
      "finally_clause", "with_statement"});
+constexpr auto kPythonComprehensions = std::to_array<std::string_view>(
+    {"list_comprehension", "set_comprehension", "dictionary_comprehension",
+     "generator_expression"});
 constexpr auto kGoComments = std::to_array<std::string_view>({"comment"});
 constexpr auto kGoStructural = std::to_array<std::string_view>(
     {"function_declaration", "method_declaration", "func_literal", "block",
@@ -124,6 +128,7 @@ constexpr auto kCSharpStructural =
                                      "switch_expression_arm",
                                      "try_statement",
                                      "catch_clause",
+                                     "catch_filter_clause",
                                      "finally_clause",
                                      "using_statement",
                                      "lock_statement",
@@ -302,7 +307,8 @@ void CollectCommentRanges(
   }
 }
 
-void CollectStructuralEvents(TSNode node, std::size_t structural_depth,
+void CollectStructuralEvents(TSNode node, Language language,
+                             std::size_t structural_depth,
                              std::span<const std::string_view> structural_kinds,
                              std::vector<StructuralEvent>& events) {
   const bool structural = HasKind(structural_kinds, ts_node_type(node));
@@ -313,9 +319,18 @@ void CollectStructuralEvents(TSNode node, std::size_t structural_depth,
         {.scope_start = start, .byte_offset = end, .depth = structural_depth});
   }
   const std::size_t child_depth = structural_depth + (structural ? 1 : 0);
+  const bool python_comprehension =
+      language == Language::kPython &&
+      HasKind(kPythonComprehensions, ts_node_type(node));
+  std::size_t comprehension_depth = child_depth;
   for (std::uint32_t i = 0; i < ts_node_child_count(node); ++i) {
-    CollectStructuralEvents(ts_node_child(node, i), child_depth,
+    const TSNode child = ts_node_child(node, i);
+    CollectStructuralEvents(child, language, comprehension_depth,
                             structural_kinds, events);
+    if (python_comprehension && (IsNodeType(child, "for_in_clause") ||
+                                 IsNodeType(child, "if_clause"))) {
+      ++comprehension_depth;
+    }
   }
 }
 
@@ -502,7 +517,7 @@ std::vector<StructuralEvent> StructuralEvents(std::string_view source,
                                               Language language) {
   Tree tree = Parse(source, language);
   std::vector<StructuralEvent> events;
-  CollectStructuralEvents(ts_tree_root_node(tree.get()), 0,
+  CollectStructuralEvents(ts_tree_root_node(tree.get()), language, 0,
                           Metadata(language).structural, events);
   std::ranges::sort(events, {}, [](const StructuralEvent& event) {
     return std::tuple(event.byte_offset, event.depth, event.scope_start);
