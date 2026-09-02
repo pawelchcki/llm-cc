@@ -512,6 +512,9 @@ void Accumulate(const llmcc::Analysis& analysis, MetricTotals& totals) {
   totals.llm_cc += analysis.llm_cc;
   totals.total_branch += analysis.total_branch;
   totals.total_comp_level += analysis.total_comp_level;
+  if (analysis.metrics.token_count == 0) {
+    return;
+  }
   totals.token_count += analysis.metrics.token_count;
   totals.high_entropy_tokens += analysis.metrics.high_entropy_tokens;
   totals.entropy_sum += analysis.metrics.entropy_sum;

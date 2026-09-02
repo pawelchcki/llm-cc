@@ -312,6 +312,30 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::ExpectEq(density_without_headline, default_without_headline,
                         "score mode changes only headline fields");
 
+  const fs::path unscored_source = repository / "unscored.rs";
+  const std::string unscored_contents = "fn unscored() {}\n";
+  Write(unscored_source, unscored_contents);
+  const auto [unscored_preprocessed, unscored_offsets] =
+      llmcc::StripComments(unscored_contents, llmcc::Language::kRust);
+  static_cast<void>(unscored_offsets);
+  llmcc::WriteEntropyCache(
+      repository, unscored_preprocessed, identity,
+      std::vector<llmcc::EntropyRecord>{{.position = 0,
+                                         .bytes = unscored_preprocessed,
+                                         .entropy = std::nullopt}});
+  const fs::path mixed_output = fs::path(test_tmpdir) / "mixed.jsonl";
+  llmcc::test::ExpectEq(
+      Run(Quote(binary) + " " + Quote(source) + " " + Quote(unscored_source) +
+          " --model " + Quote(fake_model) + " >" + Quote(mixed_output)),
+      0, "mixed scored and unscored analysis succeeds");
+  const std::vector<nlohmann::json> mixed_events = ReadEvents(mixed_output);
+  const nlohmann::json& mixed_totals = mixed_events.back();
+  llmcc::test::Expect(
+      mixed_totals["type"] == "totals" &&
+          mixed_totals["token_count"] == file["token_count"] &&
+          mixed_totals["lmcc_per_token"] == file["lmcc_per_token"],
+      "unscored files do not inflate normalized totals");
+
   const fs::path text_output = fs::path(test_tmpdir) / "analysis.txt";
   llmcc::test::ExpectEq(
       Run(analysis_command.substr(0, analysis_command.rfind('>')) +
@@ -399,7 +423,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
       0, "cache status succeeds");
   const nlohmann::json status = nlohmann::json::parse(Read(status_output));
   llmcc::test::ExpectEq(status["entries"].get<std::uint64_t>(),
-                        std::uint64_t{2}, "cache status counts entries");
+                        std::uint64_t{3}, "cache status counts entries");
 
   return 0;
 }
