@@ -69,6 +69,8 @@ int main() {  // NOLINT(bugprone-exception-escape)
   Write(repository / ".venv/hidden.py", "def hidden(): pass\n");
   Write(repository / "venv/pyvenv.cfg", "home = /usr/bin\n");
   Write(repository / "venv/lib/hidden.py", "def hidden(): pass\n");
+  Write(repository / "project-env/pyvenv.cfg", "home = /usr/bin\n");
+  Write(repository / "project-env/lib/hidden.py", "def hidden(): pass\n");
   Write(repository / "node_modules/hidden.js", "function hidden() {}\n");
   Write(repository / "bin/Hidden.cs", "class Hidden {}\n");
   Write(repository / "obj/Hidden.cs", "class Hidden {}\n");
@@ -97,10 +99,12 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(
       std::ranges::none_of(normal.sources,
                            [](const auto& source) {
-                             return source.path.generic_string().ends_with(
-                                 "venv/lib/hidden.py");
+                             const std::string path =
+                                 source.path.generic_string();
+                             return path.ends_with("venv/lib/hidden.py") ||
+                                    path.ends_with("project-env/lib/hidden.py");
                            }),
-      "recognizable Python virtual environment is excluded");
+      "marked Python virtual environments are excluded regardless of name");
   llmcc::test::Expect(
       std::ranges::is_sorted(
           normal.sources, {},
@@ -143,7 +147,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
 
   const auto all = llmcc::DiscoverSources(
       {repository}, {.include_headers = true, .no_ignore = true});
-  llmcc::test::ExpectEq(all.sources.size(), std::size_t{30},
+  llmcc::test::ExpectEq(all.sources.size(), std::size_t{31},
                         "no-ignore includes ignored and generated files");
   for (const auto& source : all.sources) {
     llmcc::test::Expect(

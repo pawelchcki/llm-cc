@@ -101,9 +101,6 @@ bool GeneratedDirectory(std::string_view name) {
 }
 
 bool PythonVirtualEnvironment(const std::filesystem::path& directory) {
-  if (directory.filename() != "venv") {
-    return false;
-  }
   std::error_code error;
   return std::filesystem::is_regular_file(directory / "pyvenv.cfg", error) &&
          !error;

@@ -161,6 +161,24 @@ int main() {  // NOLINT(bugprone-exception-escape)
     llmcc::test::ExpectEq(nested_events.back().depth, std::size_t{0},
                           "outer comprehension loop begins at parent depth");
   }
+  const auto nested_first_iterable = llmcc::StructuralEvents(
+      "[x for x in [y for y in ys]]", llmcc::Language::kPython);
+  std::vector<std::size_t> first_iterable_depths;
+  std::ranges::transform(nested_first_iterable,
+                         std::back_inserter(first_iterable_depths),
+                         [](const auto& event) { return event.depth; });
+  llmcc::test::ExpectEq(
+      first_iterable_depths, std::vector<std::size_t>({0, 0}),
+      "first comprehension iterable precedes its own loop scope");
+  const auto nested_later_iterable = llmcc::StructuralEvents(
+      "[z for x in xs for z in [y for y in x]]", llmcc::Language::kPython);
+  std::vector<std::size_t> later_iterable_depths;
+  std::ranges::transform(nested_later_iterable,
+                         std::back_inserter(later_iterable_depths),
+                         [](const auto& event) { return event.depth; });
+  llmcc::test::ExpectEq(
+      later_iterable_depths, std::vector<std::size_t>({0, 1, 1}),
+      "later comprehension iterable follows only preceding loop scopes");
   const auto exception_group_events =
       llmcc::StructuralEvents("try:\n    pass\nexcept* ValueError:\n    pass\n",
                               llmcc::Language::kPython);
