@@ -20,8 +20,6 @@ load(
 
 package(default_visibility = ["//visibility:public"])
 
-DIST_VERSION = "0.1"
-
 exports_files(["VERSION"])
 
 genrule(
@@ -34,23 +32,38 @@ genrule(
     cmd = """
 status_file=bazel-out/stable-status.txt
 version=""
+git_sha=""
+artifact_base_url=""
 if [[ -f "$$status_file" ]]; then
   version=$$(grep '^STABLE_LLM_CC_VERSION ' "$$status_file" | cut -d' ' -f2- || true)
+  git_sha=$$(grep '^STABLE_LLM_CC_GIT_SHA ' "$$status_file" | cut -d' ' -f2- || true)
+  artifact_base_url=$$(grep '^STABLE_LLM_CC_ARTIFACT_BASE_URL ' "$$status_file" | cut -d' ' -f2- || true)
 fi
 if [[ -z "$$version" ]]; then
   base=$$(tr -d '[:space:]' < $(location VERSION))
-  case "$$base" in
-    [0-9]*.[0-9]*.[0-9]*) base=$${base%.*} ;;
-  esac
-  version="$$base.0+unknown"
+  version="$$base-dev.0+unknown"
 fi
 case "$$version" in
   *[!0-9A-Za-z.+-]*|'') echo "invalid VERSION: $$version" >&2; exit 1 ;;
 esac
+if [[ "$$git_sha" == "unknown" ]]; then
+  git_sha=""
+fi
+case "$$git_sha" in
+  *[!0-9a-f]* ) echo "invalid git SHA: $$git_sha" >&2; exit 1 ;;
+esac
+case "$$artifact_base_url" in
+  *[!0-9A-Za-z:/._~-]* ) echo "invalid artifact base URL" >&2; exit 1 ;;
+esac
+if [[ "$$artifact_base_url" == "none" ]]; then
+  artifact_base_url=""
+fi
 cat > "$@" <<EOF
 #ifndef LLM_CC_GENERATED_VERSION_H_
 #define LLM_CC_GENERATED_VERSION_H_
 #define LLM_CC_VERSION "$$version"
+#define LLM_CC_GIT_SHA "$$git_sha"
+#define LLM_CC_ARTIFACT_BASE_URL "$$artifact_base_url"
 #endif
 EOF
 """,
@@ -679,6 +692,13 @@ sh_test(
     ],
 )
 
+sh_test(
+    name = "version_test",
+    srcs = ["//tools:version_test.sh"],
+    data = ["//tools:version.sh"],
+    use_bash_launcher = True,
+)
+
 build_test(
     name = "starlark_test",
     targets = [
@@ -720,9 +740,9 @@ payload_archive(
     host_runtime = "@cuda_host_toolchain//x86_64-buildroot-linux-gnu/sysroot:runtime_files",
     kind = "static",
     llama = ":llama_cpp",
-    output_name = "llm-cc-%s-linux-x86_64-cpu-static.tar.gz" % DIST_VERSION,
+    output_name = "llm-cc-linux-x86_64-cpu-static.tar.gz",
     rocm_runtime = "@rocm_sdk//:runtime_files",
-    root_name = "llm-cc-%s-linux-x86_64-cpu-static" % DIST_VERSION,
+    root_name = "llm-cc-linux-x86_64-cpu-static",
     tags = ["manual"],
     target_compatible_with = select({
         ":backend_cpu": [],
@@ -892,6 +912,7 @@ test_suite(
         ":project_test",
         ":scoring_test",
         ":starlark_test",
+        ":version_test",
     ],
 )
 

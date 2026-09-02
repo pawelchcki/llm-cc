@@ -47,6 +47,7 @@ exports_files([
     "materialize_tree.cc",
     "package_payload.sh",
     "version.sh",
+    "version_test.sh",
 ])
 
 native_tool_toolchain(

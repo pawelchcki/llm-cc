@@ -82,10 +82,18 @@ bazel build --config=release --config=universal //dist:linux_x86_64
 bazel build --config=release --config=metal //dist:macos
 ```
 
-The Linux target emits `llm-cc-0.1-linux-x86_64` and its SHA-256 checksum.
+The Linux target emits `llm-cc-linux-x86_64` and its SHA-256 checksum.
 Compatibility labels `//:universal_archive` and `//:install_payload` point to
-the same single-file output. `//:cpu_static_archive` emits the CPU-only static
-archive.
+the same single-file output. `//:cpu_static_archive` emits
+`llm-cc-linux-x86_64-cpu-static.tar.gz`, whose root directory has the same name
+without `.tar.gz`. Release automation adds versions to published asset names.
+
+Stamped builds also define `LLM_CC_GIT_SHA` and `LLM_CC_ARTIFACT_BASE_URL` in
+the generated version header. Development builds use the configured artifact
+resolver (defaulting to `https://ci-artifacts.pawelchcki.dev`), while exact
+release tags use the matching GitHub release URL. In workspace status output,
+the literal artifact URL value `none` means fetching is disabled; it becomes an
+empty build-time constant.
 
 ## Analyze source and projects
 
@@ -298,8 +306,8 @@ retained as an explicit alias:
 
 ```sh
 bazel build --config=release --config=portable //dist:linux_x86_64
-tools/check_glibc_version.sh bazel-bin/dist/llm-cc-0.1-linux-x86_64 2.28
-tools/check_static_link.sh bazel-bin/dist/llm-cc-0.1-linux-x86_64
+tools/check_glibc_version.sh bazel-bin/dist/llm-cc-linux-x86_64 2.28
+tools/check_static_link.sh bazel-bin/dist/llm-cc-linux-x86_64
 ```
 
 The hermetic Linux build uses static OpenSSL and curl for model downloads. The
