@@ -84,23 +84,26 @@ FileAnalysisResult ProjectAnalyzer::AnalyzeFile(const DiscoveredSource& source,
     if (first >= end) {
       continue;
     }
-    const std::span<const Token> slice(tokens.data() + first, end - first);
+    std::vector<Token> function_tokens(tokens.begin() + first,
+                                       tokens.begin() + end);
+    function_tokens.front().start_byte =
+        std::max(function_tokens.front().start_byte, function.start_byte);
     std::vector<StructuralEvent> function_events;
     for (const StructuralEvent& event : events) {
-      if (event.scope_start >= slice.front().start_byte &&
-          event.byte_offset <= slice.back().end_byte) {
+      if (event.scope_start >= function_tokens.front().start_byte &&
+          event.byte_offset <= function_tokens.back().end_byte) {
         function_events.push_back(event);
       }
     }
     std::vector<std::size_t> function_line_starts = {0};
     for (std::size_t line_start : line_starts) {
-      if (line_start > slice.front().start_byte &&
-          line_start <= slice.back().start_byte) {
+      if (line_start > function_tokens.front().start_byte &&
+          line_start <= function_tokens.back().start_byte) {
         function_line_starts.push_back(line_start);
       }
     }
     Analysis function_analysis = llmcc::Analyze(
-        slice, function_events, function_line_starts,
+        function_tokens, function_events, function_line_starts,
         {.kind = TauRule::Kind::kAbsolute, .value = file_tau}, options_.alpha);
     functions.push_back(
         {.name = function.name,
