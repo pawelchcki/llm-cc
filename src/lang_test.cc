@@ -126,6 +126,13 @@ int main() {  // NOLINT(bugprone-exception-escape)
       llmcc::Language::kJava);
   llmcc::test::ExpectEq(guarded_switch.size(), unguarded_switch.size() + 1,
                         "Java switch guard is structural");
+  const auto java_conditional = llmcc::StructuralEvents(
+      "class T { int f(boolean b) { return b ? 1 : 0; } }",
+      llmcc::Language::kJava);
+  const auto java_unconditional = llmcc::StructuralEvents(
+      "class T { int f(boolean b) { return 1; } }", llmcc::Language::kJava);
+  llmcc::test::ExpectEq(java_conditional.size(), java_unconditional.size() + 1,
+                        "Java conditional expression is structural");
   CheckStructure("testdata/lang/structure.py", llmcc::Language::kPython, 18, 6);
   const auto comprehension_events = llmcc::StructuralEvents(
       "[f(x) for xs in groups for x in xs if x]", llmcc::Language::kPython);
@@ -143,6 +150,13 @@ int main() {  // NOLINT(bugprone-exception-escape)
                               llmcc::Language::kPython);
   llmcc::test::ExpectEq(exception_group_events.size(), std::size_t{4},
                         "Python exception-group handler is structural");
+  const auto python_conditional = llmcc::StructuralEvents(
+      "def f(flag):\n    return 1 if flag else 0\n", llmcc::Language::kPython);
+  const auto python_unconditional = llmcc::StructuralEvents(
+      "def f(flag):\n    return 1\n", llmcc::Language::kPython);
+  llmcc::test::ExpectEq(python_conditional.size(),
+                        python_unconditional.size() + 1,
+                        "Python conditional expression is structural");
   CheckStructure("testdata/lang/structure.go", llmcc::Language::kGo, 12, 5);
   const auto go_default_events = llmcc::StructuralEvents(
       "package p\nfunc run() { switch { default: return } }",
@@ -151,6 +165,14 @@ int main() {  // NOLINT(bugprone-exception-escape)
                         "Go default case is structural");
   CheckStructure("testdata/lang/structure.js", llmcc::Language::kJavaScript, 18,
                  6);
+  const auto javascript_conditional =
+      llmcc::StructuralEvents("function f(flag) { return flag ? 1 : 0; }",
+                              llmcc::Language::kJavaScript);
+  const auto javascript_unconditional = llmcc::StructuralEvents(
+      "function f(flag) { return 1; }", llmcc::Language::kJavaScript);
+  llmcc::test::ExpectEq(javascript_conditional.size(),
+                        javascript_unconditional.size() + 1,
+                        "JavaScript conditional expression is structural");
   CheckStructure("testdata/lang/structure.cs", llmcc::Language::kCSharp, 18, 6);
   const auto csharp_query_events = llmcc::StructuralEvents(
       "class Q { void M() { var q = from x in xs where x > 0 select x; } }",
@@ -165,6 +187,24 @@ int main() {  // NOLINT(bugprone-exception-escape)
       llmcc::Language::kCSharp);
   llmcc::test::ExpectEq(filtered_catch.size(), unfiltered_catch.size() + 1,
                         "C# catch filter is structural");
+  const auto guarded_csharp_switch = llmcc::StructuralEvents(
+      "class Q { void M(object v) { switch (v) { case int n when n > 0: "
+      "break; } } }",
+      llmcc::Language::kCSharp);
+  const auto unguarded_csharp_switch = llmcc::StructuralEvents(
+      "class Q { void M(object v) { switch (v) { case int n: break; } } }",
+      llmcc::Language::kCSharp);
+  llmcc::test::ExpectEq(guarded_csharp_switch.size(),
+                        unguarded_csharp_switch.size() + 1,
+                        "C# switch guard is structural");
+  const auto csharp_conditional = llmcc::StructuralEvents(
+      "class Q { int M(bool flag) { return flag ? 1 : 0; } }",
+      llmcc::Language::kCSharp);
+  const auto csharp_unconditional = llmcc::StructuralEvents(
+      "class Q { int M(bool flag) { return 1; } }", llmcc::Language::kCSharp);
+  llmcc::test::ExpectEq(csharp_conditional.size(),
+                        csharp_unconditional.size() + 1,
+                        "C# conditional expression is structural");
   const auto structure_functions = llmcc::Functions(cpp, llmcc::Language::kCpp);
   llmcc::test::ExpectEq(structure_functions.size(), std::size_t{1},
                         "one C++ function, excluding lambda");

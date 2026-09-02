@@ -57,6 +57,7 @@ constexpr auto kJavaStructural =
                                      "enum_body",
                                      "annotation_type_body",
                                      "if_statement",
+                                     "ternary_expression",
                                      "for_statement",
                                      "enhanced_for_statement",
                                      "while_statement",
@@ -74,10 +75,10 @@ constexpr auto kJavaStructural =
 constexpr auto kPythonComments = std::to_array<std::string_view>({"comment"});
 constexpr auto kPythonStructural = std::to_array<std::string_view>(
     {"function_definition", "lambda", "block", "class_definition",
-     "if_statement", "elif_clause", "else_clause", "for_statement",
-     "for_in_clause", "if_clause", "while_statement", "match_statement",
-     "case_clause", "try_statement", "except_clause", "except_group_clause",
-     "finally_clause", "with_statement"});
+     "if_statement", "conditional_expression", "elif_clause", "else_clause",
+     "for_statement", "for_in_clause", "if_clause", "while_statement",
+     "match_statement", "case_clause", "try_statement", "except_clause",
+     "except_group_clause", "finally_clause", "with_statement"});
 constexpr auto kPythonComprehensions = std::to_array<std::string_view>(
     {"list_comprehension", "set_comprehension", "dictionary_comprehension",
      "generator_expression"});
@@ -95,12 +96,13 @@ constexpr auto kJavaScriptStructural = std::to_array<std::string_view>(
      "generator_function",   "arrow_function",
      "statement_block",      "class_body",
      "class_static_block",   "if_statement",
-     "for_statement",        "for_in_statement",
-     "while_statement",      "do_statement",
-     "switch_statement",     "switch_body",
-     "switch_case",          "switch_default",
-     "try_statement",        "catch_clause",
-     "finally_clause",       "with_statement"});
+     "ternary_expression",   "for_statement",
+     "for_in_statement",     "while_statement",
+     "do_statement",         "switch_statement",
+     "switch_body",          "switch_case",
+     "switch_default",       "try_statement",
+     "catch_clause",         "finally_clause",
+     "with_statement"});
 constexpr auto kCSharpComments = std::to_array<std::string_view>({"comment"});
 constexpr auto kCSharpStructural =
     std::to_array<std::string_view>({"method_declaration",
@@ -117,6 +119,7 @@ constexpr auto kCSharpStructural =
                                      "enum_member_declaration_list",
                                      "accessor_declaration",
                                      "if_statement",
+                                     "conditional_expression",
                                      "for_statement",
                                      "foreach_statement",
                                      "while_statement",
@@ -126,6 +129,7 @@ constexpr auto kCSharpStructural =
                                      "switch_section",
                                      "switch_expression",
                                      "switch_expression_arm",
+                                     "when_clause",
                                      "try_statement",
                                      "catch_clause",
                                      "catch_filter_clause",
