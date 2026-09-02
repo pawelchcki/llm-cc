@@ -10,6 +10,17 @@
 
 namespace llmcc {
 
+namespace {
+
+std::size_t FirstOverlappingToken(std::span<const Token> tokens,
+                                  std::size_t byte) {
+  const auto iterator = std::ranges::partition_point(
+      tokens, [&](const Token& token) { return token.end_byte <= byte; });
+  return static_cast<std::size_t>(std::distance(tokens.begin(), iterator));
+}
+
+}  // namespace
+
 ProjectAnalyzer::ProjectAnalyzer(ProjectAnalysisOptions options,
                                  ProviderFactory factory)
     : options_(std::move(options)), factory_(std::move(factory)) {}
@@ -67,7 +78,8 @@ FileAnalysisResult ProjectAnalyzer::AnalyzeFile(const DiscoveredSource& source,
   std::vector<FunctionScore> functions;
   for (const FunctionSpan& function :
        Functions(preprocessed, source.language)) {
-    const std::size_t first = TokenIndexAt(tokens, function.start_byte);
+    const std::size_t first =
+        FirstOverlappingToken(tokens, function.start_byte);
     const std::size_t end = TokenIndexAt(tokens, function.end_byte);
     if (first >= end) {
       continue;

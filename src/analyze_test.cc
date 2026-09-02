@@ -55,6 +55,19 @@ class LineEntropyProvider : public llmcc::EntropyProvider {
   std::vector<double> entropies_;
 };
 
+class FunctionBoundaryProvider : public llmcc::EntropyProvider {
+ public:
+  std::vector<llmcc::EntropyRecord> Score(std::string_view source) override {
+    llmcc::test::ExpectEq(source, std::string_view("  int f() {}\n"),
+                          "boundary fixture source");
+    return {
+        {.position = 0, .bytes = " ", .entropy = std::nullopt},
+        {.position = 1, .bytes = " int", .entropy = 1.0},
+        {.position = 2, .bytes = " f() {}\n", .entropy = 2.0},
+    };
+  }
+};
+
 }  // namespace
 
 int main() {  // NOLINT(bugprone-exception-escape)
@@ -177,5 +190,22 @@ int main() {  // NOLINT(bugprone-exception-escape)
                         "hotspot limit applied");
   llmcc::test::ExpectEq(hotspot_result.hotspots[0].line, std::size_t{3},
                         "comment stripping preserves hotspot line number");
+
+  const llmcc::DiscoveredSource boundary_source{
+      .path = repository / "boundary.cc",
+      .language = llmcc::Language::kCpp,
+      .repository = std::nullopt};
+  llmcc::ProjectAnalyzer boundary_analyzer(
+      {.model = identity, .cache = false},
+      []() { return std::make_unique<FunctionBoundaryProvider>(); });
+  const auto boundary_result =
+      boundary_analyzer.AnalyzeFile(boundary_source, "  int f() {}\n");
+  llmcc::test::ExpectEq(boundary_result.functions.size(), std::size_t{1},
+                        "indented function is scored");
+  llmcc::test::ExpectEq(boundary_result.functions[0].metrics.token_count,
+                        std::uint64_t{2},
+                        "function includes token overlapping its start");
+  llmcc::test::ExpectEq(boundary_result.functions[0].metrics.entropy_sum, 3.0,
+                        "overlapping token contributes to function metrics");
   return 0;
 }
