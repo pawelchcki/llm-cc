@@ -328,6 +328,8 @@ void CollectStructuralEvents(TSNode node, Language language,
       HasKind(kPythonComprehensions, ts_node_type(node));
   const bool python_comprehension_loop =
       language == Language::kPython && IsNodeType(node, "for_in_clause");
+  const bool python_comprehension_filter =
+      language == Language::kPython && IsNodeType(node, "if_clause");
   const TSNode comprehension_body =
       python_comprehension
           ? ts_node_child_by_field_name(node, "body", sizeof("body") - 1)
@@ -352,6 +354,9 @@ void CollectStructuralEvents(TSNode node, Language language,
     const char* field_name = ts_node_field_name_for_child(node, i);
     if (python_comprehension_loop && field_name != nullptr &&
         std::string_view(field_name) == "right") {
+      effective_depth = structural_depth;
+    }
+    if (python_comprehension_filter) {
       effective_depth = structural_depth;
     }
     CollectStructuralEvents(child, language, effective_depth, structural_kinds,

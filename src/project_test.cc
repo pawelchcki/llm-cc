@@ -73,6 +73,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
   Write(repository / "project-env/lib/hidden.py", "def hidden(): pass\n");
   Write(repository / "node_modules/hidden.js", "function hidden() {}\n");
   Write(repository / "bin/Hidden.cs", "class Hidden {}\n");
+  Write(repository / "bin/tool.csx", "void Run() {}\n");
   Write(repository / "obj/Hidden.cs", "class Hidden {}\n");
   Write(repository / ".gradle/Hidden.java", "class Hidden {}\n");
   Write(repository / "out/Hidden.java", "class Hidden {}\n");
@@ -83,12 +84,19 @@ int main() {  // NOLINT(bugprone-exception-escape)
   Write(nested_repository / "nested.rs", "fn nested() {}\n");
   Run("git -C " + Quote(nested_repository) + " add nested.rs");
   Run("git -C " + Quote(repository) +
-      " add .gitignore internal Lib nested/yes.cpp packages src "
+      " add .gitignore bin/tool.csx internal Lib nested/yes.cpp packages src "
       "target/generated.rs");
 
   const auto normal = llmcc::DiscoverSources({repository});
-  llmcc::test::ExpectEq(normal.sources.size(), std::size_t{19},
+  llmcc::test::ExpectEq(normal.sources.size(), std::size_t{20},
                         "Git discovery filters headers and generated files");
+  llmcc::test::Expect(
+      std::ranges::any_of(normal.sources,
+                          [](const auto& source) {
+                            return source.path.generic_string().ends_with(
+                                "bin/tool.csx");
+                          }),
+      "tracked C# script under bin is preserved");
   llmcc::test::Expect(
       std::ranges::any_of(normal.sources,
                           [](const auto& source) {
@@ -147,7 +155,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
 
   const auto all = llmcc::DiscoverSources(
       {repository}, {.include_headers = true, .no_ignore = true});
-  llmcc::test::ExpectEq(all.sources.size(), std::size_t{31},
+  llmcc::test::ExpectEq(all.sources.size(), std::size_t{32},
                         "no-ignore includes ignored and generated files");
   for (const auto& source : all.sources) {
     llmcc::test::Expect(

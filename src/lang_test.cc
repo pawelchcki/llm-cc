@@ -179,6 +179,14 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::ExpectEq(
       later_iterable_depths, std::vector<std::size_t>({0, 1, 1}),
       "later comprehension iterable follows only preceding loop scopes");
+  const auto nested_filter = llmcc::StructuralEvents(
+      "[x for x in xs if any(y for y in ys)]", llmcc::Language::kPython);
+  std::vector<std::size_t> filter_depths;
+  std::ranges::transform(nested_filter, std::back_inserter(filter_depths),
+                         [](const auto& event) { return event.depth; });
+  llmcc::test::ExpectEq(
+      filter_depths, std::vector<std::size_t>({0, 1, 1}),
+      "comprehension filter predicate precedes its own decision scope");
   const auto exception_group_events =
       llmcc::StructuralEvents("try:\n    pass\nexcept* ValueError:\n    pass\n",
                               llmcc::Language::kPython);

@@ -129,8 +129,7 @@ bool TopLevelOutPath(const std::filesystem::path& path,
 
 bool CSharpGeneratedPath(const std::filesystem::path& path,
                          const std::filesystem::path& root) {
-  const std::string extension = path.extension().string();
-  if (extension != ".cs" && extension != ".csx") {
+  if (path.extension() != ".cs") {
     return false;
   }
   const auto relative = path.lexically_relative(root);
