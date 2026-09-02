@@ -29,6 +29,7 @@
 #endif
 
 #include "generated/version.h"
+#include "src/backend.h"
 #include "src/scoring.h"
 
 namespace {
@@ -44,6 +45,8 @@ struct Arguments {
   BosMode bos = BosMode::kAuto;
   std::uint32_t context_size = llmcc::kDefaultContextSize;
   std::int32_t threads = 0;
+  std::int32_t gpu_layers = 0;
+  llmcc::BackendKind backend = llmcc::BackendKind::kAuto;
   bool entropy = false;
   bool override_memory_check = false;
 };
@@ -64,6 +67,8 @@ constexpr std::string_view kUsageBeforeContext =
 constexpr std::string_view kUsageAfterContext =
     ")\n"
     "  --threads N            inference threads (default: hardware count)\n"
+    "  --gpu-layers N         layers to offload; -1 means all (default: 0)\n"
+    "  --backend NAME         auto, cpu, cuda, or rocm (default: auto)\n"
     "  --override-memory-check  bypass the preflight memory check\n"
     "  --entropy              emit full-vocabulary next-token entropy\n"
     "  -V, --version          show the program version\n"
@@ -122,6 +127,17 @@ void SetOption(Arguments& arguments, std::string_view option,
     if (arguments.threads < 1) {
       Usage("--threads must be positive");
     }
+  } else if (option == "--gpu-layers") {
+    arguments.gpu_layers = ParseInteger<std::int32_t>(option, value);
+    if (arguments.gpu_layers < -1) {
+      Usage("--gpu-layers must be -1 or greater");
+    }
+  } else if (option == "--backend") {
+    try {
+      arguments.backend = llmcc::ParseBackend(value);
+    } catch (const std::invalid_argument& error) {
+      Usage(error.what());
+    }
   } else {
     Usage("unknown option: " + std::string(option));
   }
@@ -157,6 +173,14 @@ Arguments ParseArguments(int argc, char** argv) {
   if (arguments.threads == 0) {
     arguments.threads = static_cast<std::int32_t>(
         std::max(1U, std::thread::hardware_concurrency()));
+  }
+  try {
+    static_cast<void>(
+        llmcc::SelectBackend(arguments.backend, arguments.gpu_layers, {}));
+  } catch (const std::invalid_argument& error) {
+    Usage(error.what());
+  } catch (const std::runtime_error&) {
+    // Device availability is checked after the selected plugins are loaded.
   }
   return arguments;
 }
@@ -255,14 +279,6 @@ void WriteScore(std::ostream& output, std::size_t position, llama_token token,
   output << "}\n";
 }
 
-class Backend {
- public:
-  Backend() { llama_backend_init(); }
-  Backend(const Backend&) = delete;
-  Backend& operator=(const Backend&) = delete;
-  ~Backend() { llama_backend_free(); }
-};
-
 std::uint64_t ModelFileSize(const std::filesystem::path& path) {
   std::error_code error;
   const std::uintmax_t size = std::filesystem::file_size(path, error);
@@ -319,22 +335,35 @@ std::optional<std::uint64_t> HostAvailableMemory() {
 }
 
 std::optional<std::uint64_t> GpuAvailableMemory() {
+  std::uint64_t aggregate = 0;
+  bool found = false;
   for (std::size_t i = 0; i < ggml_backend_dev_count(); ++i) {
     ggml_backend_dev_t device = ggml_backend_dev_get(i);
-    if (ggml_backend_dev_type(device) != GGML_BACKEND_DEVICE_TYPE_GPU) {
+    const enum ggml_backend_dev_type type = ggml_backend_dev_type(device);
+    if (type != GGML_BACKEND_DEVICE_TYPE_GPU &&
+        type != GGML_BACKEND_DEVICE_TYPE_IGPU) {
       continue;
     }
     std::size_t free_bytes = 0;
     std::size_t total_bytes = 0;
     ggml_backend_dev_memory(device, &free_bytes, &total_bytes);
-    return static_cast<std::uint64_t>(free_bytes);
+    found = true;
+    const auto memory = static_cast<std::uint64_t>(free_bytes);
+    aggregate = memory > std::numeric_limits<std::uint64_t>::max() - aggregate
+                    ? std::numeric_limits<std::uint64_t>::max()
+                    : aggregate + memory;
   }
-  return std::nullopt;
+  return found ? std::optional<std::uint64_t>(aggregate) : std::nullopt;
 }
 
 void CheckAvailableMemory(const Arguments& arguments, bool use_gpu,
                           const std::optional<std::uint64_t>& gpu_available) {
   if (arguments.override_memory_check) {
+    return;
+  }
+  if (arguments.gpu_layers > 0) {
+    std::cerr << "warning: partial GPU offload memory use depends on model "
+                 "architecture; skipping memory check\n";
     return;
   }
 
@@ -393,13 +422,14 @@ int Run(const Arguments& arguments, std::ostream& output,
   const std::string input =
       input_override.has_value() ? *input_override : ReadInput(arguments);
   BackendLogCapture backend_log;
-  Backend backend;
-  const std::optional<std::uint64_t> gpu_available = GpuAvailableMemory();
-  const bool use_gpu = gpu_available.has_value();
+  llmcc::BackendRuntime backend(arguments.backend, arguments.gpu_layers);
+  const bool use_gpu = arguments.gpu_layers != 0;
+  const std::optional<std::uint64_t> gpu_available =
+      use_gpu ? GpuAvailableMemory() : std::nullopt;
   CheckAvailableMemory(arguments, use_gpu, gpu_available);
 
   llama_model_params model_parameters = llama_model_default_params();
-  model_parameters.n_gpu_layers = use_gpu ? -1 : 0;
+  model_parameters.n_gpu_layers = arguments.gpu_layers;
   Model model(
       llama_model_load_from_file(arguments.model.c_str(), model_parameters),
       llama_model_free);
@@ -541,7 +571,8 @@ class EntropyScorer::Impl {
  public:
   Impl(const std::filesystem::path& model_path,
        const InferenceOptions& inference_options)
-      : model_(nullptr, llama_model_free),
+      : backend_(inference_options.backend, inference_options.gpu_layers),
+        model_(nullptr, llama_model_free),
         context_limit_(inference_options.context_size),
         threads_(static_cast<std::int32_t>(
             std::max(1U, std::thread::hardware_concurrency()))) {
@@ -549,12 +580,14 @@ class EntropyScorer::Impl {
     arguments.model = model_path;
     arguments.context_size = context_limit_;
     arguments.threads = threads_;
+    arguments.gpu_layers = inference_options.gpu_layers;
+    arguments.backend = inference_options.backend;
     arguments.entropy = true;
-    const auto gpu_available = GpuAvailableMemory();
-    const bool use_gpu = gpu_available.has_value();
+    const bool use_gpu = inference_options.gpu_layers != 0;
+    const auto gpu_available = use_gpu ? GpuAvailableMemory() : std::nullopt;
     CheckAvailableMemory(arguments, use_gpu, gpu_available);
     llama_model_params parameters = llama_model_default_params();
-    parameters.n_gpu_layers = use_gpu ? -1 : 0;
+    parameters.n_gpu_layers = inference_options.gpu_layers;
     model_.reset(llama_model_load_from_file(model_path.c_str(), parameters));
     if (!model_) {
       throw std::runtime_error("could not load model: " + model_path.string());
@@ -657,7 +690,7 @@ class EntropyScorer::Impl {
   }
 
  private:
-  Backend backend_;
+  BackendRuntime backend_;
   Model model_;
   const llama_vocab* vocabulary_ = nullptr;
   std::uint32_t context_limit_;
@@ -682,7 +715,9 @@ std::string_view InferenceAbi() {
 }
 
 std::string_view CompiledBackend() {
-#ifdef LLMCC_BACKEND_CUDA
+#ifdef LLMCC_BACKEND_UNIVERSAL
+  return "universal";
+#elif defined LLMCC_BACKEND_CUDA
   return "cuda";
 #elif defined LLMCC_BACKEND_ROCM
   return "rocm";

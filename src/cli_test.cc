@@ -78,6 +78,9 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(
       Read(analyze_help).find("default: 131072") != std::string::npos,
       "analysis advertises the large default context");
+  llmcc::test::Expect(
+      Read(analyze_help).find("auto, cpu, cuda, or rocm") != std::string::npos,
+      "analysis documents runtime backend selection");
 
   const fs::path score_help = fs::path(test_tmpdir) / "score-help.txt";
   llmcc::test::ExpectEq(
@@ -86,6 +89,21 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(
       Read(score_help).find("default: 131072") != std::string::npos,
       "score advertises the large default context");
+  llmcc::test::Expect(
+      Read(score_help).find("auto, cpu, cuda, or rocm") != std::string::npos,
+      "score documents runtime backend selection");
+
+  const fs::path backend_error = fs::path(test_tmpdir) / "backend-error.txt";
+  const std::string cpu_gpu_command =
+      Quote(binary) +
+      " score --model missing.gguf --prompt x --backend cpu "
+      "--gpu-layers 1 2>" +
+      Quote(backend_error);
+  llmcc::test::Expect(Run(cpu_gpu_command) != 0,
+                      "CPU backend rejects GPU offload");
+  llmcc::test::Expect(
+      Read(backend_error).find("--backend cpu") != std::string::npos,
+      "CPU backend rejection is explained");
 
   const fs::path empty_repository = fs::path(test_tmpdir) / "empty-repository";
   fs::create_directories(empty_repository);
