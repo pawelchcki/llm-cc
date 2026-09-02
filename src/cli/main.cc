@@ -570,23 +570,19 @@ std::string_view ScoreLabel(std::string_view score_mode) {
   return "lmcc/token";
 }
 
-std::string SourceLine(std::string_view contents, std::size_t line) {
-  std::size_t start = 0;
-  for (std::size_t current = 1; current < line; ++current) {
-    const std::size_t newline = contents.find('\n', start);
-    if (newline == std::string_view::npos) {
-      return {};
-    }
-    start = newline + 1;
+std::string_view SourceLine(std::string_view contents,
+                            const std::vector<std::size_t>& line_starts,
+                            std::size_t line) {
+  if (line == 0 || line > line_starts.size()) {
+    return {};
   }
-  std::size_t end = contents.find('\n', start);
-  if (end == std::string_view::npos) {
-    end = contents.size();
-  }
+  const std::size_t start = line_starts[line - 1];
+  std::size_t end =
+      line < line_starts.size() ? line_starts[line] - 1 : contents.size();
   if (end > start && contents[end - 1] == '\r') {
     --end;
   }
-  return std::string(contents.substr(start, end - start));
+  return contents.substr(start, end - start);
 }
 
 std::string TerminalSafe(std::string_view text) {
@@ -627,11 +623,13 @@ void PrintFileText(const llmcc::DiscoveredSource& source,
               << FormatScore(function.metrics, score_mode) << '\n';
   }
   if (!result.hotspots.empty()) {
+    const auto line_starts = llmcc::LineStarts(contents);
     std::cout << "  hotspots:\n";
     for (const llmcc::Hotspot& hotspot : result.hotspots) {
       std::cout << "    L" << hotspot.line
                 << "  H=" << FormatNumber(hotspot.max_entropy) << "  | "
-                << TerminalSafe(SourceLine(contents, hotspot.line)) << '\n';
+                << TerminalSafe(SourceLine(contents, line_starts, hotspot.line))
+                << '\n';
     }
   }
   std::cout << '\n';
