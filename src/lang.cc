@@ -74,16 +74,17 @@ constexpr auto kPythonComments = std::to_array<std::string_view>({"comment"});
 constexpr auto kPythonStructural = std::to_array<std::string_view>(
     {"function_definition", "lambda", "block", "class_definition",
      "if_statement", "elif_clause", "else_clause", "for_statement",
-     "while_statement", "match_statement", "case_clause", "try_statement",
-     "except_clause", "finally_clause", "with_statement"});
+     "for_in_clause", "if_clause", "while_statement", "match_statement",
+     "case_clause", "try_statement", "except_clause", "finally_clause",
+     "with_statement"});
 constexpr auto kGoComments = std::to_array<std::string_view>({"comment"});
 constexpr auto kGoStructural = std::to_array<std::string_view>(
     {"function_declaration", "method_declaration", "func_literal", "block",
      "field_declaration_list", "if_statement", "for_statement",
      "expression_switch_statement", "type_switch_statement", "select_statement",
      "expression_case", "type_case", "communication_case"});
-constexpr auto kJavaScriptComments =
-    std::to_array<std::string_view>({"comment", "html_comment"});
+constexpr auto kJavaScriptComments = std::to_array<std::string_view>(
+    {"comment", "html_comment", "hash_bang_line"});
 constexpr auto kJavaScriptStructural = std::to_array<std::string_view>(
     {"function_declaration", "generator_function_declaration",
      "method_definition",    "function_expression",

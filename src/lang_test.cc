@@ -28,6 +28,10 @@ void CheckComments(std::string_view path, llmcc::Language language,
     llmcc::test::Expect(stripped.find("html comment") == std::string::npos,
                         "JavaScript HTML comment removed");
   }
+  if (source.starts_with("#!")) {
+    llmcc::test::Expect(stripped.find("#!/usr/bin/env") == std::string::npos,
+                        "JavaScript hash-bang line removed");
+  }
   llmcc::test::ExpectEq(map.size(), stripped.size() + 1,
                         "offset map has every boundary");
   llmcc::test::ExpectEq(map.back(), source.size(), "offset map ends at source");
@@ -114,6 +118,10 @@ int main() {  // NOLINT(bugprone-exception-escape)
       "C++ structural events");
   CheckStructure("testdata/lang/structure.java", llmcc::Language::kJava, 18, 6);
   CheckStructure("testdata/lang/structure.py", llmcc::Language::kPython, 18, 6);
+  const auto comprehension_events = llmcc::StructuralEvents(
+      "[f(x) for xs in groups for x in xs if x]", llmcc::Language::kPython);
+  llmcc::test::ExpectEq(comprehension_events.size(), std::size_t{3},
+                        "Python comprehension loops and branch are structural");
   CheckStructure("testdata/lang/structure.go", llmcc::Language::kGo, 12, 5);
   CheckStructure("testdata/lang/structure.js", llmcc::Language::kJavaScript, 18,
                  6);

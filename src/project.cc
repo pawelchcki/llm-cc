@@ -82,7 +82,6 @@ bool GeneratedDirectory(std::string_view name) {
                                                    ".gradle",
                                                    ".venv",
                                                    "venv",
-                                                   "env",
                                                    "__pycache__",
                                                    ".tox",
                                                    ".nox",

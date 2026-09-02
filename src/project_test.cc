@@ -57,6 +57,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
   Write(repository / "src/script.csx", "void Run() {}\n");
   Write(repository / "packages/server/src/index.js",
         "export function start() {}\n");
+  Write(repository / "internal/env/config.go", "package env\n");
   Write(repository / "ignored/no.cc", "int no;\n");
   Write(repository / "nested/no.cc", "int no;\n");
   Write(repository / "nested/yes.cpp", "int yes;\n");
@@ -73,10 +74,11 @@ int main() {  // NOLINT(bugprone-exception-escape)
   Write(nested_repository / "nested.rs", "fn nested() {}\n");
   Run("git -C " + Quote(nested_repository) + " add nested.rs");
   Run("git -C " + Quote(repository) +
-      " add .gitignore src nested/yes.cpp packages target/generated.rs");
+      " add .gitignore internal nested/yes.cpp packages src "
+      "target/generated.rs");
 
   const auto normal = llmcc::DiscoverSources({repository});
-  llmcc::test::ExpectEq(normal.sources.size(), std::size_t{16},
+  llmcc::test::ExpectEq(normal.sources.size(), std::size_t{17},
                         "Git discovery filters headers and generated files");
   llmcc::test::Expect(
       std::ranges::is_sorted(
@@ -120,7 +122,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
 
   const auto all = llmcc::DiscoverSources(
       {repository}, {.include_headers = true, .no_ignore = true});
-  llmcc::test::ExpectEq(all.sources.size(), std::size_t{25},
+  llmcc::test::ExpectEq(all.sources.size(), std::size_t{26},
                         "no-ignore includes ignored and generated files");
   for (const auto& source : all.sources) {
     llmcc::test::Expect(
