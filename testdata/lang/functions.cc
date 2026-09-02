@@ -13,3 +13,7 @@ Ns::Cls::~Cls() = default;
 
 struct Stream {};
 Stream& operator<<(Stream& stream, int) { return stream; }
+
+struct Convertible {
+  explicit operator bool() const { return true; }
+};

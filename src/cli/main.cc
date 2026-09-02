@@ -589,12 +589,28 @@ std::string SourceLine(std::string_view contents, std::size_t line) {
   return std::string(contents.substr(start, end - start));
 }
 
+std::string TerminalSafe(std::string_view text) {
+  constexpr std::string_view kHex = "0123456789ABCDEF";
+  std::string safe;
+  safe.reserve(text.size());
+  for (const unsigned char byte : text) {
+    if (byte < 0x20 || byte == 0x7f) {
+      safe.append("\\x");
+      safe.push_back(kHex[byte >> 4]);
+      safe.push_back(kHex[byte & 0x0f]);
+    } else {
+      safe.push_back(static_cast<char>(byte));
+    }
+  }
+  return safe;
+}
+
 void PrintFileText(const llmcc::DiscoveredSource& source,
                    std::string_view contents,
                    const llmcc::FileAnalysisResult& result,
                    std::string_view score_mode) {
   const llmcc::Metrics& metrics = result.analysis.metrics;
-  std::cout << source.path.string() << "   score "
+  std::cout << TerminalSafe(source.path.string()) << "   score "
             << FormatScore(metrics, score_mode) << " ("
             << ScoreLabel(score_mode) << ")   density ";
   if (metrics.token_count == 0) {
@@ -615,7 +631,7 @@ void PrintFileText(const llmcc::DiscoveredSource& source,
     for (const llmcc::Hotspot& hotspot : result.hotspots) {
       std::cout << "    L" << hotspot.line
                 << "  H=" << FormatNumber(hotspot.max_entropy) << "  | "
-                << SourceLine(contents, hotspot.line) << '\n';
+                << TerminalSafe(SourceLine(contents, hotspot.line)) << '\n';
     }
   }
   std::cout << '\n';

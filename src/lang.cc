@@ -144,7 +144,8 @@ std::string CFunctionName(TSNode function, std::string_view source) {
                                                sizeof("declarator") - 1);
   constexpr auto kNames = std::to_array<std::string_view>(
       {"identifier", "field_identifier", "qualified_identifier",
-       "destructor_name", "operator_name", "template_function"});
+       "destructor_name", "operator_name", "operator_cast",
+       "template_function"});
   for (std::size_t steps = 0; steps < 128 && !ts_node_is_null(current);
        ++steps) {
     if (HasKind(kNames, ts_node_type(current))) {

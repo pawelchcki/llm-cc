@@ -90,7 +90,8 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::ExpectEq(
       cpp_names,
       std::vector<std::string>({"pointer_result", "reference_result",
-                                "Ns::Cls::~Cls", "operator<<"}),
+                                "Ns::Cls::~Cls", "operator<<",
+                                "operator bool() const"}),
       "complex C++ function names");
 
   const std::string rust_functions = Read("testdata/lang/functions.rs");

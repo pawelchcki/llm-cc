@@ -219,7 +219,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
   const fs::path fake_model = fs::path(test_tmpdir) / "fake.gguf";
   Write(source,
         "fn main() {\n"
-        "  println!(\"cached\");\n"
+        "  println!(\"cached\x1b[31m\"); // \rforged\n"
         "}\n");
   Write(fake_model, "not model weights");
   const auto [preprocessed, offsets] =
@@ -322,6 +322,11 @@ int main() {  // NOLINT(bugprone-exception-escape)
                       "text output contains a function line");
   llmcc::test::Expect(text_analysis.find("  H=") != std::string::npos,
                       "text output contains a hotspot line");
+  llmcc::test::Expect(text_analysis.find('\x1b') == std::string::npos &&
+                          text_analysis.find('\r') == std::string::npos &&
+                          text_analysis.find("\\x1B") != std::string::npos &&
+                          text_analysis.find("\\x0D") != std::string::npos,
+                      "text hotspots escape terminal control bytes");
 
   const fs::path no_hotspots_output =
       fs::path(test_tmpdir) / "no-hotspots.jsonl";
