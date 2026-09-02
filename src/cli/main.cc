@@ -592,14 +592,63 @@ std::string TerminalSafe(std::string_view text) {
   constexpr std::string_view kHex = "0123456789ABCDEF";
   std::string safe;
   safe.reserve(text.size());
-  for (const unsigned char byte : text) {
+  const auto append_byte = [&](unsigned char byte) {
+    safe.append("\\x");
+    safe.push_back(kHex[byte >> 4]);
+    safe.push_back(kHex[byte & 0x0f]);
+  };
+  for (std::size_t index = 0; index < text.size();) {
+    const auto byte = static_cast<unsigned char>(text[index]);
     if (byte < 0x20 || byte == 0x7f) {
-      safe.append("\\x");
-      safe.push_back(kHex[byte >> 4]);
-      safe.push_back(kHex[byte & 0x0f]);
-    } else {
-      safe.push_back(static_cast<char>(byte));
+      append_byte(byte);
+      ++index;
+      continue;
     }
+    if (byte < 0x80) {
+      safe.push_back(static_cast<char>(byte));
+      ++index;
+      continue;
+    }
+    if (byte == 0xc2 && index + 1 < text.size()) {
+      const auto second = static_cast<unsigned char>(text[index + 1]);
+      if (second >= 0x80 && second <= 0x9f) {
+        safe.append("\\u00");
+        safe.push_back(kHex[second >> 4]);
+        safe.push_back(kHex[second & 0x0f]);
+        index += 2;
+        continue;
+      }
+    }
+    std::size_t length = 0;
+    if (byte >= 0xc2 && byte <= 0xdf) {
+      length = 2;
+    } else if (byte >= 0xe0 && byte <= 0xef) {
+      length = 3;
+    } else if (byte >= 0xf0 && byte <= 0xf4) {
+      length = 4;
+    }
+    bool valid = length != 0 && index + length <= text.size();
+    for (std::size_t offset = 1; valid && offset < length; ++offset) {
+      const auto continuation =
+          static_cast<unsigned char>(text[index + offset]);
+      valid = (continuation & 0xc0) == 0x80;
+    }
+    if (valid && length == 3) {
+      const auto second = static_cast<unsigned char>(text[index + 1]);
+      valid =
+          (byte != 0xe0 || second >= 0xa0) && (byte != 0xed || second < 0xa0);
+    } else if (valid && length == 4) {
+      const auto second = static_cast<unsigned char>(text[index + 1]);
+      valid =
+          (byte != 0xf0 || second >= 0x90) && (byte != 0xf4 || second <= 0x8f);
+    }
+    if (!valid) {
+      append_byte(byte);
+      ++index;
+      continue;
+    }
+    safe.append(text.substr(index, length));
+    index += length;
   }
   return safe;
 }
