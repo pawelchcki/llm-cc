@@ -60,12 +60,15 @@ int main() {  // NOLINT(bugprone-exception-escape)
   Write(repository / "src/script.csx", "void Run() {}\n");
   Write(repository / "packages/server/src/index.js",
         "export function start() {}\n");
+  Write(repository / "Lib/venv/__init__.py", "def create(): pass\n");
   Write(repository / "internal/env/config.go", "package env\n");
   Write(repository / "ignored/no.cc", "int no;\n");
   Write(repository / "nested/no.cc", "int no;\n");
   Write(repository / "nested/yes.cpp", "int yes;\n");
   Write(repository / "target/generated.rs", "fn generated() {}\n");
   Write(repository / ".venv/hidden.py", "def hidden(): pass\n");
+  Write(repository / "venv/pyvenv.cfg", "home = /usr/bin\n");
+  Write(repository / "venv/lib/hidden.py", "def hidden(): pass\n");
   Write(repository / "node_modules/hidden.js", "function hidden() {}\n");
   Write(repository / "bin/Hidden.cs", "class Hidden {}\n");
   Write(repository / "obj/Hidden.cs", "class Hidden {}\n");
@@ -78,12 +81,26 @@ int main() {  // NOLINT(bugprone-exception-escape)
   Write(nested_repository / "nested.rs", "fn nested() {}\n");
   Run("git -C " + Quote(nested_repository) + " add nested.rs");
   Run("git -C " + Quote(repository) +
-      " add .gitignore internal nested/yes.cpp packages src "
+      " add .gitignore internal Lib nested/yes.cpp packages src "
       "target/generated.rs");
 
   const auto normal = llmcc::DiscoverSources({repository});
-  llmcc::test::ExpectEq(normal.sources.size(), std::size_t{18},
+  llmcc::test::ExpectEq(normal.sources.size(), std::size_t{19},
                         "Git discovery filters headers and generated files");
+  llmcc::test::Expect(
+      std::ranges::any_of(normal.sources,
+                          [](const auto& source) {
+                            return source.path.generic_string().ends_with(
+                                "Lib/venv/__init__.py");
+                          }),
+      "tracked Python package named venv is preserved");
+  llmcc::test::Expect(
+      std::ranges::none_of(normal.sources,
+                           [](const auto& source) {
+                             return source.path.generic_string().ends_with(
+                                 "venv/lib/hidden.py");
+                           }),
+      "recognizable Python virtual environment is excluded");
   llmcc::test::Expect(
       std::ranges::is_sorted(
           normal.sources, {},
@@ -126,7 +143,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
 
   const auto all = llmcc::DiscoverSources(
       {repository}, {.include_headers = true, .no_ignore = true});
-  llmcc::test::ExpectEq(all.sources.size(), std::size_t{28},
+  llmcc::test::ExpectEq(all.sources.size(), std::size_t{30},
                         "no-ignore includes ignored and generated files");
   for (const auto& source : all.sources) {
     llmcc::test::Expect(

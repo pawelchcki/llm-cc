@@ -81,7 +81,6 @@ bool GeneratedDirectory(std::string_view name) {
                                                    "node_modules",
                                                    ".gradle",
                                                    ".venv",
-                                                   "venv",
                                                    "__pycache__",
                                                    ".tox",
                                                    ".nox",
@@ -99,6 +98,27 @@ bool GeneratedDirectory(std::string_view name) {
                                                    "cmake-build-debug",
                                                    "cmake-build-release"};
   return names.contains(name) || name.starts_with("bazel-");
+}
+
+bool PythonVirtualEnvironment(const std::filesystem::path& directory) {
+  if (directory.filename() != "venv") {
+    return false;
+  }
+  std::error_code error;
+  return std::filesystem::is_regular_file(directory / "pyvenv.cfg", error) &&
+         !error;
+}
+
+bool PythonVirtualEnvironmentPath(const std::filesystem::path& path,
+                                  const std::filesystem::path& root) {
+  std::filesystem::path directory = root;
+  for (const auto& component : path.lexically_relative(root)) {
+    directory /= component;
+    if (PythonVirtualEnvironment(directory)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool TopLevelOutPath(const std::filesystem::path& path,
@@ -127,6 +147,7 @@ bool GeneratedPath(const std::filesystem::path& path,
                                return component == ".llm-cc-cache" ||
                                       GeneratedDirectory(component.string());
                              }) ||
+         PythonVirtualEnvironmentPath(path, repository) ||
          TopLevelOutPath(path, repository) ||
          CSharpGeneratedPath(path, repository);
 }
@@ -187,7 +208,7 @@ void FilesystemWalk(const std::filesystem::path& directory,
     if (directory_entry &&
         (name == ".llm-cc-cache" ||
          (!options.no_ignore &&
-          (GeneratedDirectory(name) ||
+          (GeneratedDirectory(name) || PythonVirtualEnvironment(entry.path()) ||
            (name == "out" && entry.path().parent_path() == directory))) ||
          name == ".git")) {
       iterator.disable_recursion_pending();
