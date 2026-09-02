@@ -22,13 +22,15 @@ The build downloads checksum-pinned LLVM, llama.cpp, tree-sitter and its Rust,
 C, C++, Java, Python, Go, JavaScript, and C# source bundles, nlohmann/json,
 curl, and, on non-macOS platforms, OpenSSL. macOS curl builds use Apple's
 Secure Transport and system trust store.
-On Linux x86-64, `//:llm-cc` is always a universal CPU + CUDA + ROCm
-development executable. Its private GPU modules stay in Bazel runfiles, so an
+`bazel build //:llm-cc` builds the CPU-only binary by default. On Linux x86-64,
+`--config=universal` opts into the fat build whose packaged executable embeds
+CUDA and ROCm payloads. The universal build is slow and needs about 80 GB of
+disk. Its private GPU modules stay in Bazel runfiles during development, so an
 application edit recompiles and relinks only affected application actions.
-Metal remains the standalone static macOS default. Smaller diagnostic builds
-remain available:
+Other explicit backend builds remain available:
 
 ```sh
+bazel build --config=release --config=universal //:llm-cc
 bazel build --config=release --config=rocm //:llm-cc
 bazel build --config=release --config=cuda //:llm-cc
 bazel build --config=release --config=metal //:llm-cc
@@ -56,9 +58,9 @@ while `--config=metal` retains a macOS 14.0 deployment target. Xcode and the
 Apple SDK are licensed host prerequisites and cannot be downloaded hermetically
 by the repository.
 
-The ROCm archive targets Linux x86_64 Radeon `gfx110X`. Use `--config=cpu` on
-other Linux platforms, or change the pinned TheRock artifact and `GPU_TARGETS`
-together when adding another AMD GPU family.
+The ROCm archive targets Linux x86_64 Radeon `gfx110X`. The default CPU build
+supports other Linux platforms; change the pinned TheRock artifact and
+`GPU_TARGETS` together when adding another AMD GPU family.
 
 Install to `$HOME/.local/bin`, or choose another prefix:
 
@@ -68,21 +70,22 @@ bazel run //:install -- --prefix /opt/llm-cc
 ```
 
 Installation atomically replaces one `bin/llm-cc` executable. On Linux that
-ELF contains the statically linked application, llama/ggml CPU code, and raw
-CUDA and ROCm payloads. On macOS it is the standalone static Metal
-Mach-O executable.
+ELF contains the statically linked application and llama/ggml CPU code by
+default. With `--config=universal`, it also contains raw CUDA and ROCm payloads.
+On macOS, use `--config=metal` for the standalone static Metal Mach-O
+executable.
 
 Build deterministic release archives with:
 
 ```sh
-bazel build --config=release //dist:linux_x86_64
-bazel build --config=release //dist:macos
+bazel build --config=release --config=universal //dist:linux_x86_64
+bazel build --config=release --config=metal //dist:macos
 ```
 
 The Linux target emits `llm-cc-0.1-linux-x86_64` and its SHA-256 checksum.
 Compatibility labels `//:universal_archive` and `//:install_payload` point to
-the same single-file output. `//:cpu_static_archive` remains available as an
-explicit CPU diagnostic artifact; it is never the Linux default.
+the same single-file output. `//:cpu_static_archive` emits the CPU-only static
+archive.
 
 ## Analyze source and projects
 
