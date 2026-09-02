@@ -663,7 +663,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
   const bool text = arguments.format == "text";
   const auto warning = [&](std::string_view message) {
     if (text) {
-      std::cerr << "warning: " << message << '\n';
+      std::cerr << "warning: " << TerminalSafe(message) << '\n';
     } else {
       Emit({{"type", "warning"}, {"message", message}});
     }
@@ -684,12 +684,8 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
     if (!text) {
       Emit(ConfigurationJson(arguments, requested_model));
     }
-    for (const auto& warning : discovery.warnings) {
-      if (text) {
-        std::cerr << "warning: " << warning << '\n';
-      } else {
-        Emit({{"type", "warning"}, {"message", warning}});
-      }
+    for (const auto& message : discovery.warnings) {
+      warning(message);
     }
     warning("no eligible source files were discovered");
     if (text) {
@@ -812,8 +808,8 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       ++totals.failed;
       ++languages[language].failed;
       if (text) {
-        std::cerr << "error: " << source.path.string() << ": " << error.what()
-                  << '\n';
+        std::cerr << "error: " << TerminalSafe(source.path.string()) << ": "
+                  << TerminalSafe(error.what()) << '\n';
       } else {
         Emit({{"type", "error"},
               {"path", source.path.string()},
@@ -826,8 +822,8 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       ++totals.failed;
       ++languages[language].failed;
       if (text) {
-        std::cerr << "error: " << source.path.string() << ": " << error.what()
-                  << '\n';
+        std::cerr << "error: " << TerminalSafe(source.path.string()) << ": "
+                  << TerminalSafe(error.what()) << '\n';
       } else {
         Emit({{"type", "error"},
               {"path", source.path.string()},

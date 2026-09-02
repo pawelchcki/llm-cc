@@ -328,6 +328,20 @@ int main() {  // NOLINT(bugprone-exception-escape)
                           text_analysis.find("\\x0D") != std::string::npos,
                       "text hotspots escape terminal control bytes");
 
+  const fs::path unsafe_source = repository / std::string("unsafe\x1b[31m.rs");
+  Write(unsafe_source, "fn unsafe_source() {}\n");
+  const fs::path unsafe_error = fs::path(test_tmpdir) / "unsafe-error.txt";
+  const std::string unsafe_command = Quote(binary) + " " + Quote(source) + " " +
+                                     Quote(unsafe_source) + " --model " +
+                                     Quote(fake_model) + " --format text 2>" +
+                                     Quote(unsafe_error) + " >/dev/null";
+  llmcc::test::Expect(Run(unsafe_command) != 0,
+                      "uncached source reports a text-mode error");
+  const std::string unsafe_diagnostic = Read(unsafe_error);
+  llmcc::test::Expect(unsafe_diagnostic.find('\x1b') == std::string::npos &&
+                          unsafe_diagnostic.find("\\x1B") != std::string::npos,
+                      "text errors escape filename control bytes");
+
   const fs::path no_hotspots_output =
       fs::path(test_tmpdir) / "no-hotspots.jsonl";
   llmcc::test::ExpectEq(
