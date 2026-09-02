@@ -108,6 +108,9 @@ bool PythonVirtualEnvironment(const std::filesystem::path& directory) {
 
 bool PythonVirtualEnvironmentPath(const std::filesystem::path& path,
                                   const std::filesystem::path& root) {
+  if (PythonVirtualEnvironment(root)) {
+    return true;
+  }
   std::filesystem::path directory = root;
   for (const auto& component : path.lexically_relative(root)) {
     directory /= component;
@@ -184,6 +187,9 @@ void FilesystemWalk(const std::filesystem::path& directory,
                     const DiscoveryOptions& options,
                     const std::optional<std::filesystem::path>& repository,
                     std::map<std::string, DiscoveredSource>& files) {
+  if (!options.no_ignore && PythonVirtualEnvironment(directory)) {
+    return;
+  }
   std::error_code error;
   std::filesystem::recursive_directory_iterator iterator(
       directory, std::filesystem::directory_options::skip_permission_denied,

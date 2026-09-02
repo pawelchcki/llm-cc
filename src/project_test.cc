@@ -175,5 +175,17 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(!fallback.warnings.empty(), "fallback emits warning");
   llmcc::test::Expect(!fallback.sources[0].repository.has_value(),
                       "non-Git source has no cache repository");
+
+  const fs::path environment = fs::path(temporary) / "custom-environment";
+  Write(environment / "pyvenv.cfg", "home = /usr/bin\n");
+  Write(environment / "lib/site-packages/dependency.py",
+        "def dependency(): pass\n");
+  const auto excluded_environment = llmcc::DiscoverSources({environment});
+  llmcc::test::ExpectEq(excluded_environment.sources.size(), std::size_t{0},
+                        "virtual environment input root is excluded");
+  const auto included_environment =
+      llmcc::DiscoverSources({environment}, {.no_ignore = true});
+  llmcc::test::ExpectEq(included_environment.sources.size(), std::size_t{1},
+                        "no-ignore includes a virtual environment input root");
   return 0;
 }
