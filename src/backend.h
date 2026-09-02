@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <span>
+#include <string>
 #include <string_view>
 
 namespace llmcc {
@@ -19,6 +20,21 @@ BackendKind ParseBackend(std::string_view value);
 std::string_view BackendName(BackendKind backend);
 BackendKind SelectBackend(BackendKind requested, std::int32_t gpu_layers,
                           std::span<const BackendDevice> devices);
+
+// Suppresses routine llama.cpp and ggml diagnostics while retaining errors for
+// actionable failure messages.
+class BackendLogCapture {
+ public:
+  BackendLogCapture();
+  BackendLogCapture(const BackendLogCapture&) = delete;
+  BackendLogCapture& operator=(const BackendLogCapture&) = delete;
+  ~BackendLogCapture();
+
+  [[nodiscard]] std::string Error() const;
+
+ private:
+  std::string errors_;
+};
 
 // Loads exactly the backend plugins needed by this inference invocation. The
 // object must outlive all llama.cpp objects created by the caller.

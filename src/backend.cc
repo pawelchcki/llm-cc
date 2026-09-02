@@ -23,6 +23,12 @@
 namespace llmcc {
 namespace {
 
+void RecordBackendLog(ggml_log_level level, const char* text, void* user_data) {
+  if (level == GGML_LOG_LEVEL_ERROR && text != nullptr) {
+    *static_cast<std::string*>(user_data) += text;
+  }
+}
+
 #if defined(LLM_CC_DYNAMIC_BACKENDS)
 constexpr std::string_view PluginName(BackendKind backend) {
   switch (backend) {
@@ -222,6 +228,20 @@ std::vector<BackendDevice> Inventory(std::span<const LoadedPlugin> plugins) {
 #endif
 
 }  // namespace
+
+BackendLogCapture::BackendLogCapture() {
+  llama_log_set(RecordBackendLog, &errors_);
+}
+
+BackendLogCapture::~BackendLogCapture() { llama_log_set(nullptr, nullptr); }
+
+std::string BackendLogCapture::Error() const {
+  std::string result = errors_;
+  while (!result.empty() && (result.back() == '\n' || result.back() == '\r')) {
+    result.pop_back();
+  }
+  return result;
+}
 
 BackendRuntime::BackendRuntime(BackendKind requested, std::int32_t gpu_layers) {
   if (gpu_layers < -1) {

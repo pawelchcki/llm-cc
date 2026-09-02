@@ -763,6 +763,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       arguments.model, arguments.no_download, std::filesystem::current_path(),
       model_cache, llmcc::DownloadDefaultModel);
   const llmcc::BackendKind resolved_backend = [&]() {
+    llmcc::BackendLogCapture backend_log;
     llmcc::BackendRuntime runtime(arguments.backend, arguments.gpu_layers);
     return runtime.selected();
   }();
