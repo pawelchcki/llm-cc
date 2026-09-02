@@ -1,6 +1,9 @@
 actions:
   - name: "CPU build and test"
     container_image: "ubuntu-24.04"
+    resource_requests:
+      disk: 80GB
+    timeout: 2h
     allow_concurrent_runs: false
     allow_concurrent_runs_on_branches:
       - "main"
@@ -15,7 +18,8 @@ actions:
           - "main"
     steps:
       - run: "tools/check_format.sh"
-      - run: "bazel test --config=buildbuddy --config=cpu //..."
-      - run: "bazel build --config=buildbuddy --config=release --config=portable --config=cpu //:llm-cc"
-      - run: "tools/check_glibc_version.sh bazel-bin/llm-cc 2.37"
-      - run: "tools/check_static_link.sh bazel-bin/llm-cc"
+      - run: "bazel test --config=buildbuddy //:unit"
+      - run: "bazel test --config=buildbuddy //:integration"
+      - run: "bazel build --config=buildbuddy --config=release --config=portable //dist:linux_x86_64"
+      - run: "tools/check_glibc_version.sh bazel-bin/dist/llm-cc-0.1-linux-x86_64 2.28"
+      - run: "tools/check_static_link.sh bazel-bin/dist/llm-cc-0.1-linux-x86_64"

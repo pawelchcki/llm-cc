@@ -1,6 +1,339 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_import.bzl", "cc_import")
+load("@rules_cuda//cuda:defs.bzl", "cuda_library")
+load("@//tools:cuda_archive.bzl", "cuda_pruned_archive")
+load("@//tools:hip_library.bzl", "hip_library")
+
 package(default_visibility = ["//visibility:public"])
 
+# Compatibility for source-oriented tooling. Production targets below compile
+# each source independently and never pass this filegroup to CMake.
 filegroup(
     name = "all",
     srcs = glob(["**"]),
+)
+
+GGML_PUBLIC_HEADERS = [
+    "ggml/include/ggml-alloc.h",
+    "ggml/include/ggml-backend.h",
+    "ggml/include/ggml-blas.h",
+    "ggml/include/ggml-cpp.h",
+    "ggml/include/ggml-cpu.h",
+    "ggml/include/ggml-cuda.h",
+    "ggml/include/ggml-metal.h",
+    "ggml/include/ggml-opt.h",
+    "ggml/include/ggml.h",
+    "ggml/include/gguf.h",
+]
+
+GGML_BASE_SOURCES = [
+    "ggml/src/ggml-alloc.c",
+    "ggml/src/ggml-backend-meta.cpp",
+    "ggml/src/ggml-backend.cpp",
+    "ggml/src/ggml-opt.cpp",
+    "ggml/src/ggml-quants.c",
+    "ggml/src/ggml-threading.cpp",
+    "ggml/src/ggml.c",
+    "ggml/src/ggml.cpp",
+    "ggml/src/gguf.cpp",
+]
+
+GGML_CPU_COMMON_SOURCES = [
+    "ggml/src/ggml-cpu/amx/amx.cpp",
+    "ggml/src/ggml-cpu/amx/mmq.cpp",
+    "ggml/src/ggml-cpu/binary-ops.cpp",
+    "ggml/src/ggml-cpu/ggml-cpu.c",
+    "ggml/src/ggml-cpu/ggml-cpu.cpp",
+    "ggml/src/ggml-cpu/hbm.cpp",
+    "ggml/src/ggml-cpu/llamafile/sgemm.cpp",
+    "ggml/src/ggml-cpu/ops.cpp",
+    "ggml/src/ggml-cpu/quants.c",
+    "ggml/src/ggml-cpu/repack.cpp",
+    "ggml/src/ggml-cpu/traits.cpp",
+    "ggml/src/ggml-cpu/unary-ops.cpp",
+    "ggml/src/ggml-cpu/vec.cpp",
+]
+
+GGML_CPU_ARCH_SOURCES = select({
+    "@platforms//cpu:aarch64": [
+        "ggml/src/ggml-cpu/arch/arm/quants.c",
+        "ggml/src/ggml-cpu/arch/arm/repack.cpp",
+    ],
+    "@platforms//cpu:ppc64le": [
+        "ggml/src/ggml-cpu/arch/powerpc/quants.c",
+    ],
+    "@platforms//cpu:riscv64": [
+        "ggml/src/ggml-cpu/arch/riscv/quants.c",
+        "ggml/src/ggml-cpu/arch/riscv/repack.cpp",
+    ],
+    "@platforms//cpu:s390x": [
+        "ggml/src/ggml-cpu/arch/s390/quants.c",
+    ],
+    "@platforms//cpu:x86_64": [
+        "ggml/src/ggml-cpu/arch/x86/quants.c",
+        "ggml/src/ggml-cpu/arch/x86/repack.cpp",
+    ],
+    "//conditions:default": [],
+})
+
+LLAMA_SOURCES = [
+    "src/llama-adapter.cpp",
+    "src/llama-arch.cpp",
+    "src/llama-batch.cpp",
+    "src/llama-chat.cpp",
+    "src/llama-context.cpp",
+    "src/llama-cparams.cpp",
+    "src/llama-grammar.cpp",
+    "src/llama-graph.cpp",
+    "src/llama-hparams.cpp",
+    "src/llama-impl.cpp",
+    "src/llama-io.cpp",
+    "src/llama-kv-cache-dsa-iswa.cpp",
+    "src/llama-kv-cache-dsa.cpp",
+    "src/llama-kv-cache-dsv4.cpp",
+    "src/llama-kv-cache-iswa.cpp",
+    "src/llama-kv-cache-msa.cpp",
+    "src/llama-kv-cache.cpp",
+    "src/llama-memory-hybrid-idx.cpp",
+    "src/llama-memory-hybrid-iswa.cpp",
+    "src/llama-memory-hybrid.cpp",
+    "src/llama-memory-recurrent.cpp",
+    "src/llama-memory.cpp",
+    "src/llama-mmap.cpp",
+    "src/llama-model-loader.cpp",
+    "src/llama-model-saver.cpp",
+    "src/llama-model.cpp",
+    "src/llama-quant.cpp",
+    "src/llama-sampler.cpp",
+    "src/llama-vocab.cpp",
+    "src/llama.cpp",
+    "src/unicode-data.cpp",
+    "src/unicode.cpp",
+] + glob(["src/models/*.cpp"])
+
+COMMON_HEADERS = glob([
+    "ggml/src/**/*.h",
+    "ggml/src/**/*.hpp",
+    "src/**/*.h",
+])
+
+CUDA_SOURCES = glob([
+    "ggml/src/ggml-cuda/*.cu",
+    "ggml/src/ggml-cuda/template-instances/fattn-mma*.cu",
+    "ggml/src/ggml-cuda/template-instances/fattn-tile*.cu",
+    "ggml/src/ggml-cuda/template-instances/mmf*.cu",
+    "ggml/src/ggml-cuda/template-instances/mmq*.cu",
+]) + [
+    "ggml/src/ggml-cuda/template-instances/fattn-vec-instance-bf16-bf16.cu",
+    "ggml/src/ggml-cuda/template-instances/fattn-vec-instance-f16-f16.cu",
+    "ggml/src/ggml-cuda/template-instances/fattn-vec-instance-q4_0-q4_0.cu",
+    "ggml/src/ggml-cuda/template-instances/fattn-vec-instance-q8_0-q8_0.cu",
+]
+
+cc_library(
+    name = "ggml_headers",
+    hdrs = GGML_PUBLIC_HEADERS + COMMON_HEADERS,
+    includes = [
+        "ggml/include",
+        "ggml/src",
+        "ggml/src/ggml-cuda",
+    ],
+)
+
+CUDA_ARCHS = [
+    "sm_75",
+    "sm_80",
+    "sm_86",
+    "sm_89",
+    "sm_90",
+    "sm_100",
+    "sm_100a",
+    "sm_120a",
+]
+
+cuda_pruned_archive(
+    name = "cublas_static_archive",
+    archs = CUDA_ARCHS,
+    src = "@cuda_cublas//:cublas/lib/libcublas_static.a",
+)
+
+cuda_pruned_archive(
+    name = "cublas_lt_static_archive",
+    archs = CUDA_ARCHS,
+    src = "@cuda_cublas//:cublas/lib/libcublasLt_static.a",
+)
+
+cc_import(
+    name = "cublas_static",
+    static_library = ":cublas_static_archive",
+)
+
+cc_import(
+    name = "cublas_lt_static",
+    static_library = ":cublas_lt_static_archive",
+)
+
+cuda_library(
+    name = "ggml_cuda",
+    alwayslink = True,
+    srcs = CUDA_SOURCES,
+    hdrs = glob(["ggml/src/ggml-cuda/*.cuh"]),
+    tools = [
+        "@//tools:cuda_glibc_compat.h",
+        "@//tools:cuda_host_compiler_wrapper.sh",
+        "@cuda_host_toolchain//:clang_cuda_host_files",
+        "@linux_glibc_sysroot//:sysroot",
+        "@llvm_toolchain_llvm//:clang",
+    ],
+    archs = [
+        "compute_75",
+        "compute_80",
+        "compute_86:sm_86",
+        "compute_89:sm_89",
+        "compute_90",
+        "compute_120a:sm_120a",
+    ],
+    copts = [
+        "-allow-unsupported-compiler",
+        "-ccbin=tools/cuda_host_compiler_wrapper.sh",
+        "--compress-mode=size",
+        "-extended-lambda",
+        "-use_fast_math",
+    ],
+    defines = [
+        "GGML_BACKEND_BUILD",
+        "GGML_BACKEND_DL",
+        "GGML_BACKEND_SHARED",
+        "GGML_CUDA_PEER_MAX_BATCH_SIZE=128",
+    ],
+    deps = [
+        ":ggml_headers",
+        "@cuda//:cublas_headers",
+        "@cuda//:cub",
+    ],
+)
+
+cc_binary(
+    name = "libllm-cc-backend-cuda.so",
+    additional_linker_inputs = ["@//third_party:backend_module.lds"],
+    linkopts = [
+        "-Wl,--build-id=none",
+        "-Wl,--exclude-libs,ALL",
+        "-Wl,--gc-sections",
+        "-Wl,--version-script=$(location @//third_party:backend_module.lds)",
+        "-ldl",
+        "-lpthread",
+        "-lrt",
+    ],
+    linkshared = True,
+    deps = [
+        ":cublas_lt_static",
+        ":cublas_static",
+        ":ggml_cuda",
+        "@cuda//:culibos_a",
+        "@cuda//:cuda_runtime_static",
+        "@cuda_host_toolchain//:libstdcxx_static",
+    ],
+)
+
+hip_library(
+    name = "libllm-cc-backend-rocm.so",
+    archs = [
+        "gfx1100",
+        "gfx1101",
+        "gfx1102",
+    ],
+    compiler = "@rocm_sdk//:hipcc",
+    compiler_files = "@rocm_sdk//:compiler_files",
+    cxx_anchor = "@llvm_toolchain_llvm//:include/c++/v1/algorithm",
+    cxx_headers = "@llvm_toolchain_llvm//:all_includes",
+    cxx_libs = "@llvm_toolchain_llvm//:lib",
+    hdrs = GGML_PUBLIC_HEADERS + COMMON_HEADERS + glob(["ggml/src/ggml-cuda/*.cuh"]) + [
+        "@rocm_sdk//:hip_headers",
+    ],
+    includes = [
+        "ggml/include",
+        "ggml/src",
+        "ggml/src/ggml-cuda",
+    ],
+    link_files = "@rocm_sdk//:link_files",
+    output_name = "libllm-cc-backend-rocm.so",
+    srcs = CUDA_SOURCES,
+    sysroot_anchor = "@linux_glibc_sysroot//:usr/include/stdlib.h",
+    sysroot_files = "@linux_glibc_sysroot//:sysroot",
+    version_script = "@//third_party:backend_module.lds",
+)
+
+cc_library(
+    name = "ggml_base",
+    srcs = GGML_BASE_SOURCES,
+    hdrs = GGML_PUBLIC_HEADERS + COMMON_HEADERS,
+    defines = [
+        "GGML_COMMIT=\\\"c589f0ed10c643678c4707dd160c21ac7633ebc0\\\"",
+        "GGML_SCHED_MAX_COPIES=4",
+        "GGML_VERSION=\\\"0.22.0\\\"",
+        "_GNU_SOURCE",
+        "_XOPEN_SOURCE=600",
+    ],
+    includes = [
+        "ggml/include",
+        "ggml/src",
+    ],
+    linkopts = [
+        "-ldl",
+        "-lpthread",
+    ],
+)
+
+cc_library(
+    name = "ggml_cpu",
+    srcs = GGML_CPU_COMMON_SOURCES + GGML_CPU_ARCH_SOURCES,
+    hdrs = COMMON_HEADERS,
+    defines = [
+        "GGML_USE_CPU_REPACK",
+        "GGML_USE_LLAMAFILE",
+    ],
+    includes = [
+        "ggml/include",
+        "ggml/src",
+        "ggml/src/ggml-cpu",
+    ],
+    deps = [":ggml_base"],
+)
+
+cc_library(
+    name = "ggml",
+    srcs = [
+        "ggml/src/ggml-backend-dl.cpp",
+        "ggml/src/ggml-backend-reg.cpp",
+    ],
+    hdrs = GGML_PUBLIC_HEADERS + COMMON_HEADERS,
+    defines = ["GGML_USE_CPU"],
+    includes = [
+        "ggml/include",
+        "ggml/src",
+        "ggml/src/ggml-cpu",
+    ],
+    deps = [
+        ":ggml_base",
+        ":ggml_cpu",
+    ],
+)
+
+cc_library(
+    name = "llama",
+    srcs = LLAMA_SOURCES,
+    hdrs = ["include/llama.h"] + COMMON_HEADERS,
+    defines = [
+        "LLAMA_COMMIT=\\\"c589f0ed10c643678c4707dd160c21ac7633ebc0\\\"",
+        "LLAMA_VERSION=\\\"0.0.0\\\"",
+    ],
+    includes = [
+        "include",
+        "src",
+        "ggml/include",
+        "ggml/src",
+    ],
+    deps = [":ggml"],
 )

@@ -1,6 +1,8 @@
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
 load("@bazel_skylib//lib:selects.bzl", "selects")
 load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
@@ -12,9 +14,13 @@ load(
     "llama_cmake_options",
     "llama_cuda_cmake_options",
     "llama_rocm_cmake_options",
+    "llama_universal_cmake_options",
+    "payload_archive",
 )
 
 package(default_visibility = ["//visibility:public"])
+
+DIST_VERSION = "0.1"
 
 exports_files(["VERSION"])
 
@@ -73,6 +79,11 @@ config_setting(
 )
 
 config_setting(
+    name = "backend_cpu",
+    flag_values = {":backend": "cpu"},
+)
+
+config_setting(
     name = "backend_metal_explicit",
     flag_values = {":backend": "metal"},
 )
@@ -101,7 +112,7 @@ config_setting(
 )
 
 selects.config_setting_group(
-    name = "backend_rocm_auto",
+    name = "backend_universal",
     match_all = [
         ":backend_auto",
         ":target_linux_x86_64",
@@ -118,9 +129,15 @@ selects.config_setting_group(
 
 selects.config_setting_group(
     name = "backend_rocm",
+    match_any = [":backend_rocm_explicit"],
+)
+
+selects.config_setting_group(
+    name = "backend_dynamic",
     match_any = [
-        ":backend_rocm_auto",
-        ":backend_rocm_explicit",
+        ":backend_cuda",
+        ":backend_rocm",
+        ":backend_universal",
     ],
 )
 
@@ -135,6 +152,7 @@ selects.config_setting_group(
 cmake(
     name = "llama_cpp",
     cache_entries = select({
+        ":backend_universal": llama_universal_cmake_options(),
         ":backend_cuda": llama_cuda_cmake_options(),
         ":backend_rocm": llama_rocm_cmake_options(),
         ":backend_metal": llama_cmake_options(
@@ -148,6 +166,14 @@ cmake(
         "//conditions:default": llama_cmake_options(),
     }),
     build_data = select({
+        ":backend_universal": [
+            "@cuda_sdk//:nvcc",
+            "@cuda_sdk//:sdk",
+            "@cuda_host_toolchain//:host_toolchain",
+            "@rocm_sdk//:clang",
+            "@rocm_sdk//:sdk",
+            "//tools:cuda_host_compiler_wrapper.sh",
+        ],
         ":backend_cuda": [
             "@cuda_sdk//:nvcc",
             "@cuda_sdk//:sdk",
@@ -165,7 +191,9 @@ cmake(
     generate_args = ["-GNinja"],
     lib_source = "@llama_cpp//:all",
     set_file_prefix_map = True,
+    tags = ["manual"],
     out_static_libs = select({
+        ":backend_universal": [],
         ":backend_cuda": [],
         ":backend_rocm": [],
         ":backend_metal": [
@@ -184,23 +212,51 @@ cmake(
         ],
     }),
     out_shared_libs = select({
+        ":backend_universal": [
+            "libllama.so",
+            "libggml.so",
+            "libggml-base.so",
+        ],
         ":backend_cuda": [
             "libllama.so",
             "libggml.so",
             "libggml-base.so",
-            "libggml-cpu.so",
-            "libggml-cuda.so",
         ],
         ":backend_rocm": [
             "libllama.so",
             "libggml.so",
             "libggml-base.so",
-            "libggml-cpu.so",
-            "libggml-hip.so",
         ],
         ":backend_metal": [],
         "//conditions:default": [],
     }),
+    out_data_files = select({
+        ":backend_universal": [
+            "lib/libllm-cc-backend-cpu.so",
+            "lib/libllm-cc-backend-cuda.so",
+            "lib/libllm-cc-backend-rocm.so",
+        ],
+        ":backend_cuda": [
+            "lib/libllm-cc-backend-cpu.so",
+            "lib/libllm-cc-backend-cuda.so",
+        ],
+        ":backend_rocm": [
+            "lib/libllm-cc-backend-cpu.so",
+            "lib/libllm-cc-backend-rocm.so",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+# Linux uses the fine-grained native graph for every backend. The standalone
+# macOS Metal build keeps its static embedded-kernel CMake target.
+alias(
+    name = "llama",
+    actual = select({
+        ":backend_metal": ":llama_cpp",
+        "//conditions:default": "@llama_cpp//:llama",
+    }),
+    tags = ["manual"],
 )
 
 configure_make_variant(
@@ -243,6 +299,7 @@ configure_make_variant(
         "install_sw",
     ],
     toolchain = "@rules_foreign_cc//toolchains:built_make_toolchain",
+    visibility = ["//visibility:public"],
 )
 
 cmake(
@@ -255,16 +312,72 @@ cmake(
         "//conditions:default": curl_cmake_options(
             CURL_USE_OPENSSL = "ON",
             CURL_USE_SECTRANSP = "OFF",
+            OPENSSL_CRYPTO_LIBRARY = "$$EXT_BUILD_DEPS/openssl_/lib64/libcrypto.a",
+            OPENSSL_INCLUDE_DIR = "$$EXT_BUILD_DEPS/openssl_/include",
+            OPENSSL_ROOT_DIR = "$$EXT_BUILD_DEPS/openssl_",
+            OPENSSL_SSL_LIBRARY = "$$EXT_BUILD_DEPS/openssl_/lib64/libssl.a",
+            OPENSSL_USE_STATIC_LIBS = "ON",
         ),
     }),
     deps = select({
         ":host_macos": [],
-        "//conditions:default": [":openssl"],
+        "//conditions:default": [
+            ":openssl",
+        ],
     }),
     generate_args = ["-GNinja"],
     lib_source = "@curl//:all",
     out_static_libs = ["libcurl.a"],
     set_file_prefix_map = True,
+)
+
+cc_library(
+    name = "backend_policy",
+    srcs = ["src/backend_policy.cc"],
+    hdrs = ["src/backend.h"],
+)
+
+cc_library(
+    name = "payload_format",
+    hdrs = ["src/payload_format.h"],
+)
+
+cc_library(
+    name = "linux_compat",
+    srcs = ["src/linux_compat.cc"],
+)
+
+cc_library(
+    name = "backend_runtime",
+    srcs = ["src/backend.cc"],
+    hdrs = ["src/backend.h"],
+    defines = select({
+        ":backend_dynamic": ["LLM_CC_DYNAMIC_BACKENDS"],
+        ":backend_metal": ["LLM_CC_BUILTIN_GPU"],
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":backend_policy",
+        ":llama",
+        ":payload",
+    ],
+    tags = ["manual"],
+)
+
+cc_library(
+    name = "payload",
+    srcs = ["src/payload.cc"],
+    hdrs = [
+        "src/payload.h",
+        "src/payload_format.h",
+    ],
+    deps = select({
+        ":host_macos": [],
+        "//conditions:default": [
+            ":linux_compat",
+            ":openssl",
+        ],
+    }),
 )
 
 cc_library(
@@ -364,17 +477,20 @@ cc_library(
     srcs = ["src/score_cmd.cc"],
     hdrs = ["src/score_cmd.h"],
     defines = select({
+        ":backend_universal": ["LLMCC_BACKEND_UNIVERSAL"],
         ":backend_cuda": ["LLMCC_BACKEND_CUDA"],
         ":backend_rocm": ["LLMCC_BACKEND_ROCM"],
         ":backend_metal": ["LLMCC_BACKEND_METAL"],
         "//conditions:default": ["LLMCC_BACKEND_CPU"],
     }),
     deps = [
+        ":backend_runtime",
         ":inference_guard",
-        ":llama_cpp",
+        ":llama",
         ":scoring",
         ":version",
     ],
+    tags = ["manual"],
 )
 
 cc_library(
@@ -386,31 +502,54 @@ cc_library(
 cc_library(
     name = "test_util",
     hdrs = ["src/test_util.h"],
+    deps = select({
+        ":host_macos": [],
+        "//conditions:default": [":linux_compat"],
+    }),
 )
 
 cc_binary(
     name = "llm-cc",
     srcs = ["src/cli/main.cc"],
-    linkopts = select({
+    additional_linker_inputs = ["//third_party:ggml_backend_abi.list"],
+    data = select({
+        ":backend_universal": [
+            "@llama_cpp//:libllm-cc-backend-cuda.so",
+            "@llama_cpp//:libllm-cc-backend-rocm.so",
+            "@rocm_sdk//:runtime",
+        ],
         ":backend_cuda": [
-            "-ldl",
-            "-lpthread",
-            # DT_RPATH is intentionally transitive: vendor libraries have
-            # further dependencies in the same checksum-pinned SDK.
-            "-Wl,--disable-new-dtags",
-            "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+cuda_sdk_repository+cuda_sdk/sdk/lib",
-            "-Wl,-rpath,$$ORIGIN/../+cuda_sdk_repository+cuda_sdk/sdk/lib",
+            "@llama_cpp//:libllm-cc-backend-cuda.so",
         ],
         ":backend_rocm": [
+            "@llama_cpp//:libllm-cc-backend-rocm.so",
+            "@rocm_sdk//:runtime",
+        ],
+        "//conditions:default": [],
+    }),
+    linkopts = select({
+        ":backend_universal": [
             "-ldl",
             "-lpthread",
+            "-Wl,--dynamic-list=$(location //third_party:ggml_backend_abi.list)",
             "-Wl,--disable-new-dtags",
             "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib",
             "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib/llvm/lib",
             "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib/rocm_sysdeps/lib",
-            "-Wl,-rpath,$$ORIGIN/../+http_archive+rocm_sdk/lib",
-            "-Wl,-rpath,$$ORIGIN/../+http_archive+rocm_sdk/lib/llvm/lib",
-            "-Wl,-rpath,$$ORIGIN/../+http_archive+rocm_sdk/lib/rocm_sysdeps/lib",
+        ],
+        ":backend_cuda": [
+            "-ldl",
+            "-lpthread",
+            "-Wl,--dynamic-list=$(location //third_party:ggml_backend_abi.list)",
+        ],
+        ":backend_rocm": [
+            "-ldl",
+            "-lpthread",
+            "-Wl,--dynamic-list=$(location //third_party:ggml_backend_abi.list)",
+            "-Wl,--disable-new-dtags",
+            "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib",
+            "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib/llvm/lib",
+            "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib/rocm_sysdeps/lib",
         ],
         ":backend_metal": [
             "-framework Accelerate",
@@ -418,6 +557,11 @@ cc_binary(
             "-framework Metal",
             "-framework MetalKit",
             "-lobjc",
+        ],
+        ":backend_cpu": [
+            "-static",
+            "-ldl",
+            "-lpthread",
         ],
         "//conditions:default": ["-ldl", "-lpthread"],
     }),
@@ -432,21 +576,120 @@ cc_binary(
         ":project",
         ":score_cmd",
         ":version",
-    ] + select({
-        ":backend_cuda": ["@cuda_sdk//:runtime"],
-        ":backend_rocm": [
-            "@cuda_host_toolchain//x86_64-buildroot-linux-gnu/sysroot:runtime",
-            "@rocm_sdk//:runtime",
-        ],
-        "//conditions:default": [],
+    ],
+    tags = ["manual"],
+)
+
+cc_binary(
+    name = "llm-cc-release-base",
+    srcs = ["src/cli/main.cc"],
+    additional_linker_inputs = ["//third_party:ggml_backend_abi.list"],
+    linkopts = [
+        "-ldl",
+        "-lpthread",
+        "-Wl,--build-id=none",
+        "-Wl,--dynamic-list=$(location //third_party:ggml_backend_abi.list)",
+    ],
+    deps = [
+        ":analyze",
+        ":cache",
+        ":core",
+        ":download",
+        ":entropy_cache",
+        ":jsonl",
+        ":lang",
+        ":project",
+        ":score_cmd",
+        ":version",
+    ],
+    tags = ["manual"],
+    target_compatible_with = select({
+        ":backend_universal": [],
+        "//conditions:default": ["@platforms//:incompatible"],
     }),
+)
+
+filegroup(
+    name = "cpp_sources",
+    srcs = glob([
+        "src/**/*.cc",
+        "src/**/*.h",
+    ]) + ["//tools:cpp_sources"],
+)
+
+sh_test(
+    name = "format_test",
+    srcs = ["//tools:format_test.sh"],
+    args = [
+        "$(location @llvm_toolchain_llvm//:bin/clang-format)",
+        "$(location :.clang-format)",
+        "$(locations :cpp_sources)",
+    ],
+    data = [
+        ".clang-format",
+        ":cpp_sources",
+        "@llvm_toolchain_llvm//:bin/clang-format",
+    ],
+)
+
+build_test(
+    name = "starlark_test",
+    targets = [
+        ":backend_policy",
+        ":cache",
+        ":core",
+        ":jsonl",
+        ":lang",
+        ":scoring",
+    ],
 )
 
 install_launcher(
     name = "install",
-    binary = ":llm-cc",
+    binary = select({
+        ":backend_universal": "//dist:linux_x86_64_executable",
+        "//conditions:default": ":llm-cc",
+    }),
     script = "//tools:install.sh",
-    version_script = "//tools:version.sh",
+    tags = ["manual"],
+)
+
+alias(
+    name = "install_payload",
+    actual = "//dist:linux_x86_64",
+    tags = ["manual"],
+)
+
+alias(
+    name = "universal_archive",
+    actual = "//dist:linux_x86_64",
+    tags = ["manual"],
+)
+
+payload_archive(
+    name = "cpu_static_archive",
+    binary = ":llm-cc",
+    cuda_runtime = "@cuda_sdk//:runtime_files",
+    host_runtime = "@cuda_host_toolchain//x86_64-buildroot-linux-gnu/sysroot:runtime_files",
+    kind = "static",
+    llama = ":llama_cpp",
+    output_name = "llm-cc-%s-linux-x86_64-cpu-static.tar.gz" % DIST_VERSION,
+    rocm_runtime = "@rocm_sdk//:runtime_files",
+    root_name = "llm-cc-%s-linux-x86_64-cpu-static" % DIST_VERSION,
+    tags = ["manual"],
+    target_compatible_with = select({
+        ":backend_cpu": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
+cc_test(
+    name = "backend_test",
+    srcs = ["src/backend_test.cc"],
+    deps = [
+        ":backend_policy",
+        ":test_util",
+    ],
 )
 
 cc_test(
@@ -495,6 +738,7 @@ cc_test(
         ":test_util",
         "@nlohmann_json//:json",
     ],
+    tags = ["manual"],
 )
 
 cc_test(
@@ -547,6 +791,21 @@ cc_test(
 )
 
 cc_test(
+    name = "payload_integration_test",
+    srcs = ["src/payload_integration_test.cc"],
+    data = ["//dist:linux_x86_64_executable"],
+    deps = [
+        ":payload",
+        ":test_util",
+    ],
+    tags = ["manual"],
+    target_compatible_with = select({
+        ":backend_universal": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
+cc_test(
     name = "project_test",
     srcs = ["src/project_test.cc"],
     deps = [
@@ -559,4 +818,31 @@ cc_test(
     name = "scoring_test",
     srcs = ["src/scoring_test.cc"],
     deps = [":scoring"],
+)
+
+test_suite(
+    name = "unit",
+    tests = [
+        ":analyze_test",
+        ":backend_test",
+        ":cache_test",
+        ":core_test",
+        ":download_test",
+        ":entropy_cache_test",
+        ":format_test",
+        ":jsonl_test",
+        ":lang_test",
+        ":project_test",
+        ":scoring_test",
+        ":starlark_test",
+    ],
+)
+
+test_suite(
+    name = "integration",
+    tags = ["manual"],
+    tests = [
+        ":cli_test",
+        ":payload_integration_test",
+    ],
 )

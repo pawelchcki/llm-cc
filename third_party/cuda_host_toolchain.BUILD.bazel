@@ -1,4 +1,11 @@
+load("@rules_cc//cc:cc_import.bzl", "cc_import")
+
 package(default_visibility = ["//visibility:public"])
+
+cc_import(
+    name = "libstdcxx_static",
+    static_library = "x86_64-buildroot-linux-gnu/lib64/libstdc++.a",
+)
 
 filegroup(
     name = "gxx",
@@ -19,6 +26,23 @@ filegroup(
         "x86_64-buildroot-linux-gnu/include",
         "x86_64-buildroot-linux-gnu/lib",
         "x86_64-buildroot-linux-gnu/lib64",
+        "x86_64-buildroot-linux-gnu/sysroot",
+    ],
+)
+
+filegroup(
+    name = "sysroot_files",
+    srcs = ["//x86_64-buildroot-linux-gnu/sysroot:sysroot"],
+)
+
+filegroup(
+    name = "clang_cuda_host_files",
+    # CUDA's x86 headers reject libc++, so pinned Clang uses only the compact
+    # bundle's libstdc++ headers/runtime in its NVCC host phase. GCC itself is
+    # deliberately absent from this provider.
+    srcs = [
+        "lib/gcc/x86_64-buildroot-linux-gnu/12.3.0",
+        "x86_64-buildroot-linux-gnu/include/c++/12.3.0",
     ],
 )
 
