@@ -184,11 +184,27 @@ nlohmann::json AnalysisJson(const Analysis& analysis) {
   for (const Unit& unit : analysis.units) {
     units.push_back(UnitJson(unit));
   }
+  nlohmann::json lmcc_per_token = nullptr;
+  nlohmann::json density = nullptr;
+  nlohmann::json mean_entropy = nullptr;
+  if (analysis.metrics.token_count != 0) {
+    lmcc_per_token = analysis.metrics.lmcc_per_token;
+    density = analysis.metrics.density;
+    mean_entropy = analysis.metrics.mean_entropy;
+  }
   return {{"llm_cc", analysis.llm_cc},
           {"total_branch", analysis.total_branch},
           {"total_comp_level", analysis.total_comp_level},
           {"alpha", analysis.alpha},
           {"tau", analysis.tau},
+          {"token_count", analysis.metrics.token_count},
+          {"high_entropy_tokens", analysis.metrics.high_entropy_tokens},
+          {"lmcc_per_token", std::move(lmcc_per_token)},
+          {"density", std::move(density)},
+          {"mean_entropy", std::move(mean_entropy)},
+          {"tau_rule", analysis.tau_rule.kind == TauRule::Kind::kAbsolute
+                           ? "absolute"
+                           : "percentile"},
           {"units", std::move(units)}};
 }
 

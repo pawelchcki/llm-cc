@@ -19,9 +19,11 @@ has three entry points:
 3. `src/jsonl.cc` parses entropy records, reconstructs token bytes from
    `bytes_hex`, verifies contiguous positions and exact source coverage, and
    aligns entropy to preprocessed byte ranges.
-4. `src/core.cc` computes the interpolated entropy percentile, unions entropy
-   and structural boundaries, runs Algorithm 1 breadth-first, and aggregates
-   branching and compositional levels with `alpha`.
+4. `src/core.cc` applies an absolute tau by default (or resolves an explicitly
+   requested percentile), snaps entropy boundaries to source lines, unions
+   them with structural boundaries, and runs Algorithm 1 breadth-first. The
+   hierarchy has an implicit root at level 1, so emitted units begin at level
+   2; branching and compositional levels are then aggregated with `alpha`.
 5. Unit offsets are mapped back to the original source and emitted as pretty
    JSON. The top-level score field is `llm_cc`.
 

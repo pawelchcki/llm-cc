@@ -50,7 +50,8 @@ std::pair<std::uint64_t, std::uint64_t> Totals(std::span<const Unit> units) {
 }
 
 void ValidateInputs(std::span<const Token> tokens,
-                    std::span<const StructuralEvent> events) {
+                    std::span<const StructuralEvent> events,
+                    std::span<const std::size_t> line_starts) {
   std::size_t previous_end = 0;
   for (std::size_t i = 0; i < tokens.size(); ++i) {
     const Token& token = tokens[i];
@@ -67,6 +68,11 @@ void ValidateInputs(std::span<const Token> tokens,
         event.byte_offset > source_end) {
       throw AnalysisError("structural event range is invalid");
     }
+  }
+  if (!line_starts.empty() &&
+      (line_starts.front() != 0 || !std::ranges::is_sorted(line_starts) ||
+       std::ranges::adjacent_find(line_starts) != line_starts.end())) {
+    throw AnalysisError("line starts must begin at zero and be ascending");
   }
 }
 
@@ -94,10 +100,22 @@ std::optional<double> Percentile(std::span<const double> values,
                           (rank - static_cast<double>(lower)));
 }
 
+std::size_t TokenIndexAt(std::span<const Token> tokens, std::size_t byte) {
+  const auto iterator = std::ranges::partition_point(
+      tokens, [&](const Token& token) { return token.end_byte < byte; });
+  std::size_t index =
+      static_cast<std::size_t>(std::distance(tokens.begin(), iterator));
+  if (index < tokens.size() && tokens[index].start_byte < byte) {
+    ++index;
+  }
+  return index;
+}
+
 std::pair<double, std::vector<SemanticUnit>> DetectSemanticUnits(
     std::span<const Token> tokens,
-    std::span<const StructuralEvent> structural_events, double tau_percentile) {
-  ValidateInputs(tokens, structural_events);
+    std::span<const StructuralEvent> structural_events,
+    std::span<const std::size_t> line_starts, TauRule tau_rule) {
+  ValidateInputs(tokens, structural_events, line_starts);
   std::vector<double> entropy_values;
   for (const Token& token : tokens) {
     if (token.entropy.has_value()) {
@@ -107,28 +125,52 @@ std::pair<double, std::vector<SemanticUnit>> DetectSemanticUnits(
       entropy_values.push_back(*token.entropy);
     }
   }
-  const double tau = Percentile(entropy_values, tau_percentile).value_or(0.0);
+  double tau = tau_rule.value;
+  switch (tau_rule.kind) {
+    case TauRule::Kind::kAbsolute:
+      if (!std::isfinite(tau) || tau < 0.0) {
+        throw AnalysisError("absolute tau must be finite and non-negative");
+      }
+      break;
+    case TauRule::Kind::kPercentile:
+      tau = Percentile(entropy_values, tau_rule.value).value_or(0.0);
+      break;
+  }
   if (tokens.empty()) {
     return {tau, {}};
   }
 
-  std::set<std::size_t> boundaries = {0, tokens.size()};
-  for (std::size_t i = 1; i < tokens.size(); ++i) {
-    if (tokens[i].entropy.value_or(tau) > tau) {
-      boundaries.insert(i);
+  std::vector<std::size_t> first_token_on_line(tokens.size());
+  if (line_starts.empty()) {
+    for (std::size_t i = 0; i < tokens.size(); ++i) {
+      first_token_on_line[i] = i;
+    }
+  } else {
+    std::size_t line = 0;
+    std::size_t first_token = 0;
+    for (std::size_t i = 0; i < tokens.size(); ++i) {
+      while (line + 1 < line_starts.size() &&
+             line_starts[line + 1] <= tokens[i].start_byte) {
+        ++line;
+      }
+      while (first_token < i &&
+             tokens[first_token].start_byte < line_starts[line]) {
+        ++first_token;
+      }
+      first_token_on_line[i] = first_token;
     }
   }
-  for (const StructuralEvent& event : structural_events) {
-    const auto iterator = std::ranges::partition_point(
-        tokens,
-        [&](const Token& token) { return token.end_byte < event.byte_offset; });
-    std::size_t boundary =
-        static_cast<std::size_t>(std::distance(tokens.begin(), iterator));
-    if (boundary < tokens.size() &&
-        tokens[boundary].start_byte < event.byte_offset) {
-      ++boundary;
+
+  std::set<std::size_t> boundaries = {0, tokens.size()};
+  for (std::size_t i = 1; i < tokens.size(); ++i) {
+    if (tokens[i].entropy.has_value() && *tokens[i].entropy >= tau) {
+      boundaries.insert(first_token_on_line[i]);
     }
-    boundaries.insert(boundary);
+  }
+  // Structural boundaries deliberately remain token-granular, an extension
+  // over the reference implementation's entropy-only line snapping.
+  for (const StructuralEvent& event : structural_events) {
+    boundaries.insert(TokenIndexAt(tokens, event.byte_offset));
   }
 
   std::vector<std::size_t> indices(boundaries.begin(), boundaries.end());
@@ -166,7 +208,7 @@ std::vector<Unit> BuildHierarchy(std::span<const SemanticUnit> semantic_units) {
   std::vector<ArenaUnit> arena;
   for (const auto [first, end] :
        PartitionAtShallowest(semantic_units, 0, semantic_units.size())) {
-    arena.push_back({.first = first, .end = end, .level = 1, .children = {}});
+    arena.push_back({.first = first, .end = end, .level = 2, .children = {}});
   }
   std::vector<std::size_t> roots(arena.size());
   for (std::size_t i = 0; i < roots.size(); ++i) {
@@ -218,20 +260,46 @@ std::vector<Unit> BuildHierarchy(std::span<const SemanticUnit> semantic_units) {
 
 Analysis Analyze(std::span<const Token> tokens,
                  std::span<const StructuralEvent> structural_events,
-                 double tau_percentile, double alpha) {
+                 std::span<const std::size_t> line_starts, TauRule tau_rule,
+                 double alpha) {
   if (!std::isfinite(alpha) || alpha < 0.0 || alpha > 1.0) {
     throw AnalysisError("alpha must be finite and between 0 and 1");
   }
   auto [tau, semantic_units] =
-      DetectSemanticUnits(tokens, structural_events, tau_percentile);
+      DetectSemanticUnits(tokens, structural_events, line_starts, tau_rule);
   std::vector<Unit> units = BuildHierarchy(semantic_units);
-  const auto [branches, levels] = Totals(units);
-  return {.llm_cc = (alpha * static_cast<double>(branches)) +
-                    ((1.0 - alpha) * static_cast<double>(levels)),
+  auto [branches, levels] = Totals(units);
+  if (!units.empty()) {
+    branches += units.size();
+    levels += 1;
+  }
+  const double lmcc = (alpha * static_cast<double>(branches)) +
+                      ((1.0 - alpha) * static_cast<double>(levels));
+  Metrics metrics;
+  metrics.lmcc = lmcc;
+  for (const Token& token : tokens) {
+    if (token.entropy.has_value()) {
+      ++metrics.token_count;
+      metrics.entropy_sum += *token.entropy;
+      if (*token.entropy >= tau) {
+        ++metrics.high_entropy_tokens;
+      }
+    }
+  }
+  if (metrics.token_count != 0) {
+    const double token_count = static_cast<double>(metrics.token_count);
+    metrics.lmcc_per_token = metrics.lmcc / token_count;
+    metrics.density =
+        static_cast<double>(metrics.high_entropy_tokens) / token_count;
+    metrics.mean_entropy = metrics.entropy_sum / token_count;
+  }
+  return {.llm_cc = lmcc,
           .total_branch = branches,
           .total_comp_level = levels,
           .alpha = alpha,
           .tau = tau,
+          .metrics = metrics,
+          .tau_rule = tau_rule,
           .units = std::move(units)};
 }
 

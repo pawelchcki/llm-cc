@@ -1,3 +1,5 @@
+#include <sys/wait.h>
+
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -36,6 +38,24 @@ int Run(const std::string& command) {
 void Write(const std::filesystem::path& path, std::string_view contents) {
   std::ofstream output(path, std::ios::binary);
   output.write(contents.data(), static_cast<std::streamsize>(contents.size()));
+}
+
+std::vector<nlohmann::json> ReadEvents(const std::filesystem::path& path) {
+  std::istringstream lines(Read(path));
+  std::vector<nlohmann::json> events;
+  for (std::string line; std::getline(lines, line);) {
+    events.push_back(nlohmann::json::parse(line));
+  }
+  return events;
+}
+
+const nlohmann::json& FileEvent(const std::vector<nlohmann::json>& events) {
+  for (const nlohmann::json& event : events) {
+    if (event.value("type", "") == "file") {
+      return event;
+    }
+  }
+  throw std::runtime_error("file event not found");
 }
 
 }  // namespace
@@ -104,7 +124,8 @@ int main() {  // NOLINT(bugprone-exception-escape)
       fs::path(test_tmpdir) / "removed-option-error.txt";
   const std::string removed_option_command =
       Quote(binary) + " " + Quote(fixtures / "sample.rs") +
-      " --entropy-jsonl " + Quote(fixtures / "sample.jsonl") + " 2>" +
+      " --entropy-jsonl " +
+      Quote(fs::path(test_tmpdir) / "removed-entropy.jsonl") + " 2>" +
       Quote(removed_option_error);
   llmcc::test::Expect(Run(removed_option_command) != 0,
                       "removed entropy option is rejected");
@@ -178,7 +199,10 @@ int main() {  // NOLINT(bugprone-exception-escape)
                         "analysis test repository initialized");
   const fs::path source = repository / "source.rs";
   const fs::path fake_model = fs::path(test_tmpdir) / "fake.gguf";
-  Write(source, "fn main() { println!(\"cached\"); }\n");
+  Write(source,
+        "fn main() {\n"
+        "  println!(\"cached\");\n"
+        "}\n");
   Write(fake_model, "not model weights");
   const auto [preprocessed, offsets] =
       llmcc::StripComments(Read(source), llmcc::Language::kRust);
@@ -196,21 +220,31 @@ int main() {  // NOLINT(bugprone-exception-escape)
       fake_model,
       "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v1", backend,
       128U * 1024U);
+  const std::size_t first_newline = preprocessed.find('\n');
+  const std::size_t second_newline = preprocessed.find('\n', first_newline + 1);
   llmcc::WriteEntropyCache(
       repository, preprocessed, identity,
       std::vector<llmcc::EntropyRecord>{
-          {.position = 0, .bytes = preprocessed, .entropy = std::nullopt}});
+          {.position = 0,
+           .bytes = preprocessed.substr(0, 1),
+           .entropy = std::nullopt},
+          {.position = 1,
+           .bytes = preprocessed.substr(1, first_newline),
+           .entropy = 0.2},
+          {.position = 2,
+           .bytes = preprocessed.substr(first_newline + 1,
+                                        second_newline - first_newline),
+           .entropy = 1.2},
+          {.position = 3,
+           .bytes = preprocessed.substr(second_newline + 1),
+           .entropy = 0.4}});
   const fs::path analysis_output = fs::path(test_tmpdir) / "analysis.jsonl";
   const std::string analysis_command = Quote(binary) + " " + Quote(source) +
                                        " --model " + Quote(fake_model) + " >" +
                                        Quote(analysis_output);
   llmcc::test::ExpectEq(Run(analysis_command), 0,
                         "cache-only analysis succeeds without model load");
-  std::istringstream lines(Read(analysis_output));
-  std::vector<nlohmann::json> events;
-  for (std::string line; std::getline(lines, line);) {
-    events.push_back(nlohmann::json::parse(line));
-  }
+  const std::vector<nlohmann::json> events = ReadEvents(analysis_output);
   llmcc::test::ExpectEq(events.size(), std::size_t{5},
                         "analysis emits five JSONL events");
   llmcc::test::Expect(
@@ -220,8 +254,75 @@ int main() {  // NOLINT(bugprone-exception-escape)
       "analysis events are ordered");
   llmcc::test::Expect(events[3]["entropy_cache_hit"].get<bool>(),
                       "file reports entropy cache hit");
+  const nlohmann::json& file = events[3];
+  for (std::string_view field :
+       {"token_count", "high_entropy_tokens", "lmcc_per_token", "density",
+        "mean_entropy", "tau_rule", "score", "score_mode", "functions",
+        "hotspots"}) {
+    llmcc::test::Expect(file.contains(field),
+                        std::string("file contains ") + std::string(field));
+  }
+  llmcc::test::Expect(!file["functions"].empty(),
+                      "file includes function scores");
+  llmcc::test::Expect(!file["hotspots"].empty(),
+                      "file includes hotspot scores");
   llmcc::test::ExpectEq(events[4]["analyzed"].get<std::uint64_t>(),
                         std::uint64_t{1}, "totals report analyzed file");
+
+  const fs::path density_output = fs::path(test_tmpdir) / "density.jsonl";
+  llmcc::test::ExpectEq(
+      Run(analysis_command.substr(0, analysis_command.rfind('>')) +
+          "--score density >" + Quote(density_output)),
+      0, "density analysis succeeds");
+  const std::vector<nlohmann::json> density_events = ReadEvents(density_output);
+  const nlohmann::json& density_file = FileEvent(density_events);
+  llmcc::test::Expect(density_file["score_mode"] == "density" &&
+                          density_file["score"] == density_file["density"],
+                      "density selects the density headline");
+  nlohmann::json default_without_headline = file;
+  nlohmann::json density_without_headline = density_file;
+  default_without_headline.erase("score");
+  default_without_headline.erase("score_mode");
+  density_without_headline.erase("score");
+  density_without_headline.erase("score_mode");
+  for (nlohmann::json& function : default_without_headline["functions"]) {
+    function.erase("score");
+  }
+  for (nlohmann::json& function : density_without_headline["functions"]) {
+    function.erase("score");
+  }
+  llmcc::test::ExpectEq(density_without_headline, default_without_headline,
+                        "score mode changes only headline fields");
+
+  const fs::path text_output = fs::path(test_tmpdir) / "analysis.txt";
+  llmcc::test::ExpectEq(
+      Run(analysis_command.substr(0, analysis_command.rfind('>')) +
+          "--format text >" + Quote(text_output)),
+      0, "text analysis succeeds");
+  const std::string text_analysis = Read(text_output);
+  llmcc::test::Expect(text_analysis.find("  fn ") != std::string::npos,
+                      "text output contains a function line");
+  llmcc::test::Expect(text_analysis.find("  H=") != std::string::npos,
+                      "text output contains a hotspot line");
+
+  const fs::path no_hotspots_output =
+      fs::path(test_tmpdir) / "no-hotspots.jsonl";
+  llmcc::test::ExpectEq(
+      Run(analysis_command.substr(0, analysis_command.rfind('>')) +
+          "--hotspots 0 >" + Quote(no_hotspots_output)),
+      0, "zero-hotspot analysis succeeds");
+  llmcc::test::Expect(
+      !FileEvent(ReadEvents(no_hotspots_output)).contains("hotspots"),
+      "zero hotspots omits the array");
+
+  const fs::path conflicting_tau_error =
+      fs::path(test_tmpdir) / "conflicting-tau.txt";
+  const int conflicting_tau =
+      Run(Quote(binary) + " " + Quote(source) +
+          " --tau 0.5 --tau-percentile 90 2>" + Quote(conflicting_tau_error));
+  llmcc::test::Expect(
+      WIFEXITED(conflicting_tau) && WEXITSTATUS(conflicting_tau) == 2,
+      "conflicting tau options exit 2");
 
   const fs::path status_output = fs::path(test_tmpdir) / "status.json";
   llmcc::test::ExpectEq(

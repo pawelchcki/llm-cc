@@ -23,8 +23,22 @@ int main() {  // NOLINT(bugprone-exception-escape)
   }
   llmcc::test::Expect(mismatch, "byte mismatch rejected");
 
-  llmcc::Analysis analysis = llmcc::Analyze(tokens, {}, 67.0, 0.8);
+  llmcc::Analysis analysis = llmcc::Analyze(
+      tokens, {}, {},
+      {.kind = llmcc::TauRule::Kind::kPercentile, .value = 67.0}, 0.8);
   const nlohmann::json output = llmcc::AnalysisJson(analysis);
   llmcc::test::Expect(output.contains("llm_cc"), "renamed JSON score field");
+  llmcc::test::Expect(
+      output.contains("token_count") &&
+          output.contains("high_entropy_tokens") &&
+          output.contains("lmcc_per_token") && output.contains("density") &&
+          output.contains("mean_entropy") && output["tau_rule"] == "percentile",
+      "analysis JSON contains normalized metrics and tau rule");
+
+  const nlohmann::json empty = llmcc::AnalysisJson(llmcc::Analyze({}, {}));
+  llmcc::test::Expect(
+      empty["token_count"] == 0 && empty["lmcc_per_token"].is_null() &&
+          empty["density"].is_null() && empty["mean_entropy"].is_null(),
+      "empty normalized metrics are null");
   return 0;
 }

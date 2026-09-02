@@ -4,8 +4,10 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "src/test_util.h"
 
@@ -26,6 +28,31 @@ class FakeProvider : public llmcc::EntropyProvider {
 
  private:
   int& calls_;
+};
+
+class LineEntropyProvider : public llmcc::EntropyProvider {
+ public:
+  explicit LineEntropyProvider(std::vector<double> entropies)
+      : entropies_(std::move(entropies)) {}
+
+  std::vector<llmcc::EntropyRecord> Score(std::string_view source) override {
+    std::vector<llmcc::EntropyRecord> records;
+    std::size_t line = 0;
+    for (std::size_t i = 0; i < source.size(); ++i) {
+      records.push_back(
+          {.position = i,
+           .bytes = std::string(1, source[i]),
+           .entropy = i == 0 ? std::nullopt
+                             : std::optional<double>(entropies_.at(line))});
+      if (source[i] == '\n' && line + 1 < entropies_.size()) {
+        ++line;
+      }
+    }
+    return records;
+  }
+
+ private:
+  std::vector<double> entropies_;
 };
 
 }  // namespace
@@ -59,7 +86,9 @@ int main() {  // NOLINT(bugprone-exception-escape)
 
   int hit_factories = 0;
   llmcc::ProjectAnalyzer cached(
-      {.model = identity, .tau_percentile = 90.0, .alpha = 0.2},
+      {.model = identity,
+       .tau_rule = {.kind = llmcc::TauRule::Kind::kPercentile, .value = 90.0},
+       .alpha = 0.2},
       [&]() -> std::unique_ptr<llmcc::EntropyProvider> {
         ++hit_factories;
         throw std::runtime_error("cache-only run loaded scorer");
@@ -93,5 +122,60 @@ int main() {  // NOLINT(bugprone-exception-escape)
       "cache hit remains available after initialization failure");
   llmcc::test::ExpectEq(failing_factories, 1,
                         "failed scorer initialization is not retried");
+
+  const llmcc::DiscoveredSource namespace_source{
+      .path = repository / "namespace.cc",
+      .language = llmcc::Language::kCpp,
+      .repository = std::nullopt};
+  const std::string namespace_contents =
+      "namespace example {\n"
+      "int calculate() {\n"
+      "  return 1;\n"
+      "}\n"
+      "}\n";
+  llmcc::ProjectAnalyzer percentile_analyzer(
+      {.model = identity,
+       .tau_rule = {.kind = llmcc::TauRule::Kind::kPercentile, .value = 100.0},
+       .cache = false},
+      []() {
+        return std::make_unique<LineEntropyProvider>(
+            std::vector<double>{10.0, 1.0, 1.0, 1.0, 10.0, 10.0});
+      });
+  const auto namespace_result =
+      percentile_analyzer.AnalyzeFile(namespace_source, namespace_contents);
+  llmcc::test::ExpectEq(namespace_result.analysis.tau, 10.0,
+                        "file percentile resolves once");
+  llmcc::test::ExpectEq(namespace_result.functions.size(), std::size_t{1},
+                        "function nested in namespace is scored");
+  llmcc::test::ExpectEq(namespace_result.functions[0].name,
+                        std::string("calculate"), "nested function name");
+  llmcc::test::ExpectEq(
+      namespace_result.functions[0].metrics.high_entropy_tokens,
+      std::uint64_t{0}, "function uses file tau rather than own percentile");
+
+  const llmcc::DiscoveredSource commented_source{
+      .path = repository / "commented.cc",
+      .language = llmcc::Language::kCpp,
+      .repository = std::nullopt};
+  const std::string commented_contents =
+      "// a removed comment\n"
+      "int hot() {\n"
+      "  return 7;\n"
+      "}\n";
+  llmcc::ProjectAnalyzer hotspot_analyzer(
+      {.model = identity,
+       .tau_rule = {.kind = llmcc::TauRule::Kind::kAbsolute, .value = 5.0},
+       .cache = false,
+       .hotspots = 1},
+      []() {
+        return std::make_unique<LineEntropyProvider>(
+            std::vector<double>{0.1, 0.2, 9.0, 0.3, 0.1});
+      });
+  const auto hotspot_result =
+      hotspot_analyzer.AnalyzeFile(commented_source, commented_contents);
+  llmcc::test::ExpectEq(hotspot_result.hotspots.size(), std::size_t{1},
+                        "hotspot limit applied");
+  llmcc::test::ExpectEq(hotspot_result.hotspots[0].line, std::size_t{3},
+                        "comment stripping preserves hotspot line number");
   return 0;
 }
