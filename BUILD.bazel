@@ -467,6 +467,12 @@ cc_library(
 )
 
 cc_library(
+    name = "inference_guard",
+    srcs = ["src/inference_guard.cc"],
+    hdrs = ["src/inference_guard.h"],
+)
+
+cc_library(
     name = "score_cmd",
     srcs = ["src/score_cmd.cc"],
     hdrs = ["src/score_cmd.h"],
@@ -479,6 +485,7 @@ cc_library(
     }),
     deps = [
         ":backend_runtime",
+        ":inference_guard",
         ":llama",
         ":scoring",
         ":version",
@@ -749,6 +756,15 @@ cc_test(
     deps = [
         ":cache",
         ":download",
+        ":test_util",
+    ],
+)
+
+cc_test(
+    name = "inference_guard_test",
+    srcs = ["src/inference_guard_test.cc"],
+    deps = [
+        ":inference_guard",
         ":test_util",
     ],
 )

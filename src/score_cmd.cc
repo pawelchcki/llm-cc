@@ -30,6 +30,7 @@
 
 #include "generated/version.h"
 #include "src/backend.h"
+#include "src/inference_guard.h"
 #include "src/scoring.h"
 
 namespace {
@@ -358,6 +359,11 @@ std::optional<std::uint64_t> GpuAvailableMemory() {
 
 void CheckAvailableMemory(const Arguments& arguments, bool use_gpu,
                           const std::optional<std::uint64_t>& gpu_available) {
+  if (const auto warning = llmcc::CodexSandboxGpuWarning(
+          gpu_available, std::getenv("CODEX_SANDBOX"));
+      warning.has_value()) {
+    std::cerr << "warning: " << *warning << '\n';
+  }
   if (arguments.override_memory_check) {
     return;
   }
@@ -416,35 +422,37 @@ class BackendLogCapture {
   std::string errors_;
 };
 
-int Run(const Arguments& arguments, std::ostream& output,
-        std::ostream& diagnostics,
-        const std::optional<std::string>& input_override = std::nullopt) {
-  const std::string input =
-      input_override.has_value() ? *input_override : ReadInput(arguments);
-  BackendLogCapture backend_log;
-  llmcc::BackendRuntime backend(arguments.backend, arguments.gpu_layers);
-  const bool use_gpu = arguments.gpu_layers != 0;
-  const std::optional<std::uint64_t> gpu_available =
-      use_gpu ? GpuAvailableMemory() : std::nullopt;
-  CheckAvailableMemory(arguments, use_gpu, gpu_available);
+struct ScoreOptions {
+  BosMode bos;
+  std::uint32_t context_size;
+  std::int32_t threads;
+  bool entropy;
+  std::string_view context_option;
+};
 
-  llama_model_params model_parameters = llama_model_default_params();
-  model_parameters.n_gpu_layers = arguments.gpu_layers;
-  Model model(
-      llama_model_load_from_file(arguments.model.c_str(), model_parameters),
-      llama_model_free);
-  if (!model) {
-    const std::string detail = backend_log.Error();
-    throw std::runtime_error(
-        "could not load model: " + arguments.model.string() +
-        (detail.empty() ? std::string() : ": " + detail));
+void WriteSummary(std::ostream* diagnostics, std::size_t tokens,
+                  std::size_t scored, double negative_log_likelihood) {
+  if (diagnostics == nullptr) {
+    return;
   }
+  *diagnostics << "tokens=" << tokens << " scored=" << scored;
+  if (scored == 0) {
+    *diagnostics << " mean_nll=null perplexity=null\n";
+    return;
+  }
+  const double mean_nll = negative_log_likelihood / static_cast<double>(scored);
+  *diagnostics << std::setprecision(10) << " mean_nll=" << mean_nll
+               << " perplexity=" << std::exp(mean_nll) << '\n';
+}
 
-  const llama_vocab* vocabulary = llama_model_get_vocab(model.get());
+void ScoreInput(llama_model* model, BackendLogCapture& backend_log,
+                std::string_view input, const ScoreOptions& options,
+                std::ostream& output, std::ostream* diagnostics) {
+  const llama_vocab* vocabulary = llama_model_get_vocab(model);
   const bool prepend_bos =
-      arguments.bos == BosMode::kAlways ||
-      (arguments.bos == BosMode::kAuto && llama_vocab_get_add_bos(vocabulary));
-  std::vector<llama_token> tokens = Tokenize(vocabulary, input);
+      options.bos == BosMode::kAlways ||
+      (options.bos == BosMode::kAuto && llama_vocab_get_add_bos(vocabulary));
+  std::vector<llama_token> tokens = Tokenize(vocabulary, std::string(input));
   if (prepend_bos) {
     const llama_token bos_token = llama_vocab_bos(vocabulary);
     if (bos_token < 0) {
@@ -452,43 +460,37 @@ int Run(const Arguments& arguments, std::ostream& output,
     }
     tokens.insert(tokens.begin(), bos_token);
   }
-  if (tokens.empty()) {
-    diagnostics << "tokens=0 scored=0 mean_nll=null perplexity=null\n";
-    return 0;
-  }
-  if (tokens.size() > arguments.context_size) {
-    throw std::runtime_error(
-        "input token count " + std::to_string(tokens.size()) +
-        " exceeds --context-size " + std::to_string(arguments.context_size));
-  }
-
   const std::size_t first_observed = prepend_bos ? 1 : 0;
+  if (tokens.size() > options.context_size) {
+    throw std::runtime_error("input token count " +
+                             std::to_string(tokens.size()) + " exceeds " +
+                             std::string(options.context_option) + " " +
+                             std::to_string(options.context_size));
+  }
+  if (tokens.empty()) {
+    WriteSummary(diagnostics, 0, 0, 0.0);
+    return;
+  }
   if (!prepend_bos) {
-    const std::string piece = TokenPiece(vocabulary, tokens.front());
-    WriteNullScore(output, 0, tokens.front(), piece, arguments.entropy);
+    WriteNullScore(output, 0, tokens.front(),
+                   TokenPiece(vocabulary, tokens.front()), options.entropy);
   }
   if (tokens.size() == 1) {
-    diagnostics << "tokens=" << (tokens.size() - first_observed)
-                << " scored=0 mean_nll=null perplexity=null\n";
-    return 0;
+    WriteSummary(diagnostics, tokens.size() - first_observed, 0, 0.0);
+    return;
   }
 
   const std::size_t batch_size = std::min(kDecodeBatchSize, tokens.size() - 1);
-  llama_context_params context_parameters = llama_context_default_params();
-  // The option is an input limit, not a reason to reserve the entire KV cache
-  // for short inputs. Size the actual context to this invocation so the large
-  // default remains practical on memory-constrained accelerators.
-  context_parameters.n_ctx = static_cast<std::uint32_t>(tokens.size());
-  context_parameters.n_batch = static_cast<std::uint32_t>(batch_size);
-  context_parameters.n_ubatch = static_cast<std::uint32_t>(batch_size);
-  context_parameters.n_seq_max = 1;
-  context_parameters.n_outputs_max = static_cast<std::uint32_t>(batch_size);
-  context_parameters.n_outputs_max_per_seq =
-      static_cast<std::uint32_t>(batch_size);
-  context_parameters.n_threads = arguments.threads;
-  context_parameters.n_threads_batch = arguments.threads;
-  Context context(llama_init_from_model(model.get(), context_parameters),
-                  llama_free);
+  llama_context_params parameters = llama_context_default_params();
+  parameters.n_ctx = static_cast<std::uint32_t>(tokens.size());
+  parameters.n_batch = static_cast<std::uint32_t>(batch_size);
+  parameters.n_ubatch = static_cast<std::uint32_t>(batch_size);
+  parameters.n_seq_max = 1;
+  parameters.n_outputs_max = static_cast<std::uint32_t>(batch_size);
+  parameters.n_outputs_max_per_seq = static_cast<std::uint32_t>(batch_size);
+  parameters.n_threads = options.threads;
+  parameters.n_threads_batch = options.threads;
+  Context context(llama_init_from_model(model, parameters), llama_free);
   if (!context) {
     const std::string detail = backend_log.Error();
     throw std::runtime_error("could not create inference context" +
@@ -530,7 +532,6 @@ int Run(const Arguments& arguments, std::ostream& output,
       if (logits == nullptr) {
         throw std::runtime_error("model returned no logits");
       }
-
       const std::size_t target_index = source + index + 1;
       const llama_token target = tokens[target_index];
       if (target < 0 || target >= vocabulary_size) {
@@ -540,26 +541,48 @@ int Run(const Arguments& arguments, std::ostream& output,
       const llmcc::TokenScore score = llmcc::ScoreToken(
           std::span<const float>(logits,
                                  static_cast<std::size_t>(vocabulary_size)),
-          static_cast<std::size_t>(target), arguments.entropy);
-      const std::string piece = TokenPiece(vocabulary, target);
-      WriteScore(output, target_index - first_observed, target, piece, score,
-                 arguments.entropy);
+          static_cast<std::size_t>(target), options.entropy);
+      WriteScore(output, target_index - first_observed, target,
+                 TokenPiece(vocabulary, target), score, options.entropy);
       negative_log_likelihood -= score.log_probability;
       ++scored;
     }
   }
+  WriteSummary(diagnostics, tokens.size() - first_observed, scored,
+               negative_log_likelihood);
+}
 
-  if (scored == 0) {
-    diagnostics << "tokens=" << (tokens.size() - first_observed)
-                << " scored=0 mean_nll=null perplexity=null\n";
-  } else {
-    const double mean_nll =
-        negative_log_likelihood / static_cast<double>(scored);
-    diagnostics << std::setprecision(10)
-                << "tokens=" << (tokens.size() - first_observed)
-                << " scored=" << scored << " mean_nll=" << mean_nll
-                << " perplexity=" << std::exp(mean_nll) << '\n';
+int Run(const Arguments& arguments, std::ostream& output,
+        std::ostream& diagnostics,
+        const std::optional<std::string>& input_override = std::nullopt) {
+  const std::string input =
+      input_override.has_value() ? *input_override : ReadInput(arguments);
+  BackendLogCapture backend_log;
+  llmcc::BackendRuntime backend(arguments.backend, arguments.gpu_layers);
+  llmcc::InferenceGuard inference_guard(llmcc::BackendName(backend.selected()));
+  const bool use_gpu = arguments.gpu_layers != 0;
+  const std::optional<std::uint64_t> gpu_available =
+      use_gpu ? GpuAvailableMemory() : std::nullopt;
+  CheckAvailableMemory(arguments, use_gpu, gpu_available);
+
+  llama_model_params model_parameters = llama_model_default_params();
+  model_parameters.n_gpu_layers = arguments.gpu_layers;
+  Model model(
+      llama_model_load_from_file(arguments.model.c_str(), model_parameters),
+      llama_model_free);
+  if (!model) {
+    const std::string detail = backend_log.Error();
+    throw std::runtime_error(
+        "could not load model: " + arguments.model.string() +
+        (detail.empty() ? std::string() : ": " + detail));
   }
+  ScoreInput(model.get(), backend_log, input,
+             {.bos = arguments.bos,
+              .context_size = arguments.context_size,
+              .threads = arguments.threads,
+              .entropy = arguments.entropy,
+              .context_option = "--context-size"},
+             output, &diagnostics);
   return 0;
 }
 
@@ -572,6 +595,7 @@ class EntropyScorer::Impl {
   Impl(const std::filesystem::path& model_path,
        const InferenceOptions& inference_options)
       : backend_(inference_options.backend, inference_options.gpu_layers),
+        inference_guard_(BackendName(backend_.selected())),
         model_(nullptr, llama_model_free),
         context_limit_(inference_options.context_size),
         threads_(static_cast<std::int32_t>(
@@ -590,112 +614,32 @@ class EntropyScorer::Impl {
     parameters.n_gpu_layers = inference_options.gpu_layers;
     model_.reset(llama_model_load_from_file(model_path.c_str(), parameters));
     if (!model_) {
-      throw std::runtime_error("could not load model: " + model_path.string());
+      const std::string detail = backend_log_.Error();
+      throw std::runtime_error(
+          "could not load model: " + model_path.string() +
+          (detail.empty() ? std::string() : ": " + detail));
     }
-    vocabulary_ = llama_model_get_vocab(model_.get());
-    prepend_bos_ = llama_vocab_get_add_bos(vocabulary_);
   }
 
   std::string Score(std::string_view input) {
-    std::vector<llama_token> tokens = Tokenize(vocabulary_, std::string(input));
-    if (prepend_bos_) {
-      const llama_token bos = llama_vocab_bos(vocabulary_);
-      if (bos < 0) {
-        throw std::runtime_error("the model vocabulary has no BOS token");
-      }
-      tokens.insert(tokens.begin(), bos);
-    }
-    if (tokens.size() > context_limit_) {
-      throw std::runtime_error(
-          "input token count " + std::to_string(tokens.size()) +
-          " exceeds --context " + std::to_string(context_limit_));
-    }
     std::ostringstream output;
-    if (tokens.empty()) {
-      return output.str();
-    }
-    const std::size_t first_observed = prepend_bos_ ? 1 : 0;
-    if (!prepend_bos_) {
-      WriteNullScore(output, 0, tokens.front(),
-                     TokenPiece(vocabulary_, tokens.front()), true);
-    }
-    if (tokens.size() == 1) {
-      return output.str();
-    }
-    const std::size_t batch_size =
-        std::min(kDecodeBatchSize, tokens.size() - 1);
-    llama_context_params parameters = llama_context_default_params();
-    parameters.n_ctx = static_cast<std::uint32_t>(tokens.size());
-    parameters.n_batch = static_cast<std::uint32_t>(batch_size);
-    parameters.n_ubatch = static_cast<std::uint32_t>(batch_size);
-    parameters.n_seq_max = 1;
-    parameters.n_outputs_max = static_cast<std::uint32_t>(batch_size);
-    parameters.n_outputs_max_per_seq = static_cast<std::uint32_t>(batch_size);
-    parameters.n_threads = threads_;
-    parameters.n_threads_batch = threads_;
-    Context context(llama_init_from_model(model_.get(), parameters),
-                    llama_free);
-    if (!context) {
-      throw std::runtime_error("could not create inference context");
-    }
-    const std::int32_t vocabulary_size = llama_vocab_n_tokens(vocabulary_);
-    std::vector<llama_pos> positions(batch_size);
-    std::vector<std::int32_t> sequence_counts(batch_size, 1);
-    llama_seq_id sequence = 0;
-    std::vector<llama_seq_id*> sequences(batch_size, &sequence);
-    std::vector<std::int8_t> output_logits(batch_size, 1);
-    for (std::size_t source = 0; source + 1 < tokens.size();
-         source += batch_size) {
-      const std::size_t count =
-          std::min(batch_size, tokens.size() - 1 - source);
-      for (std::size_t index = 0; index < count; ++index) {
-        positions[index] = static_cast<llama_pos>(source + index);
-      }
-      llama_batch batch = {
-          .n_tokens = static_cast<std::int32_t>(count),
-          .token = tokens.data() + source,
-          .embd = nullptr,
-          .pos = positions.data(),
-          .n_seq_id = sequence_counts.data(),
-          .seq_id = sequences.data(),
-          .logits = output_logits.data(),
-      };
-      const int decode = llama_decode(context.get(), batch);
-      if (decode != 0) {
-        throw std::runtime_error("llama_decode failed at token " +
-                                 std::to_string(source) + " with code " +
-                                 std::to_string(decode));
-      }
-      for (std::size_t index = 0; index < count; ++index) {
-        float* logits = llama_get_logits_ith(context.get(),
-                                             static_cast<std::int32_t>(index));
-        if (!logits) {
-          throw std::runtime_error("model returned no logits");
-        }
-        const std::size_t target_index = source + index + 1;
-        const llama_token target = tokens[target_index];
-        if (target < 0 || target >= vocabulary_size) {
-          throw std::runtime_error(
-              "tokenizer produced a token outside the vocabulary");
-        }
-        const TokenScore score =
-            ScoreToken(std::span<const float>(
-                           logits, static_cast<std::size_t>(vocabulary_size)),
-                       static_cast<std::size_t>(target), true);
-        WriteScore(output, target_index - first_observed, target,
-                   TokenPiece(vocabulary_, target), score, true);
-      }
-    }
+    ScoreInput(model_.get(), backend_log_, input,
+               {.bos = BosMode::kAuto,
+                .context_size = context_limit_,
+                .threads = threads_,
+                .entropy = true,
+                .context_option = "--context"},
+               output, nullptr);
     return output.str();
   }
 
  private:
+  BackendLogCapture backend_log_;
   BackendRuntime backend_;
+  InferenceGuard inference_guard_;
   Model model_;
-  const llama_vocab* vocabulary_ = nullptr;
   std::uint32_t context_limit_;
   std::int32_t threads_;
-  bool prepend_bos_ = false;
 };
 
 EntropyScorer::EntropyScorer(const std::filesystem::path& model,
