@@ -145,6 +145,22 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::ExpectEq(comprehension_depths,
                         std::vector<std::size_t>({0, 1, 2}),
                         "Python comprehension clauses preserve nesting");
+  const std::vector<std::string_view> nested_comprehensions = {
+      "[[y for y in x] for x in xs]",
+      "{x: [y for y in x] for x in xs}",
+      "{[y for y in x] for x in xs}",
+      "([y for y in x] for x in xs)",
+  };
+  for (const std::string_view source : nested_comprehensions) {
+    const auto nested_events =
+        llmcc::StructuralEvents(source, llmcc::Language::kPython);
+    llmcc::test::ExpectEq(nested_events.size(), std::size_t{2},
+                          "nested Python comprehension has two loops");
+    llmcc::test::ExpectEq(nested_events.front().depth, std::size_t{1},
+                          "result comprehension is inside the outer loop");
+    llmcc::test::ExpectEq(nested_events.back().depth, std::size_t{0},
+                          "outer comprehension loop begins at parent depth");
+  }
   const auto exception_group_events =
       llmcc::StructuralEvents("try:\n    pass\nexcept* ValueError:\n    pass\n",
                               llmcc::Language::kPython);
@@ -175,10 +191,20 @@ int main() {  // NOLINT(bugprone-exception-escape)
                         "JavaScript conditional expression is structural");
   CheckStructure("testdata/lang/structure.cs", llmcc::Language::kCSharp, 18, 6);
   const auto csharp_query_events = llmcc::StructuralEvents(
-      "class Q { void M() { var q = from x in xs where x > 0 select x; } }",
+      "class Q { void M() { var q = from x in xs where x > 0 orderby x "
+      "select x; } }",
       llmcc::Language::kCSharp);
-  llmcc::test::ExpectEq(csharp_query_events.size(), std::size_t{6},
+  llmcc::test::ExpectEq(csharp_query_events.size(), std::size_t{7},
                         "C# query clauses are structural");
+  const auto csharp_deconstruction_foreach = llmcc::StructuralEvents(
+      "class Q { void M() { foreach (var (key, value) in pairs) {} } }",
+      llmcc::Language::kCSharp);
+  const auto csharp_regular_foreach = llmcc::StructuralEvents(
+      "class Q { void M() { foreach (var pair in pairs) {} } }",
+      llmcc::Language::kCSharp);
+  llmcc::test::ExpectEq(csharp_deconstruction_foreach.size(),
+                        csharp_regular_foreach.size(),
+                        "C# deconstruction foreach is structural");
   const auto filtered_catch = llmcc::StructuralEvents(
       "class Q { void M() { try {} catch (Exception e) when (P(e)) {} } }",
       llmcc::Language::kCSharp);

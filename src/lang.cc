@@ -326,11 +326,29 @@ void CollectStructuralEvents(TSNode node, Language language,
   const bool python_comprehension =
       language == Language::kPython &&
       HasKind(kPythonComprehensions, ts_node_type(node));
+  const TSNode comprehension_body =
+      python_comprehension
+          ? ts_node_child_by_field_name(node, "body", sizeof("body") - 1)
+          : TSNode{};
+  std::size_t comprehension_clause_count = 0;
+  if (python_comprehension) {
+    for (std::uint32_t i = 0; i < ts_node_child_count(node); ++i) {
+      const TSNode child = ts_node_child(node, i);
+      if (IsNodeType(child, "for_in_clause") ||
+          IsNodeType(child, "if_clause")) {
+        ++comprehension_clause_count;
+      }
+    }
+  }
   std::size_t comprehension_depth = child_depth;
   for (std::uint32_t i = 0; i < ts_node_child_count(node); ++i) {
     const TSNode child = ts_node_child(node, i);
-    CollectStructuralEvents(child, language, comprehension_depth,
-                            structural_kinds, events);
+    const std::size_t effective_depth =
+        python_comprehension && ts_node_eq(child, comprehension_body)
+            ? child_depth + comprehension_clause_count
+            : comprehension_depth;
+    CollectStructuralEvents(child, language, effective_depth, structural_kinds,
+                            events);
     if (python_comprehension && (IsNodeType(child, "for_in_clause") ||
                                  IsNodeType(child, "if_clause"))) {
       ++comprehension_depth;
