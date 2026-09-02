@@ -597,6 +597,12 @@ std::string TerminalSafe(std::string_view text) {
     safe.push_back(kHex[byte >> 4]);
     safe.push_back(kHex[byte & 0x0f]);
   };
+  const auto append_code_point = [&](std::uint32_t code_point) {
+    safe.append("\\u");
+    for (int shift = 12; shift >= 0; shift -= 4) {
+      safe.push_back(kHex[(code_point >> shift) & 0x0f]);
+    }
+  };
   for (std::size_t index = 0; index < text.size();) {
     const auto byte = static_cast<unsigned char>(text[index]);
     if (byte < 0x20 || byte == 0x7f) {
@@ -608,16 +614,6 @@ std::string TerminalSafe(std::string_view text) {
       safe.push_back(static_cast<char>(byte));
       ++index;
       continue;
-    }
-    if (byte == 0xc2 && index + 1 < text.size()) {
-      const auto second = static_cast<unsigned char>(text[index + 1]);
-      if (second >= 0x80 && second <= 0x9f) {
-        safe.append("\\u00");
-        safe.push_back(kHex[second >> 4]);
-        safe.push_back(kHex[second & 0x0f]);
-        index += 2;
-        continue;
-      }
     }
     std::size_t length = 0;
     if (byte >= 0xc2 && byte <= 0xdf) {
@@ -645,6 +641,22 @@ std::string TerminalSafe(std::string_view text) {
     if (!valid) {
       append_byte(byte);
       ++index;
+      continue;
+    }
+    std::uint32_t code_point = byte & (length == 2   ? 0x1f
+                                       : length == 3 ? 0x0f
+                                                     : 0x07);
+    for (std::size_t offset = 1; offset < length; ++offset) {
+      code_point = (code_point << 6) |
+                   (static_cast<unsigned char>(text[index + offset]) & 0x3f);
+    }
+    const bool bidi_control = code_point == 0x061c || code_point == 0x200e ||
+                              code_point == 0x200f ||
+                              (code_point >= 0x202a && code_point <= 0x202e) ||
+                              (code_point >= 0x2066 && code_point <= 0x206f);
+    if ((code_point >= 0x80 && code_point <= 0x9f) || bidi_control) {
+      append_code_point(code_point);
+      index += length;
       continue;
     }
     safe.append(text.substr(index, length));

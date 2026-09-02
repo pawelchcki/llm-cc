@@ -220,7 +220,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
   Write(source,
         "fn main() {\n"
         "  println!(\"cached\x1b[31m\xc2\x9b"
-        "31m\"); // café \rforged\n"
+        "31m\xe2\x80\xae\"); // café \rforged\n"
         "}\n");
   Write(fake_model, "not model weights");
   const auto [preprocessed, offsets] =
@@ -347,14 +347,17 @@ int main() {  // NOLINT(bugprone-exception-escape)
                       "text output contains a function line");
   llmcc::test::Expect(text_analysis.find("  H=") != std::string::npos,
                       "text output contains a hotspot line");
-  llmcc::test::Expect(text_analysis.find('\x1b') == std::string::npos &&
-                          text_analysis.find('\r') == std::string::npos &&
-                          text_analysis.find("\xc2\x9b") == std::string::npos &&
-                          text_analysis.find("\\x1B") != std::string::npos &&
-                          text_analysis.find("\\x0D") != std::string::npos &&
-                          text_analysis.find("\\u009B") != std::string::npos &&
-                          text_analysis.find("café") != std::string::npos,
-                      "text hotspots escape terminal control bytes");
+  llmcc::test::Expect(
+      text_analysis.find('\x1b') == std::string::npos &&
+          text_analysis.find('\r') == std::string::npos &&
+          text_analysis.find("\xc2\x9b") == std::string::npos &&
+          text_analysis.find("\xe2\x80\xae") == std::string::npos &&
+          text_analysis.find("\\x1B") != std::string::npos &&
+          text_analysis.find("\\x0D") != std::string::npos &&
+          text_analysis.find("\\u009B") != std::string::npos &&
+          text_analysis.find("\\u202E") != std::string::npos &&
+          text_analysis.find("café") != std::string::npos,
+      "text hotspots escape terminal control bytes");
 
   const fs::path unsafe_source = repository / std::string("unsafe\x1b[31m.rs");
   Write(unsafe_source, "fn unsafe_source() {}\n");
