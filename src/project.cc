@@ -96,7 +96,6 @@ bool GeneratedDirectory(std::string_view name) {
                                                    "out",
                                                    "bin",
                                                    "obj",
-                                                   "packages",
                                                    ".nuget",
                                                    "dist",
                                                    "deps",
