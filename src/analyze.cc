@@ -90,8 +90,8 @@ FileAnalysisResult ProjectAnalyzer::AnalyzeFile(const DiscoveredSource& source,
         std::max(function_tokens.front().start_byte, function.start_byte);
     std::vector<StructuralEvent> function_events;
     for (const StructuralEvent& event : events) {
-      if (event.scope_start >= function_tokens.front().start_byte &&
-          event.byte_offset <= function_tokens.back().end_byte) {
+      if (event.scope_start >= function.start_byte &&
+          event.byte_offset <= function.end_byte) {
         function_events.push_back(event);
       }
     }

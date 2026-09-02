@@ -57,7 +57,8 @@ class LineEntropyProvider : public llmcc::EntropyProvider {
 
 class FunctionBoundaryProvider : public llmcc::EntropyProvider {
  public:
-  explicit FunctionBoundaryProvider(bool overlap) : overlap_(overlap) {}
+  FunctionBoundaryProvider(bool overlap_start, bool overlap_end)
+      : overlap_start_(overlap_start), overlap_end_(overlap_end) {}
 
   std::vector<llmcc::EntropyRecord> Score(std::string_view source) override {
     constexpr std::string_view kExpected =
@@ -66,14 +67,15 @@ class FunctionBoundaryProvider : public llmcc::EntropyProvider {
         "  f() {\n"
         "    return 1;\n"
         "  }\n"
+        "  int g() { return 2; }\n"
         "};\n";
     llmcc::test::ExpectEq(source, kExpected, "boundary fixture source");
     const std::size_t function_start = source.find("int");
     const std::size_t first_line_end = source.find('\n', function_start) + 1;
     const std::size_t second_line_end = source.find('\n', first_line_end) + 1;
     const std::size_t function_end = source.find('}', second_line_end) + 1;
-    const std::size_t first_token = function_start - (overlap_ ? 1 : 0);
-    return {
+    const std::size_t first_token = function_start - (overlap_start_ ? 1 : 0);
+    std::vector<llmcc::EntropyRecord> records = {
         {.position = 0,
          .bytes = std::string(source.substr(0, first_token)),
          .entropy = std::nullopt},
@@ -86,17 +88,22 @@ class FunctionBoundaryProvider : public llmcc::EntropyProvider {
              source.substr(first_line_end, second_line_end - first_line_end)),
          .entropy = 2.0},
         {.position = 3,
-         .bytes = std::string(
-             source.substr(second_line_end, function_end - second_line_end)),
+         .bytes = std::string(source.substr(
+             second_line_end,
+             (overlap_end_ ? source.size() : function_end) - second_line_end)),
          .entropy = 3.0},
-        {.position = 4,
-         .bytes = std::string(source.substr(function_end)),
-         .entropy = 0.1},
     };
+    if (!overlap_end_) {
+      records.push_back({.position = 4,
+                         .bytes = std::string(source.substr(function_end)),
+                         .entropy = 0.1});
+    }
+    return records;
   }
 
  private:
-  bool overlap_;
+  bool overlap_start_;
+  bool overlap_end_;
 };
 
 }  // namespace
@@ -232,14 +239,15 @@ int main() {  // NOLINT(bugprone-exception-escape)
       "  f() {\n"
       "    return 1;\n"
       "  }\n"
+      "  int g() { return 2; }\n"
       "};\n";
   llmcc::ProjectAnalyzer boundary_analyzer(
       {.model = identity, .cache = false},
-      []() { return std::make_unique<FunctionBoundaryProvider>(true); });
+      []() { return std::make_unique<FunctionBoundaryProvider>(true, true); });
   const auto boundary_result =
       boundary_analyzer.AnalyzeFile(boundary_source, boundary_contents);
-  llmcc::test::ExpectEq(boundary_result.functions.size(), std::size_t{1},
-                        "indented function is scored");
+  llmcc::test::ExpectEq(boundary_result.functions.size(), std::size_t{2},
+                        "indented functions are scored");
   llmcc::test::ExpectEq(boundary_result.functions[0].metrics.token_count,
                         std::uint64_t{3},
                         "function includes token overlapping its start");
@@ -247,11 +255,19 @@ int main() {  // NOLINT(bugprone-exception-escape)
                         "overlapping token contributes to function metrics");
   llmcc::ProjectAnalyzer aligned_boundary_analyzer(
       {.model = identity, .cache = false},
-      []() { return std::make_unique<FunctionBoundaryProvider>(false); });
+      []() { return std::make_unique<FunctionBoundaryProvider>(false, true); });
   const auto aligned_boundary_result =
       aligned_boundary_analyzer.AnalyzeFile(boundary_source, boundary_contents);
   llmcc::test::ExpectEq(boundary_result.functions[0].metrics,
                         aligned_boundary_result.functions[0].metrics,
                         "overlapping token has aligned function structure");
+  llmcc::ProjectAnalyzer bounded_boundary_analyzer(
+      {.model = identity, .cache = false},
+      []() { return std::make_unique<FunctionBoundaryProvider>(true, false); });
+  const auto bounded_boundary_result =
+      bounded_boundary_analyzer.AnalyzeFile(boundary_source, boundary_contents);
+  llmcc::test::ExpectEq(boundary_result.functions[0].metrics,
+                        bounded_boundary_result.functions[0].metrics,
+                        "trailing token excludes adjacent function structure");
   return 0;
 }
