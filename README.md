@@ -114,12 +114,14 @@ Analysis options are:
 --tau-percentile N
 --hotspots N
 --format jsonl|text
+--progress auto|always|never
 --alpha N
 ```
 
 Automatic detection recognizes `.rs`; `.c`; C/C++ headers and `.cc`, `.cpp`,
-`.cxx`, `.c++`; `.java`; `.py`, `.pyw`, `.pyi`; `.go`; `.js`, `.mjs`, `.cjs`;
-and `.cs`, `.csx`. In addition to the canonical `--lang` names above, `c++`,
+`.cxx`, `.c++`; CUDA `.cu` sources and `.cuh` headers through the C++ grammar;
+`.java`; `.py`, `.pyw`, `.pyi`; `.go`; `.js`, `.mjs`, `.cjs`; and `.cs`,
+`.csx`. In addition to the canonical `--lang` names above, `c++`,
 `py`, `golang`, `js`, `node`, `nodejs`, `node.js`, `cs`, and `c#` are accepted
 as aliases. JavaScript support is for Node.js runtime files only; JSX and all
 TypeScript variants are intentionally excluded.
@@ -172,6 +174,13 @@ event order is:
 3. Zero or more `warning` events.
 4. A `file_start`, then either `file` or `error`, for each source.
 5. `totals` with additive project metrics, per-language totals, and `partial`.
+
+Consumers must wait for exit status zero and a terminal `totals` event with
+`partial == false`, then aggregate every `file` event. A `file_start`, a
+truncated stream, or an early file with no matching functions is not a complete
+project result. `--progress always` writes throttled model, file, cache, and
+token progress to stderr while leaving stdout JSONL unchanged; `auto` enables
+it only when stderr is a terminal.
 
 A `file` event retains `llm_cc`, `total_branch`, `total_comp_level`, `alpha`,
 `tau`, and the complete `units` hierarchy. It also contains normalized metrics,
@@ -274,14 +283,21 @@ JSONL parse or subprocess is involved. One model is loaded per analyzer
 invocation, on the first entropy cache miss. Misses share a bounded reusable
 inference context; an all-hit invocation never loads model weights.
 
-## Repository entropy cache
+## Repository-scoped entropy cache
 
-Within each containing Git repository, token bytes and entropy values are
-stored as versioned CBOR under:
+Token bytes and entropy values are stored as versioned CBOR in a per-worktree
+bucket outside the analyzed repository. The base directory follows this
+precedence:
 
 ```text
-.llm-cc-cache/llm-cc/v1/entropy/
+$LLM_CC_ENTROPY_CACHE_DIR
+$XDG_CACHE_HOME/llm-cc/entropy
+$HOME/.cache/llm-cc/entropy
 ```
+
+Each canonical worktree root hashes to an independent `HASH/v1/entropy/`
+bucket, including linked worktrees. Analysis never modifies `.gitignore`,
+`.git/info/exclude`, Git configuration, or the source tree.
 
 Non-Git inputs are analyzed without this cache and produce a warning. Cache
 keys cover the SHA-256 of prepared source, canonical model path, model
@@ -293,7 +309,7 @@ from cached entropy.
 
 Reads validate that token bytes cover the complete preprocessed source.
 Corrupt entries become misses, writes use same-directory atomic replacement,
-and cache-directory symlinks are never followed. Hits update entry timestamps
+and owned cache-directory symlinks are never followed. Hits update entry timestamps
 for LRU accounting. Cleanup runs at most daily: entries unused for seven days
 are removed, then the oldest entries are evicted until the repository cache is
 at most 512 MiB.
@@ -305,9 +321,16 @@ default):
 llm-cc cache status [PATH] [--format text|json]
 llm-cc cache prune  [PATH] [--format text|json]
 llm-cc cache clear  [PATH] [--format text|json]
+llm-cc cache clear  [PATH] --legacy [--format text|json]
 ```
 
-`clear` removes only the `llm-cc` namespace below `.llm-cc-cache`.
+Status separates active and legacy entry counts and reports storage version,
+the current inference ABI, recorded ABI groups, unknown-provenance entries, and
+malformed entries. Cache storage format and inference ABI are independent:
+an ABI upgrade correctly misses incompatible entries. Exact current-key hits
+in the former repository-local `.llm-cc-cache/llm-cc/v1/entropy/` location are
+migrated without touching the legacy file. `clear` removes the external bucket;
+`clear --legacy` additionally removes only that legacy `llm-cc` namespace.
 
 ## Hermetic Linux build
 

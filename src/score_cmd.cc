@@ -540,6 +540,7 @@ struct ScoreOptions {
   std::uint32_t batch_size;
   bool device_reduction;
   std::string_view context_option;
+  const std::function<void(std::size_t, std::size_t)>* progress = nullptr;
 };
 
 void WriteSummary(std::ostream* diagnostics, std::size_t tokens,
@@ -603,6 +604,11 @@ void ScoreInput(llama_model* model, BackendLogCapture& backend_log,
     WriteSummary(diagnostics, tokens.size() - first_observed, 0, 0.0,
                  options.device_reduction);
     return;
+  }
+
+  const std::size_t total_scored_tokens = tokens.size() - 1;
+  if (options.progress != nullptr && *options.progress) {
+    (*options.progress)(0, total_scored_tokens);
   }
 
   const std::size_t batch_size =
@@ -777,6 +783,9 @@ void ScoreInput(llama_model* model, BackendLogCapture& backend_log,
       negative_log_likelihood -= score.log_probability;
       ++scored;
     }
+    if (options.progress != nullptr && *options.progress) {
+      (*options.progress)(scored, total_scored_tokens);
+    }
   }
   WriteSummary(diagnostics, tokens.size() - first_observed, scored,
                negative_log_likelihood, options.device_reduction);
@@ -833,7 +842,8 @@ int Run(const Arguments& arguments, std::ostream& output,
               .entropy = arguments.entropy,
               .batch_size = arguments.batch_size,
               .device_reduction = device_reduction,
-              .context_option = "--context-size"},
+              .context_option = "--context-size",
+              .progress = nullptr},
              &output, nullptr, &diagnostics, context, context_capacity, sampler,
              device_state);
   return 0;
@@ -853,6 +863,7 @@ class EntropyScorer::Impl {
         context_(nullptr, llama_free),
         context_limit_(inference_options.context_size),
         batch_size_(inference_options.batch_size),
+        progress_(inference_options.progress),
         threads_(static_cast<std::int32_t>(
             std::max(1U, std::thread::hardware_concurrency()))) {
     Arguments arguments;
@@ -898,7 +909,8 @@ class EntropyScorer::Impl {
                   .entropy = true,
                   .batch_size = batch_size_,
                   .device_reduction = device_reduction_,
-                  .context_option = "--context"},
+                  .context_option = "--context",
+                  .progress = &progress_},
                  &output, nullptr, nullptr, context_, context_capacity_,
                  sampler_, device_state_);
     } catch (...) {
@@ -920,7 +932,8 @@ class EntropyScorer::Impl {
                   .entropy = true,
                   .batch_size = batch_size_,
                   .device_reduction = device_reduction_,
-                  .context_option = "--context"},
+                  .context_option = "--context",
+                  .progress = &progress_},
                  nullptr, &records, nullptr, context_, context_capacity_,
                  sampler_, device_state_);
     } catch (...) {
@@ -942,6 +955,7 @@ class EntropyScorer::Impl {
   Context context_;
   std::uint32_t context_limit_;
   std::uint32_t batch_size_;
+  std::function<void(std::size_t, std::size_t)> progress_;
   std::uint32_t context_capacity_ = 0;
   bool device_reduction_ = false;
   std::int32_t threads_;

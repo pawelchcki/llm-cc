@@ -418,6 +418,10 @@ int main() {  // NOLINT(bugprone-exception-escape)
                           language, "canonical language name round trips");
   }
   const std::vector<std::pair<std::string_view, llmcc::Language>> extensions = {
+      {"source.c", llmcc::Language::kC},
+      {"source.h", llmcc::Language::kC},
+      {"kernel.cu", llmcc::Language::kCpp},
+      {"kernel.cuh", llmcc::Language::kCpp},
       {"Source.java", llmcc::Language::kJava},
       {"source.py", llmcc::Language::kPython},
       {"source.pyw", llmcc::Language::kPython},
@@ -433,6 +437,18 @@ int main() {  // NOLINT(bugprone-exception-escape)
     llmcc::test::ExpectEq(llmcc::InferLanguage(path), language,
                           "source extension is inferred");
   }
+  llmcc::test::Expect(llmcc::IsSourcePath("kernel.cu", false) &&
+                          !llmcc::IsSourcePath("kernel.cuh", false) &&
+                          llmcc::IsSourcePath("kernel.cuh", true),
+                      "CUDA source and header discovery is classified");
+  const auto cuda = llmcc::PrepareSource(
+      "__global__ void tiny(int *out) { *out = threadIdx.x; }\n"
+      "void launch(int *out) { tiny<<<1, 1>>>(out); }\n",
+      llmcc::Language::kCpp);
+  llmcc::test::Expect(
+      cuda.functions.size() == 2 && cuda.functions[0].name == "tiny" &&
+          cuda.functions[1].name == "launch",
+      "CUDA kernel and launch syntax use C++ function extraction");
   llmcc::test::Expect(!llmcc::IsSourcePath("component.jsx", false) &&
                           !llmcc::IsSourcePath("component.ts", false) &&
                           !llmcc::IsSourcePath("component.tsx", false) &&

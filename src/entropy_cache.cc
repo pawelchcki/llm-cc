@@ -5,6 +5,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <limits>
 #include <nlohmann/json.hpp>
@@ -16,7 +17,12 @@ namespace llmcc {
 namespace {
 
 using Clock = std::chrono::system_clock;
-constexpr std::string_view kNamespace = ".llm-cc-cache/llm-cc";
+constexpr std::string_view kLegacyNamespace = ".llm-cc-cache/llm-cc";
+
+struct CacheLocation {
+  std::filesystem::path base;
+  std::filesystem::path directory;
+};
 
 constexpr std::array<std::uint32_t, 64> kShaConstants = {
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1,
@@ -44,10 +50,50 @@ std::uint64_t EpochSeconds() {
                        .count());
 }
 
-void CheckCachePath(const std::filesystem::path& repository) {
-  std::filesystem::path path = repository;
-  for (std::string_view component :
-       {".llm-cc-cache", "llm-cc", "v1", "entropy"}) {
+std::filesystem::path EntropyCacheBaseDirectory() {
+  if (const char* override = std::getenv("LLM_CC_ENTROPY_CACHE_DIR");
+      override != nullptr && *override != '\0') {
+    return override;
+  }
+  if (const char* xdg = std::getenv("XDG_CACHE_HOME");
+      xdg != nullptr && *xdg != '\0') {
+    return std::filesystem::path(xdg) / "llm-cc/entropy";
+  }
+  if (const char* home = std::getenv("HOME");
+      home != nullptr && *home != '\0') {
+    return std::filesystem::path(home) / ".cache/llm-cc/entropy";
+  }
+  throw std::runtime_error(
+      "cannot determine entropy cache directory; set "
+      "LLM_CC_ENTROPY_CACHE_DIR");
+}
+
+CacheLocation ActiveLocation(const std::filesystem::path& repository) {
+  const auto base = EntropyCacheBaseDirectory();
+  std::error_code error;
+  auto canonical = std::filesystem::weakly_canonical(repository, error);
+  if (error) {
+    canonical = repository.lexically_normal();
+  }
+  return {
+      .base = base,
+      .directory = base / Sha256Hex(canonical.generic_string()) / "v1/entropy"};
+}
+
+CacheLocation LegacyLocation(const std::filesystem::path& repository) {
+  return {.base = repository,
+          .directory = repository / kLegacyNamespace / "v1/entropy"};
+}
+
+void CheckCachePath(const CacheLocation& location) {
+  const auto relative = location.directory.lexically_relative(location.base);
+  if (relative.empty() || relative.is_absolute() ||
+      (!relative.empty() && *relative.begin() == "..")) {
+    throw std::runtime_error("invalid entropy cache path " +
+                             location.directory.string());
+  }
+  std::filesystem::path path = location.base;
+  for (const auto& component : relative) {
     path /= component;
     std::error_code error;
     const auto status = std::filesystem::symlink_status(path, error);
@@ -62,21 +108,21 @@ void CheckCachePath(const std::filesystem::path& repository) {
   }
 }
 
-void EnsureCacheDirectory(const std::filesystem::path& repository) {
-  CheckCachePath(repository);
-  const auto directory = RepositoryCacheDirectory(repository);
+void EnsureCacheDirectory(const CacheLocation& location) {
+  CheckCachePath(location);
   std::error_code error;
-  std::filesystem::create_directories(directory, error);
+  std::filesystem::create_directories(location.directory, error);
   if (error) {
     throw std::runtime_error("cannot create entropy cache " +
-                             directory.string() + ": " + error.message());
+                             location.directory.string() + ": " +
+                             error.message());
   }
-  CheckCachePath(repository);
+  CheckCachePath(location);
 }
 
-std::filesystem::path EntryPath(const std::filesystem::path& repository,
+std::filesystem::path EntryPath(const CacheLocation& location,
                                 std::string_view key) {
-  return RepositoryCacheDirectory(repository) / (std::string(key) + ".cbor");
+  return location.directory / (std::string(key) + ".cbor");
 }
 
 void Touch(const std::filesystem::path& path) {
@@ -91,11 +137,10 @@ struct EntryInfo {
   std::filesystem::file_time_type used;
 };
 
-std::vector<EntryInfo> Entries(const std::filesystem::path& repository) {
-  CheckCachePath(repository);
-  const auto directory = RepositoryCacheDirectory(repository);
+std::vector<EntryInfo> Entries(const CacheLocation& location) {
+  CheckCachePath(location);
   std::error_code error;
-  if (!std::filesystem::exists(directory, error)) {
+  if (!std::filesystem::exists(location.directory, error)) {
     if (error) {
       throw std::runtime_error("cannot inspect entropy cache: " +
                                error.message());
@@ -103,8 +148,11 @@ std::vector<EntryInfo> Entries(const std::filesystem::path& repository) {
     return {};
   }
   std::vector<EntryInfo> result;
-  for (const auto& entry : std::filesystem::directory_iterator(directory)) {
-    if (!entry.is_regular_file(error) || error ||
+  for (const auto& entry :
+       std::filesystem::directory_iterator(location.directory)) {
+    const auto status = entry.symlink_status(error);
+    if (error || std::filesystem::is_symlink(status) ||
+        !std::filesystem::is_regular_file(status) ||
         entry.path().extension() != ".cbor") {
       error.clear();
       continue;
@@ -183,9 +231,37 @@ std::vector<EntropyRecord> Decode(const nlohmann::json& value,
   return records;
 }
 
+std::optional<std::vector<EntropyRecord>> ReadEntry(
+    const CacheLocation& location, std::string_view key,
+    std::string_view source, bool touch) {
+  CheckCachePath(location);
+  const auto path = EntryPath(location, key);
+  std::error_code error;
+  const auto status = std::filesystem::symlink_status(path, error);
+  if (!error && std::filesystem::is_symlink(status)) {
+    throw std::runtime_error("refusing to follow entropy-cache entry symlink " +
+                             path.string());
+  }
+  if (error && error != std::errc::no_such_file_or_directory) {
+    throw std::runtime_error("cannot inspect entropy cache entry " +
+                             path.string() + ": " + error.message());
+  }
+  std::ifstream input(path, std::ios::binary);
+  if (!input) {
+    return std::nullopt;
+  }
+  const std::vector<std::uint8_t> bytes{std::istreambuf_iterator<char>(input),
+                                        std::istreambuf_iterator<char>()};
+  auto records = Decode(nlohmann::json::from_cbor(bytes), source);
+  if (touch) {
+    Touch(path);
+  }
+  return records;
+}
+
 void MaybePrune(const std::filesystem::path& repository) {
-  const auto marker =
-      RepositoryCacheDirectory(repository).parent_path() / ".last-prune";
+  const auto location = ActiveLocation(repository);
+  const auto marker = location.directory.parent_path() / ".last-prune";
   std::error_code error;
   const auto modified = std::filesystem::last_write_time(marker, error);
   if (!error && std::filesystem::file_time_type::clock::now() - modified <
@@ -193,7 +269,7 @@ void MaybePrune(const std::filesystem::path& repository) {
     return;
   }
   PruneRepositoryCache(repository, true);
-  EnsureCacheDirectory(repository);
+  EnsureCacheDirectory(location);
   std::ofstream output(marker, std::ios::binary | std::ios::trunc);
   output << EpochSeconds();
 }
@@ -327,25 +403,30 @@ std::string EntropyCacheKey(std::string_view source,
 
 std::filesystem::path RepositoryCacheDirectory(
     const std::filesystem::path& repository) {
-  return repository / kNamespace / "v1/entropy";
+  return ActiveLocation(repository).directory;
+}
+
+std::filesystem::path LegacyRepositoryCacheDirectory(
+    const std::filesystem::path& repository) {
+  return LegacyLocation(repository).directory;
 }
 
 EntropyCacheLookup ReadEntropyCache(const std::filesystem::path& repository,
                                     std::string_view source,
                                     const ModelIdentity& model) {
   try {
-    CheckCachePath(repository);
-    const auto path = EntryPath(repository, EntropyCacheKey(source, model));
-    std::ifstream input(path, std::ios::binary);
-    if (!input) {
+    const std::string key = EntropyCacheKey(source, model);
+    if (auto records =
+            ReadEntry(ActiveLocation(repository), key, source, true)) {
+      MaybePrune(repository);
+      return {.hit = true, .records = std::move(*records)};
+    }
+    auto legacy = ReadEntry(LegacyLocation(repository), key, source, false);
+    if (!legacy.has_value()) {
       return {};
     }
-    const std::vector<std::uint8_t> bytes{std::istreambuf_iterator<char>(input),
-                                          std::istreambuf_iterator<char>()};
-    auto records = Decode(nlohmann::json::from_cbor(bytes), source);
-    Touch(path);
-    MaybePrune(repository);
-    return {.hit = true, .records = std::move(records)};
+    WriteEntropyCache(repository, source, model, *legacy);
+    return {.hit = true, .records = std::move(*legacy)};
   } catch (const std::exception&) {
     return {};
   }
@@ -358,7 +439,8 @@ void WriteEntropyCache(const std::filesystem::path& repository,
                   std::vector<EntropyRecord>(records.begin(), records.end()))) {
     throw std::invalid_argument("refusing to cache incomplete entropy records");
   }
-  EnsureCacheDirectory(repository);
+  const auto location = ActiveLocation(repository);
+  EnsureCacheDirectory(location);
   nlohmann::json encoded = {{"version", 1},
                             {"source_size", source.size()},
                             {"provenance",
@@ -377,7 +459,7 @@ void WriteEntropyCache(const std::filesystem::path& repository,
                                             ? nlohmann::json(*record.entropy)
                                             : nlohmann::json(nullptr)}));
   }
-  const auto target = EntryPath(repository, EntropyCacheKey(source, model));
+  const auto target = EntryPath(location, EntropyCacheKey(source, model));
   static std::atomic<std::uint64_t> temporary_sequence = 0;
   const auto suffix =
       std::to_string(
@@ -410,22 +492,51 @@ void WriteEntropyCache(const std::filesystem::path& repository,
 
 RepositoryCacheStatus GetRepositoryCacheStatus(
     const std::filesystem::path& repository) {
+  const auto active = ActiveLocation(repository);
+  const auto legacy = LegacyLocation(repository);
   RepositoryCacheStatus status{
       .repository = repository,
-      .directory = RepositoryCacheDirectory(repository),
-      .entries = 0,
-      .bytes = 0,
+      .directory = active.directory,
+      .legacy_directory = legacy.directory,
   };
-  for (const auto& entry : Entries(repository)) {
-    ++status.entries;
-    status.bytes += entry.size;
-  }
+  const auto inspect = [&](const CacheLocation& location, bool is_legacy) {
+    for (const auto& entry : Entries(location)) {
+      if (is_legacy) {
+        ++status.legacy_entries;
+        status.legacy_bytes += entry.size;
+      } else {
+        ++status.entries;
+        status.bytes += entry.size;
+      }
+      try {
+        std::ifstream input(entry.path, std::ios::binary);
+        const std::vector<std::uint8_t> bytes{
+            std::istreambuf_iterator<char>(input),
+            std::istreambuf_iterator<char>()};
+        const auto value = nlohmann::json::from_cbor(bytes);
+        if (!value.is_object() || !value.contains("provenance") ||
+            !value["provenance"].is_object() ||
+            !value["provenance"].contains("inference_abi") ||
+            !value["provenance"]["inference_abi"].is_string()) {
+          ++status.unknown_provenance_entries;
+          continue;
+        }
+        ++status.entries_by_inference_abi[value["provenance"]["inference_abi"]
+                                              .get<std::string>()];
+      } catch (const std::exception&) {
+        ++status.malformed_entries;
+      }
+    }
+  };
+  inspect(active, false);
+  inspect(legacy, true);
   return status;
 }
 
 void PruneRepositoryCache(const std::filesystem::path& repository, bool force) {
   static_cast<void>(force);
-  auto entries = Entries(repository);
+  const auto location = ActiveLocation(repository);
+  auto entries = Entries(location);
   const auto now = std::filesystem::file_time_type::clock::now();
   std::uint64_t total = 0;
   for (const auto& entry : entries) {
@@ -438,7 +549,7 @@ void PruneRepositoryCache(const std::filesystem::path& repository, bool force) {
       }
     }
   }
-  entries = Entries(repository);
+  entries = Entries(location);
   total = 0;
   for (const auto& entry : entries) {
     total += entry.size;
@@ -457,12 +568,25 @@ void PruneRepositoryCache(const std::filesystem::path& repository, bool force) {
 }
 
 void ClearRepositoryCache(const std::filesystem::path& repository) {
-  CheckCachePath(repository);
-  const auto directory = repository / kNamespace;
+  const auto location = ActiveLocation(repository);
+  CheckCachePath(location);
+  const auto directory = location.directory.parent_path().parent_path();
   std::error_code error;
   std::filesystem::remove_all(directory, error);
   if (error) {
     throw std::runtime_error("cannot clear llm-cc cache namespace: " +
+                             error.message());
+  }
+}
+
+void ClearLegacyRepositoryCache(const std::filesystem::path& repository) {
+  const auto location = LegacyLocation(repository);
+  CheckCachePath(location);
+  const auto directory = repository / kLegacyNamespace;
+  std::error_code error;
+  std::filesystem::remove_all(directory, error);
+  if (error) {
+    throw std::runtime_error("cannot clear legacy llm-cc cache namespace: " +
                              error.message());
   }
 }

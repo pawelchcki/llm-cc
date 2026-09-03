@@ -9,7 +9,8 @@ has three entry points:
 
 ## Analysis pipeline
 
-1. `src/lang.cc` parses Rust, C, C++, Java, Python, Go, JavaScript, or C#
+1. `src/lang.cc` parses Rust, C, C++, CUDA `.cu`/`.cuh`, Java, Python, Go,
+   JavaScript, or C#
    through tree-sitter's C API. Exhaustive language metadata owns each
    grammar, canonical name, aliases, extensions, comment nodes, structural
    nodes, and callable kinds. One parse collects comments, Python docstrings,
@@ -22,6 +23,8 @@ has three entry points:
    records through an in-process sink; `llm-cc score` exposes the byte-exact
    JSONL form for interoperability and debugging. Contexts are reused, grow
    geometrically, and are discarded after inference failures.
+   Optional throttled progress callbacks report completed batches without
+   changing inference or stdout JSONL.
 3. `src/jsonl.cc` parses entropy records, reconstructs token bytes from
    `bytes_hex`, verifies contiguous positions and exact source coverage, and
    aligns entropy to preprocessed byte ranges.

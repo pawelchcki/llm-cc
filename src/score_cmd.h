@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -25,6 +26,7 @@ struct InferenceOptions {
   BackendKind backend = BackendKind::kAuto;
   std::uint32_t batch_size = kDefaultBatchSize;
   EntropyReduction entropy_reduction = EntropyReduction::kAuto;
+  std::function<void(std::size_t, std::size_t)> progress;
 };
 
 class EntropyScorer {

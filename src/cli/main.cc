@@ -1,11 +1,15 @@
+#include <unistd.h>
+
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <locale>
@@ -54,6 +58,7 @@ struct AnalyzeArguments {
   std::size_t hotspots = 10;
   std::string score_mode = "lmcc";
   std::string format = "jsonl";
+  std::string progress = "auto";
 };
 
 constexpr std::string_view kUsageBeforeContext =
@@ -62,13 +67,15 @@ constexpr std::string_view kUsageBeforeContext =
     "auto|rust|c|cpp|java|python|go|javascript|csharp] [OPTIONS]\n"
     "  llm-cc score --model GGUF [--prompt TEXT | --file PATH] [OPTIONS]\n"
     "  llm-cc models list|remove FILE|path\n"
-    "  llm-cc cache status|prune|clear [PATH] [--format text|json]\n\n"
+    "  llm-cc cache status|prune|clear [PATH] [--format text|json] "
+    "[--legacy]\n\n"
     "Analysis options:\n"
-    "  --lang NAME          auto, rust, c, cpp, java, python, go, javascript,\n"
-    "                       or csharp (default: auto)\n"
+    "  --lang NAME          infer per file with auto, or force every input to\n"
+    "                       rust, c, cpp, java, python, go, javascript, or\n"
+    "                       csharp (default: auto)\n"
     "  --include-headers     include headers during recursive discovery\n"
     "  --no-ignore           include ignored and generated source files\n"
-    "  --no-cache            disable repository-local entropy caching\n"
+    "  --no-cache            disable repository-scoped entropy caching\n"
     "  --no-download         do not fetch the default model\n"
     "  --model GGUF          llama.cpp-compatible model\n"
     "  --score lmcc|density|mean  headline score mode (default: lmcc)\n"
@@ -87,6 +94,7 @@ constexpr std::string_view kUsageAfterContext =
     "  --tau-percentile N    use the Nth percentile instead of --tau\n"
     "  --hotspots N          hotspot lines per file (default: 10, 0 disables)\n"
     "  --format jsonl|text   output format (default: jsonl; json is an alias)\n"
+    "  --progress M          auto, always, or never on stderr (default: auto)\n"
     "  --alpha N             branching weight (default: 0.8)\n"
     "  -V, --version         show the program version\n"
     "  -h, --help            show this help\n";
@@ -188,6 +196,12 @@ void SetAnalyzeOption(AnalyzeArguments& arguments, std::string_view option,
     arguments.format = value == "json" ? "jsonl" : std::string(value);
     if (arguments.format != "jsonl" && arguments.format != "text") {
       Usage("--format expects jsonl, json, or text");
+    }
+  } else if (option == "--progress") {
+    arguments.progress = value;
+    if (arguments.progress != "auto" && arguments.progress != "always" &&
+        arguments.progress != "never") {
+      Usage("--progress expects auto, always, or never");
     }
   } else if (option == "--alpha") {
     arguments.alpha = ParseNumber<double>(option, value);
@@ -292,6 +306,79 @@ void Emit(const nlohmann::json& event) {
   }
 }
 
+std::string TerminalSafe(std::string_view text);
+
+class ProgressReporter {
+ public:
+  explicit ProgressReporter(std::string_view mode)
+      : enabled_(mode == "always" ||
+                 (mode == "auto" && isatty(STDERR_FILENO) != 0)) {}
+
+  void Phase(std::string_view message) const {
+    if (enabled_) {
+      std::cerr << "llm-cc: " << message << '\n' << std::flush;
+    }
+  }
+
+  void StartFile(std::size_t index, std::size_t total,
+                 const std::filesystem::path& path) {
+    file_index_ = index;
+    file_total_ = total;
+    path_ = path.string();
+    started_ = std::chrono::steady_clock::now();
+    last_update_ = {};
+    if (enabled_) {
+      std::cerr << "llm-cc: [" << index << '/' << total << "] analyzing "
+                << TerminalSafe(path_) << '\n'
+                << std::flush;
+    }
+  }
+
+  void Tokens(std::size_t completed, std::size_t total) {
+    if (!enabled_) {
+      return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (completed != 0 && completed != total && last_update_ != TimePoint{} &&
+        now - last_update_ < std::chrono::seconds(1)) {
+      return;
+    }
+    last_update_ = now;
+    std::cerr << "llm-cc: [" << file_index_ << '/' << file_total_ << "] "
+              << completed << '/' << total << " tokens\n"
+              << std::flush;
+  }
+
+  void FinishFile(bool cache_hit) const {
+    if (!enabled_) {
+      return;
+    }
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - started_);
+    std::cerr << "llm-cc: [" << file_index_ << '/' << file_total_
+              << "] complete cache=" << (cache_hit ? "hit" : "miss")
+              << " elapsed_ms=" << elapsed.count() << '\n'
+              << std::flush;
+  }
+
+  void FailFile() const {
+    if (enabled_) {
+      std::cerr << "llm-cc: [" << file_index_ << '/' << file_total_
+                << "] failed\n"
+                << std::flush;
+    }
+  }
+
+ private:
+  using TimePoint = std::chrono::steady_clock::time_point;
+  bool enabled_;
+  std::size_t file_index_ = 0;
+  std::size_t file_total_ = 0;
+  std::string path_;
+  TimePoint started_{};
+  TimePoint last_update_{};
+};
+
 int RunModels(int argc, char** argv) {
   if (argc < 3) {
     Usage("models requires list, remove, or path");
@@ -317,6 +404,7 @@ struct CacheArguments {
   std::string_view action;
   std::filesystem::path path = std::filesystem::current_path();
   std::string_view format = "text";
+  bool legacy = false;
 };
 
 CacheArguments ParseCacheArguments(int argc, char** argv) {
@@ -335,6 +423,8 @@ CacheArguments ParseCacheArguments(int argc, char** argv) {
       if (arguments.format != "text" && arguments.format != "json") {
         Usage("--format expects text or json");
       }
+    } else if (value == "--legacy") {
+      arguments.legacy = true;
     } else if (!value.starts_with('-') && !path_set) {
       arguments.path = value;
       path_set = true;
@@ -345,6 +435,9 @@ CacheArguments ParseCacheArguments(int argc, char** argv) {
   if (arguments.action != "status" && arguments.action != "prune" &&
       arguments.action != "clear") {
     Usage("cache requires status, prune, or clear");
+  }
+  if (arguments.legacy && arguments.action != "clear") {
+    Usage("--legacy is only valid with cache clear");
   }
   return arguments;
 }
@@ -360,20 +453,43 @@ int RunCache(int argc, char** argv) {
     llmcc::PruneRepositoryCache(*repository);
   } else if (arguments.action == "clear") {
     llmcc::ClearRepositoryCache(*repository);
+    if (arguments.legacy) {
+      llmcc::ClearLegacyRepositoryCache(*repository);
+    }
   }
   const auto status = llmcc::GetRepositoryCacheStatus(*repository);
   if (arguments.format == "json") {
     std::cout << nlohmann::json{{"repository", status.repository.string()},
                                 {"directory", status.directory.string()},
+                                {"storage_version", 1},
+                                {"inference_abi", llmcc::InferenceAbi()},
                                 {"entries", status.entries},
-                                {"bytes", status.bytes}}
+                                {"bytes", status.bytes},
+                                {"legacy_directory",
+                                 status.legacy_directory.string()},
+                                {"legacy_entries", status.legacy_entries},
+                                {"legacy_bytes", status.legacy_bytes},
+                                {"entries_by_inference_abi",
+                                 status.entries_by_inference_abi},
+                                {"unknown_provenance_entries",
+                                 status.unknown_provenance_entries},
+                                {"malformed_entries", status.malformed_entries}}
                      .dump()
               << '\n';
   } else {
     std::cout << "repository: " << status.repository.string() << '\n'
               << "directory: " << status.directory.string() << '\n'
+              << "storage version: 1\n"
+              << "inference ABI: " << llmcc::InferenceAbi() << '\n'
               << "entries: " << status.entries << '\n'
-              << "bytes: " << status.bytes << '\n';
+              << "bytes: " << status.bytes << '\n'
+              << "legacy directory: " << status.legacy_directory.string()
+              << '\n'
+              << "legacy entries: " << status.legacy_entries << '\n'
+              << "legacy bytes: " << status.legacy_bytes << '\n'
+              << "unknown provenance entries: "
+              << status.unknown_provenance_entries << '\n'
+              << "malformed entries: " << status.malformed_entries << '\n';
   }
   return 0;
 }
@@ -384,13 +500,15 @@ class LlamaEntropyProvider : public llmcc::EntropyProvider {
                        const std::filesystem::path& model,
                        std::uint32_t context, std::int32_t gpu_layers,
                        llmcc::BackendKind backend, std::uint32_t batch_size,
-                       llmcc::EntropyReduction entropy_reduction)
+                       llmcc::EntropyReduction entropy_reduction,
+                       std::function<void(std::size_t, std::size_t)> progress)
       : scorer_((llmcc::MarkCachedModelUsed(cache_dir, model), model),
                 {.context_size = context,
                  .gpu_layers = gpu_layers,
                  .backend = backend,
                  .batch_size = batch_size,
-                 .entropy_reduction = entropy_reduction}) {}
+                 .entropy_reduction = entropy_reduction,
+                 .progress = std::move(progress)}) {}
 
   std::vector<llmcc::EntropyRecord> Score(std::string_view source) override {
     return scorer_.ScoreRecords(source);
@@ -528,6 +646,7 @@ nlohmann::json ConfigurationJson(
       {"language", arguments.language_name},
       {"include_headers", arguments.include_headers},
       {"no_ignore", arguments.no_ignore},
+      {"progress", arguments.progress},
       {"no_download", arguments.no_download},
       {"model", requested_model},
       {"context", arguments.context},
@@ -547,7 +666,7 @@ nlohmann::json ConfigurationJson(
       {"cache",
        {{"enabled", !arguments.no_cache},
         {"version", 1},
-        {"namespace", ".llm-cc-cache/llm-cc/v1/entropy"},
+        {"namespace", "external/v1/entropy"},
         {"limit_bytes", llmcc::kEntropyCacheLimit}}}};
   if (identity != nullptr) {
     configuration["model"] = identity->canonical_path.string();
@@ -774,6 +893,8 @@ void PrintTotalsText(const MetricTotals& totals, std::string_view score_mode) {
 
 int RunAnalyze(const AnalyzeArguments& arguments) {
   const bool text = arguments.format == "text";
+  ProgressReporter progress(arguments.progress);
+  progress.Phase("discovering sources");
   const auto warning = [&](std::string_view message) {
     if (text) {
       std::cerr << "warning: " << TerminalSafe(message) << '\n';
@@ -811,9 +932,11 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
   }
 
   const std::filesystem::path model_cache = llmcc::CacheDir();
+  progress.Phase("resolving model");
   const auto resolved_model = llmcc::ResolveModel(
       arguments.model, arguments.no_download, std::filesystem::current_path(),
       model_cache, llmcc::DownloadDefaultModel);
+  progress.Phase("selecting inference backend");
   const llmcc::BackendKind resolved_backend = [&]() {
     if (arguments.gpu_layers == 0) {
       return llmcc::BackendKind::kCpu;
@@ -882,10 +1005,14 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
        .hotspots = arguments.hotspots,
        .hierarchy_mode = arguments.hierarchy_mode},
       [&]() {
+        progress.Phase("loading model after entropy cache miss");
         return std::make_unique<LlamaEntropyProvider>(
             model_cache, identity.canonical_path, arguments.context,
             arguments.gpu_layers, resolved_backend, arguments.batch_size,
-            arguments.entropy_reduction);
+            arguments.entropy_reduction,
+            [&](std::size_t completed, std::size_t total) {
+              progress.Tokens(completed, total);
+            });
       });
 
   MetricTotals totals;
@@ -895,7 +1022,9 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
     ++languages[std::string(llmcc::LanguageName(source.language))].discovered;
   }
   bool fatal = false;
+  std::size_t file_index = 0;
   for (const auto& source : discovery.sources) {
+    progress.StartFile(++file_index, discovery.sources.size(), source.path);
     const std::string language(llmcc::LanguageName(source.language));
     if (!text) {
       Emit({{"type", "file_start"},
@@ -905,6 +1034,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
     try {
       const std::string contents = ReadFile(source.path);
       auto result = analyzer.AnalyzeFile(source, contents);
+      progress.FinishFile(result.entropy_cache_hit);
       if (text) {
         PrintFileText(source, contents, result, arguments.score_mode);
       } else {
@@ -938,6 +1068,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       ++language_totals.analyzed;
       Accumulate(result.analysis, language_totals);
     } catch (const llmcc::ScorerInitializationError& error) {
+      progress.FailFile();
       ++totals.failed;
       ++languages[language].failed;
       if (text) {
@@ -952,6 +1083,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       }
       fatal = true;
     } catch (const std::exception& error) {
+      progress.FailFile();
       ++totals.failed;
       ++languages[language].failed;
       if (text) {

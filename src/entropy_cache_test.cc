@@ -23,6 +23,8 @@ int main() {  // NOLINT(bugprone-exception-escape)
   namespace fs = std::filesystem;
   const char* temporary = std::getenv("TEST_TMPDIR");
   llmcc::test::Expect(temporary != nullptr, "TEST_TMPDIR is set");
+  const fs::path entropy_root = fs::path(temporary) / "entropy-cache";
+  setenv("LLM_CC_ENTROPY_CACHE_DIR", entropy_root.c_str(), 1);
   const fs::path repository = fs::path(temporary) / "repository";
   const fs::path model = fs::path(temporary) / "model.gguf";
   fs::create_directories(repository);
@@ -40,6 +42,18 @@ int main() {  // NOLINT(bugprone-exception-escape)
   const auto initial_status = llmcc::GetRepositoryCacheStatus(repository);
   llmcc::test::ExpectEq(initial_status.entries, std::uint64_t{1},
                         "one cache entry exists");
+  llmcc::test::Expect(
+      !fs::exists(repository / ".llm-cc-cache") &&
+          initial_status.directory.string().starts_with(entropy_root.string()),
+      "entropy cache does not mutate analyzed repository");
+  llmcc::test::ExpectEq(initial_status.entries_by_inference_abi.at("test-abi"),
+                        std::uint64_t{1},
+                        "status groups entries by inference ABI");
+  const fs::path other_worktree = fs::path(temporary) / "other-worktree";
+  fs::create_directories(other_worktree);
+  llmcc::test::Expect(llmcc::RepositoryCacheDirectory(other_worktree) !=
+                          initial_status.directory,
+                      "canonical worktree roots use independent cache buckets");
   const fs::path entry = *fs::directory_iterator(initial_status.directory);
   fs::last_write_time(
       entry, fs::file_time_type::clock::now() - std::chrono::hours(48));
@@ -78,6 +92,11 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(
       !llmcc::ReadEntropyCache(repository, "ab", changed_context).hit,
       "context limit invalidates key");
+  auto changed_abi = identity;
+  changed_abi.inference_abi = "next-abi";
+  llmcc::test::Expect(
+      !llmcc::ReadEntropyCache(repository, "ab", changed_abi).hit,
+      "inference ABI invalidates key");
   auto changed_backend = identity;
   changed_backend.backend = "metal";
   llmcc::test::Expect(
@@ -116,16 +135,40 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::ExpectEq(llmcc::GetRepositoryCacheStatus(repository).entries,
                         std::uint64_t{0}, "clear removes llm-cc entries");
 
+  llmcc::WriteEntropyCache(repository, "ab", identity, records);
+  const fs::path active_directory = llmcc::RepositoryCacheDirectory(repository);
+  const fs::path active_entry = *fs::directory_iterator(active_directory);
+  const fs::path legacy_directory =
+      llmcc::LegacyRepositoryCacheDirectory(repository);
+  fs::create_directories(legacy_directory);
+  const fs::path legacy_entry = legacy_directory / active_entry.filename();
+  fs::rename(active_entry, legacy_entry);
+  const auto legacy_time = fs::last_write_time(legacy_entry);
+  const auto migrated = llmcc::ReadEntropyCache(repository, "ab", identity);
+  llmcc::test::Expect(migrated.hit && fs::exists(active_entry) &&
+                          fs::last_write_time(legacy_entry) == legacy_time,
+                      "exact legacy hit migrates without touching legacy data");
+  const auto migrated_status = llmcc::GetRepositoryCacheStatus(repository);
+  llmcc::test::ExpectEq(migrated_status.legacy_entries, std::uint64_t{1},
+                        "status reports legacy entries separately");
+  llmcc::ClearLegacyRepositoryCache(repository);
+  llmcc::test::Expect(!fs::exists(legacy_entry) &&
+                          fs::exists(repository / ".llm-cc-cache/other/keep"),
+                      "legacy clear preserves unrelated repository cache data");
+
   const fs::path unsafe = fs::path(temporary) / "unsafe";
   fs::create_directories(unsafe);
+  const fs::path unsafe_directory = llmcc::RepositoryCacheDirectory(unsafe);
+  fs::create_directories(
+      unsafe_directory.parent_path().parent_path().parent_path());
   fs::create_directory_symlink(fs::path(temporary) / "elsewhere",
-                               unsafe / ".llm-cc-cache");
+                               unsafe_directory.parent_path().parent_path());
   bool refused = false;
   try {
     llmcc::WriteEntropyCache(unsafe, "ab", identity, records);
   } catch (const std::runtime_error&) {
     refused = true;
   }
-  llmcc::test::Expect(refused, "cache directory symlink is refused");
+  llmcc::test::Expect(refused, "external cache bucket symlink is refused");
   return 0;
 }

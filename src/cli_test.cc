@@ -70,6 +70,8 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(test_srcdir != nullptr && test_workspace != nullptr &&
                           test_tmpdir != nullptr,
                       "Bazel test environment");
+  const fs::path entropy_root = fs::path(test_tmpdir) / "entropy-cache";
+  setenv("LLM_CC_ENTROPY_CACHE_DIR", entropy_root.c_str(), 1);
   const fs::path root = fs::path(test_srcdir) / test_workspace;
   const fs::path binary = root / "llm-cc";
   const fs::path fixtures = root / "testdata/cli";
@@ -87,12 +89,15 @@ int main() {  // NOLINT(bugprone-exception-escape)
       Read(analyze_help).find("--hierarchy structural|reference") !=
               std::string::npos &&
           Read(analyze_help).find("--batch-size") != std::string::npos &&
-          Read(analyze_help).find("--entropy-reduction") != std::string::npos,
+          Read(analyze_help).find("--entropy-reduction") != std::string::npos &&
+          Read(analyze_help).find("--progress") != std::string::npos,
       "analysis documents hierarchy and inference controls");
   llmcc::test::Expect(
-      Read(analyze_help).find("rust, c, cpp, java, python, go, javascript") !=
+      Read(analyze_help).find("rust, c, cpp") != std::string::npos &&
+          Read(analyze_help).find("java, python, go, javascript") !=
               std::string::npos &&
-          Read(analyze_help).find("or csharp") != std::string::npos,
+          Read(analyze_help).find("csharp (default: auto)") !=
+              std::string::npos,
       "analysis help lists every canonical source language");
 
   const fs::path score_help = fs::path(test_tmpdir) / "score-help.txt";
@@ -314,6 +319,17 @@ int main() {  // NOLINT(bugprone-exception-escape)
                       "file includes hotspot scores");
   llmcc::test::ExpectEq(events[4]["analyzed"].get<std::uint64_t>(),
                         std::uint64_t{1}, "totals report analyzed file");
+
+  const fs::path progress_output = fs::path(test_tmpdir) / "progress.txt";
+  llmcc::test::ExpectEq(
+      Run(Quote(binary) + " " + Quote(source) + " --model " +
+          Quote(fake_model) + " --progress always >/dev/null 2>" +
+          Quote(progress_output)),
+      0, "explicit progress succeeds on a cache-only run");
+  llmcc::test::Expect(
+      Read(progress_output).find("analyzing") != std::string::npos &&
+          Read(progress_output).find("cache=hit") != std::string::npos,
+      "progress stays on stderr and identifies cache hits");
 
   const fs::path reference_output =
       fs::path(test_tmpdir) / "analysis-reference.jsonl";
@@ -543,6 +559,14 @@ int main() {  // NOLINT(bugprone-exception-escape)
   const nlohmann::json status = nlohmann::json::parse(Read(status_output));
   llmcc::test::ExpectEq(status["entries"].get<std::uint64_t>(),
                         std::uint64_t{8}, "cache status counts entries");
+  llmcc::test::Expect(
+      status["storage_version"] == 1 &&
+          status["inference_abi"].get<std::string>().ends_with("/entropy-v2") &&
+          status.contains("legacy_entries") &&
+          status.contains("entries_by_inference_abi") &&
+          !status["directory"].get<std::string>().starts_with(
+              repository.string()),
+      "cache status explains compatibility and external storage");
 
   return 0;
 }

@@ -162,8 +162,9 @@ constexpr auto kCSharpAliases =
 
 constexpr auto kRustExtensions = std::to_array<std::string_view>({".rs"});
 constexpr auto kCExtensions = std::to_array<std::string_view>({".c", ".h"});
-constexpr auto kCppExtensions = std::to_array<std::string_view>(
-    {".cc", ".cpp", ".cxx", ".c++", ".hpp", ".hh", ".hxx", ".h++"});
+constexpr auto kCppExtensions =
+    std::to_array<std::string_view>({".cc", ".cpp", ".cxx", ".c++", ".cu",
+                                     ".hpp", ".hh", ".hxx", ".h++", ".cuh"});
 constexpr auto kJavaExtensions = std::to_array<std::string_view>({".java"});
 constexpr auto kPythonExtensions =
     std::to_array<std::string_view>({".py", ".pyw", ".pyi"});
@@ -765,7 +766,7 @@ std::string_view LanguageName(Language language) {
 bool IsHeaderPath(std::string_view path) {
   return std::ranges::any_of(
       std::initializer_list<std::string_view>{".h", ".hpp", ".hh", ".hxx",
-                                              ".h++"},
+                                              ".h++", ".cuh"},
       [path](std::string_view suffix) { return EndsWith(path, suffix); });
 }
 
