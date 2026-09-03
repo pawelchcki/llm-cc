@@ -297,7 +297,11 @@ AnalyzeArguments ParseAnalyzeArguments(int argc, char** argv) {
 
 std::string ReadFile(const std::filesystem::path& path) {
   using File = std::unique_ptr<std::FILE, decltype(&std::fclose)>;
-  File input(std::fopen(path.string().c_str(), "rb"), std::fclose);
+#if defined(_WIN32)
+  File input(_wfopen(path.c_str(), L"rb"), std::fclose);
+#else
+  File input(std::fopen(path.c_str(), "rb"), std::fclose);
+#endif
   if (!input) {
     throw std::runtime_error("failed to read " + path.string());
   }

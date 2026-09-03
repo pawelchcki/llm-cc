@@ -98,6 +98,20 @@ std::tuple<std::int64_t, std::int64_t, std::int64_t> CivilDate(
 }  // namespace
 
 std::filesystem::path CacheDir() {
+  if (const auto override_dir = EnvironmentPath("LLM_CC_CACHE_DIR");
+      override_dir.has_value() && !override_dir->empty()) {
+    return *override_dir;
+  }
+#if defined(_WIN32)
+  if (const auto local_app_data = EnvironmentPath("LOCALAPPDATA");
+      local_app_data.has_value() && !local_app_data->empty()) {
+    return *local_app_data / "llm-cc/models";
+  }
+  if (const auto user_profile = EnvironmentPath("USERPROFILE");
+      user_profile.has_value() && !user_profile->empty()) {
+    return *user_profile / "AppData/Local/llm-cc/models";
+  }
+#endif
   return CacheDirFrom(EnvironmentPath("LLM_CC_CACHE_DIR"),
                       EnvironmentPath("XDG_CACHE_HOME"),
                       EnvironmentPath("HOME"));

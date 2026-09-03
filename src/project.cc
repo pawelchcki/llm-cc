@@ -22,7 +22,12 @@ namespace {
 
 std::string ShellQuote(std::string_view value) {
 #if defined(_WIN32)
-  return "\"" + std::string(value) + "\"";
+  std::string result = "\"";
+  for (char character : value) {
+    // cmd.exe expands %NAME% even inside quotes; a caret suppresses it.
+    result += character == '%' ? "^%" : std::string(1, character);
+  }
+  return result + "\"";
 #else
   std::string result = "'";
   for (char character : value) {

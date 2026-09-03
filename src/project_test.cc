@@ -12,11 +12,19 @@
 namespace {
 
 std::string Quote(const std::filesystem::path& path) {
+#if defined(_WIN32)
+  std::string result = "\"";
+  for (char character : path.string()) {
+    result += character == '%' ? "^%" : std::string(1, character);
+  }
+  return result + "\"";
+#else
   std::string result = "'";
   for (char character : path.string()) {
     result += character == '\'' ? "'\\''" : std::string(1, character);
   }
   return result + "'";
+#endif
 }
 
 void Write(const std::filesystem::path& path, std::string_view value = {}) {
@@ -177,6 +185,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
 
   const fs::path plain = fs::path(temporary) / "plain";
   Write(plain / "main.c", "int main(void) {}\n");
+  Write(plain / ".git", "gitdir: missing\n");
   const auto fallback = llmcc::DiscoverSources({plain});
   llmcc::test::ExpectEq(fallback.sources.size(), std::size_t{1},
                         "filesystem fallback discovers source");

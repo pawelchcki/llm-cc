@@ -16,7 +16,7 @@ actions:
     steps:
       - run: "tools/check_format.sh"
       - run: "bazel test --config=buildbuddy-rbe //:unit //:integration"
-      - run: "bazel build --config=buildbuddy-rbe --config=release --config=portable //:cpu_static_archive"
+      - run: "bazel build --config=buildbuddy-rbe --remote_download_all --config=release --config=portable //:cpu_static_archive"
       - run: "tools/check_glibc_version.sh bazel-bin/llm-cc 2.28"
       - run: "tools/check_static_link.sh bazel-bin/llm-cc"
   - name: "GPU backends"
@@ -43,7 +43,7 @@ actions:
             git checkout --detach HEAD^1
           fi
 
-          bazel build --config=buildbuddy-rbe --config=release --config=universal \
+          bazel build --config=buildbuddy-rbe --remote_download_all --config=release --config=universal \
             //dist:backend_cuda //dist:backend_rocm
 
           # Bundles are containers, not ELF files; check the actual module ELFs
