@@ -378,6 +378,18 @@ cc_library(
 )
 
 cc_library(
+    name = "backend_fetch",
+    srcs = ["src/backend_fetch.cc"],
+    hdrs = ["src/backend_fetch.h"],
+    deps = [
+        ":download",
+        ":payload",
+        ":version",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_library(
     name = "payload_format",
     hdrs = ["src/payload_format.h"],
 )
@@ -761,6 +773,16 @@ cc_test(
 )
 
 cc_test(
+    name = "backend_fetch_test",
+    srcs = ["src/backend_fetch_test.cc"],
+    deps = [
+        ":backend_fetch",
+        ":entropy_cache",
+        ":test_util",
+    ],
+)
+
+cc_test(
     name = "cache_test",
     srcs = ["src/cache_test.cc"],
     deps = [
@@ -901,6 +923,7 @@ test_suite(
     name = "unit",
     tests = [
         ":analyze_test",
+        ":backend_fetch_test",
         ":backend_test",
         ":cache_test",
         ":core_test",
