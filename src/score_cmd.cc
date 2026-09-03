@@ -1,9 +1,11 @@
 #include "src/score_cmd.h"
 
 #include <ggml-backend.h>
+#include <ggml.h>
 #include <llama.h>
 
 #include <algorithm>
+#include <atomic>
 #include <charconv>
 #include <cmath>
 #include <cstdint>
@@ -15,6 +17,7 @@
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <sstream>
@@ -37,8 +40,6 @@ namespace {
 
 enum class BosMode : std::uint8_t { kAuto, kAlways, kNever };
 
-constexpr std::size_t kDecodeBatchSize = 64;
-
 struct Arguments {
   std::filesystem::path model;
   std::optional<std::string> prompt;
@@ -48,6 +49,8 @@ struct Arguments {
   std::int32_t threads = 0;
   std::int32_t gpu_layers = 0;
   llmcc::BackendKind backend = llmcc::BackendKind::kAuto;
+  std::uint32_t batch_size = llmcc::kDefaultBatchSize;
+  llmcc::EntropyReduction entropy_reduction = llmcc::EntropyReduction::kAuto;
   bool entropy = false;
   bool override_memory_check = false;
 };
@@ -70,6 +73,8 @@ constexpr std::string_view kUsageAfterContext =
     "  --threads N            inference threads (default: hardware count)\n"
     "  --gpu-layers N         layers to offload; -1 means all (default: 0)\n"
     "  --backend NAME         auto, cpu, cuda, or rocm (default: auto)\n"
+    "  --batch-size N         decode rows per batch (default: 64)\n"
+    "  --entropy-reduction M  auto, host, or device (default: auto)\n"
     "  --override-memory-check  bypass the preflight memory check\n"
     "  --entropy              emit full-vocabulary next-token entropy\n"
     "  -V, --version          show the program version\n"
@@ -127,6 +132,21 @@ void SetOption(Arguments& arguments, std::string_view option,
     arguments.threads = ParseInteger<std::int32_t>(option, value);
     if (arguments.threads < 1) {
       Usage("--threads must be positive");
+    }
+  } else if (option == "--batch-size") {
+    arguments.batch_size = ParseInteger<std::uint32_t>(option, value);
+    if (arguments.batch_size == 0) {
+      Usage("--batch-size must be positive");
+    }
+  } else if (option == "--entropy-reduction") {
+    if (value == "auto") {
+      arguments.entropy_reduction = llmcc::EntropyReduction::kAuto;
+    } else if (value == "host") {
+      arguments.entropy_reduction = llmcc::EntropyReduction::kHost;
+    } else if (value == "device") {
+      arguments.entropy_reduction = llmcc::EntropyReduction::kDevice;
+    } else {
+      Usage("--entropy-reduction expects auto, host, or device");
     }
   } else if (option == "--gpu-layers") {
     arguments.gpu_layers = ParseInteger<std::int32_t>(option, value);
@@ -395,6 +415,96 @@ void CheckAvailableMemory(const Arguments& arguments, bool use_gpu,
 
 using Model = std::unique_ptr<llama_model, decltype(&llama_model_free)>;
 using Context = std::unique_ptr<llama_context, decltype(&llama_free)>;
+using Sampler = std::unique_ptr<llama_sampler, decltype(&llama_sampler_free)>;
+
+struct DeviceEntropyState {
+  std::vector<ggml_tensor*> target_inputs;
+  std::span<const llama_token> targets;
+};
+
+const char* DeviceEntropyName(const llama_sampler*) { return "llm-cc-entropy"; }
+
+void DeviceEntropyApply(llama_sampler*, llama_token_data_array*) {}
+
+bool DeviceEntropyBackendInit(llama_sampler*, ggml_backend_buffer_type_t,
+                              std::uint32_t) {
+  return true;
+}
+
+void DeviceEntropyBackendApply(llama_sampler* sampler, ggml_context* context,
+                               ggml_cgraph*, llama_sampler_data* data) {
+  auto* state = static_cast<DeviceEntropyState*>(sampler->ctx);
+  ggml_tensor* logits =
+      ggml_reshape_1d(context, data->logits, ggml_nelements(data->logits));
+  ggml_tensor* logits_2d = ggml_reshape_2d(context, logits, 1, logits->ne[0]);
+  ggml_tensor* maximum_index = ggml_argmax(context, logits);
+  ggml_tensor* maximum = ggml_get_rows(context, logits_2d, maximum_index);
+  maximum = ggml_reshape_1d(context, maximum, 1);
+  ggml_tensor* shifted =
+      ggml_sub(context, logits, ggml_repeat(context, maximum, logits));
+  ggml_tensor* exponentials = ggml_exp(context, shifted);
+  ggml_tensor* sum_exp = ggml_sum(context, exponentials);
+  ggml_tensor* log_sum_exp = ggml_log(context, sum_exp);
+  ggml_tensor* finite_shifted =
+      ggml_clamp(context, shifted, std::numeric_limits<float>::lowest(), 0.0F);
+  ggml_tensor* weighted =
+      ggml_sum(context, ggml_mul(context, exponentials, finite_shifted));
+  ggml_tensor* entropy =
+      ggml_sub(context, log_sum_exp, ggml_div(context, weighted, sum_exp));
+
+  ggml_tensor* target = ggml_new_tensor_1d(context, GGML_TYPE_I32, 1);
+  ggml_set_input(target);
+  state->target_inputs.push_back(target);
+  ggml_tensor* shifted_2d =
+      ggml_reshape_2d(context, shifted, 1, shifted->ne[0]);
+  ggml_tensor* target_shifted = ggml_get_rows(context, shifted_2d, target);
+  target_shifted = ggml_reshape_1d(context, target_shifted, 1);
+  ggml_tensor* log_probability = ggml_sub(context, target_shifted, log_sum_exp);
+
+  entropy = ggml_reshape_1d(context, entropy, 1);
+  data->probs = ggml_concat(context, entropy, log_probability, 0);
+  ggml_set_name(data->probs, "llm_cc_entropy_log_probability");
+}
+
+void DeviceEntropySetInput(llama_sampler* sampler) {
+  auto* state = static_cast<DeviceEntropyState*>(sampler->ctx);
+  for (std::size_t index = 0; index < state->target_inputs.size(); ++index) {
+    const llama_token target =
+        index < state->targets.size() ? state->targets[index] : 0;
+    ggml_backend_tensor_set(state->target_inputs[index], &target, 0,
+                            sizeof(target));
+  }
+}
+
+void DeviceEntropyReset(llama_sampler* sampler) {
+  static_cast<DeviceEntropyState*>(sampler->ctx)->target_inputs.clear();
+}
+
+llama_sampler_i kDeviceEntropySampler = {
+    .name = DeviceEntropyName,
+    .accept = nullptr,
+    .apply = DeviceEntropyApply,
+    .reset = nullptr,
+    .clone = nullptr,
+    .free = nullptr,
+    .backend_init = DeviceEntropyBackendInit,
+    .backend_accept = nullptr,
+    .backend_apply = DeviceEntropyBackendApply,
+    .backend_set_input = DeviceEntropySetInput,
+    .backend_reset = DeviceEntropyReset,
+    .copy_state = nullptr,
+};
+
+Sampler MakeDeviceEntropySampler(DeviceEntropyState& state) {
+  Sampler chain(llama_sampler_chain_init(llama_sampler_chain_default_params()),
+                llama_sampler_free);
+  if (!chain) {
+    throw std::runtime_error("could not create device entropy sampler");
+  }
+  llama_sampler_chain_add(chain.get(),
+                          llama_sampler_init(&kDeviceEntropySampler, &state));
+  return chain;
+}
 
 class BackendLogCapture {
  public:
@@ -427,15 +537,19 @@ struct ScoreOptions {
   std::uint32_t context_size;
   std::int32_t threads;
   bool entropy;
+  std::uint32_t batch_size;
+  bool device_reduction;
   std::string_view context_option;
 };
 
 void WriteSummary(std::ostream* diagnostics, std::size_t tokens,
-                  std::size_t scored, double negative_log_likelihood) {
+                  std::size_t scored, double negative_log_likelihood,
+                  bool device_reduction) {
   if (diagnostics == nullptr) {
     return;
   }
-  *diagnostics << "tokens=" << tokens << " scored=" << scored;
+  *diagnostics << "tokens=" << tokens << " scored=" << scored
+               << " entropy_reducer=" << (device_reduction ? "device" : "host");
   if (scored == 0) {
     *diagnostics << " mean_nll=null perplexity=null\n";
     return;
@@ -447,7 +561,11 @@ void WriteSummary(std::ostream* diagnostics, std::size_t tokens,
 
 void ScoreInput(llama_model* model, BackendLogCapture& backend_log,
                 std::string_view input, const ScoreOptions& options,
-                std::ostream& output, std::ostream* diagnostics) {
+                std::ostream* output,
+                std::vector<llmcc::EntropyRecord>* records,
+                std::ostream* diagnostics, Context& context,
+                std::uint32_t& context_capacity, Sampler& sampler,
+                DeviceEntropyState& device_state) {
   const llama_vocab* vocabulary = llama_model_get_vocab(model);
   const bool prepend_bos =
       options.bos == BosMode::kAlways ||
@@ -468,33 +586,67 @@ void ScoreInput(llama_model* model, BackendLogCapture& backend_log,
                              std::to_string(options.context_size));
   }
   if (tokens.empty()) {
-    WriteSummary(diagnostics, 0, 0, 0.0);
+    WriteSummary(diagnostics, 0, 0, 0.0, options.device_reduction);
     return;
   }
   if (!prepend_bos) {
-    WriteNullScore(output, 0, tokens.front(),
-                   TokenPiece(vocabulary, tokens.front()), options.entropy);
+    const std::string piece = TokenPiece(vocabulary, tokens.front());
+    if (output != nullptr) {
+      WriteNullScore(*output, 0, tokens.front(), piece, options.entropy);
+    }
+    if (records != nullptr) {
+      records->push_back(
+          {.position = 0, .bytes = piece, .entropy = std::nullopt});
+    }
   }
   if (tokens.size() == 1) {
-    WriteSummary(diagnostics, tokens.size() - first_observed, 0, 0.0);
+    WriteSummary(diagnostics, tokens.size() - first_observed, 0, 0.0,
+                 options.device_reduction);
     return;
   }
 
-  const std::size_t batch_size = std::min(kDecodeBatchSize, tokens.size() - 1);
-  llama_context_params parameters = llama_context_default_params();
-  parameters.n_ctx = static_cast<std::uint32_t>(tokens.size());
-  parameters.n_batch = static_cast<std::uint32_t>(batch_size);
-  parameters.n_ubatch = static_cast<std::uint32_t>(batch_size);
-  parameters.n_seq_max = 1;
-  parameters.n_outputs_max = static_cast<std::uint32_t>(batch_size);
-  parameters.n_outputs_max_per_seq = static_cast<std::uint32_t>(batch_size);
-  parameters.n_threads = options.threads;
-  parameters.n_threads_batch = options.threads;
-  Context context(llama_init_from_model(model, parameters), llama_free);
-  if (!context) {
-    const std::string detail = backend_log.Error();
-    throw std::runtime_error("could not create inference context" +
-                             (detail.empty() ? std::string() : ": " + detail));
+  const std::size_t batch_size =
+      std::min<std::size_t>(options.batch_size, tokens.size() - 1);
+  const auto required = static_cast<std::uint32_t>(tokens.size());
+  if (!context || context_capacity < required) {
+    std::uint32_t capacity =
+        context_capacity == 0 ? std::min(options.context_size,
+                                         std::max(required, options.batch_size))
+                              : context_capacity;
+    while (capacity < required) {
+      const std::uint64_t doubled = static_cast<std::uint64_t>(capacity) * 2;
+      capacity = static_cast<std::uint32_t>(
+          std::min<std::uint64_t>(options.context_size, doubled));
+    }
+    context.reset();
+    sampler.reset();
+    llama_context_params parameters = llama_context_default_params();
+    parameters.n_ctx = capacity;
+    parameters.n_batch = options.batch_size;
+    parameters.n_ubatch = options.batch_size;
+    parameters.n_seq_max = 1;
+    parameters.n_outputs_max = options.batch_size;
+    parameters.n_outputs_max_per_seq = options.batch_size;
+    parameters.n_threads = options.threads;
+    parameters.n_threads_batch = options.threads;
+    llama_sampler_seq_config sampler_config{};
+    if (options.device_reduction) {
+      sampler = MakeDeviceEntropySampler(device_state);
+      sampler_config = {.seq_id = 0, .sampler = sampler.get()};
+      parameters.samplers = &sampler_config;
+      parameters.n_samplers = 1;
+    }
+    context.reset(llama_init_from_model(model, parameters));
+    if (!context) {
+      context_capacity = 0;
+      const std::string detail = backend_log.Error();
+      throw std::runtime_error(
+          "could not create inference context" +
+          (detail.empty() ? std::string() : ": " + detail));
+    }
+    context_capacity = capacity;
+  } else {
+    llama_memory_clear(llama_get_memory(context.get()), true);
   }
 
   const std::int32_t vocabulary_size = llama_vocab_n_tokens(vocabulary);
@@ -520,36 +672,120 @@ void ScoreInput(llama_model* model, BackendLogCapture& backend_log,
         .seq_id = sequences.data(),
         .logits = output_logits.data(),
     };
+    if (options.device_reduction) {
+      device_state.targets =
+          std::span<const llama_token>(tokens.data() + source + 1, count);
+    }
     const int decode_result = llama_decode(context.get(), batch);
     if (decode_result != 0) {
       throw std::runtime_error("llama_decode failed at token " +
                                std::to_string(source) + " with code " +
                                std::to_string(decode_result));
     }
-    for (std::size_t index = 0; index < count; ++index) {
-      float* logits =
-          llama_get_logits_ith(context.get(), static_cast<std::int32_t>(index));
-      if (logits == nullptr) {
-        throw std::runtime_error("model returned no logits");
+    std::vector<llmcc::TokenScore> host_scores;
+    if (!options.device_reduction) {
+      host_scores.resize(count);
+      std::vector<float*> logits_rows(count);
+      for (std::size_t index = 0; index < count; ++index) {
+        logits_rows[index] = llama_get_logits_ith(
+            context.get(), static_cast<std::int32_t>(index));
+        if (logits_rows[index] == nullptr) {
+          throw std::runtime_error("model returned no logits");
+        }
+        const llama_token target = tokens[source + index + 1];
+        if (target < 0 || target >= vocabulary_size) {
+          throw std::runtime_error(
+              "tokenizer produced a token outside the vocabulary");
+        }
       }
+      std::atomic_size_t next_row = 0;
+      std::mutex error_mutex;
+      std::exception_ptr worker_error;
+      const std::size_t worker_count = std::min<std::size_t>(
+          count, std::max<std::int32_t>(1, options.threads));
+      const auto reduce_rows = [&]() {
+        for (;;) {
+          const std::size_t index = next_row.fetch_add(1);
+          if (index >= count) {
+            return;
+          }
+          try {
+            const llama_token target = tokens[source + index + 1];
+            host_scores[index] = llmcc::ScoreToken(
+                std::span<const float>(
+                    logits_rows[index],
+                    static_cast<std::size_t>(vocabulary_size)),
+                static_cast<std::size_t>(target), options.entropy);
+          } catch (...) {
+            std::lock_guard lock(error_mutex);
+            if (!worker_error) {
+              worker_error = std::current_exception();
+            }
+            return;
+          }
+        }
+      };
+      std::vector<std::jthread> workers;
+      workers.reserve(worker_count - 1);
+      for (std::size_t worker = 1; worker < worker_count; ++worker) {
+        workers.emplace_back(reduce_rows);
+      }
+      reduce_rows();
+      workers.clear();
+      if (worker_error) {
+        std::rethrow_exception(worker_error);
+      }
+    }
+    for (std::size_t index = 0; index < count; ++index) {
       const std::size_t target_index = source + index + 1;
       const llama_token target = tokens[target_index];
       if (target < 0 || target >= vocabulary_size) {
         throw std::runtime_error(
             "tokenizer produced a token outside the vocabulary");
       }
-      const llmcc::TokenScore score = llmcc::ScoreToken(
-          std::span<const float>(logits,
-                                 static_cast<std::size_t>(vocabulary_size)),
-          static_cast<std::size_t>(target), options.entropy);
-      WriteScore(output, target_index - first_observed, target,
-                 TokenPiece(vocabulary, target), score, options.entropy);
+      llmcc::TokenScore score{};
+      if (options.device_reduction) {
+        const float* statistics = llama_get_sampled_probs_ith(
+            context.get(), static_cast<std::int32_t>(index));
+        const std::uint32_t statistics_count =
+            llama_get_sampled_probs_count_ith(context.get(),
+                                              static_cast<std::int32_t>(index));
+        if (statistics == nullptr || statistics_count != 2 ||
+            !std::isfinite(statistics[0]) || !std::isfinite(statistics[1]) ||
+            statistics[0] < 0.0F) {
+          throw std::runtime_error(
+              "device entropy reduction returned invalid logits");
+        }
+        score.log_probability = statistics[1];
+        score.probability = std::exp(score.log_probability);
+        if (options.entropy) {
+          score.entropy = statistics[0];
+        }
+      } else {
+        score = host_scores[index];
+      }
+      const std::string piece = TokenPiece(vocabulary, target);
+      if (output != nullptr) {
+        WriteScore(*output, target_index - first_observed, target, piece, score,
+                   options.entropy);
+      }
+      if (records != nullptr) {
+        records->push_back({.position = target_index - first_observed,
+                            .bytes = piece,
+                            .entropy = score.entropy});
+      }
       negative_log_likelihood -= score.log_probability;
       ++scored;
     }
   }
   WriteSummary(diagnostics, tokens.size() - first_observed, scored,
-               negative_log_likelihood);
+               negative_log_likelihood, options.device_reduction);
+}
+
+bool DeviceReductionAvailable(llmcc::BackendKind selected,
+                              std::int32_t gpu_layers) {
+  return gpu_layers != 0 && (selected != llmcc::BackendKind::kCpu ||
+                             llmcc::CompiledBackend() == "metal");
 }
 
 int Run(const Arguments& arguments, std::ostream& output,
@@ -563,6 +799,16 @@ int Run(const Arguments& arguments, std::ostream& output,
   const bool use_gpu = arguments.gpu_layers != 0;
   const std::optional<std::uint64_t> gpu_available =
       use_gpu ? GpuAvailableMemory() : std::nullopt;
+  const bool device_available =
+      DeviceReductionAvailable(backend.selected(), arguments.gpu_layers);
+  if (arguments.entropy_reduction == llmcc::EntropyReduction::kDevice &&
+      !device_available) {
+    throw std::runtime_error("device entropy reduction requires GPU execution");
+  }
+  const bool device_reduction =
+      arguments.entropy_reduction == llmcc::EntropyReduction::kDevice ||
+      (arguments.entropy_reduction == llmcc::EntropyReduction::kAuto &&
+       device_available);
   CheckAvailableMemory(arguments, use_gpu, gpu_available);
 
   llama_model_params model_parameters = llama_model_default_params();
@@ -576,13 +822,20 @@ int Run(const Arguments& arguments, std::ostream& output,
         "could not load model: " + arguments.model.string() +
         (detail.empty() ? std::string() : ": " + detail));
   }
+  DeviceEntropyState device_state;
+  Sampler sampler(nullptr, llama_sampler_free);
+  Context context(nullptr, llama_free);
+  std::uint32_t context_capacity = 0;
   ScoreInput(model.get(), backend_log, input,
              {.bos = arguments.bos,
               .context_size = arguments.context_size,
               .threads = arguments.threads,
               .entropy = arguments.entropy,
+              .batch_size = arguments.batch_size,
+              .device_reduction = device_reduction,
               .context_option = "--context-size"},
-             output, &diagnostics);
+             &output, nullptr, &diagnostics, context, context_capacity, sampler,
+             device_state);
   return 0;
 }
 
@@ -597,7 +850,9 @@ class EntropyScorer::Impl {
       : backend_(inference_options.backend, inference_options.gpu_layers),
         inference_guard_(BackendName(backend_.selected())),
         model_(nullptr, llama_model_free),
+        context_(nullptr, llama_free),
         context_limit_(inference_options.context_size),
+        batch_size_(inference_options.batch_size),
         threads_(static_cast<std::int32_t>(
             std::max(1U, std::thread::hardware_concurrency()))) {
     Arguments arguments;
@@ -607,6 +862,18 @@ class EntropyScorer::Impl {
     arguments.gpu_layers = inference_options.gpu_layers;
     arguments.backend = inference_options.backend;
     arguments.entropy = true;
+    arguments.batch_size = batch_size_;
+    const bool device_available = DeviceReductionAvailable(
+        backend_.selected(), inference_options.gpu_layers);
+    if (inference_options.entropy_reduction == EntropyReduction::kDevice &&
+        !device_available) {
+      throw std::runtime_error(
+          "device entropy reduction requires GPU execution");
+    }
+    device_reduction_ =
+        inference_options.entropy_reduction == EntropyReduction::kDevice ||
+        (inference_options.entropy_reduction == EntropyReduction::kAuto &&
+         device_available);
     const bool use_gpu = inference_options.gpu_layers != 0;
     const auto gpu_available = use_gpu ? GpuAvailableMemory() : std::nullopt;
     CheckAvailableMemory(arguments, use_gpu, gpu_available);
@@ -623,14 +890,46 @@ class EntropyScorer::Impl {
 
   std::string Score(std::string_view input) {
     std::ostringstream output;
-    ScoreInput(model_.get(), backend_log_, input,
-               {.bos = BosMode::kAuto,
-                .context_size = context_limit_,
-                .threads = threads_,
-                .entropy = true,
-                .context_option = "--context"},
-               output, nullptr);
+    try {
+      ScoreInput(model_.get(), backend_log_, input,
+                 {.bos = BosMode::kAuto,
+                  .context_size = context_limit_,
+                  .threads = threads_,
+                  .entropy = true,
+                  .batch_size = batch_size_,
+                  .device_reduction = device_reduction_,
+                  .context_option = "--context"},
+                 &output, nullptr, nullptr, context_, context_capacity_,
+                 sampler_, device_state_);
+    } catch (...) {
+      context_.reset();
+      sampler_.reset();
+      context_capacity_ = 0;
+      throw;
+    }
     return output.str();
+  }
+
+  std::vector<EntropyRecord> ScoreRecords(std::string_view input) {
+    std::vector<EntropyRecord> records;
+    try {
+      ScoreInput(model_.get(), backend_log_, input,
+                 {.bos = BosMode::kAuto,
+                  .context_size = context_limit_,
+                  .threads = threads_,
+                  .entropy = true,
+                  .batch_size = batch_size_,
+                  .device_reduction = device_reduction_,
+                  .context_option = "--context"},
+                 nullptr, &records, nullptr, context_, context_capacity_,
+                 sampler_, device_state_);
+    } catch (...) {
+      context_.reset();
+      sampler_.reset();
+      context_capacity_ = 0;
+      throw;
+    }
+    return records;
   }
 
  private:
@@ -638,7 +937,13 @@ class EntropyScorer::Impl {
   BackendRuntime backend_;
   InferenceGuard inference_guard_;
   Model model_;
+  DeviceEntropyState device_state_;
+  Sampler sampler_{nullptr, llama_sampler_free};
+  Context context_;
   std::uint32_t context_limit_;
+  std::uint32_t batch_size_;
+  std::uint32_t context_capacity_ = 0;
+  bool device_reduction_ = false;
   std::int32_t threads_;
 };
 
@@ -654,8 +959,24 @@ std::string EntropyScorer::Score(std::string_view input) {
   return implementation_->Score(input);
 }
 
+std::vector<EntropyRecord> EntropyScorer::ScoreRecords(std::string_view input) {
+  return implementation_->ScoreRecords(input);
+}
+
+std::string_view EntropyReductionName(EntropyReduction reduction) {
+  switch (reduction) {
+    case EntropyReduction::kAuto:
+      return "auto";
+    case EntropyReduction::kHost:
+      return "host";
+    case EntropyReduction::kDevice:
+      return "device";
+  }
+  return "unknown";
+}
+
 std::string_view InferenceAbi() {
-  return "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v1";
+  return "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v2";
 }
 
 std::string_view CompiledBackend() {

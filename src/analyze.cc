@@ -27,10 +27,11 @@ ProjectAnalyzer::ProjectAnalyzer(ProjectAnalysisOptions options,
 
 FileAnalysisResult ProjectAnalyzer::AnalyzeFile(const DiscoveredSource& source,
                                                 std::string_view contents) {
-  auto [preprocessed, offset_map] = StripComments(contents, source.language);
+  PreparedSource prepared = PrepareSource(contents, source.language);
+  const std::string& preprocessed = prepared.cleaned;
   assert(std::ranges::count(preprocessed, '\n') ==
          std::ranges::count(contents, '\n'));
-  const auto events = StructuralEvents(preprocessed, source.language);
+  const auto& events = prepared.structural_events;
   EntropyCacheLookup cached;
   if (options_.cache && source.repository.has_value()) {
     cached = ReadEntropyCache(*source.repository, preprocessed, options_.model);
@@ -66,9 +67,14 @@ FileAnalysisResult ProjectAnalyzer::AnalyzeFile(const DiscoveredSource& source,
     }
   }
   const auto tokens = AlignTokens(preprocessed, records);
-  const auto line_starts = LineStarts(preprocessed);
-  Analysis analysis = llmcc::Analyze(tokens, events, line_starts,
-                                     options_.tau_rule, options_.alpha);
+  const auto& line_starts = prepared.line_starts;
+  Analysis analysis =
+      prepared.meaningful_ranges.empty()
+          ? llmcc::Analyze({}, {}, {}, options_.tau_rule, options_.alpha, {},
+                           options_.hierarchy_mode)
+          : llmcc::Analyze(tokens, events, line_starts, options_.tau_rule,
+                           options_.alpha, prepared.meaningful_ranges,
+                           options_.hierarchy_mode);
   const double file_tau = analysis.tau;
 
   const auto line_at = [&](std::size_t byte) {
@@ -76,8 +82,7 @@ FileAnalysisResult ProjectAnalyzer::AnalyzeFile(const DiscoveredSource& source,
         std::ranges::upper_bound(line_starts, byte) - line_starts.begin());
   };
   std::vector<FunctionScore> functions;
-  for (const FunctionSpan& function :
-       Functions(preprocessed, source.language)) {
+  for (const FunctionSpan& function : prepared.functions) {
     const std::size_t first =
         FirstOverlappingToken(tokens, function.start_byte);
     const std::size_t end = TokenIndexAt(tokens, function.end_byte);
@@ -89,22 +94,43 @@ FileAnalysisResult ProjectAnalyzer::AnalyzeFile(const DiscoveredSource& source,
     function_tokens.front().start_byte =
         std::max(function_tokens.front().start_byte, function.start_byte);
     std::vector<StructuralEvent> function_events;
-    for (const StructuralEvent& event : events) {
-      if (event.scope_start >= function.start_byte &&
-          event.byte_offset <= function.end_byte) {
-        function_events.push_back(event);
+    const auto first_event = std::ranges::lower_bound(
+        events, function.start_byte, {}, &StructuralEvent::scope_start);
+    for (auto event = first_event;
+         event != events.end() && event->scope_start < function.end_byte;
+         ++event) {
+      if (event->byte_offset <= function.end_byte) {
+        function_events.push_back(*event);
       }
     }
     std::vector<std::size_t> function_line_starts = {0};
-    for (std::size_t line_start : line_starts) {
-      if (line_start > function_tokens.front().start_byte &&
-          line_start <= function_tokens.back().start_byte) {
-        function_line_starts.push_back(line_start);
+    const auto first_line = std::ranges::upper_bound(
+        line_starts, function_tokens.front().start_byte);
+    const auto last_line = std::ranges::upper_bound(
+        line_starts, function_tokens.back().start_byte);
+    for (auto line = first_line; line != last_line; ++line) {
+      function_line_starts.push_back(*line);
+    }
+    std::vector<SourceRange> function_meaningful;
+    const auto first_range = std::ranges::partition_point(
+        prepared.meaningful_ranges, [&](const SourceRange& range) {
+          return range.end_byte <= function.start_byte;
+        });
+    for (auto range = first_range; range != prepared.meaningful_ranges.end() &&
+                                   range->start_byte < function.end_byte;
+         ++range) {
+      const std::size_t start =
+          std::max(range->start_byte, function.start_byte);
+      const std::size_t range_end =
+          std::min(range->end_byte, function.end_byte);
+      if (start < range_end) {
+        function_meaningful.push_back({start, range_end});
       }
     }
     Analysis function_analysis = llmcc::Analyze(
         function_tokens, function_events, function_line_starts,
-        {.kind = TauRule::Kind::kAbsolute, .value = file_tau}, options_.alpha);
+        {.kind = TauRule::Kind::kAbsolute, .value = file_tau}, options_.alpha,
+        function_meaningful, options_.hierarchy_mode);
     functions.push_back(
         {.name = function.name,
          .start_line = line_at(function.start_byte),
@@ -165,7 +191,7 @@ FileAnalysisResult ProjectAnalyzer::AnalyzeFile(const DiscoveredSource& source,
     hotspots.resize(options_.hotspots);
   }
 
-  MapAnalysisOffsets(analysis, offset_map);
+  MapAnalysisOffsets(analysis, prepared.original_offsets);
   return {.analysis = std::move(analysis),
           .entropy_cache_hit = cached.hit,
           .functions = std::move(functions),

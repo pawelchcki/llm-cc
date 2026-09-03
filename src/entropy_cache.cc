@@ -275,7 +275,10 @@ std::string Sha256Hex(std::string_view contents) {
 ModelIdentity InspectModel(const std::filesystem::path& model,
                            std::string_view inference_abi,
                            std::string_view backend,
-                           std::uint32_t context_limit) {
+                           std::uint32_t context_limit,
+                           std::uint32_t batch_size,
+                           std::string_view reduction_policy,
+                           std::string_view effective_reducer) {
   std::error_code error;
   const auto canonical = std::filesystem::canonical(model, error);
   if (error) {
@@ -300,6 +303,9 @@ ModelIdentity InspectModel(const std::filesystem::path& model,
       .inference_abi = std::string(inference_abi),
       .backend = std::string(backend),
       .context_limit = context_limit,
+      .batch_size = batch_size,
+      .reduction_policy = std::string(reduction_policy),
+      .effective_reducer = std::string(effective_reducer),
   };
 }
 
@@ -313,7 +319,9 @@ std::string EntropyCacheKey(std::string_view source,
   identity += '\0' + std::to_string(model.size) + '\0' +
               std::to_string(model.modification_time) + '\0' +
               model.inference_abi + '\0' + model.backend + '\0' +
-              std::to_string(model.context_limit);
+              std::to_string(model.context_limit) + '\0' +
+              std::to_string(model.batch_size) + '\0' + model.reduction_policy +
+              '\0' + model.effective_reducer;
   return Sha256Hex(identity);
 }
 
@@ -353,6 +361,13 @@ void WriteEntropyCache(const std::filesystem::path& repository,
   EnsureCacheDirectory(repository);
   nlohmann::json encoded = {{"version", 1},
                             {"source_size", source.size()},
+                            {"provenance",
+                             {{"inference_abi", model.inference_abi},
+                              {"backend", model.backend},
+                              {"context_limit", model.context_limit},
+                              {"batch_size", model.batch_size},
+                              {"reduction_policy", model.reduction_policy},
+                              {"effective_reducer", model.effective_reducer}}},
                             {"records", nlohmann::json::array()}};
   for (const auto& record : records) {
     const std::vector<std::uint8_t> bytes(record.bytes.begin(),

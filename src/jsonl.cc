@@ -49,13 +49,18 @@ nlohmann::json UnitJson(const Unit& unit) {
 }
 
 void MapUnit(Unit& unit, std::span<const std::size_t> map) {
-  if (unit.start_byte >= map.size() || unit.end_byte >= map.size()) {
-    throw std::out_of_range("unit is outside the preprocessing offset map");
-  }
-  unit.start_byte = map[unit.start_byte];
-  unit.end_byte = map[unit.end_byte];
-  for (Unit& child : unit.children) {
-    MapUnit(child, map);
+  std::vector<Unit*> pending = {&unit};
+  while (!pending.empty()) {
+    Unit& current = *pending.back();
+    pending.pop_back();
+    if (current.start_byte >= map.size() || current.end_byte >= map.size()) {
+      throw std::out_of_range("unit is outside the preprocessing offset map");
+    }
+    current.start_byte = map[current.start_byte];
+    current.end_byte = map[current.end_byte];
+    for (Unit& child : current.children) {
+      pending.push_back(&child);
+    }
   }
 }
 
@@ -193,6 +198,10 @@ nlohmann::json AnalysisJson(const Analysis& analysis) {
     mean_entropy = analysis.metrics.mean_entropy;
   }
   return {{"llm_cc", analysis.llm_cc},
+          {"analysis_version", 2},
+          {"hierarchy_mode",
+           analysis.hierarchy_mode == HierarchyMode::kStructural ? "structural"
+                                                                 : "reference"},
           {"total_branch", analysis.total_branch},
           {"total_comp_level", analysis.total_comp_level},
           {"alpha", analysis.alpha},

@@ -107,6 +107,66 @@ int main() {  // NOLINT(bugprone-exception-escape)
   ExpectEq(empty.total_comp_level, std::uint64_t{0}, "empty level total");
   ExpectEq(empty.metrics, llmcc::Metrics{}, "empty metrics");
 
+  const auto plain_tokens = ByteTokens({std::nullopt, 0.0, 0.0});
+  const llmcc::Analysis root_only =
+      llmcc::Analyze(plain_tokens, {}, {},
+                     {.kind = llmcc::TauRule::Kind::kAbsolute, .value = 1.0},
+                     0.8, std::vector<llmcc::SourceRange>{{0, 3}});
+  ExpectEq(root_only.units.size(), std::size_t{0},
+           "undivided input has no duplicate root child");
+  Expect(std::abs(root_only.llm_cc - 0.2) < 1e-12,
+         "undivided input scores one minus alpha");
+
+  const std::vector<llmcc::StructuralEvent> termination = {
+      {.scope_start = 0, .byte_offset = 2, .depth = 0}};
+  const llmcc::Analysis structural =
+      llmcc::Analyze(plain_tokens, termination, {},
+                     {.kind = llmcc::TauRule::Kind::kAbsolute, .value = 1.0},
+                     0.8, std::vector<llmcc::SourceRange>{{0, 3}},
+                     llmcc::HierarchyMode::kStructural);
+  const llmcc::Analysis reference =
+      llmcc::Analyze(plain_tokens, termination, {},
+                     {.kind = llmcc::TauRule::Kind::kAbsolute, .value = 1.0},
+                     0.8, std::vector<llmcc::SourceRange>{{0, 3}},
+                     llmcc::HierarchyMode::kReference);
+  Expect(structural.llm_cc > reference.llm_cc,
+         "reference mode uses entropy-led boundaries");
+  Expect(std::abs(reference.llm_cc - 0.2) < 1e-12,
+         "reference root-only behavior matches pinned implementation");
+
+  // Golden topology for the authors' c38a26af revision: the text before the
+  // first marker stays in the implicit root and each marker starts a block.
+  const auto reference_tokens =
+      ByteTokens({std::nullopt, 0.0, 2.0, 0.0, 2.0, 0.0});
+  const std::vector<std::size_t> reference_lines = {0, 1, 2, 3, 4, 5};
+  const std::vector<llmcc::StructuralEvent> reference_scopes = {
+      {.scope_start = 0, .byte_offset = 6, .depth = 0},
+      {.scope_start = 4, .byte_offset = 6, .depth = 1},
+  };
+  const llmcc::Analysis reference_golden =
+      llmcc::Analyze(reference_tokens, reference_scopes, reference_lines,
+                     {.kind = llmcc::TauRule::Kind::kAbsolute, .value = 1.0},
+                     0.8, std::vector<llmcc::SourceRange>{{0, 6}},
+                     llmcc::HierarchyMode::kReference);
+  ExpectEq(reference_golden.units.size(), std::size_t{1},
+           "reference marker blocks share the implicit root");
+  ExpectEq(reference_golden.units.front().children.size(), std::size_t{1},
+           "reference control scope nests the later marker block");
+  ExpectEq(reference_golden.total_branch, std::uint64_t{2},
+           "reference golden branch total");
+  ExpectEq(reference_golden.total_comp_level, std::uint64_t{6},
+           "reference golden level total");
+  Expect(std::abs(reference_golden.llm_cc - 2.8) < 1e-12,
+         "reference golden raw score");
+
+  const auto whitespace_tokens = ByteTokens({std::nullopt, 0.0, 0.0, 0.0, 0.0});
+  const llmcc::Analysis with_trailing_whitespace =
+      llmcc::Analyze(whitespace_tokens, {}, {},
+                     {.kind = llmcc::TauRule::Kind::kAbsolute, .value = 1.0},
+                     0.8, std::vector<llmcc::SourceRange>{{0, 3}});
+  ExpectEq(with_trailing_whitespace.llm_cc, root_only.llm_cc,
+           "trailing whitespace does not change raw LM-CC");
+
   const auto metric_tokens = ByteTokens({std::nullopt, 0.5, 1.0});
   const llmcc::Analysis metric_analysis = llmcc::Analyze(
       metric_tokens, {}, {},

@@ -12,22 +12,25 @@ has three entry points:
 1. `src/lang.cc` parses Rust, C, C++, Java, Python, Go, JavaScript, or C#
    through tree-sitter's C API. Exhaustive language metadata owns each
    grammar, canonical name, aliases, extensions, comment nodes, structural
-   nodes, and callable kinds. Comment ranges are removed while an offset map
-   preserves every boundary back to the original UTF-8 byte stream. The same
-   frontend emits sorted structural scope termination events and their nesting
-   depth. JavaScript covers Node.js `.js`, `.mjs`, and `.cjs` files, not JSX or
-   TypeScript.
+   nodes, and callable kinds. One parse collects comments, Python docstrings,
+   callable spans, meaningful lines, and structural scopes. Removal preserves
+   newlines and an original-byte map; metadata is remapped instead of reparsing
+   potentially invalid empty Python suites. JavaScript covers Node.js `.js`,
+   `.mjs`, and `.cjs` files, not JSX or TypeScript.
 2. `src/score_cmd.cc` loads a GGUF with llama.cpp and teacher-forces the
-   preprocessed source. Analysis uses this API in-process. `llm-cc score`
-   exposes the byte-exact JSONL form for interoperability and debugging.
+   preprocessed source through configurable batches. Analysis consumes native
+   records through an in-process sink; `llm-cc score` exposes the byte-exact
+   JSONL form for interoperability and debugging. Contexts are reused, grow
+   geometrically, and are discarded after inference failures.
 3. `src/jsonl.cc` parses entropy records, reconstructs token bytes from
    `bytes_hex`, verifies contiguous positions and exact source coverage, and
    aligns entropy to preprocessed byte ranges.
 4. `src/core.cc` applies an absolute tau by default (or resolves an explicitly
-   requested percentile), snaps entropy boundaries to source lines, unions
-   them with structural boundaries, and runs Algorithm 1 breadth-first. The
-   hierarchy has an implicit root at level 1, so emitted units begin at level
-   2; branching and compositional levels are then aggregated with `alpha`.
+   requested percentile). Structural mode combines line-snapped entropy and
+   scope-termination boundaries. Reference mode uses entropy-led logical-line
+   partitioning. Both use source-aware meaningful positions and a scope sweep.
+   One implicit root occupies level 1; an undivided nonempty input is root-only
+   and scores `1 - alpha`.
 5. Unit offsets are mapped back to the original source and emitted as pretty
    JSON. The top-level score field is `llm_cc`.
 
@@ -35,9 +38,17 @@ has three entry points:
 
 For observed tokens `t[i]`, logits produced after `t[i]` score `t[i+1]`.
 Without a beginning-of-stream token, the first observed token has null
-probability, log probability, and entropy. Only one vocabulary row is retained
-at a time. Token pieces have both a readable JSON string and exact
-`bytes_hex`, so invalid standalone UTF-8 pieces remain lossless.
+probability, log probability, and entropy. Host reduction retains logits for
+the current batch; reduced device execution does not allocate a raw host-logits
+buffer. Token pieces have both a readable JSON string and exact `bytes_hex`,
+so invalid standalone UTF-8 pieces remain lossless.
+
+Host reduction is the double-precision numerical reference. Device reduction
+is a llama backend-sampler graph placed after final logits: stable max-shifted
+operations return entropy and observed-token log probability per row. The
+existing CUDA/HIP and Metal implementations execute those ggml operations;
+only the two-result tensor is copied to the host, and raw logits storage/copies
+are suppressed. Invalid results and token IDs are checked before emission.
 
 Before loading a model, the scorer checks host memory and, when requested, GPU
 memory. The estimate is the model file plus a 10% weight margin and 512 MiB of

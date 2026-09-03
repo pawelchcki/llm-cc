@@ -84,6 +84,12 @@ int main() {  // NOLINT(bugprone-exception-escape)
       Read(analyze_help).find("auto, cpu, cuda, or rocm") != std::string::npos,
       "analysis documents runtime backend selection");
   llmcc::test::Expect(
+      Read(analyze_help).find("--hierarchy structural|reference") !=
+              std::string::npos &&
+          Read(analyze_help).find("--batch-size") != std::string::npos &&
+          Read(analyze_help).find("--entropy-reduction") != std::string::npos,
+      "analysis documents hierarchy and inference controls");
+  llmcc::test::Expect(
       Read(analyze_help).find("rust, c, cpp, java, python, go, javascript") !=
               std::string::npos &&
           Read(analyze_help).find("or csharp") != std::string::npos,
@@ -99,6 +105,10 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(
       Read(score_help).find("auto, cpu, cuda, or rocm") != std::string::npos,
       "score documents runtime backend selection");
+  llmcc::test::Expect(
+      Read(score_help).find("--batch-size") != std::string::npos &&
+          Read(score_help).find("--entropy-reduction") != std::string::npos,
+      "score documents batching and reduction controls");
 
   const fs::path backend_error = fs::path(test_tmpdir) / "backend-error.txt";
   const std::string cpu_gpu_command =
@@ -134,6 +144,13 @@ int main() {  // NOLINT(bugprone-exception-escape)
           empty_events[3]["type"] == "totals" &&
           empty_events[3]["discovered"] == 0,
       "empty discovery emits a complete zero-file event stream");
+  llmcc::test::Expect(empty_events[1]["hierarchy_mode"] == "structural" &&
+                          empty_events[1]["analysis_version"] == 2 &&
+                          empty_events[1]["batch_size"] == 64 &&
+                          empty_events[1]["entropy_reduction"] == "auto" &&
+                          empty_events[3]["hierarchy_mode"] == "structural" &&
+                          empty_events[3]["analysis_version"] == 2,
+                      "default analysis metadata is additive and versioned");
   const fs::path invalid_options_error =
       fs::path(test_tmpdir) / "invalid-options.txt";
   llmcc::test::Expect(Run(Quote(binary) + " " + Quote(empty_repository) +
@@ -144,6 +161,12 @@ int main() {  // NOLINT(bugprone-exception-escape)
               .find("--alpha must be finite and between 0 and 1") !=
           std::string::npos,
       "invalid global parameter is explained");
+  llmcc::test::Expect(Run(Quote(binary) + " " + Quote(empty_repository) +
+                          " --batch-size 0 >/dev/null 2>&1") != 0,
+                      "zero analysis batch size is rejected");
+  llmcc::test::Expect(Run(Quote(binary) + " " + Quote(empty_repository) +
+                          " --hierarchy invalid >/dev/null 2>&1") != 0,
+                      "invalid hierarchy mode is rejected");
 
   const fs::path removed_option_error =
       fs::path(test_tmpdir) / "removed-option-error.txt";
@@ -233,18 +256,10 @@ int main() {  // NOLINT(bugprone-exception-escape)
   const auto [preprocessed, offsets] =
       llmcc::StripComments(Read(source), llmcc::Language::kRust);
   static_cast<void>(offsets);
-#ifdef LLMCC_TEST_BACKEND_METAL
-  constexpr std::string_view backend = "metal";
-#elif defined LLMCC_TEST_BACKEND_CUDA
-  constexpr std::string_view backend = "cuda";
-#elif defined LLMCC_TEST_BACKEND_ROCM
-  constexpr std::string_view backend = "rocm";
-#else
   constexpr std::string_view backend = "cpu";
-#endif
   const auto identity = llmcc::InspectModel(
       fake_model,
-      "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v1", backend,
+      "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v2", backend,
       128U * 1024U);
   const std::size_t first_newline = preprocessed.find('\n');
   const std::size_t second_newline = preprocessed.find('\n', first_newline + 1);
@@ -280,6 +295,11 @@ int main() {  // NOLINT(bugprone-exception-escape)
       "analysis events are ordered");
   llmcc::test::Expect(events[3]["entropy_cache_hit"].get<bool>(),
                       "file reports entropy cache hit");
+  llmcc::test::Expect(events[3]["hierarchy_mode"] == "structural" &&
+                          events[3]["analysis_version"] == 2 &&
+                          events[4]["hierarchy_mode"] == "structural" &&
+                          events[4]["analysis_version"] == 2,
+                      "file and totals records identify corrected semantics");
   const nlohmann::json& file = events[3];
   for (std::string_view field :
        {"token_count", "high_entropy_tokens", "lmcc_per_token", "density",
@@ -294,6 +314,18 @@ int main() {  // NOLINT(bugprone-exception-escape)
                       "file includes hotspot scores");
   llmcc::test::ExpectEq(events[4]["analyzed"].get<std::uint64_t>(),
                         std::uint64_t{1}, "totals report analyzed file");
+
+  const fs::path reference_output =
+      fs::path(test_tmpdir) / "analysis-reference.jsonl";
+  llmcc::test::ExpectEq(Run(Quote(binary) + " " + Quote(source) + " --model " +
+                            Quote(fake_model) + " --hierarchy reference >" +
+                            Quote(reference_output)),
+                        0, "reference hierarchy reuses cached entropy");
+  const auto reference_events = ReadEvents(reference_output);
+  const auto& reference_file = FileEvent(reference_events);
+  llmcc::test::Expect(reference_file["hierarchy_mode"] == "reference" &&
+                          reference_file["entropy_cache_hit"].get<bool>(),
+                      "hierarchy mode stays outside entropy-cache identity");
 
   const std::map<std::string, std::pair<llmcc::Language, std::string>>
       additional_sources = {

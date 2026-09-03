@@ -83,6 +83,16 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(
       !llmcc::ReadEntropyCache(repository, "ab", changed_backend).hit,
       "backend invalidates key");
+  auto changed_batch = identity;
+  changed_batch.batch_size++;
+  llmcc::test::Expect(
+      !llmcc::ReadEntropyCache(repository, "ab", changed_batch).hit,
+      "batch size invalidates key");
+  auto changed_reducer = identity;
+  changed_reducer.reduction_policy = "host";
+  llmcc::test::Expect(
+      !llmcc::ReadEntropyCache(repository, "ab", changed_reducer).hit,
+      "reduction policy invalidates key");
   llmcc::test::Expect(llmcc::EntropyCacheKey("ab", identity) !=
                           llmcc::EntropyCacheKey("ac", identity),
                       "source digest invalidates key");

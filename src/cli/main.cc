@@ -45,6 +45,9 @@ struct AnalyzeArguments {
   std::int32_t gpu_layers = 0;
   llmcc::BackendKind backend = llmcc::BackendKind::kAuto;
   std::uint32_t context = llmcc::kDefaultContextSize;
+  std::uint32_t batch_size = llmcc::kDefaultBatchSize;
+  llmcc::EntropyReduction entropy_reduction = llmcc::EntropyReduction::kAuto;
+  llmcc::HierarchyMode hierarchy_mode = llmcc::HierarchyMode::kStructural;
   std::optional<double> tau;
   std::optional<double> tau_percentile;
   double alpha = 0.8;
@@ -69,10 +72,14 @@ constexpr std::string_view kUsageBeforeContext =
     "  --no-download         do not fetch the default model\n"
     "  --model GGUF          llama.cpp-compatible model\n"
     "  --score lmcc|density|mean  headline score mode (default: lmcc)\n"
+    "  --hierarchy structural|reference  hierarchy contract (default: "
+    "structural)\n"
     "  --tau N               absolute entropy threshold in nats (default: "
     "0.67)\n"
     "  --gpu-layers N        transformer layers to offload (-1 means all)\n"
     "  --backend NAME        auto, cpu, cuda, or rocm (default: auto)\n"
+    "  --batch-size N        decode rows per batch (default: 64)\n"
+    "  --entropy-reduction M auto, host, or device (default: auto)\n"
     "  --context N           maximum input tokens (default: ";
 
 constexpr std::string_view kUsageAfterContext =
@@ -141,6 +148,29 @@ void SetAnalyzeOption(AnalyzeArguments& arguments, std::string_view option,
     arguments.context = ParseNumber<std::uint32_t>(option, value);
     if (arguments.context == 0) {
       Usage("--context must be positive");
+    }
+  } else if (option == "--batch-size") {
+    arguments.batch_size = ParseNumber<std::uint32_t>(option, value);
+    if (arguments.batch_size == 0) {
+      Usage("--batch-size must be positive");
+    }
+  } else if (option == "--entropy-reduction") {
+    if (value == "auto") {
+      arguments.entropy_reduction = llmcc::EntropyReduction::kAuto;
+    } else if (value == "host") {
+      arguments.entropy_reduction = llmcc::EntropyReduction::kHost;
+    } else if (value == "device") {
+      arguments.entropy_reduction = llmcc::EntropyReduction::kDevice;
+    } else {
+      Usage("--entropy-reduction expects auto, host, or device");
+    }
+  } else if (option == "--hierarchy") {
+    if (value == "structural") {
+      arguments.hierarchy_mode = llmcc::HierarchyMode::kStructural;
+    } else if (value == "reference") {
+      arguments.hierarchy_mode = llmcc::HierarchyMode::kReference;
+    } else {
+      Usage("--hierarchy expects structural or reference");
     }
   } else if (option == "--tau-percentile") {
     arguments.tau_percentile = ParseNumber<double>(option, value);
@@ -353,14 +383,17 @@ class LlamaEntropyProvider : public llmcc::EntropyProvider {
   LlamaEntropyProvider(const std::filesystem::path& cache_dir,
                        const std::filesystem::path& model,
                        std::uint32_t context, std::int32_t gpu_layers,
-                       llmcc::BackendKind backend)
+                       llmcc::BackendKind backend, std::uint32_t batch_size,
+                       llmcc::EntropyReduction entropy_reduction)
       : scorer_((llmcc::MarkCachedModelUsed(cache_dir, model), model),
                 {.context_size = context,
                  .gpu_layers = gpu_layers,
-                 .backend = backend}) {}
+                 .backend = backend,
+                 .batch_size = batch_size,
+                 .entropy_reduction = entropy_reduction}) {}
 
   std::vector<llmcc::EntropyRecord> Score(std::string_view source) override {
-    return llmcc::ParseEntropyJsonl(scorer_.Score(source));
+    return scorer_.ScoreRecords(source);
   }
 
  private:
@@ -441,7 +474,8 @@ nlohmann::json TotalsMetricsJson(const MetricTotals& totals,
 
 nlohmann::json TotalsJson(const MetricTotals& totals,
                           const std::map<std::string, MetricTotals>& languages,
-                          bool fatal, std::string_view score_mode) {
+                          bool fatal, std::string_view score_mode,
+                          llmcc::HierarchyMode hierarchy_mode) {
   nlohmann::json language_json = nlohmann::json::object();
   for (const auto& [name, value] : languages) {
     nlohmann::json item = TotalsMetricsJson(value, score_mode);
@@ -454,16 +488,21 @@ nlohmann::json TotalsJson(const MetricTotals& totals,
     language_json[name] = std::move(item);
   }
   nlohmann::json result = TotalsMetricsJson(totals, score_mode);
-  result.update({{"type", "totals"},
-                 {"discovered", totals.discovered},
-                 {"analyzed", totals.analyzed},
-                 {"failed", totals.failed},
-                 {"llm_cc", totals.llm_cc},
-                 {"total_branch", totals.total_branch},
-                 {"total_comp_level", totals.total_comp_level},
-                 {"languages", std::move(language_json)},
-                 {"partial", fatal || totals.failed != 0 ||
-                                 totals.analyzed != totals.discovered}});
+  result.update(
+      {{"type", "totals"},
+       {"analysis_version", 2},
+       {"hierarchy_mode", hierarchy_mode == llmcc::HierarchyMode::kStructural
+                              ? "structural"
+                              : "reference"},
+       {"discovered", totals.discovered},
+       {"analyzed", totals.analyzed},
+       {"failed", totals.failed},
+       {"llm_cc", totals.llm_cc},
+       {"total_branch", totals.total_branch},
+       {"total_comp_level", totals.total_comp_level},
+       {"languages", std::move(language_json)},
+       {"partial",
+        fatal || totals.failed != 0 || totals.analyzed != totals.discovered}});
   return result;
 }
 
@@ -481,12 +520,21 @@ nlohmann::json ConfigurationJson(
   }
   nlohmann::json configuration = {
       {"type", "configuration"},
+      {"analysis_version", 2},
+      {"hierarchy_mode",
+       arguments.hierarchy_mode == llmcc::HierarchyMode::kStructural
+           ? "structural"
+           : "reference"},
       {"language", arguments.language_name},
       {"include_headers", arguments.include_headers},
       {"no_ignore", arguments.no_ignore},
       {"no_download", arguments.no_download},
       {"model", requested_model},
       {"context", arguments.context},
+      {"batch_size", arguments.batch_size},
+      {"entropy_reduction",
+       llmcc::EntropyReductionName(arguments.entropy_reduction)},
+      {"effective_entropy_reducer", "host"},
       {"score_mode", arguments.score_mode},
       {"tau_rule", percentile ? "percentile" : "absolute"},
       {"tau", std::move(configured_tau)},
@@ -506,6 +554,7 @@ nlohmann::json ConfigurationJson(
     configuration["model_size"] = identity->size;
     configuration["model_modification_time"] = identity->modification_time;
     configuration["backend"] = identity->backend;
+    configuration["effective_entropy_reducer"] = identity->effective_reducer;
   }
   return configuration;
 }
@@ -755,7 +804,8 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
     if (text) {
       PrintTotalsText({}, arguments.score_mode);
     } else {
-      Emit(TotalsJson({}, {}, false, arguments.score_mode));
+      Emit(TotalsJson({}, {}, false, arguments.score_mode,
+                      arguments.hierarchy_mode));
     }
     return 0;
   }
@@ -765,14 +815,31 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       arguments.model, arguments.no_download, std::filesystem::current_path(),
       model_cache, llmcc::DownloadDefaultModel);
   const llmcc::BackendKind resolved_backend = [&]() {
+    if (arguments.gpu_layers == 0) {
+      return llmcc::BackendKind::kCpu;
+    }
     llmcc::BackendRuntime runtime(arguments.backend, arguments.gpu_layers);
     return runtime.selected();
   }();
+  const bool device_available = arguments.gpu_layers != 0 &&
+                                (resolved_backend != llmcc::BackendKind::kCpu ||
+                                 llmcc::CompiledBackend() == "metal");
+  if (arguments.entropy_reduction == llmcc::EntropyReduction::kDevice &&
+      !device_available) {
+    throw std::invalid_argument(
+        "device entropy reduction requires GPU execution");
+  }
+  const bool device_reduction =
+      arguments.entropy_reduction == llmcc::EntropyReduction::kDevice ||
+      (arguments.entropy_reduction == llmcc::EntropyReduction::kAuto &&
+       device_available);
   const std::string backend_identity =
       BackendCacheIdentity(resolved_backend, arguments.gpu_layers);
-  const auto identity =
-      llmcc::InspectModel(resolved_model, llmcc::InferenceAbi(),
-                          backend_identity, arguments.context);
+  const auto identity = llmcc::InspectModel(
+      resolved_model, llmcc::InferenceAbi(), backend_identity,
+      arguments.context, arguments.batch_size,
+      llmcc::EntropyReductionName(arguments.entropy_reduction),
+      device_reduction ? "device" : "host");
   if (!text) {
     Emit(ConfigurationJson(arguments, requested_model, &identity));
   }
@@ -812,11 +879,13 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
                                 .value = arguments.tau.value_or(0.67)},
        .alpha = arguments.alpha,
        .cache = !arguments.no_cache,
-       .hotspots = arguments.hotspots},
+       .hotspots = arguments.hotspots,
+       .hierarchy_mode = arguments.hierarchy_mode},
       [&]() {
         return std::make_unique<LlamaEntropyProvider>(
             model_cache, identity.canonical_path, arguments.context,
-            arguments.gpu_layers, resolved_backend);
+            arguments.gpu_layers, resolved_backend, arguments.batch_size,
+            arguments.entropy_reduction);
       });
 
   MetricTotals totals;
@@ -899,7 +968,8 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
   if (text) {
     PrintTotalsText(totals, arguments.score_mode);
   } else {
-    Emit(TotalsJson(totals, languages, fatal, arguments.score_mode));
+    Emit(TotalsJson(totals, languages, fatal, arguments.score_mode,
+                    arguments.hierarchy_mode));
   }
   if (fatal) {
     return 2;

@@ -23,6 +23,9 @@ struct ModelIdentity {
   std::string inference_abi;
   std::string backend;
   std::uint32_t context_limit;
+  std::uint32_t batch_size = 64;
+  std::string reduction_policy = "auto";
+  std::string effective_reducer = "host";
 };
 
 struct EntropyCacheLookup {
@@ -40,7 +43,10 @@ struct RepositoryCacheStatus {
 ModelIdentity InspectModel(const std::filesystem::path& model,
                            std::string_view inference_abi,
                            std::string_view backend,
-                           std::uint32_t context_limit);
+                           std::uint32_t context_limit,
+                           std::uint32_t batch_size = 64,
+                           std::string_view reduction_policy = "auto",
+                           std::string_view effective_reducer = "host");
 std::string Sha256Hex(std::string_view contents);
 std::string EntropyCacheKey(std::string_view preprocessed_source,
                             const ModelIdentity& model);

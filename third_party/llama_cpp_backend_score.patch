@@ -60,3 +60,10 @@ index d18b9c8..25fb305 100644
 +
 +GGML_BACKEND_DL_SCORE_IMPL(llm_cc_cuda_backend_score)
  GGML_BACKEND_DL_IMPL(ggml_backend_cuda_reg)
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index 29ec82d..d39e043 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -2053 +2053 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
+-    bool has_logits     = true;
++    bool has_logits     = sampling.samplers.size() < cparams.n_seq_max;
