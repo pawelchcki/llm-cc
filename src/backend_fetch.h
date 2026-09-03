@@ -8,6 +8,7 @@
 #include <string_view>
 
 #include "generated/version.h"
+#include "src/download.h"
 #include "src/payload.h"
 
 namespace llmcc {
@@ -22,8 +23,9 @@ struct BackendFetchOptions {
   std::filesystem::path runtime_root = RuntimeRoot();
 };
 
-using BundleDownloader = std::function<void(
-    std::string_view url, const std::filesystem::path& target)>;
+using BundleDownloader = std::function<void(std::string_view url,
+                                            const std::filesystem::path& target,
+                                            const DownloadOptions& options)>;
 
 std::filesystem::path BackendBundlePath(const BackendFetchOptions& options);
 std::filesystem::path FetchBackendBundle(

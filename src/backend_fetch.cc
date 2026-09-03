@@ -357,12 +357,16 @@ std::optional<fs::path> DownloadManifest(const BundleDownloader& download,
   if (base.empty()) {
     return std::nullopt;
   }
-  for (const std::string& file : {std::string(artifact) + ".manifest.json",
-                                  std::string("manifest.json")}) {
+  const std::array files = {std::string(artifact) + ".manifest.json",
+                            std::string("manifest.json")};
+  for (std::size_t index = 0; index < files.size(); ++index) {
     RemoveFile(destination);
     RemoveFile(destination.string() + ".partial");
     try {
-      download(JoinUrl(base, file), destination);
+      download(JoinUrl(base, files[index]), destination,
+               {.noun = "backend bundle",
+                .show_progress = index != 0,
+                .record_in_model_manifest = false});
       return destination;
     } catch (const std::exception&) {
       RemoveFile(destination);
@@ -434,11 +438,16 @@ fs::path FetchBackendBundle(const BackendFetchOptions& options,
   const std::string checksum_url = bundle_url + ".sha256";
   const std::string manifest_base =
       has_explicit_url ? UrlParent(bundle_url) : std::string(options.base_url);
-  const BundleDownloader download = downloader ? downloader : DownloadModel;
+  const BundleDownloader download = downloader ? downloader : DownloadFile;
+  const DownloadOptions download_options{
+      .noun = "backend bundle",
+      .show_progress = true,
+      .record_in_model_manifest = false,
+  };
 
   try {
-    download(bundle_url, bundle);
-    download(checksum_url, checksum);
+    download(bundle_url, bundle, download_options);
+    download(checksum_url, checksum, download_options);
     if (HashFile(bundle) != ReadRecordedHash(checksum)) {
       throw std::runtime_error("backend bundle SHA-256 mismatch");
     }

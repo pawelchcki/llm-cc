@@ -65,17 +65,32 @@ std::string Bundle(std::string_view name, bool valid_footer = true) {
 }
 
 struct FakeDownloads {
+  struct Request {
+    std::string url;
+    std::string noun;
+    bool show_progress;
+    bool record_in_model_manifest;
+  };
+
   std::map<std::string, std::string> files;
-  std::vector<std::string> urls;
+  std::vector<Request> requests;
 
   llmcc::BundleDownloader Downloader() {
-    return [this](std::string_view url, const fs::path& target) {
-      urls.emplace_back(url);
+    return [this](std::string_view url, const fs::path& target,
+                  const llmcc::DownloadOptions& options) {
+      requests.push_back(
+          {.url = std::string(url),
+           .noun = std::string(options.noun),
+           .show_progress = options.show_progress,
+           .record_in_model_manifest = options.record_in_model_manifest});
       const auto found = files.find(std::string(url));
       if (found == files.end()) {
         throw std::runtime_error("test URL not found");
       }
       Write(target, found->second);
+      if (options.record_in_model_manifest) {
+        Write(target.parent_path() / "models.json", "{}");
+      }
     };
   }
 };
@@ -121,7 +136,7 @@ void TestBaseUrls(const fs::path& root) {
     options.base_url = base;
     ExpectEq(llmcc::FetchBackendBundle(options, downloads.Downloader()),
              llmcc::BackendBundlePath(options), label + " bundle path");
-    Expect(!downloads.urls.empty() && downloads.urls.front() == url,
+    Expect(!downloads.requests.empty() && downloads.requests.front().url == url,
            label + " base produces the bundle URL");
   }
 
@@ -129,7 +144,8 @@ void TestBaseUrls(const fs::path& root) {
   bool called = false;
   const std::string message = ExceptionMessage([&] {
     static_cast<void>(llmcc::FetchBackendBundle(
-        options, [&](std::string_view, const fs::path&) { called = true; }));
+        options, [&](std::string_view, const fs::path&,
+                     const llmcc::DownloadOptions&) { called = true; }));
   });
   Expect(message.find("no artifact base URL") != std::string::npos,
          "unstamped build explains the missing artifact base");
@@ -147,9 +163,10 @@ void TestExplicitUrl(const fs::path& root) {
   options.base_url = "https://ignored.example/release";
   options.explicit_url = explicit_url;
   static_cast<void>(llmcc::FetchBackendBundle(options, downloads.Downloader()));
-  Expect(downloads.urls.size() >= 2, "bundle and checksum were downloaded");
-  ExpectEq(downloads.urls[0], explicit_url, "explicit URL overrides base URL");
-  ExpectEq(downloads.urls[1], explicit_url + ".sha256",
+  Expect(downloads.requests.size() >= 2, "bundle and checksum were downloaded");
+  ExpectEq(downloads.requests[0].url, explicit_url,
+           "explicit URL overrides base URL");
+  ExpectEq(downloads.requests[1].url, explicit_url + ".sha256",
            "explicit checksum URL is derived from bundle URL");
 }
 
@@ -224,12 +241,43 @@ void TestCachedBundle(const fs::path& root) {
   Write(path.string() + ".sha256", llmcc::Sha256Hex(bundle) + "\n");
   bool called = false;
   const fs::path result = llmcc::FetchBackendBundle(
-      options, [&](std::string_view, const fs::path&) {
+      options,
+      [&](std::string_view, const fs::path&, const llmcc::DownloadOptions&) {
         called = true;
         throw std::runtime_error("cached bundle should not download");
       });
   ExpectEq(result, path, "cached bundle path is returned");
   Expect(!called, "valid cached bundle does not invoke downloader");
+}
+
+void TestDownloadSemantics(const fs::path& root) {
+  const std::string base = "https://artifacts.example/release";
+  const std::string artifact = "llm-cc-backend-cuda-linux-x86_64";
+  const std::string url = base + "/" + artifact + ".bundle";
+  FakeDownloads downloads;
+  AddValidBundle(downloads, url);
+  downloads.files[base + "/manifest.json"] = R"({"git_sha":"expected"})";
+  auto options = Options(root);
+  options.base_url = base;
+  options.git_sha = "expected";
+
+  const fs::path bundle =
+      llmcc::FetchBackendBundle(options, downloads.Downloader());
+
+  Expect(!fs::exists(bundle.parent_path() / "models.json"),
+         "backend fetch does not create a model manifest");
+  Expect(std::ranges::all_of(downloads.requests,
+                             [](const auto& request) {
+                               return request.noun == "backend bundle" &&
+                                      !request.record_in_model_manifest;
+                             }),
+         "backend downloads are described and recorded as backend bundles");
+  Expect(downloads.requests.size() == 4,
+         "fallback manifest is requested after the artifact manifest");
+  Expect(!downloads.requests[2].show_progress,
+         "speculative artifact manifest request is quiet");
+  Expect(downloads.requests[3].show_progress,
+         "fallback manifest request reports progress");
 }
 
 }  // namespace
@@ -247,5 +295,6 @@ int main() {  // NOLINT(bugprone-exception-escape)
   TestFooterMismatch(root / "footer-mismatch");
   TestManifestMismatch(root / "manifest-mismatch");
   TestCachedBundle(root / "cached");
+  TestDownloadSemantics(root / "download-semantics");
   return 0;
 }
