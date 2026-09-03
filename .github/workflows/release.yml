@@ -42,6 +42,7 @@ jobs:
           fi
 
       - name: Fetch and verify GPU backends
+        timeout-minutes: 135
         env:
           RESOLVER_BASE: ${{ vars.LLM_CC_RESOLVER_BASE || 'https://ci-artifacts.pawelchcki.workers.dev' }}
         shell: bash
@@ -50,29 +51,43 @@ jobs:
           commit_sha="$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
           artifact_base="${RESOLVER_BASE%/}/pawelchcki/llm-cc/${commit_sha}"
           mkdir -p gpu-assets
+          deadline=$((SECONDS + 7500))
 
           missing_backend() {
             echo "::error::GPU backends for this commit are missing or invalid (${commit_sha}); refusing to publish a CPU-only release." >&2
             exit 1
           }
 
+          fetch_artifact() {
+            local url="$1"
+            local destination="$2"
+            while ! curl --fail --location --silent --show-error \
+              --output "$destination" "$url"; do
+              rm -f "$destination"
+              if ((SECONDS >= deadline)); then
+                return 1
+              fi
+              echo "Waiting for ${url}"
+              sleep 60
+            done
+          }
+
           for backend in cuda rocm; do
             bundle="llm-cc-backend-${backend}-linux-x86_64.bundle"
-            if ! curl --fail --location --silent --show-error \
-              --output "gpu-assets/${bundle}" "${artifact_base}/${bundle}"; then
+            manifest="llm-cc-backend-${backend}-linux-x86_64.manifest.json"
+            if ! fetch_artifact "${artifact_base}/${bundle}.sha256" \
+              "gpu-assets/${bundle}.sha256"; then
               missing_backend
             fi
-            if ! curl --fail --location --silent --show-error \
-              --output "gpu-assets/${bundle}.sha256" "${artifact_base}/${bundle}.sha256"; then
+            if ! fetch_artifact "${artifact_base}/${manifest}" \
+              "gpu-assets/${manifest}"; then
+              missing_backend
+            fi
+            if ! fetch_artifact "${artifact_base}/${bundle}" \
+              "gpu-assets/${bundle}"; then
               missing_backend
             fi
             if ! (cd gpu-assets && sha256sum -c "${bundle}.sha256"); then
-              missing_backend
-            fi
-
-            manifest="llm-cc-backend-${backend}-linux-x86_64.manifest.json"
-            if ! curl --fail --location --silent --show-error \
-              --output "gpu-assets/${manifest}" "${artifact_base}/${manifest}"; then
               missing_backend
             fi
           done

@@ -31,6 +31,7 @@ enum class BackendPluginSource : std::uint8_t {
 struct ResolvedBackendPlugin {
   BackendPluginSource source;
   std::filesystem::path path;
+  bool payload_verified = false;
 };
 
 // Resolves a GPU plugin in production order. The callback keeps the embedded

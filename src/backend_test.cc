@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "src/backend_fetch.h"
 #include "src/entropy_cache.h"
 #include "src/payload.h"
 #include "src/test_util.h"
@@ -190,6 +191,17 @@ int main() try {
              "built from a different commit"),
          "ordinary cache resolution verifies the manifest commit");
 
+  WriteFile(cached_bundle.parent_path() / "cuda.manifest.json",
+            R"({"git_sha":"expected"})");
+  const llmcc::ResolvedBackendPlugin cached = llmcc::ResolveBackendPlugin(
+      BackendKind::kCuda, std::nullopt, std::span<const fs::path>{},
+      [] { return false; }, [&] { return runtime_root; }, "test-version",
+      "expected");
+  Expect(cached.payload_verified,
+         "validated runtime cache carries its payload verification");
+  WriteFile(cached_bundle.parent_path() / "cuda.manifest.json",
+            R"({"git_sha":"actual"})");
+
   bool repair_called = false;
   const fs::path repaired_bundle = root / "repaired.bundle";
   const llmcc::ResolvedBackendPlugin repaired = llmcc::ResolveBackendPlugin(
@@ -200,11 +212,14 @@ int main() try {
         repair_called = true;
         return std::optional<llmcc::ResolvedBackendPlugin>(
             {{.source = llmcc::BackendPluginSource::kBundle,
-              .path = repaired_bundle}});
+              .path = repaired_bundle,
+              .payload_verified = true}});
       });
   Expect(repair_called, "invalid runtime cache reaches the fetch callback");
   ExpectEq(repaired.path, repaired_bundle,
            "cache repair returns the fetched bundle");
+  Expect(repaired.payload_verified,
+         "cache repair preserves payload verification");
 
   const fs::path missing_directory = root / "does-not-exist";
   Expect(ThrowsContaining<std::runtime_error>(
@@ -230,10 +245,12 @@ int main() try {
   Expect(ThrowsContaining<std::runtime_error>(resolve_missing,
                                               "LLM_CC_BACKEND_DIR"),
          "missing-plugin error mentions the backend directory");
-  Expect(ThrowsContaining<std::runtime_error>(
-             resolve_missing,
-             (empty_runtime / "backends" / "test-version" / "cuda.bundle")
-                 .string()),
+  const fs::path missing_cache =
+      llmcc::BackendBundlePath({.name = "cuda",
+                                .version = "test-version",
+                                .runtime_root = empty_runtime});
+  Expect(ThrowsContaining<std::runtime_error>(resolve_missing,
+                                              missing_cache.string()),
          "missing-plugin error names the runtime cache path");
 
 #ifdef __linux__

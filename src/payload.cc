@@ -282,7 +282,8 @@ const std::array<char, 8>& PayloadMagic(std::string_view name) {
 }
 
 std::optional<PayloadLocation> FindStandalonePayload(int fd,
-                                                     std::string_view name) {
+                                                     std::string_view name,
+                                                     bool verify_hash) {
   struct stat status{};
   if (fstat(fd, &status) != 0 || !S_ISREG(status.st_mode)) {
     throw std::runtime_error("bundle is not a regular file");
@@ -319,7 +320,7 @@ std::optional<PayloadLocation> FindStandalonePayload(int fd,
   }
   PayloadLocation location{.offset = offset, .length = length};
   std::memcpy(location.hash.data(), footer.data() + 32, location.hash.size());
-  if (HashRange(fd, 0, body_length) != location.hash) {
+  if (verify_hash && HashRange(fd, 0, body_length) != location.hash) {
     throw std::runtime_error("standalone bundle footer SHA-256 mismatch");
   }
   return location;
@@ -456,10 +457,10 @@ void ExtractEntry(int executable_fd, const ArchiveEntry& entry,
   }
 }
 
-PreparedPayload PrepareCuda(int executable_fd,
-                            const PayloadLocation& location) {
-  if (HashRange(executable_fd, location.offset, location.length) !=
-      location.hash) {
+PreparedPayload PrepareCuda(int executable_fd, const PayloadLocation& location,
+                            bool verify_hash) {
+  if (verify_hash && HashRange(executable_fd, location.offset,
+                               location.length) != location.hash) {
     throw std::runtime_error("CUDA payload SHA-256 mismatch");
   }
   const std::vector<ArchiveEntry> entries =
@@ -489,12 +490,12 @@ PreparedPayload PrepareCuda(int executable_fd,
           .backing_fd = retained_fd};
 }
 
-PreparedPayload PrepareRocm(int executable_fd,
-                            const PayloadLocation& location) {
+PreparedPayload PrepareRocm(int executable_fd, const PayloadLocation& location,
+                            bool verify_hash) {
   static std::mutex cache_mutex;
   const std::scoped_lock lock(cache_mutex);
-  if (HashRange(executable_fd, location.offset, location.length) !=
-      location.hash) {
+  if (verify_hash && HashRange(executable_fd, location.offset,
+                               location.length) != location.hash) {
     throw std::runtime_error("ROCm payload SHA-256 mismatch");
   }
   const std::vector<ArchiveEntry> entries =
@@ -565,12 +566,12 @@ PreparedPayload PrepareRocm(int executable_fd,
 }
 
 PreparedPayload PreparePayload(int fd, const PayloadLocation& location,
-                               std::string_view name) {
+                               std::string_view name, bool verify_hash) {
   if (name == "cuda") {
-    return PrepareCuda(fd, location);
+    return PrepareCuda(fd, location, verify_hash);
   }
   if (name == "rocm") {
-    return PrepareRocm(fd, location);
+    return PrepareRocm(fd, location, verify_hash);
   }
   throw std::runtime_error("unknown embedded payload: " + std::string(name));
 }
@@ -589,11 +590,11 @@ std::optional<PreparedPayload> PrepareEmbeddedPayloadFromExecutable(
   if (!location.has_value()) {
     return std::nullopt;
   }
-  return PreparePayload(executable.get(), *location, name);
+  return PreparePayload(executable.get(), *location, name, true);
 }
 
 std::optional<PreparedPayload> PrepareEmbeddedPayloadFromFile(
-    const fs::path& bundle, std::string_view name) {
+    const fs::path& bundle, std::string_view name, bool already_verified) {
   FileDescriptor input(open(bundle.c_str(), O_RDONLY | O_CLOEXEC));
   if (input.get() < 0) {
     if (errno == ENOENT) {
@@ -604,11 +605,11 @@ std::optional<PreparedPayload> PrepareEmbeddedPayloadFromFile(
   }
   try {
     const std::optional<PayloadLocation> location =
-        FindStandalonePayload(input.get(), name);
+        FindStandalonePayload(input.get(), name, !already_verified);
     if (!location.has_value()) {
       return std::nullopt;
     }
-    return PreparePayload(input.get(), *location, name);
+    return PreparePayload(input.get(), *location, name, false);
   } catch (const std::exception& error) {
     throw std::runtime_error("invalid backend bundle " + bundle.string() +
                              ": " + error.what());
@@ -635,7 +636,7 @@ std::optional<PreparedPayload> PrepareEmbeddedPayloadFromExecutable(
 }
 
 std::optional<PreparedPayload> PrepareEmbeddedPayloadFromFile(
-    const std::filesystem::path&, std::string_view) {
+    const std::filesystem::path&, std::string_view, bool) {
   return std::nullopt;
 }
 

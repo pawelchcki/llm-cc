@@ -25,7 +25,8 @@ std::optional<PreparedPayload> PrepareEmbeddedPayloadFromExecutable(
 // nullopt when the file is absent or has a different archive magic, and throws
 // when a matching bundle is corrupt.
 std::optional<PreparedPayload> PrepareEmbeddedPayloadFromFile(
-    const std::filesystem::path& bundle, std::string_view name);
+    const std::filesystem::path& bundle, std::string_view name,
+    bool already_verified = false);
 
 // Root shared by extracted runtime payloads and downloaded backend bundles.
 std::filesystem::path RuntimeRoot();

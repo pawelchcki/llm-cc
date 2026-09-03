@@ -581,6 +581,7 @@ cc_library(
         "//conditions:default": ["LLMCC_BACKEND_CPU"],
     }),
     deps = [
+        ":backend_fetch",
         ":backend_runtime",
         ":cache",
         ":download",

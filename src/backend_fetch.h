@@ -17,6 +17,7 @@ struct BackendFetchOptions {
   std::string_view name;
   std::string_view version = LLM_CC_VERSION;
   std::string_view git_sha{LLM_CC_GIT_SHA, sizeof(LLM_CC_GIT_SHA) - 1};
+  std::string_view build_identity;
   std::string_view base_url{LLM_CC_ARTIFACT_BASE_URL,
                             sizeof(LLM_CC_ARTIFACT_BASE_URL) - 1};
   std::optional<std::string> explicit_url;

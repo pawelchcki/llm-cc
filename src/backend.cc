@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <optional>
 #include <stdexcept>
@@ -125,6 +126,7 @@ struct LoadedPlugin {
   int backing_fd = -1;
   void* driver_handle = nullptr;
   bool missing_with_download_disabled = false;
+  std::exception_ptr failure;
 };
 
 std::string DownloadDisabledMessage(BackendKind backend) {
@@ -183,7 +185,9 @@ LoadedPlugin LoadPlugin(
         const std::filesystem::path path = FetchBackendBundle(
             {.name = BackendName(backend), .version = version});
         return std::optional<ResolvedBackendPlugin>(
-            {{.source = BackendPluginSource::kBundle, .path = path}});
+            {{.source = BackendPluginSource::kBundle,
+              .path = path,
+              .payload_verified = true}});
       };
     }
     resolved = ResolveBackendPlugin(
@@ -195,8 +199,8 @@ LoadedPlugin LoadPlugin(
         [] { return RuntimeRoot(); }, version,
         std::string_view{LLM_CC_GIT_SHA, sizeof(LLM_CC_GIT_SHA) - 1}, fetch);
     if (resolved.source == BackendPluginSource::kBundle) {
-      prepared =
-          PrepareEmbeddedPayloadFromFile(resolved.path, BackendName(backend));
+      prepared = PrepareEmbeddedPayloadFromFile(
+          resolved.path, BackendName(backend), resolved.payload_verified);
       if (!prepared.has_value()) {
         throw std::runtime_error(
             "backend bundle does not begin with the expected " +
@@ -205,6 +209,7 @@ LoadedPlugin LoadPlugin(
       }
     }
   } catch (const MissingBackendPluginError&) {
+    const std::exception_ptr failure = std::current_exception();
     close_driver();
     if (required) {
       if (no_download) {
@@ -214,13 +219,15 @@ LoadedPlugin LoadPlugin(
     }
     return {.backend = backend,
             .registry = nullptr,
-            .missing_with_download_disabled = no_download};
+            .missing_with_download_disabled = no_download,
+            .failure = no_download ? nullptr : failure};
   } catch (...) {
+    const std::exception_ptr failure = std::current_exception();
     close_driver();
     if (required) {
       throw;
     }
-    return {.backend = backend, .registry = nullptr};
+    return {.backend = backend, .registry = nullptr, .failure = failure};
   }
   const std::filesystem::path plugin_path =
       prepared.has_value() ? prepared->path : resolved.path;
@@ -237,16 +244,21 @@ LoadedPlugin LoadPlugin(
   }
 #endif
   close_driver();
-  if (required) {
-    if (resolved.source == BackendPluginSource::kEmbedded) {
-      throw std::runtime_error("could not load embedded " +
-                               std::string(BackendName(backend)) + " backend");
-    }
-    throw std::runtime_error("could not load " +
-                             std::string(BackendName(backend)) +
-                             " backend plugin: " + resolved.path.string());
+  std::string failure_message;
+  if (resolved.source == BackendPluginSource::kEmbedded) {
+    failure_message = "could not load embedded " +
+                      std::string(BackendName(backend)) + " backend";
+  } else {
+    failure_message = "could not load " + std::string(BackendName(backend)) +
+                      " backend plugin: " + resolved.path.string();
   }
-  return {.backend = backend, .registry = nullptr};
+  if (required) {
+    throw std::runtime_error(failure_message);
+  }
+  return {
+      .backend = backend,
+      .registry = nullptr,
+      .failure = std::make_exception_ptr(std::runtime_error(failure_message))};
 }
 
 void UnloadPlugin(LoadedPlugin& plugin) {
@@ -355,7 +367,9 @@ ResolvedBackendPlugin ResolveBackendPlugin(
   if (IsRegularFile(cached_bundle)) {
     try {
       VerifyBackendBundle(cached_options);
-      return {.source = BackendPluginSource::kBundle, .path = cached_bundle};
+      return {.source = BackendPluginSource::kBundle,
+              .path = cached_bundle,
+              .payload_verified = true};
     } catch (const std::exception&) {
       if (!fetch_backend) {
         throw;
@@ -422,6 +436,14 @@ BackendRuntime::BackendRuntime(
                        });
       if (missing != gpu_plugins.begin() + gpu_count) {
         throw std::runtime_error(DownloadDisabledMessage(missing->backend));
+      }
+    }
+    if (devices.empty()) {
+      const auto failed = std::find_if(
+          gpu_plugins.begin(), gpu_plugins.begin() + gpu_count,
+          [](const LoadedPlugin& plugin) { return plugin.failure != nullptr; });
+      if (failed != gpu_plugins.begin() + gpu_count) {
+        std::rethrow_exception(failed->failure);
       }
     }
     selected_ = SelectBackend(requested, gpu_layers, devices);

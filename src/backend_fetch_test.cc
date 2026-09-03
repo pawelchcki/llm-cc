@@ -1,8 +1,11 @@
 #include "src/backend_fetch.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -10,6 +13,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include "src/entropy_cache.h"
@@ -110,6 +114,7 @@ llmcc::BackendFetchOptions Options(const fs::path& root,
   return {.name = name,
           .version = "1.2.3",
           .git_sha = "",
+          .build_identity = "test-build",
           .base_url = "",
           .explicit_url = std::nullopt,
           .runtime_root = root};
@@ -132,6 +137,13 @@ void TestBaseUrls(const fs::path& root) {
   Expect(!llmcc::BackendArtifactName("cuda").has_value(),
          "automatic fetching is disabled without a published platform");
 #endif
+  auto first_build = Options(root / "identity");
+  first_build.build_identity = "first-build";
+  auto second_build = first_build;
+  second_build.build_identity = "second-build";
+  Expect(llmcc::BackendBundlePath(first_build) !=
+             llmcc::BackendBundlePath(second_build),
+         "unstamped builds have distinct cache paths");
   for (const auto& [label, base] :
        std::vector<std::pair<std::string, std::string>>{
            {"release", "https://github.com/example/releases/download/v1.2.3"},
@@ -328,6 +340,59 @@ void TestInvalidCacheRepair(const fs::path& root) {
   llmcc::VerifyBackendBundle(options);
 }
 
+void TestConcurrentFetch(const fs::path& root) {
+  const std::string base = "https://artifacts.example/concurrent";
+  const std::string artifact = "llm-cc-backend-cuda-linux-x86_64";
+  const std::string bundle_url = base + "/" + artifact + ".bundle";
+  const std::string bundle = Bundle("cuda");
+  std::atomic<int> requests = 0;
+  const llmcc::BundleDownloader downloader =
+      [&](std::string_view url, const fs::path& target,
+          const llmcc::DownloadOptions&) {
+        ++requests;
+        if (url == bundle_url) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(100));
+          Write(target, bundle);
+        } else if (url == bundle_url + ".sha256") {
+          Write(target, llmcc::Sha256Hex(bundle) + "\n");
+        } else if (url == base + "/" + artifact + ".manifest.json") {
+          Write(target, R"({"git_sha":"expected"})");
+        } else {
+          throw std::runtime_error("unexpected concurrent test URL");
+        }
+      };
+  auto options = Options(root);
+  options.git_sha = "expected";
+  options.base_url = base;
+  std::exception_ptr first_error;
+  std::exception_ptr second_error;
+  std::thread first([&] {
+    try {
+      static_cast<void>(llmcc::FetchBackendBundle(options, downloader));
+    } catch (...) {
+      first_error = std::current_exception();
+    }
+  });
+  std::thread second([&] {
+    try {
+      static_cast<void>(llmcc::FetchBackendBundle(options, downloader));
+    } catch (...) {
+      second_error = std::current_exception();
+    }
+  });
+  first.join();
+  second.join();
+  if (first_error) {
+    std::rethrow_exception(first_error);
+  }
+  if (second_error) {
+    std::rethrow_exception(second_error);
+  }
+  ExpectEq(requests.load(), 3,
+           "concurrent fetches perform one download transaction");
+  llmcc::VerifyBackendBundle(options);
+}
+
 void TestDownloadSemantics(const fs::path& root) {
   const std::string base = "https://artifacts.example/release";
   const std::string artifact = "llm-cc-backend-cuda-linux-x86_64";
@@ -376,6 +441,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
   TestStampedCachedBundle(root / "stamped-cached");
   TestCachedFooter(root / "cached-footer");
   TestInvalidCacheRepair(root / "invalid-cache-repair");
+  TestConcurrentFetch(root / "concurrent");
   TestDownloadSemantics(root / "download-semantics");
   return 0;
 }

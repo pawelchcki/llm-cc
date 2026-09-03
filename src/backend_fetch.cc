@@ -3,15 +3,28 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <limits>
+#include <mutex>
 #include <nlohmann/json.hpp>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <utility>
+
+#if defined(__linux__) || defined(__APPLE__)
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
+#endif
+
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 #include "src/download.h"
 
@@ -179,6 +192,41 @@ std::array<unsigned char, kSha256Size> HashFile(const fs::path& path) {
   return HashFileRange(path, FileSize(path));
 }
 
+std::string Hex(std::span<const unsigned char> bytes) {
+  constexpr std::string_view digits = "0123456789abcdef";
+  std::string result(bytes.size() * 2, '0');
+  for (std::size_t index = 0; index < bytes.size(); ++index) {
+    result[index * 2] = digits[bytes[index] >> 4];
+    result[(index * 2) + 1] = digits[bytes[index] & 0xf];
+  }
+  return result;
+}
+
+fs::path RunningExecutablePath() {
+#ifdef __linux__
+  return "/proc/self/exe";
+#elif defined(__APPLE__)
+  std::uint32_t size = 1024;
+  std::string path(size, '\0');
+  if (_NSGetExecutablePath(path.data(), &size) != 0) {
+    path.assign(size, '\0');
+    if (_NSGetExecutablePath(path.data(), &size) != 0) {
+      throw std::runtime_error("cannot resolve the running executable path");
+    }
+  }
+  path.resize(std::char_traits<char>::length(path.c_str()));
+  return path;
+#else
+  throw std::runtime_error(
+      "unstamped backend caches are unsupported on this platform");
+#endif
+}
+
+std::string RunningExecutableIdentity() {
+  static const std::string identity = Hex(HashFile(RunningExecutablePath()));
+  return identity;
+}
+
 int HexDigit(char value) {
   if (value >= '0' && value <= '9') {
     return value - '0';
@@ -233,7 +281,13 @@ Integer ReadLittleEndian(std::span<const char> input, std::size_t offset) {
   return result;
 }
 
-void VerifyFooter(const fs::path& bundle, std::string_view expected_name) {
+struct BundleFooter {
+  std::uint64_t body_size;
+  std::array<unsigned char, kSha256Size> body_hash;
+};
+
+BundleFooter ReadBundleFooter(const fs::path& bundle,
+                              std::string_view expected_name) {
   const std::uint64_t size = FileSize(bundle);
   if (size < kFooterSize) {
     throw std::runtime_error("backend bundle footer is truncated");
@@ -260,9 +314,43 @@ void VerifyFooter(const fs::path& bundle, std::string_view expected_name) {
   }
   std::array<unsigned char, kSha256Size> recorded{};
   std::memcpy(recorded.data(), footer.data() + 32, recorded.size());
-  if (HashFileRange(bundle, body_size) != recorded) {
-    throw std::runtime_error("backend bundle footer SHA-256 mismatch");
+  return {.body_size = body_size, .body_hash = recorded};
+}
+
+struct BundleHashes {
+  std::array<unsigned char, kSha256Size> whole;
+  std::array<unsigned char, kSha256Size> body;
+};
+
+BundleHashes HashBundle(const fs::path& path, std::uint64_t body_size) {
+  std::ifstream input(path, std::ios::binary);
+  if (!input) {
+    throw std::runtime_error("cannot open backend bundle " + path.string());
   }
+  Sha256 whole;
+  Sha256 body;
+  std::array<char, std::size_t{1024} * 1024> buffer{};
+  const std::uint64_t total_size = body_size + kFooterSize;
+  std::uint64_t completed = 0;
+  while (completed < total_size) {
+    const std::size_t requested = static_cast<std::size_t>(
+        std::min<std::uint64_t>(buffer.size(), total_size - completed));
+    input.read(buffer.data(), static_cast<std::streamsize>(requested));
+    const std::streamsize count = input.gcount();
+    if (count <= 0) {
+      throw std::runtime_error("cannot read backend bundle " + path.string());
+    }
+    const std::span<const char> bytes(buffer.data(),
+                                      static_cast<std::size_t>(count));
+    whole.Update(bytes);
+    if (completed < body_size) {
+      const std::size_t body_count = static_cast<std::size_t>(
+          std::min<std::uint64_t>(bytes.size(), body_size - completed));
+      body.Update(bytes.first(body_count));
+    }
+    completed += static_cast<std::uint64_t>(count);
+  }
+  return {.whole = whole.Finish(), .body = body.Finish()};
 }
 
 void ValidateComponent(std::string_view value, std::string_view description) {
@@ -298,9 +386,9 @@ void CheckNotSymlink(const fs::path& path) {
   }
 }
 
-void EnsureCacheDirectory(const BackendFetchOptions& options) {
+void EnsureCacheDirectory(const BackendFetchOptions& options,
+                          const fs::path& version) {
   const fs::path backends = options.runtime_root / "backends";
-  const fs::path version = backends / options.version;
   CheckNotSymlink(backends);
   CheckNotSymlink(version);
   std::error_code error;
@@ -312,6 +400,54 @@ void EnsureCacheDirectory(const BackendFetchOptions& options) {
   CheckNotSymlink(backends);
   CheckNotSymlink(version);
 }
+
+class BackendCacheLock {
+ public:
+  explicit BackendCacheLock(const fs::path& path) {
+#if defined(__linux__) || defined(__APPLE__)
+    descriptor_ =
+        open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (descriptor_ < 0) {
+      throw std::runtime_error("cannot open backend cache lock " +
+                               path.string() + ": " + std::strerror(errno));
+    }
+    while (flock(descriptor_, LOCK_EX) != 0) {
+      if (errno != EINTR) {
+        const std::string message = "cannot acquire backend cache lock " +
+                                    path.string() + ": " + std::strerror(errno);
+        close(descriptor_);
+        descriptor_ = -1;
+        throw std::runtime_error(message);
+      }
+    }
+#else
+    static_cast<void>(path);
+    lock_ = std::unique_lock<std::mutex>(FallbackMutex());
+#endif
+  }
+
+  ~BackendCacheLock() {
+#if defined(__linux__) || defined(__APPLE__)
+    if (descriptor_ >= 0) {
+      close(descriptor_);
+    }
+#endif
+  }
+
+  BackendCacheLock(const BackendCacheLock&) = delete;
+  BackendCacheLock& operator=(const BackendCacheLock&) = delete;
+
+ private:
+#if defined(__linux__) || defined(__APPLE__)
+  int descriptor_ = -1;
+#else
+  static std::mutex& FallbackMutex() {
+    static std::mutex mutex;
+    return mutex;
+  }
+  std::unique_lock<std::mutex> lock_;
+#endif
+};
 
 void RemoveFile(const fs::path& path) {
   std::error_code ignored;
@@ -346,12 +482,10 @@ std::string ExplicitArtifactName(std::string_view url) {
   return std::string(file.substr(0, file.size() - suffix.size()));
 }
 
-bool CacheMatches(const fs::path& bundle, const fs::path& checksum) {
+bool CacheIsValid(const BackendFetchOptions& options) {
   try {
-    CheckNotSymlink(bundle);
-    CheckNotSymlink(checksum);
-    return fs::is_regular_file(bundle) && fs::is_regular_file(checksum) &&
-           HashFile(bundle) == ReadRecordedHash(checksum);
+    VerifyBackendBundle(options);
+    return true;
   } catch (const std::exception&) {
     return false;
   }
@@ -417,7 +551,15 @@ std::optional<std::string> BackendArtifactName(std::string_view name) {
 
 fs::path BackendBundlePath(const BackendFetchOptions& options) {
   ValidateOptions(options);
-  return options.runtime_root / "backends" / options.version /
+  std::string cache_version(options.version);
+  if (options.git_sha.empty()) {
+    const std::string identity = options.build_identity.empty()
+                                     ? RunningExecutableIdentity()
+                                     : std::string(options.build_identity);
+    ValidateComponent(identity, "build identity");
+    cache_version += ".build." + identity;
+  }
+  return options.runtime_root / "backends" / cache_version /
          (std::string(options.name) + ".bundle");
 }
 
@@ -433,10 +575,14 @@ void VerifyBackendBundle(const BackendFetchOptions& options) {
     throw std::runtime_error(
         "backend bundle and checksum must both be regular files");
   }
-  if (HashFile(bundle) != ReadRecordedHash(checksum)) {
+  const BundleFooter footer = ReadBundleFooter(bundle, options.name);
+  const BundleHashes hashes = HashBundle(bundle, footer.body_size);
+  if (hashes.whole != ReadRecordedHash(checksum)) {
     throw std::runtime_error("backend bundle SHA-256 mismatch");
   }
-  VerifyFooter(bundle, options.name);
+  if (hashes.body != footer.body_hash) {
+    throw std::runtime_error("backend bundle footer SHA-256 mismatch");
+  }
   if (!options.git_sha.empty()) {
     if (!fs::is_regular_file(manifest)) {
       throw std::runtime_error(
@@ -454,12 +600,8 @@ fs::path FetchBackendBundle(const BackendFetchOptions& options,
       bundle.parent_path() / (std::string(options.name) + ".manifest.json");
   CheckNotSymlink(options.runtime_root / "backends");
   CheckNotSymlink(bundle.parent_path());
-  if (CacheMatches(bundle, checksum)) {
-    try {
-      VerifyBackendBundle(options);
-      return bundle;
-    } catch (const std::exception&) {
-    }
+  if (CacheIsValid(options)) {
+    return bundle;
   }
 
   const bool has_explicit_url =
@@ -479,10 +621,15 @@ fs::path FetchBackendBundle(const BackendFetchOptions& options,
   const std::string artifact = has_explicit_url
                                    ? ExplicitArtifactName(*options.explicit_url)
                                    : *automatic_artifact;
-  EnsureCacheDirectory(options);
+  EnsureCacheDirectory(options, bundle.parent_path());
   for (const fs::path& path : {bundle, checksum, manifest}) {
     CheckNotSymlink(path);
     CheckNotSymlink(path.string() + ".partial");
+  }
+  BackendCacheLock cache_lock(bundle.parent_path() /
+                              ("." + std::string(options.name) + ".lock"));
+  if (CacheIsValid(options)) {
+    return bundle;
   }
   RemoveFile(bundle);
 
