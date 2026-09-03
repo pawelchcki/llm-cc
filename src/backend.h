@@ -19,6 +19,8 @@ BackendKind ParseBackend(std::string_view value);
 std::string_view BackendName(BackendKind backend);
 BackendKind SelectBackend(BackendKind requested, std::int32_t gpu_layers,
                           std::span<const BackendDevice> devices);
+bool DeviceOutputGuaranteed(BackendKind backend, std::int32_t gpu_layers,
+                            bool metal_backend);
 
 // Loads exactly the backend plugins needed by this inference invocation. The
 // object must outlive all llama.cpp objects created by the caller.

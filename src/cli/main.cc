@@ -944,9 +944,9 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
     llmcc::BackendRuntime runtime(arguments.backend, arguments.gpu_layers);
     return runtime.selected();
   }();
-  const bool device_available = arguments.gpu_layers != 0 &&
-                                (resolved_backend != llmcc::BackendKind::kCpu ||
-                                 llmcc::CompiledBackend() == "metal");
+  const bool device_available =
+      llmcc::DeviceOutputGuaranteed(resolved_backend, arguments.gpu_layers,
+                                    llmcc::CompiledBackend() == "metal");
   if (arguments.entropy_reduction == llmcc::EntropyReduction::kDevice &&
       !device_available) {
     throw std::invalid_argument(

@@ -791,12 +791,6 @@ void ScoreInput(llama_model* model, BackendLogCapture& backend_log,
                negative_log_likelihood, options.device_reduction);
 }
 
-bool DeviceReductionAvailable(llmcc::BackendKind selected,
-                              std::int32_t gpu_layers) {
-  return gpu_layers != 0 && (selected != llmcc::BackendKind::kCpu ||
-                             llmcc::CompiledBackend() == "metal");
-}
-
 int Run(const Arguments& arguments, std::ostream& output,
         std::ostream& diagnostics,
         const std::optional<std::string>& input_override = std::nullopt) {
@@ -809,7 +803,8 @@ int Run(const Arguments& arguments, std::ostream& output,
   const std::optional<std::uint64_t> gpu_available =
       use_gpu ? GpuAvailableMemory() : std::nullopt;
   const bool device_available =
-      DeviceReductionAvailable(backend.selected(), arguments.gpu_layers);
+      llmcc::DeviceOutputGuaranteed(backend.selected(), arguments.gpu_layers,
+                                    llmcc::CompiledBackend() == "metal");
   if (arguments.entropy_reduction == llmcc::EntropyReduction::kDevice &&
       !device_available) {
     throw std::runtime_error("device entropy reduction requires GPU execution");
@@ -874,8 +869,9 @@ class EntropyScorer::Impl {
     arguments.backend = inference_options.backend;
     arguments.entropy = true;
     arguments.batch_size = batch_size_;
-    const bool device_available = DeviceReductionAvailable(
-        backend_.selected(), inference_options.gpu_layers);
+    const bool device_available = DeviceOutputGuaranteed(
+        backend_.selected(), inference_options.gpu_layers,
+        CompiledBackend() == "metal");
     if (inference_options.entropy_reduction == EntropyReduction::kDevice &&
         !device_available) {
       throw std::runtime_error(

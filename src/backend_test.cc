@@ -75,5 +75,13 @@ int main() {
   };
   ExpectEq(SelectBackend(BackendKind::kAuto, 1, tied), BackendKind::kCuda,
            "CUDA wins ties");
+  Expect(!llmcc::DeviceOutputGuaranteed(BackendKind::kCuda, 1, false),
+         "partial offload does not guarantee device output");
+  Expect(llmcc::DeviceOutputGuaranteed(BackendKind::kCuda, -1, false),
+         "full CUDA offload guarantees device output");
+  Expect(llmcc::DeviceOutputGuaranteed(BackendKind::kCpu, -1, true),
+         "full Metal offload guarantees device output");
+  Expect(!llmcc::DeviceOutputGuaranteed(BackendKind::kCpu, -1, false),
+         "a CPU build cannot guarantee device output");
   return 0;
 }

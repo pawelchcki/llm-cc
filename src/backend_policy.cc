@@ -100,4 +100,12 @@ BackendKind SelectBackend(BackendKind requested, std::int32_t gpu_layers,
   return BackendKind::kRocm;
 }
 
+bool DeviceOutputGuaranteed(BackendKind backend, std::int32_t gpu_layers,
+                            bool metal_backend) {
+  // Cache identity is selected before model weights are loaded, so a partial
+  // offload cannot prove that the final logits will remain on the accelerator.
+  // Full offload is the only model-independent placement guarantee.
+  return gpu_layers == -1 && (backend != BackendKind::kCpu || metal_backend);
+}
+
 }  // namespace llmcc

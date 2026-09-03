@@ -51,7 +51,10 @@ is a llama backend-sampler graph placed after final logits: stable max-shifted
 operations return entropy and observed-token log probability per row. The
 existing CUDA/HIP and Metal implementations execute those ggml operations;
 only the two-result tensor is copied to the host, and raw logits storage/copies
-are suppressed. Invalid results and token IDs are checked before emission.
+are suppressed. Automatic and explicit device reduction require full model
+offload, the only output-layer placement guarantee available before cache
+lookup; partial offload conservatively retains host reduction. Invalid results
+and token IDs are checked before emission.
 
 Before loading a model, the scorer checks host memory and, when requested, GPU
 memory. The estimate is the model file plus a 10% weight margin and 512 MiB of

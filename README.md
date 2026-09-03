@@ -197,9 +197,11 @@ needed, and has its model memory and positions cleared between inputs. Use
 default; request GPU offload with `--gpu-layers`.
 
 `--entropy-reduction auto` performs entropy and observed-token log-probability
-reduction on the GPU when the final logits execute there, otherwise it reports
-a host fallback. `host` retains the ordinary full-logits path. Explicit
-`device` fails unless GPU execution is available. The device graph uses a
+reduction on the GPU when full offload (`--gpu-layers -1`) guarantees that the
+final logits execute there; partial offload conservatively reports a host
+fallback because output-layer placement is model-dependent. `host` retains the
+ordinary full-logits path. Explicit `device` likewise requires full offload.
+The device graph uses a
 max-shifted reduction and transfers two floats per scored row instead of a
 vocabulary-sized logits row. Host/device comparisons allow `1e-5` nats for
 entropy and `1e-5` absolute plus relative tolerance for log probability;
