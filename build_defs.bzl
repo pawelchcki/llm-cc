@@ -1,5 +1,40 @@
 """Small build helpers for project targets."""
 
+# Single source of truth for both llama.cpp's GPU_TARGETS CMake option and the
+# generated runtime topology filter in generated/rocm_gpu_targets.h.
+ROCM_GPU_TARGETS = [
+    "gfx1100",
+    "gfx1101",
+    "gfx1102",
+]
+
+def _rocm_targets_header_impl(ctx):
+    targets = ", ".join(['"%s"' % target for target in ctx.attr.targets])
+    ctx.actions.write(
+        output = ctx.outputs.out,
+        content = """#ifndef LLM_CC_GENERATED_ROCM_GPU_TARGETS_H_
+#define LLM_CC_GENERATED_ROCM_GPU_TARGETS_H_
+
+#include <array>
+#include <string_view>
+
+namespace llmcc {
+inline constexpr auto kRocmGpuTargets =
+    std::to_array<std::string_view>({%s});
+}  // namespace llmcc
+
+#endif  // LLM_CC_GENERATED_ROCM_GPU_TARGETS_H_
+""" % targets,
+    )
+
+rocm_targets_header = rule(
+    implementation = _rocm_targets_header_impl,
+    attrs = {
+        "out": attr.output(mandatory = True),
+        "targets": attr.string_list(mandatory = True),
+    },
+)
+
 def curl_cmake_options(**tls):
     options = {
         "BUILD_CURL_EXE": "OFF",
@@ -348,7 +383,7 @@ def llama_rocm_cmake_options():
         CMAKE_INSTALL_RPATH = "\\$$ORIGIN;\\$$ORIGIN/rocm;\\$$ORIGIN/rocm/llvm/lib;\\$$ORIGIN/rocm/rocm_sysdeps/lib",
         GGML_BACKEND_DL = "ON",
         GGML_HIP = "ON",
-        GPU_TARGETS = "gfx1100;gfx1101;gfx1102",
+        GPU_TARGETS = ";".join(ROCM_GPU_TARGETS),
     )
 
 def llama_cuda_cmake_options():

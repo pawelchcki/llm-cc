@@ -9,6 +9,7 @@ load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make_variant")
 load(
     "//:build_defs.bzl",
+    "ROCM_GPU_TARGETS",
     "curl_cmake_options",
     "install_launcher",
     "llama_cmake_options",
@@ -16,6 +17,7 @@ load(
     "llama_rocm_cmake_options",
     "llama_universal_cmake_options",
     "payload_archive",
+    "rocm_targets_header",
 )
 
 package(default_visibility = ["//visibility:public"])
@@ -399,6 +401,21 @@ cc_library(
     srcs = ["src/linux_compat.cc"],
 )
 
+rocm_targets_header(
+    name = "rocm_gpu_targets_header",
+    out = "generated/rocm_gpu_targets.h",
+    targets = ROCM_GPU_TARGETS,
+)
+
+cc_library(
+    name = "rocm_topology",
+    srcs = ["src/rocm_topology.cc"],
+    hdrs = [
+        ":rocm_gpu_targets_header",
+        "src/rocm_topology.h",
+    ],
+)
+
 cc_library(
     name = "backend_runtime",
     srcs = ["src/backend.cc"],
@@ -413,6 +430,7 @@ cc_library(
         ":backend_policy",
         ":llama",
         ":payload",
+        ":rocm_topology",
     ],
     tags = ["manual"],
 )
@@ -912,6 +930,15 @@ cc_test(
 )
 
 cc_test(
+    name = "rocm_topology_test",
+    srcs = ["src/rocm_topology_test.cc"],
+    deps = [
+        ":rocm_topology",
+        ":test_util",
+    ],
+)
+
+cc_test(
     name = "scoring_test",
     srcs = ["src/scoring_test.cc"],
     deps = [":scoring"],
@@ -932,6 +959,7 @@ test_suite(
         ":lang_test",
         ":models_test",
         ":project_test",
+        ":rocm_topology_test",
         ":scoring_test",
         ":starlark_test",
         ":version_test",
