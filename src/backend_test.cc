@@ -190,6 +190,22 @@ int main() try {
              "built from a different commit"),
          "ordinary cache resolution verifies the manifest commit");
 
+  bool repair_called = false;
+  const fs::path repaired_bundle = root / "repaired.bundle";
+  const llmcc::ResolvedBackendPlugin repaired = llmcc::ResolveBackendPlugin(
+      BackendKind::kCuda, std::nullopt, std::span<const fs::path>{},
+      [] { return false; }, [&] { return runtime_root; }, "test-version",
+      "expected",
+      [&] {
+        repair_called = true;
+        return std::optional<llmcc::ResolvedBackendPlugin>(
+            {{.source = llmcc::BackendPluginSource::kBundle,
+              .path = repaired_bundle}});
+      });
+  Expect(repair_called, "invalid runtime cache reaches the fetch callback");
+  ExpectEq(repaired.path, repaired_bundle,
+           "cache repair returns the fetched bundle");
+
   const fs::path missing_directory = root / "does-not-exist";
   Expect(ThrowsContaining<std::runtime_error>(
              [&] {

@@ -318,10 +318,6 @@ void RemoveFile(const fs::path& path) {
   fs::remove(path, ignored);
 }
 
-std::string ArtifactName(std::string_view name) {
-  return "llm-cc-backend-" + std::string(name) + "-linux-x86_64";
-}
-
 std::string JoinUrl(std::string_view base, std::string_view file) {
   std::string result(base);
   if (!result.empty() && result.back() != '/') {
@@ -337,6 +333,17 @@ std::string UrlParent(std::string_view url) {
     return {};
   }
   return std::string(url.substr(0, slash));
+}
+
+std::string ExplicitArtifactName(std::string_view url) {
+  const std::size_t slash = url.rfind('/');
+  const std::string_view file =
+      slash == std::string_view::npos ? url : url.substr(slash + 1);
+  constexpr std::string_view suffix = ".bundle";
+  if (!file.ends_with(suffix) || file.size() == suffix.size()) {
+    throw std::invalid_argument("backend --url must identify a .bundle file");
+  }
+  return std::string(file.substr(0, file.size() - suffix.size()));
 }
 
 bool CacheMatches(const fs::path& bundle, const fs::path& checksum) {
@@ -399,6 +406,15 @@ void VerifyManifest(const fs::path& manifest, std::string_view expected_sha) {
 
 }  // namespace
 
+std::optional<std::string> BackendArtifactName(std::string_view name) {
+#if defined(__linux__) && defined(__x86_64__)
+  return "llm-cc-backend-" + std::string(name) + "-linux-x86_64";
+#else
+  static_cast<void>(name);
+  return std::nullopt;
+#endif
+}
+
 fs::path BackendBundlePath(const BackendFetchOptions& options) {
   ValidateOptions(options);
   return options.runtime_root / "backends" / options.version /
@@ -439,8 +455,11 @@ fs::path FetchBackendBundle(const BackendFetchOptions& options,
   CheckNotSymlink(options.runtime_root / "backends");
   CheckNotSymlink(bundle.parent_path());
   if (CacheMatches(bundle, checksum)) {
-    VerifyBackendBundle(options);
-    return bundle;
+    try {
+      VerifyBackendBundle(options);
+      return bundle;
+    } catch (const std::exception&) {
+    }
   }
 
   const bool has_explicit_url =
@@ -450,6 +469,16 @@ fs::path FetchBackendBundle(const BackendFetchOptions& options,
         "this build has no artifact base URL; --url must be used to fetch a "
         "backend bundle");
   }
+  const std::optional<std::string> automatic_artifact =
+      BackendArtifactName(options.name);
+  if (!has_explicit_url && !automatic_artifact.has_value()) {
+    throw std::runtime_error(
+        "automatic backend fetching is unavailable for this target platform; "
+        "use --url with a compatible bundle");
+  }
+  const std::string artifact = has_explicit_url
+                                   ? ExplicitArtifactName(*options.explicit_url)
+                                   : *automatic_artifact;
   EnsureCacheDirectory(options);
   for (const fs::path& path : {bundle, checksum, manifest}) {
     CheckNotSymlink(path);
@@ -457,7 +486,6 @@ fs::path FetchBackendBundle(const BackendFetchOptions& options,
   }
   RemoveFile(bundle);
 
-  const std::string artifact = ArtifactName(options.name);
   const std::string bundle_url =
       has_explicit_url ? *options.explicit_url
                        : JoinUrl(options.base_url, artifact + ".bundle");

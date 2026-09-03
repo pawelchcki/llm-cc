@@ -49,11 +49,6 @@ std::string BundleName(BackendKind backend) {
   return std::string(BackendName(backend)) + ".bundle";
 }
 
-std::string DistributionBundleName(BackendKind backend) {
-  return "llm-cc-backend-" + std::string(BackendName(backend)) +
-         "-linux-x86_64.bundle";
-}
-
 bool IsRegularFile(const std::filesystem::path& path) {
   std::error_code error;
   const bool regular = std::filesystem::is_regular_file(path, error);
@@ -320,15 +315,17 @@ ResolvedBackendPlugin ResolveBackendPlugin(
   //   5. the currently empty network-fetch seam below.
   if (backend_directory.has_value()) {
     ValidateBackendDirectory(*backend_directory);
-    const std::array<std::pair<std::filesystem::path, BackendPluginSource>, 3>
-        candidates = {{
-            {*backend_directory / DistributionBundleName(backend),
-             BackendPluginSource::kBundle},
-            {*backend_directory / BundleName(backend),
-             BackendPluginSource::kBundle},
-            {*backend_directory / PluginName(backend),
-             BackendPluginSource::kSharedLibrary},
-        }};
+    std::vector<std::pair<std::filesystem::path, BackendPluginSource>>
+        candidates;
+    if (const auto artifact = BackendArtifactName(BackendName(backend));
+        artifact.has_value()) {
+      candidates.emplace_back(*backend_directory / (*artifact + ".bundle"),
+                              BackendPluginSource::kBundle);
+    }
+    candidates.emplace_back(*backend_directory / BundleName(backend),
+                            BackendPluginSource::kBundle);
+    candidates.emplace_back(*backend_directory / PluginName(backend),
+                            BackendPluginSource::kSharedLibrary);
     for (const auto& [path, source] : candidates) {
       if (IsRegularFile(path)) {
         return {.source = source, .path = path};
@@ -356,8 +353,14 @@ ResolvedBackendPlugin ResolveBackendPlugin(
   };
   const std::filesystem::path cached_bundle = BackendBundlePath(cached_options);
   if (IsRegularFile(cached_bundle)) {
-    VerifyBackendBundle(cached_options);
-    return {.source = BackendPluginSource::kBundle, .path = cached_bundle};
+    try {
+      VerifyBackendBundle(cached_options);
+      return {.source = BackendPluginSource::kBundle, .path = cached_bundle};
+    } catch (const std::exception&) {
+      if (!fetch_backend) {
+        throw;
+      }
+    }
   }
 
   // Step 5 is deliberately invoked only after every local source misses.

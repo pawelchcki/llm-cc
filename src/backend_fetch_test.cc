@@ -124,6 +124,14 @@ void AddValidBundle(FakeDownloads& downloads, std::string_view url,
 }
 
 void TestBaseUrls(const fs::path& root) {
+#if defined(__linux__) && defined(__x86_64__)
+  ExpectEq(llmcc::BackendArtifactName("cuda"),
+           std::optional<std::string>("llm-cc-backend-cuda-linux-x86_64"),
+           "automatic artifact name matches the target platform");
+#else
+  Expect(!llmcc::BackendArtifactName("cuda").has_value(),
+         "automatic fetching is disabled without a published platform");
+#endif
   for (const auto& [label, base] :
        std::vector<std::pair<std::string, std::string>>{
            {"release", "https://github.com/example/releases/download/v1.2.3"},
@@ -168,6 +176,9 @@ void TestExplicitUrl(const fs::path& root) {
            "explicit URL overrides base URL");
   ExpectEq(downloads.requests[1].url, explicit_url + ".sha256",
            "explicit checksum URL is derived from bundle URL");
+  ExpectEq(downloads.requests[2].url,
+           "https://mirror.example/custom/backend.manifest.json",
+           "explicit manifest name is derived from the bundle URL");
 }
 
 void TestWholeFileMismatch(const fs::path& root) {
@@ -260,32 +271,24 @@ void TestStampedCachedBundle(const fs::path& root) {
   Write(path, bundle);
   Write(path.string() + ".sha256", llmcc::Sha256Hex(bundle) + "\n");
   Write(manifest, R"({"git_sha":"actual"})");
-  bool called = false;
-  const auto downloader = [&](std::string_view, const fs::path&,
-                              const llmcc::DownloadOptions&) {
-    called = true;
-    throw std::runtime_error("invalid cache must not download");
-  };
-
-  const std::string mismatch = ExceptionMessage([&] {
-    static_cast<void>(llmcc::FetchBackendBundle(options, downloader));
-  });
+  const std::string mismatch =
+      ExceptionMessage([&] { llmcc::VerifyBackendBundle(options); });
   Expect(mismatch.find("built from a different commit") != std::string::npos,
          "cache hit verifies the manifest commit");
-  Expect(!called, "manifest mismatch is rejected before downloading");
 
   Write(manifest, R"({"git_sha":"expected"})");
-  ExpectEq(llmcc::FetchBackendBundle(options, downloader), path,
-           "matching stamped cache is accepted");
+  bool called = false;
+  ExpectEq(llmcc::FetchBackendBundle(
+               options, [&](std::string_view, const fs::path&,
+                            const llmcc::DownloadOptions&) { called = true; }),
+           path, "matching stamped cache is accepted");
   Expect(!called, "matching stamped cache does not download");
 
   fs::remove(manifest);
-  const std::string missing = ExceptionMessage([&] {
-    static_cast<void>(llmcc::FetchBackendBundle(options, downloader));
-  });
+  const std::string missing =
+      ExceptionMessage([&] { llmcc::VerifyBackendBundle(options); });
   Expect(missing.find("manifest is required") != std::string::npos,
          "stamped cache hit requires its manifest");
-  Expect(!called, "missing cache manifest is rejected before downloading");
 }
 
 void TestCachedFooter(const fs::path& root) {
@@ -295,15 +298,34 @@ void TestCachedFooter(const fs::path& root) {
   const std::string bundle = Bundle("cuda", false);
   Write(path, bundle);
   Write(path.string() + ".sha256", llmcc::Sha256Hex(bundle) + "\n");
-  bool called = false;
-  const std::string message = ExceptionMessage([&] {
-    static_cast<void>(llmcc::FetchBackendBundle(
-        options, [&](std::string_view, const fs::path&,
-                     const llmcc::DownloadOptions&) { called = true; }));
-  });
+  const std::string message =
+      ExceptionMessage([&] { llmcc::VerifyBackendBundle(options); });
   Expect(message.find("footer SHA-256 mismatch") != std::string::npos,
          "cache hit verifies the bundle footer");
-  Expect(!called, "invalid cached footer is rejected before downloading");
+}
+
+void TestInvalidCacheRepair(const fs::path& root) {
+  const std::string base = "https://artifacts.example/commit/expected";
+  const std::string artifact = "llm-cc-backend-cuda-linux-x86_64";
+  const std::string url = base + "/" + artifact + ".bundle";
+  FakeDownloads downloads;
+  AddValidBundle(downloads, url);
+  downloads.files[base + "/" + artifact + ".manifest.json"] =
+      R"({"git_sha":"expected"})";
+
+  auto options = Options(root);
+  options.base_url = base;
+  options.git_sha = "expected";
+  const fs::path path = llmcc::BackendBundlePath(options);
+  const std::string cached = Bundle("cuda");
+  Write(path, cached);
+  Write(path.string() + ".sha256", llmcc::Sha256Hex(cached) + "\n");
+  Write(path.parent_path() / "cuda.manifest.json", R"({"git_sha":"wrong"})");
+
+  ExpectEq(llmcc::FetchBackendBundle(options, downloads.Downloader()), path,
+           "invalid stamped cache is repaired");
+  Expect(!downloads.requests.empty(), "cache repair downloads a replacement");
+  llmcc::VerifyBackendBundle(options);
 }
 
 void TestDownloadSemantics(const fs::path& root) {
@@ -353,6 +375,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
   TestCachedBundle(root / "cached");
   TestStampedCachedBundle(root / "stamped-cached");
   TestCachedFooter(root / "cached-footer");
+  TestInvalidCacheRepair(root / "invalid-cache-repair");
   TestDownloadSemantics(root / "download-semantics");
   return 0;
 }
