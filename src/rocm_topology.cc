@@ -109,6 +109,10 @@ std::optional<std::vector<AmdGpuDevice>> ReadAmdGpuDevices(
     const std::filesystem::path& nodes_directory) {
   std::error_code error;
   std::filesystem::directory_iterator iterator(nodes_directory, error);
+  if (error == std::errc::no_such_file_or_directory ||
+      error == std::errc::not_a_directory) {
+    return std::vector<AmdGpuDevice>{};
+  }
   if (error) {
     return std::nullopt;
   }
@@ -178,6 +182,10 @@ std::optional<RocmTopology> InspectRocmTopology(
   if (!devices.has_value()) {
     return std::nullopt;
   }
+  const bool has_supported =
+      std::ranges::any_of(*devices, [&](const AmdGpuDevice& device) {
+        return IsSupported(device.architecture, supported_architectures);
+      });
   const bool has_unsupported =
       std::ranges::any_of(*devices, [&](const AmdGpuDevice& device) {
         return !IsSupported(device.architecture, supported_architectures);
@@ -187,6 +195,7 @@ std::optional<RocmTopology> InspectRocmTopology(
   return RocmTopology{
       .devices = std::move(*devices),
       .visible_devices = std::move(visible_devices),
+      .has_supported_device = has_supported,
       .has_unsupported_device = has_unsupported,
   };
 }

@@ -75,6 +75,10 @@ int main() try {
     Expect(false, "mixed topology inspection succeeds");
     return EXIT_FAILURE;
   }
+  Expect(mixed_topology->has_supported_device,
+         "mixed topology contains a supported GPU");
+  Expect(mixed_topology->has_unsupported_device,
+         "mixed topology contains an unsupported GPU");
   ExpectEq(llmcc::RocmUnsupportedSystemMessage(mixed_topology.value()),
            std::string("the ROCm backend does not support this system; "
                        "detected AMD devices: gfx1100, gfx1036; this build "
@@ -98,8 +102,13 @@ int main() try {
   WriteNode(all_supported_tree, "1",
             "simd_count 60\ngfx_target_version 110002\n");
   ClearVisibility();
-  Expect(llmcc::ConfigureRocmVisibility(all_supported_tree).has_value(),
-         "all-supported topology parses");
+  const auto supported_topology =
+      llmcc::ConfigureRocmVisibility(all_supported_tree);
+  Expect(supported_topology.has_value(), "all-supported topology parses");
+  Expect(supported_topology->has_supported_device,
+         "all-supported topology contains a supported GPU");
+  Expect(!supported_topology->has_unsupported_device,
+         "all-supported topology contains no unsupported GPU");
   Expect(std::getenv("ROCR_VISIBLE_DEVICES") == nullptr,
          "all-supported topology does not set visibility");
 
@@ -107,10 +116,23 @@ int main() try {
   WriteNode(none_supported_tree, "0",
             "simd_count 4\ngfx_target_version 100306\n");
   ClearVisibility();
-  Expect(llmcc::ConfigureRocmVisibility(none_supported_tree).has_value(),
-         "unsupported-only topology parses");
+  const auto unsupported_topology =
+      llmcc::ConfigureRocmVisibility(none_supported_tree);
+  Expect(unsupported_topology.has_value(), "unsupported-only topology parses");
+  Expect(!unsupported_topology->has_supported_device,
+         "unsupported-only topology contains no supported GPU");
+  Expect(unsupported_topology->has_unsupported_device,
+         "unsupported-only topology contains an unsupported GPU");
   Expect(std::getenv("ROCR_VISIBLE_DEVICES") == nullptr,
          "unsupported-only topology does not set visibility");
+
+  const auto missing_topology =
+      llmcc::ConfigureRocmVisibility(root / "missing");
+  Expect(missing_topology.has_value(), "missing KFD topology is definitive");
+  Expect(missing_topology->devices.empty(),
+         "missing KFD topology has no AMD GPUs");
+  Expect(!missing_topology->has_supported_device,
+         "missing KFD topology has no supported GPU");
 
   const fs::path malformed = root / "malformed";
   WriteNode(malformed, "0", "simd_count nope\ngfx_target_version 110000\n");

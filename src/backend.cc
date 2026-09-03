@@ -169,6 +169,16 @@ LoadedPlugin LoadPlugin(
     }
   }
 #endif
+  std::optional<RocmTopology> rocm_topology;
+  if (backend == BackendKind::kRocm) {
+    rocm_topology = ConfigureRocmVisibility();
+    if (rocm_topology.has_value() && !rocm_topology->has_supported_device) {
+      if (required && rocm_topology->has_unsupported_device) {
+        throw std::runtime_error(RocmUnsupportedSystemMessage(*rocm_topology));
+      }
+      return {.backend = backend, .registry = nullptr};
+    }
+  }
   std::optional<PreparedPayload> prepared;
   ResolvedBackendPlugin resolved;
   try {
@@ -219,12 +229,6 @@ LoadedPlugin LoadPlugin(
   }
   const std::filesystem::path plugin_path =
       prepared.has_value() ? prepared->path : resolved.path;
-  std::optional<RocmTopology> rocm_topology;
-  if (backend == BackendKind::kRocm) {
-    // This is intentionally delayed until the ROCm plugin is resolved and is
-    // immediately about to be loaded. CPU-only invocations never probe KFD.
-    rocm_topology = ConfigureRocmVisibility();
-  }
   if (ggml_backend_reg_t registry = ggml_backend_load(plugin_path.c_str());
       registry != nullptr) {
     return {.backend = backend,
@@ -239,10 +243,6 @@ LoadedPlugin LoadPlugin(
 #endif
   close_driver();
   if (required) {
-    if (backend == BackendKind::kRocm && rocm_topology.has_value() &&
-        rocm_topology->has_unsupported_device) {
-      throw std::runtime_error(RocmUnsupportedSystemMessage(*rocm_topology));
-    }
     if (resolved.source == BackendPluginSource::kEmbedded) {
       throw std::runtime_error("could not load embedded " +
                                std::string(BackendName(backend)) + " backend");

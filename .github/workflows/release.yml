@@ -82,6 +82,7 @@ jobs:
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
+          commit_sha="$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
           output_dir="release-assets"
           mkdir -p "$output_dir"
 
@@ -105,8 +106,14 @@ jobs:
             source_manifest="gpu-assets/llm-cc-backend-${backend}-linux-x86_64.manifest.json"
             unversioned_manifest="llm-cc-backend-${backend}-linux-x86_64.manifest.json"
             target_manifest="llm-cc-backend-${backend}-${version}-linux-x86_64.manifest.json"
-            cp "$source_manifest" "$output_dir/$unversioned_manifest"
-            cp "$source_manifest" "$output_dir/$target_manifest"
+            jq --arg version "$version" --arg git_sha "$commit_sha" '
+              if .git_sha == $git_sha then
+                .version = $version
+              else
+                error("backend manifest git_sha does not match tagged commit")
+              end
+            ' "$source_manifest" > "$output_dir/$unversioned_manifest"
+            cp "$output_dir/$unversioned_manifest" "$output_dir/$target_manifest"
             assets+=("$unversioned_manifest" "$target_manifest")
           done
 

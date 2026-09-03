@@ -739,7 +739,10 @@ sh_test(
 sh_test(
     name = "version_test",
     srcs = ["//tools:version_test.sh"],
-    data = ["//tools:version.sh"],
+    data = [
+        "//tools:bazel_status.sh",
+        "//tools:version.sh",
+    ],
     use_bash_launcher = True,
 )
 

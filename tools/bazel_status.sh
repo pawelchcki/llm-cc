@@ -9,14 +9,14 @@ version="$("$script_dir/version.sh")"
 git_sha="unknown"
 artifact_base_url="none"
 resolved_git_sha=""
-# The resolver Worker is not deployed yet. Until it is, use
-# `llm-cc backends fetch <name> --url <public_url>` with the URL from the CI
-# comment.
+worktree_status=""
 default_resolver_base="https://ci-artifacts.pawelchcki.workers.dev"
 
 if command -v git >/dev/null 2>&1 &&
     git -C "$repo_root" rev-parse --git-dir >/dev/null 2>&1 &&
-    resolved_git_sha="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null)"; then
+    resolved_git_sha="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null)" &&
+    worktree_status="$(git -C "$repo_root" status --porcelain 2>/dev/null)" &&
+    [[ -z "$worktree_status" ]]; then
   git_sha="$resolved_git_sha"
   if head_tag="$(git -C "$repo_root" describe --tags --exact-match --match 'v*' HEAD 2>/dev/null)" &&
       [[ "$head_tag" == "v$raw_version" && "$version" == "$raw_version" ]]; then

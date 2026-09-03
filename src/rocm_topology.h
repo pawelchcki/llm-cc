@@ -17,10 +17,12 @@ struct AmdGpuDevice {
 struct RocmTopology {
   std::vector<AmdGpuDevice> devices;
   std::optional<std::string> visible_devices;
+  bool has_supported_device = false;
   bool has_unsupported_device = false;
 };
 
-// Reads KFD nodes in numeric node order. A failure anywhere returns nullopt so
+// Reads KFD nodes in numeric node order. A missing KFD topology is a definitive
+// empty inventory; malformed or inaccessible topology returns nullopt so
 // callers can preserve ROCm's existing device discovery behavior.
 std::optional<std::vector<AmdGpuDevice>> ReadAmdGpuDevices(
     const std::filesystem::path& nodes_directory);

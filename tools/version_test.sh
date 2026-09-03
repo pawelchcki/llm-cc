@@ -8,6 +8,7 @@ fi
 
 script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 version_script="$script_dir/version.sh"
+status_script="$script_dir/bazel_status.sh"
 test_tmp="$(mktemp -d)"
 trap 'rm -rf -- "$test_tmp"' EXIT
 
@@ -29,10 +30,11 @@ make_repo() {
 
   mkdir -p "$repo/tools"
   cp "$version_script" "$repo/tools/version.sh"
+  cp "$status_script" "$repo/tools/bazel_status.sh"
   printf '%s\n' "$version" > "$repo/VERSION"
   printf 'tracked\n' > "$repo/tracked.txt"
   git -C "$repo" init -q
-  git -C "$repo" add VERSION tools/version.sh tracked.txt
+  git -C "$repo" add VERSION tools/bazel_status.sh tools/version.sh tracked.txt
   git -C "$repo" commit -q -m initial
   printf '%s\n' "$repo"
 }
@@ -52,11 +54,30 @@ untagged_output="$("$untagged_repo/tools/version.sh")"
   echo "untagged: expected 0.1.0-dev.1+g$untagged_sha, got $untagged_output" >&2
   exit 1
 }
+untagged_full_sha="$(git -C "$untagged_repo" rev-parse HEAD)"
+untagged_status="$("$untagged_repo/tools/bazel_status.sh")"
+grep -qx "STABLE_LLM_CC_GIT_SHA $untagged_full_sha" <<<"$untagged_status" || {
+  echo "clean status did not stamp HEAD" >&2
+  exit 1
+}
+grep -qx "STABLE_LLM_CC_ARTIFACT_BASE_URL https://ci-artifacts.pawelchcki.workers.dev/pawelchcki/llm-cc/$untagged_full_sha" <<<"$untagged_status" || {
+  echo "clean status did not stamp the resolver URL" >&2
+  exit 1
+}
 
 printf 'dirty\n' >> "$untagged_repo/tracked.txt"
 dirty_output="$("$untagged_repo/tools/version.sh")"
 [[ "$dirty_output" == "0.1.0-dev.1+g$untagged_sha.dirty" ]] || {
   echo "dirty tree: expected .dirty suffix, got $dirty_output" >&2
+  exit 1
+}
+dirty_status="$("$untagged_repo/tools/bazel_status.sh")"
+grep -qx 'STABLE_LLM_CC_GIT_SHA unknown' <<<"$dirty_status" || {
+  echo "dirty status stamped a clean commit" >&2
+  exit 1
+}
+grep -qx 'STABLE_LLM_CC_ARTIFACT_BASE_URL none' <<<"$dirty_status" || {
+  echo "dirty status enabled backend fetching" >&2
   exit 1
 }
 
