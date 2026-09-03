@@ -24,6 +24,7 @@
 
 #include "generated/version.h"
 #include "src/analyze.h"
+#include "src/backend_fetch.h"
 #include "src/cache.h"
 #include "src/download.h"
 #include "src/entropy_cache.h"
@@ -64,6 +65,7 @@ constexpr std::string_view kUsageBeforeContext =
     "  llm-cc score (--model GGUF | --model-name NAME) "
     "[--prompt TEXT | --file PATH] [OPTIONS]\n"
     "  llm-cc models list [--available]|remove FILE|path\n"
+    "  llm-cc backends list|fetch|path|remove\n"
     "  llm-cc cache status|prune|clear [PATH] [--format text|json]\n\n"
     "Analysis options:\n"
     "  --lang NAME          auto, rust, c, cpp, java, python, go, javascript,\n"
@@ -71,7 +73,7 @@ constexpr std::string_view kUsageBeforeContext =
     "  --include-headers     include headers during recursive discovery\n"
     "  --no-ignore           include ignored and generated source files\n"
     "  --no-cache            disable repository-local entropy caching\n"
-    "  --no-download         do not fetch the selected model\n"
+    "  --no-download         do not fetch the model or backend bundle\n"
     "  --model GGUF          llama.cpp-compatible model\n"
     "  --model-name NAME     registered model (default: "
     "deepseek-coder-v2-lite-base-q6_k)\n"
@@ -133,6 +135,25 @@ std::string ValidModelNames() {
     first = false;
   }
   return result;
+}
+
+bool ShouldFetchBackend(llmcc::BackendKind backend, std::int32_t gpu_layers) {
+  return backend == llmcc::BackendKind::kCuda ||
+         backend == llmcc::BackendKind::kRocm ||
+         (backend == llmcc::BackendKind::kAuto && gpu_layers != 0);
+}
+
+void ApplyBackendDirectoryEnvironment(
+    std::optional<std::filesystem::path>& backend_directory,
+    llmcc::BackendKind backend, std::int32_t gpu_layers) {
+  if (backend_directory.has_value() ||
+      !ShouldFetchBackend(backend, gpu_layers)) {
+    return;
+  }
+  if (const char* environment = std::getenv("LLM_CC_BACKEND_DIR");
+      environment != nullptr && *environment != '\0') {
+    backend_directory = environment;
+  }
 }
 
 void SetAnalyzeOption(AnalyzeArguments& arguments, std::string_view option,
@@ -238,6 +259,8 @@ AnalyzeArguments ParseAnalyzeArguments(int argc, char** argv) {
   if (arguments.sources.empty()) {
     Usage("at least one source path is required unless a subcommand is used");
   }
+  ApplyBackendDirectoryEnvironment(arguments.backend_directory,
+                                   arguments.backend, arguments.gpu_layers);
   if (arguments.backend_directory.has_value()) {
     std::error_code error;
     if (!std::filesystem::is_directory(*arguments.backend_directory, error)) {
@@ -334,6 +357,120 @@ int RunModels(int argc, char** argv) {
   Usage("invalid models command");
 }
 
+std::string_view BackendBundleName(std::string_view name) {
+  if (name != "cuda" && name != "rocm") {
+    Usage("backend name must be cuda or rocm");
+  }
+  return name;
+}
+
+llmcc::BackendFetchOptions BackendOptions(
+    std::string_view name,
+    const std::optional<std::string>& explicit_url = std::nullopt) {
+  llmcc::BackendFetchOptions options{.name = BackendBundleName(name)};
+  options.explicit_url = explicit_url;
+  return options;
+}
+
+void RemoveBackendFile(const std::filesystem::path& path) {
+  std::error_code error;
+  std::filesystem::remove(path, error);
+  if (error && error != std::errc::no_such_file_or_directory) {
+    throw std::runtime_error("could not remove backend cache file " +
+                             path.string() + ": " + error.message());
+  }
+}
+
+int RunBackends(int argc, char** argv) {
+  if (argc < 3) {
+    Usage("backends requires list, fetch, path, or remove");
+  }
+  const std::string_view action = argv[2];
+  if (action == "list" && argc == 3) {
+    for (const std::string_view name : {"cuda", "rocm"}) {
+      const std::filesystem::path path =
+          llmcc::BackendBundlePath(BackendOptions(name));
+      std::error_code error;
+      const bool cached = std::filesystem::is_regular_file(path, error);
+      if (error && error != std::errc::no_such_file_or_directory &&
+          error != std::errc::not_a_directory) {
+        throw std::runtime_error("could not inspect backend bundle " +
+                                 path.string() + ": " + error.message());
+      }
+      if (!cached) {
+        std::cout << name << "\tnot cached\n";
+        continue;
+      }
+      const std::uintmax_t size = std::filesystem::file_size(path, error);
+      if (error) {
+        throw std::runtime_error("could not measure backend bundle " +
+                                 path.string() + ": " + error.message());
+      }
+      std::cout << name << "\tcached\t" << path.string() << '\t' << size
+                << " bytes\n";
+    }
+    return 0;
+  }
+  if (action == "fetch" && argc >= 4) {
+    const std::string_view name = BackendBundleName(argv[3]);
+    std::optional<std::string> explicit_url;
+    bool no_download = false;
+    for (int index = 4; index < argc; ++index) {
+      const std::string_view option = argv[index];
+      if (option == "--no-download") {
+        no_download = true;
+      } else if (option == "--url") {
+        if (explicit_url.has_value()) {
+          Usage("--url may only be specified once");
+        }
+        if (++index >= argc) {
+          Usage("--url requires a value");
+        }
+        explicit_url = argv[index];
+      } else {
+        Usage("invalid backends fetch option: " + std::string(option));
+      }
+    }
+    if (no_download) {
+      Usage("backends fetch cannot be used with --no-download");
+    }
+    std::cout << llmcc::FetchBackendBundle(BackendOptions(name, explicit_url))
+                     .string()
+              << '\n';
+    return 0;
+  }
+  if (action == "path" && (argc == 3 || argc == 4)) {
+    const llmcc::BackendFetchOptions options =
+        BackendOptions(argc == 4 ? argv[3] : "cuda");
+    const std::filesystem::path bundle = llmcc::BackendBundlePath(options);
+    std::cout << (argc == 4 ? bundle : bundle.parent_path()).string() << '\n';
+    return 0;
+  }
+  if (action == "remove" && argc == 4) {
+    const std::string_view name = BackendBundleName(argv[3]);
+    const std::filesystem::path bundle =
+        llmcc::BackendBundlePath(BackendOptions(name));
+    std::error_code error;
+    const bool cached = std::filesystem::is_regular_file(bundle, error);
+    if (error && error != std::errc::no_such_file_or_directory &&
+        error != std::errc::not_a_directory) {
+      throw std::runtime_error("could not inspect backend bundle " +
+                               bundle.string() + ": " + error.message());
+    }
+    RemoveBackendFile(bundle);
+    RemoveBackendFile(bundle.string() + ".sha256");
+    RemoveBackendFile(bundle.parent_path() /
+                      (std::string(name) + ".manifest.json"));
+    if (cached) {
+      std::cout << name << "\tremoved\t" << bundle.string() << '\n';
+    } else {
+      std::cout << name << "\tnot cached\n";
+    }
+    return 0;
+  }
+  Usage("invalid backends command");
+}
+
 struct CacheArguments {
   std::string_view action;
   std::filesystem::path path = std::filesystem::current_path();
@@ -405,12 +542,15 @@ class LlamaEntropyProvider : public llmcc::EntropyProvider {
       const std::filesystem::path& cache_dir,
       const std::filesystem::path& model, std::uint32_t context,
       std::int32_t gpu_layers, llmcc::BackendKind backend,
-      const std::optional<std::filesystem::path>& backend_directory)
+      const std::optional<std::filesystem::path>& backend_directory,
+      bool no_download, bool fetch_backend)
       : scorer_((llmcc::MarkCachedModelUsed(cache_dir, model), model),
                 {.context_size = context,
                  .gpu_layers = gpu_layers,
                  .backend = backend,
-                 .backend_directory = backend_directory}) {}
+                 .backend_directory = backend_directory,
+                 .no_download = no_download,
+                 .fetch_backend = fetch_backend}) {}
 
   std::vector<llmcc::EntropyRecord> Score(std::string_view source) override {
     return llmcc::ParseEntropyJsonl(scorer_.Score(source));
@@ -822,9 +962,12 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
   const auto resolved_model = llmcc::ResolveModel(
       arguments.model, model_spec, arguments.no_download,
       std::filesystem::current_path(), model_cache, llmcc::DownloadModel);
+  const bool fetch_backend =
+      ShouldFetchBackend(arguments.backend, arguments.gpu_layers);
   const llmcc::BackendKind resolved_backend = [&]() {
     llmcc::BackendRuntime runtime(arguments.backend, arguments.gpu_layers,
-                                  LLM_CC_VERSION, arguments.backend_directory);
+                                  LLM_CC_VERSION, arguments.backend_directory,
+                                  arguments.no_download, fetch_backend);
     return runtime.selected();
   }();
   const std::string backend_identity =
@@ -875,8 +1018,8 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       [&]() {
         return std::make_unique<LlamaEntropyProvider>(
             model_cache, identity.canonical_path, arguments.context,
-            arguments.gpu_layers, resolved_backend,
-            arguments.backend_directory);
+            arguments.gpu_layers, resolved_backend, arguments.backend_directory,
+            arguments.no_download, fetch_backend);
       });
 
   MetricTotals totals;
@@ -981,6 +1124,8 @@ int main(int argc, char** argv) {
         std::cerr << "error: " << error.what() << '\n';
         return 1;
       }
+    } else if (argc > 1 && std::string_view(argv[1]) == "backends") {
+      result = RunBackends(argc, argv);
     } else if (argc > 1 && std::string_view(argv[1]) == "cache") {
       result = RunCache(argc, argv);
     } else {

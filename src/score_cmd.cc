@@ -71,7 +71,7 @@ constexpr std::string_view kUsageBeforeContext =
     "Options:\n"
     "  --model PATH           local llama.cpp-compatible GGUF\n"
     "  --model-name NAME      registered model name\n"
-    "  --no-download          do not fetch a selected registered model\n"
+    "  --no-download          do not fetch the model or backend bundle\n"
     "  --bos auto|always|never  beginning-of-stream policy (default: auto)\n"
     "  --context-size N       maximum tokens in the input (default: ";
 
@@ -118,6 +118,23 @@ std::string ValidModelNames() {
     first = false;
   }
   return result;
+}
+
+bool ShouldFetchBackend(llmcc::BackendKind backend, std::int32_t gpu_layers) {
+  return backend == llmcc::BackendKind::kCuda ||
+         backend == llmcc::BackendKind::kRocm ||
+         (backend == llmcc::BackendKind::kAuto && gpu_layers != 0);
+}
+
+void ApplyBackendDirectoryEnvironment(Arguments& arguments) {
+  if (arguments.backend_directory.has_value() ||
+      !ShouldFetchBackend(arguments.backend, arguments.gpu_layers)) {
+    return;
+  }
+  if (const char* environment = std::getenv("LLM_CC_BACKEND_DIR");
+      environment != nullptr && *environment != '\0') {
+    arguments.backend_directory = environment;
+  }
 }
 
 void SetOption(Arguments& arguments, std::string_view option,
@@ -211,6 +228,7 @@ Arguments ParseArguments(int argc, char** argv) {
   if (arguments.model.empty() && !arguments.model_name.has_value()) {
     Usage("--model or --model-name is required");
   }
+  ApplyBackendDirectoryEnvironment(arguments);
   if (arguments.backend_directory.has_value()) {
     std::error_code error;
     if (!std::filesystem::is_directory(*arguments.backend_directory, error)) {
@@ -605,8 +623,10 @@ int Run(const Arguments& arguments, std::ostream& output,
   const std::string input =
       input_override.has_value() ? *input_override : ReadInput(arguments);
   BackendLogCapture backend_log;
-  llmcc::BackendRuntime backend(arguments.backend, arguments.gpu_layers,
-                                LLM_CC_VERSION, arguments.backend_directory);
+  llmcc::BackendRuntime backend(
+      arguments.backend, arguments.gpu_layers, LLM_CC_VERSION,
+      arguments.backend_directory, arguments.no_download,
+      ShouldFetchBackend(arguments.backend, arguments.gpu_layers));
   llmcc::InferenceGuard inference_guard(llmcc::BackendName(backend.selected()));
   const bool use_gpu = arguments.gpu_layers != 0;
   const std::optional<std::uint64_t> gpu_available =
@@ -643,7 +663,11 @@ class EntropyScorer::Impl {
   Impl(const std::filesystem::path& model_path,
        const InferenceOptions& inference_options)
       : backend_(inference_options.backend, inference_options.gpu_layers,
-                 LLM_CC_VERSION, inference_options.backend_directory),
+                 LLM_CC_VERSION, inference_options.backend_directory,
+                 inference_options.no_download,
+                 inference_options.fetch_backend &&
+                     ShouldFetchBackend(inference_options.backend,
+                                        inference_options.gpu_layers)),
         inference_guard_(BackendName(backend_.selected())),
         model_(nullptr, llama_model_free),
         context_limit_(inference_options.context_size),

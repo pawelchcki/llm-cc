@@ -277,6 +277,60 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::ExpectEq(Read(path_output), cache.string() + "\n",
                         "models path honors override");
 
+  const fs::path runtime_root = fs::path(test_tmpdir) / "backend-runtime";
+  fs::create_directories(runtime_root);
+  const std::string runtime_environment =
+      "LLM_CC_RUNTIME_DIR=" + Quote(runtime_root) + " ";
+  const fs::path backend_list_output =
+      fs::path(test_tmpdir) / "backend-list.txt";
+  llmcc::test::ExpectEq(Run(runtime_environment + Quote(binary) +
+                            " backends list >" + Quote(backend_list_output)),
+                        0, "empty backend list succeeds");
+  const std::string backend_list = Read(backend_list_output);
+  llmcc::test::Expect(
+      backend_list.find("cuda\tnot cached") != std::string::npos &&
+          backend_list.find("rocm\tnot cached") != std::string::npos,
+      "empty backend list reports both bundles as not cached");
+
+  const fs::path backend_error_output =
+      fs::path(test_tmpdir) / "backend-command-error.txt";
+  const int disabled_backend_fetch = Run(
+      runtime_environment + Quote(binary) +
+      " backends fetch cuda --no-download 2>" + Quote(backend_error_output));
+  llmcc::test::Expect(WIFEXITED(disabled_backend_fetch) &&
+                          WEXITSTATUS(disabled_backend_fetch) == 2,
+                      "backend fetch with --no-download exits 2");
+  llmcc::test::Expect(
+      Read(backend_error_output).find("cannot be used with --no-download") !=
+          std::string::npos,
+      "contradictory backend fetch options are explained");
+
+  const int unknown_backend =
+      Run(runtime_environment + Quote(binary) + " backends fetch nonsense 2>" +
+          Quote(backend_error_output));
+  llmcc::test::Expect(
+      WIFEXITED(unknown_backend) && WEXITSTATUS(unknown_backend) == 2,
+      "unknown backend fetch exits 2");
+
+  const fs::path backend_path_output =
+      fs::path(test_tmpdir) / "backend-path.txt";
+  llmcc::test::ExpectEq(Run(runtime_environment + Quote(binary) +
+                            " backends path >" + Quote(backend_path_output)),
+                        0, "backend path succeeds");
+  llmcc::test::Expect(
+      Read(backend_path_output).starts_with(runtime_root.string() + "/"),
+      "backend path honors the runtime root override");
+
+  const fs::path backend_remove_output =
+      fs::path(test_tmpdir) / "backend-remove.txt";
+  llmcc::test::ExpectEq(
+      Run(runtime_environment + Quote(binary) + " backends remove cuda >" +
+          Quote(backend_remove_output)),
+      0, "removing an absent backend succeeds");
+  llmcc::test::Expect(
+      Read(backend_remove_output).find("not cached") != std::string::npos,
+      "removing an absent backend says it was not cached");
+
   const fs::path repository = fs::path(test_tmpdir) / "analysis-repository";
   fs::create_directories(repository);
   llmcc::test::ExpectEq(Run("git -C " + Quote(repository) + " init -q"), 0,

@@ -35,7 +35,7 @@ struct ResolvedBackendPlugin {
 
 // Resolves a GPU plugin in production order. The callback keeps the embedded
 // payload probe at step 2 without making filesystem-only unit tests load it.
-// fetch_backend is the intentionally empty seam for the future network step 5.
+// fetch_backend is the network-backed last resort at step 5.
 ResolvedBackendPlugin ResolveBackendPlugin(
     BackendKind backend,
     const std::optional<std::filesystem::path>& backend_directory,
@@ -52,7 +52,8 @@ class BackendRuntime {
  public:
   BackendRuntime(
       BackendKind requested, std::int32_t gpu_layers, std::string_view version,
-      std::optional<std::filesystem::path> backend_directory = std::nullopt);
+      std::optional<std::filesystem::path> backend_directory = std::nullopt,
+      bool no_download = false, bool fetch_backend = true);
   BackendRuntime(const BackendRuntime&) = delete;
   BackendRuntime& operator=(const BackendRuntime&) = delete;
   ~BackendRuntime();

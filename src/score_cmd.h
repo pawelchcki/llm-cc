@@ -19,6 +19,8 @@ struct InferenceOptions {
   std::int32_t gpu_layers = 0;
   BackendKind backend = BackendKind::kAuto;
   std::optional<std::filesystem::path> backend_directory;
+  bool no_download = false;
+  bool fetch_backend = true;
 };
 
 class EntropyScorer {

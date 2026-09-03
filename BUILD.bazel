@@ -409,6 +409,7 @@ cc_library(
         "//conditions:default": [],
     }),
     deps = [
+        ":backend_fetch",
         ":backend_policy",
         ":llama",
         ":payload",
@@ -637,6 +638,7 @@ cc_binary(
     }),
     deps = [
         ":analyze",
+        ":backend_fetch",
         ":cache",
         ":core",
         ":download",
@@ -663,6 +665,7 @@ cc_binary(
     ],
     deps = [
         ":analyze",
+        ":backend_fetch",
         ":cache",
         ":core",
         ":download",

@@ -14,6 +14,7 @@
 #include <utility>
 #include <vector>
 
+#include "src/backend_fetch.h"
 #include "src/payload.h"
 
 #if defined(__linux__)
@@ -23,6 +24,11 @@
 
 namespace llmcc {
 namespace {
+
+class MissingBackendPluginError : public std::runtime_error {
+ public:
+  using std::runtime_error::runtime_error;
+};
 
 constexpr std::string_view PluginName(BackendKind backend) {
   switch (backend) {
@@ -122,12 +128,21 @@ struct LoadedPlugin {
   ggml_backend_reg_t registry;
   int backing_fd = -1;
   void* driver_handle = nullptr;
+  bool missing_with_download_disabled = false;
 };
+
+std::string DownloadDisabledMessage(BackendKind backend) {
+  const std::string name(BackendName(backend));
+  return "missing " + name +
+         " backend bundle while --no-download is set; run 'llm-cc backends "
+         "fetch " +
+         name + "' or pass --url to that command";
+}
 
 LoadedPlugin LoadPlugin(
     BackendKind backend, bool required,
     const std::optional<std::filesystem::path>& backend_directory,
-    std::string_view version) {
+    std::string_view version, bool no_download, bool fetch_backend) {
 #if defined(__linux__)
   void* driver_handle = nullptr;
 #endif
@@ -142,13 +157,22 @@ LoadedPlugin LoadPlugin(
   std::optional<PreparedPayload> prepared;
   ResolvedBackendPlugin resolved;
   try {
+    std::function<std::optional<ResolvedBackendPlugin>()> fetch;
+    if (fetch_backend && !no_download) {
+      fetch = [backend, version] {
+        const std::filesystem::path path = FetchBackendBundle(
+            {.name = BackendName(backend), .version = version});
+        return std::optional<ResolvedBackendPlugin>(
+            {{.source = BackendPluginSource::kBundle, .path = path}});
+      };
+    }
     resolved = ResolveBackendPlugin(
         backend, backend_directory, PluginCandidates(backend),
         [&]() {
           prepared = PrepareEmbeddedPayload(BackendName(backend));
           return prepared.has_value();
         },
-        [] { return RuntimeRoot(); }, version);
+        [] { return RuntimeRoot(); }, version, fetch);
     if (resolved.source == BackendPluginSource::kBundle) {
       prepared =
           PrepareEmbeddedPayloadFromFile(resolved.path, BackendName(backend));
@@ -159,6 +183,17 @@ LoadedPlugin LoadPlugin(
             " magic: " + resolved.path.string());
       }
     }
+  } catch (const MissingBackendPluginError&) {
+    close_driver();
+    if (required) {
+      if (no_download) {
+        throw std::runtime_error(DownloadDisabledMessage(backend));
+      }
+      throw;
+    }
+    return {.backend = backend,
+            .registry = nullptr,
+            .missing_with_download_disabled = no_download};
   } catch (...) {
     close_driver();
     if (required) {
@@ -310,7 +345,7 @@ ResolvedBackendPlugin ResolveBackendPlugin(
     return {.source = BackendPluginSource::kBundle, .path = cached_bundle};
   }
 
-  // Step 5 seam: a later change may supply a network-backed callback here.
+  // Step 5 is deliberately invoked only after every local source misses.
   if (fetch_backend) {
     if (auto fetched = fetch_backend(); fetched.has_value()) {
       return *fetched;
@@ -327,12 +362,13 @@ ResolvedBackendPlugin ResolveBackendPlugin(
       ", the embedded executable, beside the executable and in Bazel "
       "runfiles, and runtime cache " +
       cached_bundle.string() + ")";
-  throw std::runtime_error(message);
+  throw MissingBackendPluginError(message);
 }
 
 BackendRuntime::BackendRuntime(
     BackendKind requested, std::int32_t gpu_layers, std::string_view version,
-    std::optional<std::filesystem::path> backend_directory) {
+    std::optional<std::filesystem::path> backend_directory, bool no_download,
+    bool fetch_backend) {
   if (gpu_layers < -1) {
     throw std::invalid_argument("--gpu-layers must be -1 or greater");
   }
@@ -342,12 +378,6 @@ BackendRuntime::BackendRuntime(
   const bool load_gpu = requested == BackendKind::kCuda ||
                         requested == BackendKind::kRocm ||
                         (gpu_layers != 0 && requested == BackendKind::kAuto);
-  if (load_gpu && !backend_directory.has_value()) {
-    if (const char* environment = std::getenv("LLM_CC_BACKEND_DIR");
-        environment != nullptr && *environment != '\0') {
-      backend_directory = environment;
-    }
-  }
   if (load_gpu && backend_directory.has_value()) {
     ValidateBackendDirectory(*backend_directory);
   }
@@ -355,18 +385,28 @@ BackendRuntime::BackendRuntime(
       (gpu_layers != 0 && requested == BackendKind::kAuto)) {
     gpu_plugins[gpu_count++] =
         LoadPlugin(BackendKind::kCuda, requested == BackendKind::kCuda,
-                   backend_directory, version);
+                   backend_directory, version, no_download, fetch_backend);
   }
   if (requested == BackendKind::kRocm ||
       (gpu_layers != 0 && requested == BackendKind::kAuto)) {
     gpu_plugins[gpu_count++] =
         LoadPlugin(BackendKind::kRocm, requested == BackendKind::kRocm,
-                   backend_directory, version);
+                   backend_directory, version, no_download, fetch_backend);
   }
   try {
-    selected_ = SelectBackend(requested, gpu_layers,
-                              Inventory(std::span<const LoadedPlugin>(
-                                  gpu_plugins.data(), gpu_count)));
+    const std::vector<BackendDevice> devices =
+        Inventory(std::span<const LoadedPlugin>(gpu_plugins.data(), gpu_count));
+    if (devices.empty() && no_download) {
+      const auto missing =
+          std::find_if(gpu_plugins.begin(), gpu_plugins.begin() + gpu_count,
+                       [](const LoadedPlugin& plugin) {
+                         return plugin.missing_with_download_disabled;
+                       });
+      if (missing != gpu_plugins.begin() + gpu_count) {
+        throw std::runtime_error(DownloadDisabledMessage(missing->backend));
+      }
+    }
+    selected_ = SelectBackend(requested, gpu_layers, devices);
   } catch (...) {
     for (std::size_t index = 0; index < gpu_count; ++index) {
       UnloadPlugin(gpu_plugins[index]);
@@ -392,6 +432,8 @@ BackendRuntime::BackendRuntime(
 #else
   static_cast<void>(version);
   static_cast<void>(backend_directory);
+  static_cast<void>(no_download);
+  static_cast<void>(fetch_backend);
 #if defined(LLM_CC_BUILTIN_GPU)
   if (requested == BackendKind::kCuda || requested == BackendKind::kRocm) {
     throw std::runtime_error(std::string(BackendName(requested)) +
