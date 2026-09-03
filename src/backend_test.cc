@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -49,7 +50,7 @@ void WriteBundleWithBadFooterHash(const std::filesystem::path& path) {
   constexpr std::size_t kBodySize = 12;
   constexpr std::size_t kFooterSize = 64;
   std::array<char, kBodySize + kFooterSize> contents{};
-  std::copy(kMagic.begin(), kMagic.end(), contents.begin());
+  std::ranges::copy(kMagic, contents.begin());
   contents[8] = 1;
   std::copy_n("cuda", 4, contents.begin() + kBodySize);
   WriteLittleEndian(contents, kBodySize + 16, 0);
@@ -59,7 +60,7 @@ void WriteBundleWithBadFooterHash(const std::filesystem::path& path) {
 
 }  // namespace
 
-int main() {
+int main() try {
   using llmcc::BackendDevice;
   using llmcc::BackendKind;
   using llmcc::SelectBackend;
@@ -121,7 +122,7 @@ int main() {
   std::error_code cleanup_error;
   fs::remove_all(root, cleanup_error);
   const fs::path backend_directory = root / "explicit";
-  const fs::path runtime_root = root / "runtime";
+  fs::path runtime_root = root / "runtime";
   fs::create_directories(backend_directory);
   fs::create_directories(runtime_root / "backends" / "test-version");
   const fs::path explicit_bundle = backend_directory / "cuda.bundle";
@@ -161,7 +162,7 @@ int main() {
              missing_directory.string()),
          "nonexistent explicit backend directory names the path");
 
-  const fs::path empty_runtime = root / "empty-runtime";
+  fs::path empty_runtime = root / "empty-runtime";
   fs::create_directories(empty_runtime);
   const auto resolve_missing = [&] {
     static_cast<void>(llmcc::ResolveBackendPlugin(
@@ -199,4 +200,7 @@ int main() {
          "standalone bundle error names the file");
 #endif
   return 0;
+} catch (const std::exception& error) {
+  std::cerr << "FAIL: unexpected exception: " << error.what() << '\n';
+  return EXIT_FAILURE;
 }

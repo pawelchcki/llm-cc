@@ -7,11 +7,11 @@ namespace {
 
 std::string FormatUnit(std::uint64_t bytes, std::uint64_t unit,
                        std::string_view suffix) {
-  const std::uint64_t tenths = (bytes + unit / 20) / (unit / 10);
+  const std::uint64_t tenths = (bytes + (unit / 20)) / (unit / 10);
   std::string result = std::to_string(tenths / 10);
   if (tenths % 10 != 0) {
     result += '.';
-    result += static_cast<char>('0' + tenths % 10);
+    result += static_cast<char>('0' + (tenths % 10));
   }
   return result + " " + std::string(suffix);
 }
@@ -21,7 +21,7 @@ std::string FormatUnit(std::uint64_t bytes, std::uint64_t unit,
 const ModelSpec& DefaultModel() { return kModels.front(); }
 
 const ModelSpec* FindModel(std::string_view name) {
-  const auto model = std::ranges::find(kModels, name, &ModelSpec::name);
+  const auto* const model = std::ranges::find(kModels, name, &ModelSpec::name);
   return model == kModels.end() ? nullptr : &*model;
 }
 

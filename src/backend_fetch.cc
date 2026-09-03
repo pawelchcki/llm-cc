@@ -77,7 +77,7 @@ class Sha256 {
     std::array<unsigned char, kSha256Size> result{};
     for (std::size_t word = 0; word < hash_.size(); ++word) {
       for (std::size_t byte = 0; byte < 4; ++byte) {
-        result[word * 4 + byte] =
+        result[(word * 4) + byte] =
             static_cast<unsigned char>(hash_[word] >> ((3 - byte) * 8));
       }
     }
@@ -148,7 +148,7 @@ std::array<unsigned char, kSha256Size> HashFileRange(const fs::path& path,
     throw std::runtime_error("cannot open backend bundle " + path.string());
   }
   Sha256 hash;
-  std::array<char, 1024 * 1024> buffer{};
+  std::array<char, std::size_t{1024} * 1024> buffer{};
   std::uint64_t remaining = length;
   while (remaining > 0) {
     const std::size_t requested = static_cast<std::size_t>(
@@ -206,17 +206,17 @@ std::array<unsigned char, kSha256Size> ReadRecordedHash(const fs::path& path) {
   }
   std::array<unsigned char, kSha256Size> result{};
   for (std::size_t index = 0; index < result.size(); ++index) {
-    const int high = HexDigit(text[begin + index * 2]);
-    const int low = HexDigit(text[begin + index * 2 + 1]);
+    const int high = HexDigit(text[begin + (index * 2)]);
+    const int low = HexDigit(text[begin + (index * 2) + 1]);
     if (high < 0 || low < 0) {
       throw std::runtime_error("invalid backend checksum file " +
                                path.string());
     }
     result[index] = static_cast<unsigned char>((high << 4) | low);
   }
-  if (begin + kSha256Size * 2 < text.size() &&
+  if (begin + (kSha256Size * 2) < text.size() &&
       !std::isspace(
-          static_cast<unsigned char>(text[begin + kSha256Size * 2]))) {
+          static_cast<unsigned char>(text[begin + (kSha256Size * 2)]))) {
     throw std::runtime_error("invalid backend checksum file " + path.string());
   }
   return result;

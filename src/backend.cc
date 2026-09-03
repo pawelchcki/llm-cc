@@ -367,8 +367,8 @@ ResolvedBackendPlugin ResolveBackendPlugin(
 
 BackendRuntime::BackendRuntime(
     BackendKind requested, std::int32_t gpu_layers, std::string_view version,
-    std::optional<std::filesystem::path> backend_directory, bool no_download,
-    bool fetch_backend) {
+    const std::optional<std::filesystem::path>& backend_directory,
+    bool no_download, bool fetch_backend) {
   if (gpu_layers < -1) {
     throw std::invalid_argument("--gpu-layers must be -1 or greater");
   }

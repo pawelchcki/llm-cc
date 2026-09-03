@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -49,7 +50,7 @@ unsigned char HexByte(std::string_view hex, std::size_t offset) {
 std::string Bundle(std::string_view name, bool valid_footer = true) {
   std::string body = "tiny backend body";
   std::string bundle = body + std::string(64, '\0');
-  std::copy(name.begin(), name.end(), bundle.begin() + body.size());
+  std::ranges::copy(name, bundle.begin() + std::ssize(body));
   WriteLittleEndian(bundle, body.size() + 16, 0);
   WriteLittleEndian(bundle, body.size() + 24, body.size());
   const std::string body_hash = llmcc::Sha256Hex(body);

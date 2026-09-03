@@ -50,15 +50,16 @@ ResolvedBackendPlugin ResolveBackendPlugin(
 // object must outlive all llama.cpp objects created by the caller.
 class BackendRuntime {
  public:
-  BackendRuntime(
-      BackendKind requested, std::int32_t gpu_layers, std::string_view version,
-      std::optional<std::filesystem::path> backend_directory = std::nullopt,
-      bool no_download = false, bool fetch_backend = true);
+  BackendRuntime(BackendKind requested, std::int32_t gpu_layers,
+                 std::string_view version,
+                 const std::optional<std::filesystem::path>& backend_directory =
+                     std::nullopt,
+                 bool no_download = false, bool fetch_backend = true);
   BackendRuntime(const BackendRuntime&) = delete;
   BackendRuntime& operator=(const BackendRuntime&) = delete;
   ~BackendRuntime();
 
-  BackendKind selected() const { return selected_; }
+  [[nodiscard]] BackendKind selected() const { return selected_; }
 
  private:
   BackendKind selected_ = BackendKind::kCpu;
