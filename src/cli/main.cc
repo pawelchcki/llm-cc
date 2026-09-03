@@ -457,10 +457,15 @@ int RunBackends(int argc, char** argv) {
       throw std::runtime_error("could not inspect backend bundle " +
                                bundle.string() + ": " + error.message());
     }
-    RemoveBackendFile(bundle);
-    RemoveBackendFile(bundle.string() + ".sha256");
-    RemoveBackendFile(bundle.parent_path() /
-                      (std::string(name) + ".manifest.json"));
+    const std::array files = {
+        bundle,
+        std::filesystem::path(bundle.string() + ".sha256"),
+        bundle.parent_path() / (std::string(name) + ".manifest.json"),
+    };
+    for (const std::filesystem::path& path : files) {
+      RemoveBackendFile(path);
+      RemoveBackendFile(path.string() + ".partial");
+    }
     if (cached) {
       std::cout << name << "\tremoved\t" << bundle.string() << '\n';
     } else {
@@ -969,6 +974,12 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
   const bool fetch_backend =
       ShouldFetchBackend(arguments.backend, arguments.gpu_layers);
   const llmcc::BackendKind resolved_backend = [&]() {
+    if (arguments.backend != llmcc::BackendKind::kAuto) {
+      return arguments.backend;
+    }
+    if (arguments.gpu_layers == 0) {
+      return llmcc::BackendKind::kCpu;
+    }
     llmcc::BackendRuntime runtime(arguments.backend, arguments.gpu_layers,
                                   LLM_CC_VERSION, arguments.backend_directory,
                                   arguments.no_download, fetch_backend);
@@ -985,13 +996,18 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
   for (const auto& message : discovery.warnings) {
     warning(message);
   }
-  if (!arguments.no_cache &&
+  const bool entropy_cache =
+      !arguments.no_cache && !arguments.backend_directory.has_value();
+  if (!arguments.no_cache && arguments.backend_directory.has_value()) {
+    warning("entropy caching is disabled for custom backend directories");
+  }
+  if (entropy_cache &&
       std::ranges::any_of(discovery.sources, [](const auto& source) {
         return !source.repository.has_value();
       })) {
     warning("entropy caching is disabled for inputs outside Git worktrees");
   }
-  if (!arguments.no_cache) {
+  if (entropy_cache) {
     std::set<std::filesystem::path> repositories;
     for (const auto& source : discovery.sources) {
       if (source.repository.has_value()) {
@@ -1017,7 +1033,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
                : llmcc::TauRule{.kind = llmcc::TauRule::Kind::kAbsolute,
                                 .value = arguments.tau.value_or(0.67)},
        .alpha = arguments.alpha,
-       .cache = !arguments.no_cache,
+       .cache = entropy_cache,
        .hotspots = arguments.hotspots},
       [&]() {
         return std::make_unique<LlamaEntropyProvider>(

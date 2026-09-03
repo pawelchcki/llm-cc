@@ -13,8 +13,13 @@
 #include <string>
 #include <vector>
 
+#include "src/entropy_cache.h"
 #include "src/payload.h"
 #include "src/test_util.h"
+
+#if defined(LLMCC_TEST_LINUX_CPU) && !defined(LLM_CC_DYNAMIC_BACKENDS)
+#error "Linux CPU builds must retain dynamic backend loading"
+#endif
 
 namespace {
 
@@ -29,7 +34,7 @@ bool ThrowsContaining(Function function, const std::string& needle) {
 }
 
 void WriteFile(const std::filesystem::path& path,
-               std::span<const char> contents = {}) {
+               std::string_view contents = {}) {
   std::ofstream output(path, std::ios::binary | std::ios::trunc);
   output.write(contents.data(), static_cast<std::streamsize>(contents.size()));
   if (!output) {
@@ -55,7 +60,26 @@ void WriteBundleWithBadFooterHash(const std::filesystem::path& path) {
   std::copy_n("cuda", 4, contents.begin() + kBodySize);
   WriteLittleEndian(contents, kBodySize + 16, 0);
   WriteLittleEndian(contents, kBodySize + 24, kBodySize);
-  WriteFile(path, contents);
+  WriteFile(path, std::string_view(contents.data(), contents.size()));
+}
+
+std::string Bundle(std::string_view name) {
+  std::string body = "tiny backend body";
+  std::string bundle = body + std::string(64, '\0');
+  std::ranges::copy(name, bundle.begin() + std::ssize(body));
+  WriteLittleEndian(bundle, body.size() + 16, 0);
+  WriteLittleEndian(bundle, body.size() + 24, body.size());
+  const std::string body_hash = llmcc::Sha256Hex(body);
+  const auto hex_digit = [](char value) -> unsigned char {
+    return static_cast<unsigned char>(value <= '9' ? value - '0'
+                                                   : value - 'a' + 10);
+  };
+  for (std::size_t index = 0; index < 32; ++index) {
+    bundle[body.size() + 32 + index] =
+        static_cast<char>((hex_digit(body_hash[index * 2]) << 4) |
+                          hex_digit(body_hash[(index * 2) + 1]));
+  }
+  return bundle;
 }
 
 }  // namespace
@@ -130,7 +154,12 @@ int main() try {
       runtime_root / "backends" / "test-version" / "cuda.bundle";
   WriteFile(explicit_bundle);
   WriteFile(backend_directory / "libllm-cc-backend-cuda.so");
-  WriteFile(cached_bundle);
+  const std::string cached_contents = Bundle("cuda");
+  WriteFile(cached_bundle, cached_contents);
+  WriteFile(cached_bundle.string() + ".sha256",
+            llmcc::Sha256Hex(cached_contents) + "\n");
+  WriteFile(cached_bundle.parent_path() / "cuda.manifest.json",
+            R"({"git_sha":"actual"})");
   bool embedded_probed = false;
   bool runtime_probed = false;
   const llmcc::ResolvedBackendPlugin resolved = llmcc::ResolveBackendPlugin(
@@ -150,6 +179,16 @@ int main() try {
            "bundle wins over raw shared library");
   Expect(!embedded_probed && !runtime_probed,
          "later resolution stages are not probed");
+
+  Expect(ThrowsContaining<std::runtime_error>(
+             [&] {
+               static_cast<void>(llmcc::ResolveBackendPlugin(
+                   BackendKind::kCuda, std::nullopt,
+                   std::span<const fs::path>{}, [] { return false; },
+                   [&] { return runtime_root; }, "test-version", "expected"));
+             },
+             "built from a different commit"),
+         "ordinary cache resolution verifies the manifest commit");
 
   const fs::path missing_directory = root / "does-not-exist";
   Expect(ThrowsContaining<std::runtime_error>(

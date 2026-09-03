@@ -28,6 +28,7 @@ using BundleDownloader = std::function<void(std::string_view url,
                                             const DownloadOptions& options)>;
 
 std::filesystem::path BackendBundlePath(const BackendFetchOptions& options);
+void VerifyBackendBundle(const BackendFetchOptions& options);
 std::filesystem::path FetchBackendBundle(
     const BackendFetchOptions& options,
     const BundleDownloader& downloader = {});

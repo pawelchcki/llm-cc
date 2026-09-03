@@ -86,9 +86,10 @@ formed from the configured resolver as
 `https://ci-artifacts.pawelchcki.workers.dev`, but the resolver Worker is not
 deployed yet. Until it is, the supported path is
 `llm-cc backends fetch <name> --url <public_url>` with the Public URL from the
-CI comment. For a stamped binary, fetching requires a manifest and rejects the
-bundle unless the manifest's `git_sha` equals the binary's Git SHA, enforcing a
-same-commit contract.
+CI comment. For a stamped binary, fetching and cache reuse require a manifest
+and reject the bundle unless the manifest's `git_sha` equals the binary's Git
+SHA, enforcing a same-commit contract. Cache reuse also repeats the bundle
+footer verification.
 
 The default Linux toolchain is pinned Clang with a glibc 2.24 sysroot; the
 `portable` profile is an alias for the same hermetic configuration. CI enforces

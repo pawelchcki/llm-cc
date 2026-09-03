@@ -1,6 +1,7 @@
 #include <sys/wait.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -321,6 +322,19 @@ int main() {  // NOLINT(bugprone-exception-escape)
       Read(backend_path_output).starts_with(runtime_root.string() + "/"),
       "backend path honors the runtime root override");
 
+  std::string backend_bundle_text = Read(backend_path_output);
+  backend_bundle_text.erase(std::ranges::find(backend_bundle_text, '\n'),
+                            backend_bundle_text.end());
+  const fs::path backend_bundle = backend_bundle_text;
+  const std::array backend_partials = {
+      fs::path(backend_bundle.string() + ".partial"),
+      fs::path(backend_bundle.string() + ".sha256.partial"),
+      backend_bundle.parent_path() / "cuda.manifest.json.partial",
+  };
+  for (const fs::path& path : backend_partials) {
+    Write(path, "partial");
+  }
+
   const fs::path backend_remove_output =
       fs::path(test_tmpdir) / "backend-remove.txt";
   llmcc::test::ExpectEq(
@@ -330,6 +344,11 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(
       Read(backend_remove_output).find("not cached") != std::string::npos,
       "removing an absent backend says it was not cached");
+  llmcc::test::Expect(
+      std::ranges::none_of(
+          backend_partials,
+          [](const fs::path& path) { return fs::exists(path); }),
+      "removing an absent backend also deletes every partial download");
 
   const fs::path repository = fs::path(test_tmpdir) / "analysis-repository";
   fs::create_directories(repository);
@@ -393,6 +412,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
       "analysis events are ordered");
   llmcc::test::Expect(events[3]["entropy_cache_hit"].get<bool>(),
                       "file reports entropy cache hit");
+
   const nlohmann::json& file = events[3];
   for (std::string_view field :
        {"token_count", "high_entropy_tokens", "lmcc_per_token", "density",
@@ -624,6 +644,41 @@ int main() {  // NOLINT(bugprone-exception-escape)
   const nlohmann::json status = nlohmann::json::parse(Read(status_output));
   llmcc::test::ExpectEq(status["entries"].get<std::uint64_t>(),
                         std::uint64_t{8}, "cache status counts entries");
+
+  const auto deferred_backend_identity = llmcc::InspectModel(
+      fake_model,
+      "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v1",
+      "cuda/gpu-layers=-1", 128U * 1024U);
+  llmcc::WriteEntropyCache(
+      repository, preprocessed, deferred_backend_identity,
+      std::vector<llmcc::EntropyRecord>{
+          {.position = 0,
+           .bytes = preprocessed.substr(0, 1),
+           .entropy = std::nullopt},
+          {.position = 1,
+           .bytes = preprocessed.substr(1, first_newline),
+           .entropy = 0.2},
+          {.position = 2,
+           .bytes = preprocessed.substr(first_newline + 1,
+                                        second_newline - first_newline),
+           .entropy = 1.2},
+          {.position = 3,
+           .bytes = preprocessed.substr(second_newline + 1),
+           .entropy = 0.4}});
+  const fs::path deferred_backend_output =
+      fs::path(test_tmpdir) / "deferred-backend.jsonl";
+  llmcc::test::ExpectEq(
+      Run(Quote(binary) + " " + Quote(source) + " --model " +
+          Quote(fake_model) +
+          " --backend cuda --gpu-layers -1 --no-download >" +
+          Quote(deferred_backend_output)),
+      0, "an all-hit analysis does not initialize an explicit GPU backend");
+  const std::vector<nlohmann::json> deferred_backend_events =
+      ReadEvents(deferred_backend_output);
+  llmcc::test::Expect(
+      deferred_backend_events.size() == 5 &&
+          deferred_backend_events[3]["entropy_cache_hit"].get<bool>(),
+      "the deferred explicit backend analysis reports its cache hit");
 
   return 0;
 }

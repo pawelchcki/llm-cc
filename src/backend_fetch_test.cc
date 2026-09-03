@@ -250,6 +250,62 @@ void TestCachedBundle(const fs::path& root) {
   Expect(!called, "valid cached bundle does not invoke downloader");
 }
 
+void TestStampedCachedBundle(const fs::path& root) {
+  auto options = Options(root);
+  options.base_url = "https://unused.example/release";
+  options.git_sha = "expected";
+  const fs::path path = llmcc::BackendBundlePath(options);
+  const fs::path manifest = path.parent_path() / "cuda.manifest.json";
+  const std::string bundle = Bundle("cuda");
+  Write(path, bundle);
+  Write(path.string() + ".sha256", llmcc::Sha256Hex(bundle) + "\n");
+  Write(manifest, R"({"git_sha":"actual"})");
+  bool called = false;
+  const auto downloader = [&](std::string_view, const fs::path&,
+                              const llmcc::DownloadOptions&) {
+    called = true;
+    throw std::runtime_error("invalid cache must not download");
+  };
+
+  const std::string mismatch = ExceptionMessage([&] {
+    static_cast<void>(llmcc::FetchBackendBundle(options, downloader));
+  });
+  Expect(mismatch.find("built from a different commit") != std::string::npos,
+         "cache hit verifies the manifest commit");
+  Expect(!called, "manifest mismatch is rejected before downloading");
+
+  Write(manifest, R"({"git_sha":"expected"})");
+  ExpectEq(llmcc::FetchBackendBundle(options, downloader), path,
+           "matching stamped cache is accepted");
+  Expect(!called, "matching stamped cache does not download");
+
+  fs::remove(manifest);
+  const std::string missing = ExceptionMessage([&] {
+    static_cast<void>(llmcc::FetchBackendBundle(options, downloader));
+  });
+  Expect(missing.find("manifest is required") != std::string::npos,
+         "stamped cache hit requires its manifest");
+  Expect(!called, "missing cache manifest is rejected before downloading");
+}
+
+void TestCachedFooter(const fs::path& root) {
+  auto options = Options(root);
+  options.base_url = "https://unused.example/release";
+  const fs::path path = llmcc::BackendBundlePath(options);
+  const std::string bundle = Bundle("cuda", false);
+  Write(path, bundle);
+  Write(path.string() + ".sha256", llmcc::Sha256Hex(bundle) + "\n");
+  bool called = false;
+  const std::string message = ExceptionMessage([&] {
+    static_cast<void>(llmcc::FetchBackendBundle(
+        options, [&](std::string_view, const fs::path&,
+                     const llmcc::DownloadOptions&) { called = true; }));
+  });
+  Expect(message.find("footer SHA-256 mismatch") != std::string::npos,
+         "cache hit verifies the bundle footer");
+  Expect(!called, "invalid cached footer is rejected before downloading");
+}
+
 void TestDownloadSemantics(const fs::path& root) {
   const std::string base = "https://artifacts.example/release";
   const std::string artifact = "llm-cc-backend-cuda-linux-x86_64";
@@ -295,6 +351,8 @@ int main() {  // NOLINT(bugprone-exception-escape)
   TestFooterMismatch(root / "footer-mismatch");
   TestManifestMismatch(root / "manifest-mismatch");
   TestCachedBundle(root / "cached");
+  TestStampedCachedBundle(root / "stamped-cached");
+  TestCachedFooter(root / "cached-footer");
   TestDownloadSemantics(root / "download-semantics");
   return 0;
 }

@@ -42,7 +42,7 @@ ResolvedBackendPlugin ResolveBackendPlugin(
     std::span<const std::filesystem::path> runfile_candidates,
     const std::function<bool()>& has_embedded_payload,
     const std::function<std::filesystem::path()>& runtime_root,
-    std::string_view version,
+    std::string_view version, std::string_view git_sha = {},
     const std::function<std::optional<ResolvedBackendPlugin>()>& fetch_backend =
         {});
 

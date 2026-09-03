@@ -8,6 +8,83 @@ ROCM_GPU_TARGETS = [
     "gfx1102",
 ]
 
+BackendConfigurationInfo = provider(
+    fields = {
+        "backend": "Resolved backend family.",
+        "dynamic": "Whether runtime GPU backend loading is enabled.",
+        "linux_cpu": "Whether this is a Linux CPU configuration.",
+    },
+)
+
+def _backend_configuration_probe_impl(ctx):
+    return [BackendConfigurationInfo(
+        backend = ctx.attr.backend,
+        dynamic = ctx.attr.dynamic,
+        linux_cpu = ctx.attr.linux_cpu,
+    )]
+
+backend_configuration_probe = rule(
+    implementation = _backend_configuration_probe_impl,
+    attrs = {
+        "backend": attr.string(mandatory = True),
+        "dynamic": attr.bool(mandatory = True),
+        "linux_cpu": attr.bool(mandatory = True),
+    },
+)
+
+def _backend_configuration_transition_impl(_settings, attr):
+    return {
+        "//:backend": attr.backend,
+        "//command_line_option:platforms": [attr.platform],
+    }
+
+_backend_configuration_transition = transition(
+    implementation = _backend_configuration_transition_impl,
+    inputs = [],
+    outputs = [
+        "//:backend",
+        "//command_line_option:platforms",
+    ],
+)
+
+def _backend_configuration_case_impl(ctx):
+    configuration = ctx.attr.probe[0][BackendConfigurationInfo]
+    expected = BackendConfigurationInfo(
+        backend = ctx.attr.expected_backend,
+        dynamic = ctx.attr.expected_dynamic,
+        linux_cpu = ctx.attr.expected_linux_cpu,
+    )
+    for field in ["backend", "dynamic", "linux_cpu"]:
+        actual_value = getattr(configuration, field)
+        expected_value = getattr(expected, field)
+        if actual_value != expected_value:
+            fail("%s: expected %s=%s, got %s" % (
+                ctx.label,
+                field,
+                expected_value,
+                actual_value,
+            ))
+    return [DefaultInfo()]
+
+backend_configuration_case = rule(
+    implementation = _backend_configuration_case_impl,
+    attrs = {
+        "backend": attr.string(mandatory = True),
+        "expected_backend": attr.string(mandatory = True),
+        "expected_dynamic": attr.bool(default = False),
+        "expected_linux_cpu": attr.bool(default = False),
+        "platform": attr.label(mandatory = True),
+        "probe": attr.label(
+            cfg = _backend_configuration_transition,
+            mandatory = True,
+            providers = [BackendConfigurationInfo],
+        ),
+        "_allowlist_function_transition": attr.label(
+            default = "@bazel_tools//tools/allowlists/function_transition_allowlist",
+        ),
+    },
+)
+
 def _rocm_targets_header_impl(ctx):
     targets = ", ".join(['"%s"' % target for target in ctx.attr.targets])
     ctx.actions.write(
@@ -283,7 +360,8 @@ def _payload_archive_impl(ctx):
     args = ctx.actions.args()
     args.add("--output", output)
     args.add("--root", ctx.attr.root_name)
-    args.add("--require-static")
+    if ctx.attr.require_static:
+        args.add("--require-static")
     for source, destination in mappings:
         args.add("--file", source.path + "=" + destination)
     ctx.actions.run_shell(
@@ -304,6 +382,7 @@ payload_archive = rule(
     attrs = {
         "binary": attr.label(mandatory = True),
         "output_name": attr.string(mandatory = True),
+        "require_static": attr.bool(default = True),
         "root_name": attr.string(mandatory = True),
         "_packager": attr.label(
             default = Label("//tools:package_payload.sh"),

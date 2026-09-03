@@ -405,6 +405,31 @@ fs::path BackendBundlePath(const BackendFetchOptions& options) {
          (std::string(options.name) + ".bundle");
 }
 
+void VerifyBackendBundle(const BackendFetchOptions& options) {
+  const fs::path bundle = BackendBundlePath(options);
+  const fs::path checksum = bundle.string() + ".sha256";
+  const fs::path manifest =
+      bundle.parent_path() / (std::string(options.name) + ".manifest.json");
+  CheckNotSymlink(bundle);
+  CheckNotSymlink(checksum);
+  CheckNotSymlink(manifest);
+  if (!fs::is_regular_file(bundle) || !fs::is_regular_file(checksum)) {
+    throw std::runtime_error(
+        "backend bundle and checksum must both be regular files");
+  }
+  if (HashFile(bundle) != ReadRecordedHash(checksum)) {
+    throw std::runtime_error("backend bundle SHA-256 mismatch");
+  }
+  VerifyFooter(bundle, options.name);
+  if (!options.git_sha.empty()) {
+    if (!fs::is_regular_file(manifest)) {
+      throw std::runtime_error(
+          "backend manifest is required for a stamped build");
+    }
+    VerifyManifest(manifest, options.git_sha);
+  }
+}
+
 fs::path FetchBackendBundle(const BackendFetchOptions& options,
                             const BundleDownloader& downloader) {
   const fs::path bundle = BackendBundlePath(options);
@@ -414,6 +439,7 @@ fs::path FetchBackendBundle(const BackendFetchOptions& options,
   CheckNotSymlink(options.runtime_root / "backends");
   CheckNotSymlink(bundle.parent_path());
   if (CacheMatches(bundle, checksum)) {
+    VerifyBackendBundle(options);
     return bundle;
   }
 
@@ -448,10 +474,6 @@ fs::path FetchBackendBundle(const BackendFetchOptions& options,
   try {
     download(bundle_url, bundle, download_options);
     download(checksum_url, checksum, download_options);
-    if (HashFile(bundle) != ReadRecordedHash(checksum)) {
-      throw std::runtime_error("backend bundle SHA-256 mismatch");
-    }
-    VerifyFooter(bundle, options.name);
     const std::optional<fs::path> downloaded_manifest =
         DownloadManifest(download, manifest_base, artifact, manifest);
     if (!options.git_sha.empty()) {
@@ -459,8 +481,8 @@ fs::path FetchBackendBundle(const BackendFetchOptions& options,
         throw std::runtime_error(
             "backend manifest is required for a stamped build");
       }
-      VerifyManifest(*downloaded_manifest, options.git_sha);
     }
+    VerifyBackendBundle(options);
   } catch (...) {
     RemoveFile(bundle);
     throw;

@@ -25,9 +25,11 @@ The build downloads checksum-pinned LLVM, llama.cpp, tree-sitter and its Rust,
 C, C++, Java, Python, Go, JavaScript, and C# source bundles, nlohmann/json,
 curl, and, on non-macOS platforms, OpenSSL. macOS curl builds use Apple's
 Secure Transport and system trust store.
-`bazel build //:llm-cc` builds the CPU-only binary by default. On Linux x86-64,
-`--config=universal` opts into the fat CPU + CUDA + ROCm build. Its private GPU
-modules stay in Bazel runfiles during development; packaging
+`bazel build //:llm-cc` selects CPU on Linux and Metal on macOS. The Linux CPU
+binary includes no CUDA or ROCm implementation, but retains the dynamic backend
+loader and exported ggml ABI so fetched GPU bundles can be selected later. On
+Linux x86-64, `--config=universal` opts into the fat CPU + CUDA + ROCm build.
+Its private GPU modules stay in Bazel runfiles during development; packaging
 `//dist:linux_x86_64` appends them to the executable. The universal build is
 slow and needs about 80 GB of disk. Other explicit backend builds remain
 available:
@@ -75,8 +77,8 @@ bazel run //:install -- --prefix /opt/llm-cc
 Installation atomically replaces one `bin/llm-cc` executable. On Linux that
 ELF contains the statically linked application and llama/ggml CPU code by
 default. With `--config=universal`, it also contains raw CUDA and ROCm payloads.
-On macOS, use `--config=metal` for the standalone static Metal Mach-O
-executable.
+On macOS, both the default build and `--config=metal` produce the standalone
+static Metal Mach-O executable.
 
 Build deterministic distribution artifacts with:
 
@@ -277,7 +279,10 @@ llm-cc backends remove cuda|rocm
 `fetch` normally uses the artifact base URL stamped into the binary. `--url`
 overrides it with the exact bundle URL, and is the fallback for a build with no
 stamped artifact URL; the checksum is fetched from `<url>.sha256` and the
-manifest from the same directory. Automatic GPU resolution uses this order:
+manifest from the same directory. Cache hits revalidate both the bundle footer
+and, for stamped binaries, the manifest's build commit. `remove` deletes final
+files and any resumable `.partial` downloads. Automatic GPU resolution uses
+this order:
 
 1. `--backend-dir`, or `LLM_CC_BACKEND_DIR` when the option is absent
 2. an embedded payload footer in the executable
@@ -294,9 +299,10 @@ extracted ROCm files. Otherwise the runtime root is
 
 `--backend auto` is the default. When GPU layers are requested it totals free
 VRAM for each usable family and chooses the larger aggregate, preferring CUDA
-on a tie. Explicit `cuda` or `rocm` loads only that GPU plugin plus CPU and
-fails clearly when the requested device is unavailable. `cpu` rejects nonzero
-GPU layers.
+on a tie. CUDA driver availability is checked before resolving or fetching its
+bundle. Explicit `cuda` or `rocm` loads only that GPU plugin plus CPU and fails
+clearly when the requested device is unavailable. `cpu` rejects nonzero GPU
+layers.
 
 An embedded universal ELF reads its raw payload footer through `/proc/self/exe`.
 CUDA is copied into an immutable sealed memfd and never touches disk. ROCm's
@@ -346,7 +352,7 @@ CI rejects any imported symbol above that ceiling. The `portable` profile is
 retained as an explicit alias:
 
 ```sh
-bazel build --config=release --config=portable //dist:linux_x86_64
+bazel build --config=release --config=portable --config=universal //dist:linux_x86_64
 tools/check_glibc_version.sh bazel-bin/dist/llm-cc-linux-x86_64 2.28
 tools/check_static_link.sh bazel-bin/dist/llm-cc-linux-x86_64
 ```

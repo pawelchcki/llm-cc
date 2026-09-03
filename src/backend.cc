@@ -155,6 +155,20 @@ LoadedPlugin LoadPlugin(
     }
 #endif
   };
+#ifdef __linux__
+  if (backend == BackendKind::kCuda) {
+    driver_handle = dlopen("libcuda.so.1", RTLD_NOW | RTLD_GLOBAL);
+    if (driver_handle == nullptr) {
+      if (required) {
+        const char* error = dlerror();
+        throw std::runtime_error(
+            "could not load NVIDIA driver libcuda.so.1: " +
+            std::string(error != nullptr ? error : "unknown loader error"));
+      }
+      return {.backend = backend, .registry = nullptr};
+    }
+  }
+#endif
   std::optional<PreparedPayload> prepared;
   ResolvedBackendPlugin resolved;
   try {
@@ -173,7 +187,8 @@ LoadedPlugin LoadPlugin(
           prepared = PrepareEmbeddedPayload(BackendName(backend));
           return prepared.has_value();
         },
-        [] { return RuntimeRoot(); }, version, fetch);
+        [] { return RuntimeRoot(); }, version,
+        std::string_view{LLM_CC_GIT_SHA, sizeof(LLM_CC_GIT_SHA) - 1}, fetch);
     if (resolved.source == BackendPluginSource::kBundle) {
       prepared =
           PrepareEmbeddedPayloadFromFile(resolved.path, BackendName(backend));
@@ -202,23 +217,6 @@ LoadedPlugin LoadPlugin(
     }
     return {.backend = backend, .registry = nullptr};
   }
-#ifdef __linux__
-  if (backend == BackendKind::kCuda) {
-    driver_handle = dlopen("libcuda.so.1", RTLD_NOW | RTLD_GLOBAL);
-    if (driver_handle == nullptr) {
-      if (prepared.has_value() && prepared->backing_fd >= 0) {
-        close(prepared->backing_fd);
-      }
-      if (required) {
-        const char* error = dlerror();
-        throw std::runtime_error(
-            "could not load NVIDIA driver libcuda.so.1: " +
-            std::string(error != nullptr ? error : "unknown loader error"));
-      }
-      return {.backend = backend, .registry = nullptr};
-    }
-  }
-#endif
   const std::filesystem::path plugin_path =
       prepared.has_value() ? prepared->path : resolved.path;
   std::optional<RocmTopology> rocm_topology;
@@ -307,7 +305,7 @@ ResolvedBackendPlugin ResolveBackendPlugin(
     std::span<const std::filesystem::path> runfile_candidates,
     const std::function<bool()>& has_embedded_payload,
     const std::function<std::filesystem::path()>& runtime_root,
-    std::string_view version,
+    std::string_view version, std::string_view git_sha,
     const std::function<std::optional<ResolvedBackendPlugin>()>&
         fetch_backend) {
   if (backend != BackendKind::kCuda && backend != BackendKind::kRocm) {
@@ -350,9 +348,15 @@ ResolvedBackendPlugin ResolveBackendPlugin(
     }
   }
 
-  const std::filesystem::path cached_bundle =
-      runtime_root() / "backends" / version / BundleName(backend);
+  BackendFetchOptions cached_options{
+      .name = BackendName(backend),
+      .version = version,
+      .git_sha = git_sha,
+      .runtime_root = runtime_root(),
+  };
+  const std::filesystem::path cached_bundle = BackendBundlePath(cached_options);
   if (IsRegularFile(cached_bundle)) {
+    VerifyBackendBundle(cached_options);
     return {.source = BackendPluginSource::kBundle, .path = cached_bundle};
   }
 

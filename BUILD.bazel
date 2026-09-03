@@ -10,6 +10,8 @@ load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make_variant")
 load(
     "//:build_defs.bzl",
     "ROCM_GPU_TARGETS",
+    "backend_configuration_case",
+    "backend_configuration_probe",
     "curl_cmake_options",
     "install_launcher",
     "llama_cmake_options",
@@ -78,7 +80,7 @@ cc_library(
 
 string_flag(
     name = "backend",
-    build_setting_default = "cpu",
+    build_setting_default = "auto",
     values = [
         "auto",
         "cpu",
@@ -170,6 +172,14 @@ selects.config_setting_group(
 )
 
 selects.config_setting_group(
+    name = "backend_cpu_linux",
+    match_all = [
+        ":backend_cpu",
+        ":target_linux",
+    ],
+)
+
+selects.config_setting_group(
     name = "backend_rocm",
     match_any = [":backend_rocm_explicit"],
 )
@@ -178,6 +188,7 @@ selects.config_setting_group(
     name = "backend_dynamic",
     match_any = [
         ":backend_cuda",
+        ":backend_cpu_linux",
         ":backend_rocm",
         ":backend_universal",
     ],
@@ -647,12 +658,12 @@ cc_binary(
             "-framework MetalKit",
             "-lobjc",
         ],
-        ":backend_cpu": [
-            "-static",
+        ":backend_cpu_linux": [
             "-ldl",
             "-lpthread",
+            "-Wl,--dynamic-list=$(location //third_party:ggml_backend_abi.list)",
         ],
-        "//conditions:default": ["-ldl", "-lpthread"],
+        "//conditions:default": [],
     }),
     deps = [
         ":analyze",
@@ -755,6 +766,14 @@ sh_test(
 build_test(
     name = "starlark_test",
     targets = [
+        ":backend_config_linux_auto_test",
+        ":backend_config_linux_cpu_test",
+        ":backend_config_linux_cuda_test",
+        ":backend_config_linux_rocm_test",
+        ":backend_config_linux_universal_test",
+        ":backend_config_macos_auto_test",
+        ":backend_config_macos_cpu_test",
+        ":backend_config_macos_metal_test",
         ":backend_policy",
         ":cache",
         ":core",
@@ -762,6 +781,113 @@ build_test(
         ":lang",
         ":scoring",
     ],
+)
+
+platform(
+    name = "test_linux_x86_64_platform",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+)
+
+platform(
+    name = "test_macos_arm64_platform",
+    constraint_values = [
+        "@platforms//cpu:arm64",
+        "@platforms//os:macos",
+    ],
+)
+
+backend_configuration_probe(
+    name = "backend_configuration_probe",
+    backend = select({
+        ":backend_universal": "universal",
+        ":backend_cuda": "cuda",
+        ":backend_rocm": "rocm",
+        ":backend_metal": "metal",
+        ":backend_cpu": "cpu",
+        "//conditions:default": "unmatched",
+    }),
+    dynamic = select({
+        ":backend_dynamic": True,
+        "//conditions:default": False,
+    }),
+    linux_cpu = select({
+        ":backend_cpu_linux": True,
+        "//conditions:default": False,
+    }),
+)
+
+backend_configuration_case(
+    name = "backend_config_linux_auto_test",
+    backend = "auto",
+    expected_backend = "cpu",
+    expected_dynamic = True,
+    expected_linux_cpu = True,
+    platform = ":test_linux_x86_64_platform",
+    probe = ":backend_configuration_probe",
+)
+
+backend_configuration_case(
+    name = "backend_config_linux_cpu_test",
+    backend = "cpu",
+    expected_backend = "cpu",
+    expected_dynamic = True,
+    expected_linux_cpu = True,
+    platform = ":test_linux_x86_64_platform",
+    probe = ":backend_configuration_probe",
+)
+
+backend_configuration_case(
+    name = "backend_config_linux_cuda_test",
+    backend = "cuda",
+    expected_backend = "cuda",
+    expected_dynamic = True,
+    platform = ":test_linux_x86_64_platform",
+    probe = ":backend_configuration_probe",
+)
+
+backend_configuration_case(
+    name = "backend_config_linux_rocm_test",
+    backend = "rocm",
+    expected_backend = "rocm",
+    expected_dynamic = True,
+    platform = ":test_linux_x86_64_platform",
+    probe = ":backend_configuration_probe",
+)
+
+backend_configuration_case(
+    name = "backend_config_linux_universal_test",
+    backend = "universal",
+    expected_backend = "universal",
+    expected_dynamic = True,
+    platform = ":test_linux_x86_64_platform",
+    probe = ":backend_configuration_probe",
+)
+
+backend_configuration_case(
+    name = "backend_config_macos_auto_test",
+    backend = "auto",
+    expected_backend = "metal",
+    platform = ":test_macos_arm64_platform",
+    probe = ":backend_configuration_probe",
+)
+
+backend_configuration_case(
+    name = "backend_config_macos_cpu_test",
+    backend = "cpu",
+    expected_backend = "cpu",
+    platform = ":test_macos_arm64_platform",
+    probe = ":backend_configuration_probe",
+)
+
+backend_configuration_case(
+    name = "backend_config_macos_metal_test",
+    backend = "metal",
+    expected_backend = "metal",
+    platform = ":test_macos_arm64_platform",
+    probe = ":backend_configuration_probe",
 )
 
 install_launcher(
@@ -790,6 +916,7 @@ payload_archive(
     name = "cpu_static_archive",
     binary = ":llm-cc",
     output_name = "llm-cc-linux-x86_64-cpu-static.tar.gz",
+    require_static = False,
     root_name = "llm-cc-linux-x86_64-cpu-static",
     tags = ["manual"],
     target_compatible_with = select({
@@ -801,8 +928,13 @@ payload_archive(
 cc_test(
     name = "backend_test",
     srcs = ["src/backend_test.cc"],
+    defines = select({
+        ":backend_cpu_linux": ["LLMCC_TEST_LINUX_CPU"],
+        "//conditions:default": [],
+    }),
     deps = [
         ":backend_runtime",
+        ":entropy_cache",
         ":payload",
         ":test_util",
     ],
