@@ -1,0 +1,115 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up Bazel
+        uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}
+          repository-cache: true
+
+      - name: Build and verify portable CPU binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          bazel build --config=release --config=portable //:cpu_static_archive
+          tools/check_glibc_version.sh bazel-bin/llm-cc 2.28
+          tools/check_static_link.sh bazel-bin/llm-cc
+
+          version="${GITHUB_REF_NAME#v}"
+          actual="$(bazel-bin/llm-cc --version)"
+          expected="llm-cc ${version}"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "::error::Version stamp mismatch: expected '$expected', got '$actual'" >&2
+            exit 1
+          fi
+
+      - name: Fetch and verify GPU backends
+        env:
+          RESOLVER_BASE: ${{ vars.LLM_CC_RESOLVER_BASE || 'https://ci-artifacts.pawelchcki.dev' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit_sha="$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
+          artifact_base="${RESOLVER_BASE%/}/pawelchcki/rethink-cc/${commit_sha}"
+          mkdir -p gpu-assets
+
+          missing_backend() {
+            echo "::error::GPU backends for this commit are missing or invalid (${commit_sha}); refusing to publish a CPU-only release." >&2
+            exit 1
+          }
+
+          for backend in cuda rocm; do
+            bundle="llm-cc-backend-${backend}-linux-x86_64.bundle"
+            if ! curl --fail --location --silent --show-error \
+              --output "gpu-assets/${bundle}" "${artifact_base}/${bundle}"; then
+              missing_backend
+            fi
+            if ! curl --fail --location --silent --show-error \
+              --output "gpu-assets/${bundle}.sha256" "${artifact_base}/${bundle}.sha256"; then
+              missing_backend
+            fi
+            if ! (cd gpu-assets && sha256sum -c "${bundle}.sha256"); then
+              missing_backend
+            fi
+
+            manifest="llm-cc-backend-${backend}-linux-x86_64.manifest.json"
+            if ! curl --fail --location --silent --show-error \
+              --output "gpu-assets/${manifest}" "${artifact_base}/${manifest}"; then
+              rm -f "gpu-assets/${manifest}"
+            fi
+          done
+
+      - name: Prepare versioned release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          output_dir="release-assets"
+          mkdir -p "$output_dir"
+
+          tar -xzf bazel-bin/llm-cc-linux-x86_64-cpu-static.tar.gz \
+            -C "$output_dir" --strip-components=1 \
+            llm-cc-linux-x86_64-cpu-static/llm-cc
+          mv "$output_dir/llm-cc" \
+            "$output_dir/llm-cc-${version}-linux-x86_64"
+
+          assets=("llm-cc-${version}-linux-x86_64")
+          for backend in cuda rocm; do
+            source="gpu-assets/llm-cc-backend-${backend}-linux-x86_64.bundle"
+            target="llm-cc-backend-${backend}-${version}-linux-x86_64.bundle"
+            mv "$source" "$output_dir/$target"
+            assets+=("$target")
+
+            source_manifest="gpu-assets/llm-cc-backend-${backend}-linux-x86_64.manifest.json"
+            if [[ -f "$source_manifest" ]]; then
+              target_manifest="llm-cc-backend-${backend}-${version}-linux-x86_64.manifest.json"
+              mv "$source_manifest" "$output_dir/$target_manifest"
+              assets+=("$target_manifest")
+            fi
+          done
+
+          (cd "$output_dir" && sha256sum "${assets[@]}" > SHA256SUMS)
+
+      - name: Upload assets to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber

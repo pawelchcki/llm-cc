@@ -334,4 +334,11 @@ tools/run_clang_tidy.sh
 The project intentionally uses small standalone C++ tests instead of a test
 framework. CI runs the full Bazel test suite and the portable release gates.
 
+## Releases
+
+The project uses Conventional Commits. Release Please opens the release pull
+request and creates the version tag when that pull request is merged. Each
+release includes the CPU binary, CUDA and ROCm backend bundles, and a
+`SHA256SUMS` file covering the published assets.
+
 Repository: [pawelchcki/llm-cc](https://github.com/pawelchcki/llm-cc)
