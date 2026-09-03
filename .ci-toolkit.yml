@@ -1,0 +1,302 @@
+api_version: ci-toolkit/v1alpha1
+
+automations:
+  - id: cuda-backend-bundle
+    triggers:
+      - id: successful-gpu-build
+        uses: github.commit-status@v1
+        with:
+          event: github.commit_status
+          states: [success]
+          targets:
+            - pull_request:
+                state: open
+                base_branches: ["*"]
+            - default_branch: {}
+          status:
+            context: GPU backends
+            creator:
+              login: buildbuddy-io[bot]
+              id: 130678843
+            target_url:
+              scheme: https
+              host: pawel.buildbuddy.io
+              path_pattern: /invocation/{uuid}
+            require_target_head_sha: true
+    sources:
+      - id: cuda-bundle
+        uses: buildbuddy.workflow-artifact@v1
+        with:
+          invocation_url: "{{ event.target_url }}"
+          artifact: llm-cc-backend-cuda-linux-x86_64.bundle
+          expected:
+            media_type: application/octet-stream
+            max_bytes: 4294967296
+    actions:
+      - id: publish-cuda-bundle
+        uses: toolkit.public-artifact@v1
+        with:
+          source: cuda-bundle
+          security_profile: untrusted-data
+          retention: 90d
+      - id: comment-cuda-bundle
+        uses: github.pull-request-comment@v1
+        needs: [publish-cuda-bundle]
+        when:
+          target: pull_request
+        with:
+          operation: upsert
+          marker: "<!-- ci-toolkit:cuda-backend-bundle -->"
+          body: |
+            <!-- ci-toolkit:cuda-backend-bundle -->
+            [CUDA bundle]({{ actions.publish-cuda-bundle.outputs.public_url | markdown_url_escape }})
+
+  - id: cuda-backend-checksum
+    triggers:
+      - id: successful-gpu-build
+        uses: github.commit-status@v1
+        with:
+          event: github.commit_status
+          states: [success]
+          targets:
+            - pull_request:
+                state: open
+                base_branches: ["*"]
+            - default_branch: {}
+          status:
+            context: GPU backends
+            creator:
+              login: buildbuddy-io[bot]
+              id: 130678843
+            target_url:
+              scheme: https
+              host: pawel.buildbuddy.io
+              path_pattern: /invocation/{uuid}
+            require_target_head_sha: true
+    sources:
+      - id: cuda-checksum
+        uses: buildbuddy.workflow-artifact@v1
+        with:
+          invocation_url: "{{ event.target_url }}"
+          artifact: llm-cc-backend-cuda-linux-x86_64.bundle.sha256
+          expected:
+            media_type: text/plain
+            max_bytes: 4096
+    actions:
+      - id: publish-cuda-checksum
+        uses: toolkit.public-artifact@v1
+        with:
+          source: cuda-checksum
+          security_profile: untrusted-data
+          retention: 90d
+      - id: comment-cuda-checksum
+        uses: github.pull-request-comment@v1
+        needs: [publish-cuda-checksum]
+        when:
+          target: pull_request
+        with:
+          operation: upsert
+          marker: "<!-- ci-toolkit:cuda-backend-checksum -->"
+          body: |
+            <!-- ci-toolkit:cuda-backend-checksum -->
+            [CUDA checksum]({{ actions.publish-cuda-checksum.outputs.public_url | markdown_url_escape }})
+
+  - id: cuda-backend-manifest
+    triggers:
+      - id: successful-gpu-build
+        uses: github.commit-status@v1
+        with:
+          event: github.commit_status
+          states: [success]
+          targets:
+            - pull_request:
+                state: open
+                base_branches: ["*"]
+            - default_branch: {}
+          status:
+            context: GPU backends
+            creator:
+              login: buildbuddy-io[bot]
+              id: 130678843
+            target_url:
+              scheme: https
+              host: pawel.buildbuddy.io
+              path_pattern: /invocation/{uuid}
+            require_target_head_sha: true
+    sources:
+      - id: cuda-manifest
+        uses: buildbuddy.workflow-artifact@v1
+        with:
+          invocation_url: "{{ event.target_url }}"
+          artifact: llm-cc-backend-cuda-linux-x86_64.manifest.json
+          expected:
+            media_type: application/json
+            max_bytes: 65536
+    actions:
+      - id: publish-cuda-manifest
+        uses: toolkit.public-artifact@v1
+        with:
+          source: cuda-manifest
+          security_profile: untrusted-data
+          retention: 90d
+      - id: comment-cuda-manifest
+        uses: github.pull-request-comment@v1
+        needs: [publish-cuda-manifest]
+        when:
+          target: pull_request
+        with:
+          operation: upsert
+          marker: "<!-- ci-toolkit:cuda-backend-manifest -->"
+          body: |
+            <!-- ci-toolkit:cuda-backend-manifest -->
+            [CUDA manifest]({{ actions.publish-cuda-manifest.outputs.public_url | markdown_url_escape }})
+
+  - id: rocm-backend-bundle
+    triggers:
+      - id: successful-gpu-build
+        uses: github.commit-status@v1
+        with:
+          event: github.commit_status
+          states: [success]
+          targets:
+            - pull_request:
+                state: open
+                base_branches: ["*"]
+            - default_branch: {}
+          status:
+            context: GPU backends
+            creator:
+              login: buildbuddy-io[bot]
+              id: 130678843
+            target_url:
+              scheme: https
+              host: pawel.buildbuddy.io
+              path_pattern: /invocation/{uuid}
+            require_target_head_sha: true
+    sources:
+      - id: rocm-bundle
+        uses: buildbuddy.workflow-artifact@v1
+        with:
+          invocation_url: "{{ event.target_url }}"
+          artifact: llm-cc-backend-rocm-linux-x86_64.bundle
+          expected:
+            media_type: application/octet-stream
+            max_bytes: 4294967296
+    actions:
+      - id: publish-rocm-bundle
+        uses: toolkit.public-artifact@v1
+        with:
+          source: rocm-bundle
+          security_profile: untrusted-data
+          retention: 90d
+      - id: comment-rocm-bundle
+        uses: github.pull-request-comment@v1
+        needs: [publish-rocm-bundle]
+        when:
+          target: pull_request
+        with:
+          operation: upsert
+          marker: "<!-- ci-toolkit:rocm-backend-bundle -->"
+          body: |
+            <!-- ci-toolkit:rocm-backend-bundle -->
+            [ROCm bundle]({{ actions.publish-rocm-bundle.outputs.public_url | markdown_url_escape }})
+
+  - id: rocm-backend-checksum
+    triggers:
+      - id: successful-gpu-build
+        uses: github.commit-status@v1
+        with:
+          event: github.commit_status
+          states: [success]
+          targets:
+            - pull_request:
+                state: open
+                base_branches: ["*"]
+            - default_branch: {}
+          status:
+            context: GPU backends
+            creator:
+              login: buildbuddy-io[bot]
+              id: 130678843
+            target_url:
+              scheme: https
+              host: pawel.buildbuddy.io
+              path_pattern: /invocation/{uuid}
+            require_target_head_sha: true
+    sources:
+      - id: rocm-checksum
+        uses: buildbuddy.workflow-artifact@v1
+        with:
+          invocation_url: "{{ event.target_url }}"
+          artifact: llm-cc-backend-rocm-linux-x86_64.bundle.sha256
+          expected:
+            media_type: text/plain
+            max_bytes: 4096
+    actions:
+      - id: publish-rocm-checksum
+        uses: toolkit.public-artifact@v1
+        with:
+          source: rocm-checksum
+          security_profile: untrusted-data
+          retention: 90d
+      - id: comment-rocm-checksum
+        uses: github.pull-request-comment@v1
+        needs: [publish-rocm-checksum]
+        when:
+          target: pull_request
+        with:
+          operation: upsert
+          marker: "<!-- ci-toolkit:rocm-backend-checksum -->"
+          body: |
+            <!-- ci-toolkit:rocm-backend-checksum -->
+            [ROCm checksum]({{ actions.publish-rocm-checksum.outputs.public_url | markdown_url_escape }})
+
+  - id: rocm-backend-manifest
+    triggers:
+      - id: successful-gpu-build
+        uses: github.commit-status@v1
+        with:
+          event: github.commit_status
+          states: [success]
+          targets:
+            - pull_request:
+                state: open
+                base_branches: ["*"]
+            - default_branch: {}
+          status:
+            context: GPU backends
+            creator:
+              login: buildbuddy-io[bot]
+              id: 130678843
+            target_url:
+              scheme: https
+              host: pawel.buildbuddy.io
+              path_pattern: /invocation/{uuid}
+            require_target_head_sha: true
+    sources:
+      - id: rocm-manifest
+        uses: buildbuddy.workflow-artifact@v1
+        with:
+          invocation_url: "{{ event.target_url }}"
+          artifact: llm-cc-backend-rocm-linux-x86_64.manifest.json
+          expected:
+            media_type: application/json
+            max_bytes: 65536
+    actions:
+      - id: publish-rocm-manifest
+        uses: toolkit.public-artifact@v1
+        with:
+          source: rocm-manifest
+          security_profile: untrusted-data
+          retention: 90d
+      - id: comment-rocm-manifest
+        uses: github.pull-request-comment@v1
+        needs: [publish-rocm-manifest]
+        when:
+          target: pull_request
+        with:
+          operation: upsert
+          marker: "<!-- ci-toolkit:rocm-backend-manifest -->"
+          body: |
+            <!-- ci-toolkit:rocm-backend-manifest -->
+            [ROCm manifest]({{ actions.publish-rocm-manifest.outputs.public_url | markdown_url_escape }})

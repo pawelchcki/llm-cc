@@ -95,9 +95,18 @@ register_toolchains(
 )
 
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
 cuda_sdk_repository = use_repo_rule("//tools:gpu_sdk_repositories.bzl", "cuda_sdk_repository")
 
 cuda_sdk_repository(name = "cuda_sdk")
+
+# Optional 397,808,128-byte model used only by //:model_smoke_test.
+http_file(
+    name = "qwen2_5_coder_0_5b_q4_k_m",
+    downloaded_file_path = "Qwen2.5-Coder-0.5B-Q4_K_M.gguf",
+    sha256 = "fefe9d34df79d3ad3db33519d81112be76096626a5fdb87a98092035dc79ad68",
+    urls = ["https://huggingface.co/bartowski/Qwen2.5-Coder-0.5B-GGUF/resolve/main/Qwen2.5-Coder-0.5B-Q4_K_M.gguf"],
+)
 
 # Pinned GCC bundle used only for its libstdc++ headers and libraries. CUDA's
 # x86 headers reject libc++, but NVCC still delegates every host compile to
@@ -182,6 +191,41 @@ http_archive(
     build_file = "//third_party:tree_sitter_grammar.BUILD.bazel",
     sha256 = "4333032439bef29e71c4d7a8d3acb0c4a498dc9d767980419859ed6fbeeeef29",
     urls = ["https://github.com/tree-sitter/tree-sitter-cpp/releases/download/v0.23.4/tree-sitter-cpp.tar.xz"],
+)
+
+http_archive(
+    name = "tree_sitter_java",
+    build_file = "//third_party:tree_sitter_grammar.BUILD.bazel",
+    sha256 = "ed766e1045be236e50a7f99295996f6705d7506628b79af80d1fd5efb63c86a7",
+    urls = ["https://github.com/tree-sitter/tree-sitter-java/releases/download/v0.23.5/tree-sitter-java.tar.xz"],
+)
+
+http_archive(
+    name = "tree_sitter_python",
+    build_file = "//third_party:tree_sitter_grammar.BUILD.bazel",
+    sha256 = "7bce887eb2f33e94bf74a69645cf5138d4096720e54fd3269a6124c06b93c584",
+    urls = ["https://github.com/tree-sitter/tree-sitter-python/releases/download/v0.25.0/tree-sitter-python.tar.gz"],
+)
+
+http_archive(
+    name = "tree_sitter_go",
+    build_file = "//third_party:tree_sitter_grammar.BUILD.bazel",
+    sha256 = "ac412018d59f7cd5bb72fbde557e9ebf9fdfac12c5853f2bb03669f980a953bb",
+    urls = ["https://github.com/tree-sitter/tree-sitter-go/releases/download/v0.25.0/tree-sitter-go.tar.gz"],
+)
+
+http_archive(
+    name = "tree_sitter_javascript",
+    build_file = "//third_party:tree_sitter_grammar.BUILD.bazel",
+    sha256 = "3385229430f686c6ff6e756168d7e05a01da4c45acb7708239edc9fa9ee41514",
+    urls = ["https://github.com/tree-sitter/tree-sitter-javascript/releases/download/v0.25.0/tree-sitter-javascript.tar.gz"],
+)
+
+http_archive(
+    name = "tree_sitter_c_sharp",
+    build_file = "//third_party:tree_sitter_grammar.BUILD.bazel",
+    sha256 = "d7e9db699ad8ebd234cb6922d285efe128a408db3737d4fa0bab6c668e0fc5e6",
+    urls = ["https://github.com/tree-sitter/tree-sitter-c-sharp/releases/download/v0.23.5/tree-sitter-c-sharp.tar.gz"],
 )
 
 http_archive(

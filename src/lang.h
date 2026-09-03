@@ -12,7 +12,16 @@
 
 namespace llmcc {
 
-enum class Language : std::uint8_t { kRust, kC, kCpp };
+enum class Language : std::uint8_t {
+  kRust,
+  kC,
+  kCpp,
+  kJava,
+  kPython,
+  kGo,
+  kJavaScript,
+  kCSharp,
+};
 using OffsetMap = std::vector<std::size_t>;
 
 struct FunctionSpan {

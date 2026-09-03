@@ -20,7 +20,7 @@ inline constexpr std::size_t kSha256Size = 32;
 inline constexpr std::size_t kFooterHeaderSize = 16;
 inline constexpr std::size_t kFooterEntrySize = 64;
 inline constexpr std::size_t kFooterSize =
-    kFooterHeaderSize + kPayloadCount * kFooterEntrySize;
+    kFooterHeaderSize + (kPayloadCount * kFooterEntrySize);
 
 }  // namespace llmcc::payload
 

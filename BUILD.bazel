@@ -9,6 +9,9 @@ load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make_variant")
 load(
     "//:build_defs.bzl",
+    "ROCM_GPU_TARGETS",
+    "backend_configuration_case",
+    "backend_configuration_probe",
     "curl_cmake_options",
     "install_launcher",
     "llama_cmake_options",
@@ -16,11 +19,10 @@ load(
     "llama_rocm_cmake_options",
     "llama_universal_cmake_options",
     "payload_archive",
+    "rocm_targets_header",
 )
 
 package(default_visibility = ["//visibility:public"])
-
-DIST_VERSION = "0.1"
 
 exports_files(["VERSION"])
 
@@ -34,23 +36,38 @@ genrule(
     cmd = """
 status_file=bazel-out/stable-status.txt
 version=""
+git_sha=""
+artifact_base_url=""
 if [[ -f "$$status_file" ]]; then
   version=$$(grep '^STABLE_LLM_CC_VERSION ' "$$status_file" | cut -d' ' -f2- || true)
+  git_sha=$$(grep '^STABLE_LLM_CC_GIT_SHA ' "$$status_file" | cut -d' ' -f2- || true)
+  artifact_base_url=$$(grep '^STABLE_LLM_CC_ARTIFACT_BASE_URL ' "$$status_file" | cut -d' ' -f2- || true)
 fi
 if [[ -z "$$version" ]]; then
   base=$$(tr -d '[:space:]' < $(location VERSION))
-  case "$$base" in
-    [0-9]*.[0-9]*.[0-9]*) base=$${base%.*} ;;
-  esac
-  version="$$base.0+unknown"
+  version="$$base-dev.0+unknown"
 fi
 case "$$version" in
   *[!0-9A-Za-z.+-]*|'') echo "invalid VERSION: $$version" >&2; exit 1 ;;
 esac
+if [[ "$$git_sha" == "unknown" ]]; then
+  git_sha=""
+fi
+case "$$git_sha" in
+  *[!0-9a-f]* ) echo "invalid git SHA: $$git_sha" >&2; exit 1 ;;
+esac
+case "$$artifact_base_url" in
+  *[!0-9A-Za-z:/._~-]* ) echo "invalid artifact base URL" >&2; exit 1 ;;
+esac
+if [[ "$$artifact_base_url" == "none" ]]; then
+  artifact_base_url=""
+fi
 cat > "$@" <<EOF
 #ifndef LLM_CC_GENERATED_VERSION_H_
 #define LLM_CC_GENERATED_VERSION_H_
 #define LLM_CC_VERSION "$$version"
+#define LLM_CC_GIT_SHA "$$git_sha"
+#define LLM_CC_ARTIFACT_BASE_URL "$$artifact_base_url"
 #endif
 EOF
 """,
@@ -70,6 +87,7 @@ string_flag(
         "cuda",
         "metal",
         "rocm",
+        "universal",
     ],
 )
 
@@ -79,7 +97,7 @@ config_setting(
 )
 
 config_setting(
-    name = "backend_cpu",
+    name = "backend_cpu_explicit",
     flag_values = {":backend": "cpu"},
 )
 
@@ -99,11 +117,21 @@ config_setting(
 )
 
 config_setting(
+    name = "backend_universal_explicit",
+    flag_values = {":backend": "universal"},
+)
+
+config_setting(
     name = "target_linux_x86_64",
     constraint_values = [
         "@platforms//cpu:x86_64",
         "@platforms//os:linux",
     ],
+)
+
+config_setting(
+    name = "target_linux",
+    constraint_values = ["@platforms//os:linux"],
 )
 
 config_setting(
@@ -114,7 +142,7 @@ config_setting(
 selects.config_setting_group(
     name = "backend_universal",
     match_all = [
-        ":backend_auto",
+        ":backend_universal_explicit",
         ":target_linux_x86_64",
     ],
 )
@@ -128,6 +156,30 @@ selects.config_setting_group(
 )
 
 selects.config_setting_group(
+    name = "backend_cpu_auto",
+    match_all = [
+        ":backend_auto",
+        ":target_linux",
+    ],
+)
+
+selects.config_setting_group(
+    name = "backend_cpu",
+    match_any = [
+        ":backend_cpu_auto",
+        ":backend_cpu_explicit",
+    ],
+)
+
+selects.config_setting_group(
+    name = "backend_cpu_linux",
+    match_all = [
+        ":backend_cpu",
+        ":target_linux",
+    ],
+)
+
+selects.config_setting_group(
     name = "backend_rocm",
     match_any = [":backend_rocm_explicit"],
 )
@@ -136,6 +188,7 @@ selects.config_setting_group(
     name = "backend_dynamic",
     match_any = [
         ":backend_cuda",
+        ":backend_cpu_linux",
         ":backend_rocm",
         ":backend_universal",
     ],
@@ -338,6 +391,18 @@ cc_library(
 )
 
 cc_library(
+    name = "backend_fetch",
+    srcs = ["src/backend_fetch.cc"],
+    hdrs = ["src/backend_fetch.h"],
+    deps = [
+        ":download",
+        ":payload",
+        ":version",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_library(
     name = "payload_format",
     hdrs = ["src/payload_format.h"],
 )
@@ -345,6 +410,21 @@ cc_library(
 cc_library(
     name = "linux_compat",
     srcs = ["src/linux_compat.cc"],
+)
+
+rocm_targets_header(
+    name = "rocm_gpu_targets_header",
+    out = "generated/rocm_gpu_targets.h",
+    targets = ROCM_GPU_TARGETS,
+)
+
+cc_library(
+    name = "rocm_topology",
+    srcs = ["src/rocm_topology.cc"],
+    hdrs = [
+        ":rocm_gpu_targets_header",
+        "src/rocm_topology.h",
+    ],
 )
 
 cc_library(
@@ -357,9 +437,11 @@ cc_library(
         "//conditions:default": [],
     }),
     deps = [
+        ":backend_fetch",
         ":backend_policy",
         ":llama",
         ":payload",
+        ":rocm_topology",
     ],
     tags = ["manual"],
 )
@@ -400,10 +482,19 @@ cc_library(
 )
 
 cc_library(
+    name = "models",
+    srcs = ["src/models.cc"],
+    hdrs = ["src/models.h"],
+)
+
+cc_library(
     name = "cache",
     srcs = ["src/cache.cc"],
     hdrs = ["src/cache.h"],
-    deps = ["@nlohmann_json//:json"],
+    deps = [
+        ":models",
+        "@nlohmann_json//:json",
+    ],
 )
 
 cc_library(
@@ -422,6 +513,7 @@ cc_library(
     deps = [
         ":cache",
         ":curl",
+        ":models",
     ],
 )
 
@@ -454,7 +546,12 @@ cc_library(
         ":core",
         "@tree_sitter//:tree_sitter",
         "@tree_sitter_c//:grammar",
+        "@tree_sitter_c_sharp//:grammar",
         "@tree_sitter_cpp//:grammar",
+        "@tree_sitter_go//:grammar",
+        "@tree_sitter_java//:grammar",
+        "@tree_sitter_javascript//:grammar",
+        "@tree_sitter_python//:grammar",
         "@tree_sitter_rust//:grammar",
     ],
 )
@@ -484,9 +581,13 @@ cc_library(
         "//conditions:default": ["LLMCC_BACKEND_CPU"],
     }),
     deps = [
+        ":backend_fetch",
         ":backend_runtime",
+        ":cache",
+        ":download",
         ":inference_guard",
         ":llama",
+        ":models",
         ":scoring",
         ":version",
     ],
@@ -558,21 +659,23 @@ cc_binary(
             "-framework MetalKit",
             "-lobjc",
         ],
-        ":backend_cpu": [
-            "-static",
+        ":backend_cpu_linux": [
             "-ldl",
             "-lpthread",
+            "-Wl,--dynamic-list=$(location //third_party:ggml_backend_abi.list)",
         ],
-        "//conditions:default": ["-ldl", "-lpthread"],
+        "//conditions:default": [],
     }),
     deps = [
         ":analyze",
+        ":backend_fetch",
         ":cache",
         ":core",
         ":download",
         ":entropy_cache",
         ":jsonl",
         ":lang",
+        ":models",
         ":project",
         ":score_cmd",
         ":version",
@@ -592,12 +695,14 @@ cc_binary(
     ],
     deps = [
         ":analyze",
+        ":backend_fetch",
         ":cache",
         ":core",
         ":download",
         ":entropy_cache",
         ":jsonl",
         ":lang",
+        ":models",
         ":project",
         ":score_cmd",
         ":version",
@@ -632,9 +737,47 @@ sh_test(
     ],
 )
 
+sh_test(
+    name = "version_test",
+    srcs = ["//tools:version_test.sh"],
+    data = [
+        "//tools:bazel_status.sh",
+        "//tools:version.sh",
+    ],
+    use_bash_launcher = True,
+)
+
+sh_test(
+    name = "model_smoke_test",
+    srcs = ["//tools:model_smoke_test.sh"],
+    args = [
+        "$(location :llm-cc)",
+        "$(location @qwen2_5_coder_0_5b_q4_k_m//file)",
+        "$(location testdata/cli/sample.cpp)",
+    ],
+    data = [
+        ":llm-cc",
+        "testdata/cli/sample.cpp",
+        "@qwen2_5_coder_0_5b_q4_k_m//file",
+    ],
+    tags = [
+        "manual",
+        "requires-network",
+    ],
+    use_bash_launcher = True,
+)
+
 build_test(
     name = "starlark_test",
     targets = [
+        ":backend_config_linux_auto_test",
+        ":backend_config_linux_cpu_test",
+        ":backend_config_linux_cuda_test",
+        ":backend_config_linux_rocm_test",
+        ":backend_config_linux_universal_test",
+        ":backend_config_macos_auto_test",
+        ":backend_config_macos_cpu_test",
+        ":backend_config_macos_metal_test",
         ":backend_policy",
         ":cache",
         ":core",
@@ -642,6 +785,113 @@ build_test(
         ":lang",
         ":scoring",
     ],
+)
+
+platform(
+    name = "test_linux_x86_64_platform",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+)
+
+platform(
+    name = "test_macos_arm64_platform",
+    constraint_values = [
+        "@platforms//cpu:arm64",
+        "@platforms//os:macos",
+    ],
+)
+
+backend_configuration_probe(
+    name = "backend_configuration_probe",
+    backend = select({
+        ":backend_universal": "universal",
+        ":backend_cuda": "cuda",
+        ":backend_rocm": "rocm",
+        ":backend_metal": "metal",
+        ":backend_cpu": "cpu",
+        "//conditions:default": "unmatched",
+    }),
+    dynamic = select({
+        ":backend_dynamic": True,
+        "//conditions:default": False,
+    }),
+    linux_cpu = select({
+        ":backend_cpu_linux": True,
+        "//conditions:default": False,
+    }),
+)
+
+backend_configuration_case(
+    name = "backend_config_linux_auto_test",
+    backend = "auto",
+    expected_backend = "cpu",
+    expected_dynamic = True,
+    expected_linux_cpu = True,
+    platform = ":test_linux_x86_64_platform",
+    probe = ":backend_configuration_probe",
+)
+
+backend_configuration_case(
+    name = "backend_config_linux_cpu_test",
+    backend = "cpu",
+    expected_backend = "cpu",
+    expected_dynamic = True,
+    expected_linux_cpu = True,
+    platform = ":test_linux_x86_64_platform",
+    probe = ":backend_configuration_probe",
+)
+
+backend_configuration_case(
+    name = "backend_config_linux_cuda_test",
+    backend = "cuda",
+    expected_backend = "cuda",
+    expected_dynamic = True,
+    platform = ":test_linux_x86_64_platform",
+    probe = ":backend_configuration_probe",
+)
+
+backend_configuration_case(
+    name = "backend_config_linux_rocm_test",
+    backend = "rocm",
+    expected_backend = "rocm",
+    expected_dynamic = True,
+    platform = ":test_linux_x86_64_platform",
+    probe = ":backend_configuration_probe",
+)
+
+backend_configuration_case(
+    name = "backend_config_linux_universal_test",
+    backend = "universal",
+    expected_backend = "universal",
+    expected_dynamic = True,
+    platform = ":test_linux_x86_64_platform",
+    probe = ":backend_configuration_probe",
+)
+
+backend_configuration_case(
+    name = "backend_config_macos_auto_test",
+    backend = "auto",
+    expected_backend = "metal",
+    platform = ":test_macos_arm64_platform",
+    probe = ":backend_configuration_probe",
+)
+
+backend_configuration_case(
+    name = "backend_config_macos_cpu_test",
+    backend = "cpu",
+    expected_backend = "cpu",
+    platform = ":test_macos_arm64_platform",
+    probe = ":backend_configuration_probe",
+)
+
+backend_configuration_case(
+    name = "backend_config_macos_metal_test",
+    backend = "metal",
+    expected_backend = "metal",
+    platform = ":test_macos_arm64_platform",
+    probe = ":backend_configuration_probe",
 )
 
 install_launcher(
@@ -669,13 +919,9 @@ alias(
 payload_archive(
     name = "cpu_static_archive",
     binary = ":llm-cc",
-    cuda_runtime = "@cuda_sdk//:runtime_files",
-    host_runtime = "@cuda_host_toolchain//x86_64-buildroot-linux-gnu/sysroot:runtime_files",
-    kind = "static",
-    llama = ":llama_cpp",
-    output_name = "llm-cc-%s-linux-x86_64-cpu-static.tar.gz" % DIST_VERSION,
-    rocm_runtime = "@rocm_sdk//:runtime_files",
-    root_name = "llm-cc-%s-linux-x86_64-cpu-static" % DIST_VERSION,
+    output_name = "llm-cc-linux-x86_64-cpu-static.tar.gz",
+    require_static = False,
+    root_name = "llm-cc-linux-x86_64-cpu-static",
     tags = ["manual"],
     target_compatible_with = select({
         ":backend_cpu": [],
@@ -686,8 +932,24 @@ payload_archive(
 cc_test(
     name = "backend_test",
     srcs = ["src/backend_test.cc"],
+    defines = select({
+        ":backend_cpu_linux": ["LLMCC_TEST_LINUX_CPU"],
+        "//conditions:default": [],
+    }),
     deps = [
-        ":backend_policy",
+        ":backend_runtime",
+        ":entropy_cache",
+        ":payload",
+        ":test_util",
+    ],
+)
+
+cc_test(
+    name = "backend_fetch_test",
+    srcs = ["src/backend_fetch_test.cc"],
+    deps = [
+        ":backend_fetch",
+        ":entropy_cache",
         ":test_util",
     ],
 )
@@ -791,6 +1053,15 @@ cc_test(
 )
 
 cc_test(
+    name = "models_test",
+    srcs = ["src/models_test.cc"],
+    deps = [
+        ":models",
+        ":test_util",
+    ],
+)
+
+cc_test(
     name = "payload_integration_test",
     srcs = ["src/payload_integration_test.cc"],
     data = ["//dist:linux_x86_64_executable"],
@@ -815,6 +1086,15 @@ cc_test(
 )
 
 cc_test(
+    name = "rocm_topology_test",
+    srcs = ["src/rocm_topology_test.cc"],
+    deps = [
+        ":rocm_topology",
+        ":test_util",
+    ],
+)
+
+cc_test(
     name = "scoring_test",
     srcs = ["src/scoring_test.cc"],
     deps = [":scoring"],
@@ -824,6 +1104,7 @@ test_suite(
     name = "unit",
     tests = [
         ":analyze_test",
+        ":backend_fetch_test",
         ":backend_test",
         ":cache_test",
         ":core_test",
@@ -832,9 +1113,12 @@ test_suite(
         ":format_test",
         ":jsonl_test",
         ":lang_test",
+        ":models_test",
         ":project_test",
+        ":rocm_topology_test",
         ":scoring_test",
         ":starlark_test",
+        ":version_test",
     ],
 )
 

@@ -21,6 +21,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -30,7 +31,10 @@
 
 #include "generated/version.h"
 #include "src/backend.h"
+#include "src/cache.h"
+#include "src/download.h"
 #include "src/inference_guard.h"
+#include "src/models.h"
 #include "src/scoring.h"
 
 namespace {
@@ -41,6 +45,7 @@ constexpr std::size_t kDecodeBatchSize = 64;
 
 struct Arguments {
   std::filesystem::path model;
+  std::optional<std::string> model_name;
   std::optional<std::string> prompt;
   std::optional<std::filesystem::path> file;
   BosMode bos = BosMode::kAuto;
@@ -48,12 +53,15 @@ struct Arguments {
   std::int32_t threads = 0;
   std::int32_t gpu_layers = 0;
   llmcc::BackendKind backend = llmcc::BackendKind::kAuto;
+  std::optional<std::filesystem::path> backend_directory;
   bool entropy = false;
+  bool no_download = false;
   bool override_memory_check = false;
 };
 
 constexpr std::string_view kUsageBeforeContext =
-    "Usage: llm-cc --model MODEL.gguf [INPUT] [OPTIONS]\n\n"
+    "Usage: llm-cc score (--model MODEL.gguf | --model-name NAME) "
+    "[INPUT] [OPTIONS]\n\n"
     "Teacher-force input through a GGUF model and emit observed-token "
     "probabilities.\n"
     "No continuation is generated. Output is JSONL on stdout.\n\n"
@@ -61,7 +69,9 @@ constexpr std::string_view kUsageBeforeContext =
     "  --prompt TEXT          score literal text\n"
     "  --file PATH            score the contents of a file\n\n"
     "Options:\n"
-    "  --model PATH           local llama.cpp-compatible GGUF (required)\n"
+    "  --model PATH           local llama.cpp-compatible GGUF\n"
+    "  --model-name NAME      registered model name\n"
+    "  --no-download          do not fetch the model or backend bundle\n"
     "  --bos auto|always|never  beginning-of-stream policy (default: auto)\n"
     "  --context-size N       maximum tokens in the input (default: ";
 
@@ -70,6 +80,7 @@ constexpr std::string_view kUsageAfterContext =
     "  --threads N            inference threads (default: hardware count)\n"
     "  --gpu-layers N         layers to offload; -1 means all (default: 0)\n"
     "  --backend NAME         auto, cpu, cuda, or rocm (default: auto)\n"
+    "  --backend-dir DIR      GPU backend bundle/shared-library directory\n"
     "  --override-memory-check  bypass the preflight memory check\n"
     "  --entropy              emit full-vocabulary next-token entropy\n"
     "  -V, --version          show the program version\n"
@@ -96,6 +107,36 @@ Integer ParseInteger(std::string_view name, std::string_view value) {
   return parsed;
 }
 
+std::string ValidModelNames() {
+  std::string result = "valid model names: ";
+  bool first = true;
+  for (const llmcc::ModelSpec& model : llmcc::Models()) {
+    if (!first) {
+      result += ", ";
+    }
+    result += model.name;
+    first = false;
+  }
+  return result;
+}
+
+bool ShouldFetchBackend(llmcc::BackendKind backend, std::int32_t gpu_layers) {
+  return backend == llmcc::BackendKind::kCuda ||
+         backend == llmcc::BackendKind::kRocm ||
+         (backend == llmcc::BackendKind::kAuto && gpu_layers != 0);
+}
+
+void ApplyBackendDirectoryEnvironment(Arguments& arguments) {
+  if (arguments.backend_directory.has_value() ||
+      !ShouldFetchBackend(arguments.backend, arguments.gpu_layers)) {
+    return;
+  }
+  if (const char* environment = std::getenv("LLM_CC_BACKEND_DIR");
+      environment != nullptr && *environment != '\0') {
+    arguments.backend_directory = environment;
+  }
+}
+
 void SetOption(Arguments& arguments, std::string_view option,
                std::string_view value) {
   if ((option == "--prompt" && arguments.file.has_value()) ||
@@ -104,6 +145,8 @@ void SetOption(Arguments& arguments, std::string_view option,
   }
   if (option == "--model") {
     arguments.model = value;
+  } else if (option == "--model-name") {
+    arguments.model_name = value;
   } else if (option == "--prompt") {
     arguments.prompt = value;
   } else if (option == "--file") {
@@ -139,6 +182,8 @@ void SetOption(Arguments& arguments, std::string_view option,
     } catch (const std::invalid_argument& error) {
       Usage(error.what());
     }
+  } else if (option == "--backend-dir") {
+    arguments.backend_directory = value;
   } else {
     Usage("unknown option: " + std::string(option));
   }
@@ -159,6 +204,10 @@ Arguments ParseArguments(int argc, char** argv) {
       arguments.entropy = true;
       continue;
     }
+    if (option == "--no-download") {
+      arguments.no_download = true;
+      continue;
+    }
     if (option == "--override-memory-check") {
       arguments.override_memory_check = true;
       continue;
@@ -168,8 +217,24 @@ Arguments ParseArguments(int argc, char** argv) {
     }
     SetOption(arguments, option, argv[++i]);
   }
-  if (arguments.model.empty()) {
-    Usage("--model is required");
+  if (!arguments.model.empty() && arguments.model_name.has_value()) {
+    Usage("--model-name and --model are mutually exclusive");
+  }
+  if (arguments.model_name.has_value() &&
+      llmcc::FindModel(*arguments.model_name) == nullptr) {
+    Usage("unknown model name '" + *arguments.model_name + "'; " +
+          ValidModelNames());
+  }
+  if (arguments.model.empty() && !arguments.model_name.has_value()) {
+    Usage("--model or --model-name is required");
+  }
+  ApplyBackendDirectoryEnvironment(arguments);
+  if (arguments.backend_directory.has_value()) {
+    std::error_code error;
+    if (!std::filesystem::is_directory(*arguments.backend_directory, error)) {
+      Usage("--backend-dir is not a directory: " +
+            arguments.backend_directory->string());
+    }
   }
   if (arguments.threads == 0) {
     arguments.threads = static_cast<std::int32_t>(
@@ -180,7 +245,7 @@ Arguments ParseArguments(int argc, char** argv) {
         llmcc::SelectBackend(arguments.backend, arguments.gpu_layers, {}));
   } catch (const std::invalid_argument& error) {
     Usage(error.what());
-  } catch (const std::runtime_error&) {
+  } catch (const std::runtime_error&) {  // NOLINT(bugprone-empty-catch)
     // Device availability is checked after the selected plugins are loaded.
   }
   return arguments;
@@ -532,7 +597,10 @@ int Run(const Arguments& arguments, std::ostream& output,
   const std::string input =
       input_override.has_value() ? *input_override : ReadInput(arguments);
   llmcc::BackendLogCapture backend_log;
-  llmcc::BackendRuntime backend(arguments.backend, arguments.gpu_layers);
+  llmcc::BackendRuntime backend(
+      arguments.backend, arguments.gpu_layers, LLM_CC_VERSION,
+      arguments.backend_directory, arguments.no_download,
+      ShouldFetchBackend(arguments.backend, arguments.gpu_layers));
   llmcc::InferenceGuard inference_guard(llmcc::BackendName(backend.selected()));
   const bool use_gpu = arguments.gpu_layers != 0;
   const std::optional<std::uint64_t> gpu_available =
@@ -568,7 +636,12 @@ class EntropyScorer::Impl {
  public:
   Impl(const std::filesystem::path& model_path,
        const InferenceOptions& inference_options)
-      : backend_(inference_options.backend, inference_options.gpu_layers),
+      : backend_(inference_options.backend, inference_options.gpu_layers,
+                 LLM_CC_VERSION, inference_options.backend_directory,
+                 inference_options.no_download,
+                 inference_options.fetch_backend &&
+                     ShouldFetchBackend(inference_options.backend,
+                                        inference_options.gpu_layers)),
         inference_guard_(BackendName(backend_.selected())),
         model_(nullptr, llama_model_free),
         context_limit_(inference_options.context_size),
@@ -580,6 +653,7 @@ class EntropyScorer::Impl {
     arguments.threads = threads_;
     arguments.gpu_layers = inference_options.gpu_layers;
     arguments.backend = inference_options.backend;
+    arguments.backend_directory = inference_options.backend_directory;
     arguments.entropy = true;
     const bool use_gpu = inference_options.gpu_layers != 0;
     const auto gpu_available = use_gpu ? GpuAvailableMemory() : std::nullopt;
@@ -654,7 +728,14 @@ std::string ScoreEntropyJsonl(const std::filesystem::path& model,
 
 int RunScoreCommand(int argc, char** argv) {
   try {
-    return Run(ParseArguments(argc, argv), std::cout, std::cerr);
+    Arguments arguments = ParseArguments(argc, argv);
+    if (arguments.model_name.has_value()) {
+      arguments.model =
+          ResolveModel(std::nullopt, *FindModel(*arguments.model_name),
+                       arguments.no_download, std::filesystem::current_path(),
+                       CacheDir(), DownloadModel);
+    }
+    return Run(arguments, std::cout, std::cerr);
   } catch (const std::exception& error) {
     std::cerr << "error: " << error.what() << '\n';
     return 1;
