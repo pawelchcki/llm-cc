@@ -9,8 +9,10 @@ version="$("$script_dir/version.sh")"
 git_sha="unknown"
 artifact_base_url="none"
 resolved_git_sha=""
-# This resolver is planned infrastructure and is not deployed yet.
-default_resolver_base="https://ci-artifacts.pawelchcki.dev"
+# The resolver Worker is not deployed yet. Until it is, use
+# `llm-cc backends fetch <name> --url <public_url>` with the URL from the CI
+# comment.
+default_resolver_base="https://ci-artifacts.pawelchcki.workers.dev"
 
 if command -v git >/dev/null 2>&1 &&
     git -C "$repo_root" rev-parse --git-dir >/dev/null 2>&1 &&

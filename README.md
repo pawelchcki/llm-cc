@@ -93,17 +93,20 @@ without `.tar.gz`. Release automation adds versions to published asset names.
 
 Stamped builds also define `LLM_CC_GIT_SHA` and `LLM_CC_ARTIFACT_BASE_URL` in
 the generated version header. Development builds use the configured artifact
-resolver (defaulting to `https://ci-artifacts.pawelchcki.dev`), while exact
-release tags stamp the matching GitHub release URL. In workspace status output,
-the literal artifact URL value `none` means fetching is disabled; it becomes an
-empty build-time constant.
+resolver (defaulting to `https://ci-artifacts.pawelchcki.workers.dev`), while
+exact release tags stamp the matching GitHub release URL. The resolver Worker
+is not deployed yet. Until it is, the supported path is
+`llm-cc backends fetch <name> --url <public_url>` with the Public URL from the
+CI comment. In workspace status output, the literal artifact URL value `none`
+means fetching is disabled; it becomes an empty build-time constant.
 
 ### Pull-request GPU bundles
 
 Each pull request publishes immutable CUDA and ROCm backend bundles. An
 automated pull-request comment links the bundles, their checksums, expiration
 dates, and stable resolver URLs. A stamped development build automatically uses
-the resolver URL for its commit to fetch the matching backend bundle.
+the resolver URL for its commit to fetch the matching backend bundle once the
+resolver Worker is deployed.
 
 ## Analyze source and projects
 

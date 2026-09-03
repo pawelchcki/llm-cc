@@ -56,7 +56,9 @@ automations:
           visibility: public
           checksum: sha256
           retention: 90d
-          # Resolver keys are a new ci-toolkit feature that my-infra will implement.
+          # The resolver Worker is not deployed yet. Until it is, use
+          # `llm-cc backends fetch <name> --url <public_url>` with the URL from
+          # the CI comment.
           resolver:
             key: "{{ commit.sha }}"
 
@@ -69,7 +71,9 @@ automations:
           visibility: public
           checksum: sha256
           retention: 90d
-          # Resolver keys are a new ci-toolkit feature that my-infra will implement.
+          # The resolver Worker is not deployed yet. Until it is, use
+          # `llm-cc backends fetch <name> --url <public_url>` with the URL from
+          # the CI comment.
           resolver:
             key: "{{ commit.sha }}"
 
@@ -92,15 +96,19 @@ automations:
             - **Public URL:** {{ actions.publish-cuda-bundle.outputs.public_url | markdown_url_escape }}
             - **SHA-256:** `{{ actions.publish-cuda-bundle.outputs.sha256 | markdown_escape }}`
             - **Available until:** `{{ actions.publish-cuda-bundle.outputs.expires_at | markdown_escape }}`
-            - **Stable resolver:** https://ci-artifacts.pawelchcki.dev/pawelchcki/llm-cc/{{ commit.sha }}/llm-cc-backend-cuda-linux-x86_64.bundle
+            - **Stable resolver:** https://ci-artifacts.pawelchcki.workers.dev/pawelchcki/llm-cc/{{ commit.sha }}/llm-cc-backend-cuda-linux-x86_64.bundle
 
-            Fetch it with `llm-cc backends fetch cuda --url {{ actions.publish-cuda-bundle.outputs.public_url | markdown_escape }}`.
+            The resolver Worker is not deployed yet. Until it is, the supported path is
+            `llm-cc backends fetch cuda --url {{ actions.publish-cuda-bundle.outputs.public_url | markdown_escape }}`
+            using the Public URL above.
 
             ### ROCm
 
             - **Public URL:** {{ actions.publish-rocm-bundle.outputs.public_url | markdown_url_escape }}
             - **SHA-256:** `{{ actions.publish-rocm-bundle.outputs.sha256 | markdown_escape }}`
             - **Available until:** `{{ actions.publish-rocm-bundle.outputs.expires_at | markdown_escape }}`
-            - **Stable resolver:** https://ci-artifacts.pawelchcki.dev/pawelchcki/llm-cc/{{ commit.sha }}/llm-cc-backend-rocm-linux-x86_64.bundle
+            - **Stable resolver:** https://ci-artifacts.pawelchcki.workers.dev/pawelchcki/llm-cc/{{ commit.sha }}/llm-cc-backend-rocm-linux-x86_64.bundle
 
-            Fetch it with `llm-cc backends fetch rocm --url {{ actions.publish-rocm-bundle.outputs.public_url | markdown_escape }}`.
+            The resolver Worker is not deployed yet. Until it is, the supported path is
+            `llm-cc backends fetch rocm --url {{ actions.publish-rocm-bundle.outputs.public_url | markdown_escape }}`
+            using the Public URL above.

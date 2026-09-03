@@ -43,7 +43,7 @@ jobs:
 
       - name: Fetch and verify GPU backends
         env:
-          RESOLVER_BASE: ${{ vars.LLM_CC_RESOLVER_BASE || 'https://ci-artifacts.pawelchcki.dev' }}
+          RESOLVER_BASE: ${{ vars.LLM_CC_RESOLVER_BASE || 'https://ci-artifacts.pawelchcki.workers.dev' }}
         shell: bash
         run: |
           set -euo pipefail

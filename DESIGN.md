@@ -82,11 +82,13 @@ Git SHA, compatibility fields, bundle SHA-256, and size.
 Stamped binaries contain an artifact base URL. For development builds it is
 formed from the configured resolver as
 `<resolver>/<owner>/<repo>/<sha>`, and bundle downloads append `<file>`, giving
-`<resolver>/<owner>/<repo>/<sha>/<file>`. An explicit `backends fetch --url`
-can supply the bundle URL when the stamped base is unavailable. For a stamped
-binary, fetching requires a manifest and rejects the bundle unless the
-manifest's `git_sha` equals the binary's Git SHA, enforcing a same-commit
-contract.
+`<resolver>/<owner>/<repo>/<sha>/<file>`. The default resolver is
+`https://ci-artifacts.pawelchcki.workers.dev`, but the resolver Worker is not
+deployed yet. Until it is, the supported path is
+`llm-cc backends fetch <name> --url <public_url>` with the Public URL from the
+CI comment. For a stamped binary, fetching requires a manifest and rejects the
+bundle unless the manifest's `git_sha` equals the binary's Git SHA, enforcing a
+same-commit contract.
 
 The default Linux toolchain is pinned Clang with a glibc 2.24 sysroot; the
 `portable` profile is an alias for the same hermetic configuration. CI enforces
