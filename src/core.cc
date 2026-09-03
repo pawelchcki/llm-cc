@@ -163,8 +163,11 @@ std::pair<double, std::vector<SemanticUnit>> DetectSemanticUnits(
 
   std::set<std::size_t> boundaries = {0, tokens.size()};
   for (std::size_t i = 1; i < tokens.size(); ++i) {
-    if (tokens[i].entropy.has_value() && *tokens[i].entropy >= tau) {
-      boundaries.insert(first_token_on_line[i]);
+    if (tokens[i].entropy.has_value()) {
+      const double entropy = tokens[i].entropy.value_or(0.0);
+      if (entropy >= tau) {
+        boundaries.insert(first_token_on_line[i]);
+      }
     }
   }
   // Structural boundaries deliberately remain token-granular, an extension

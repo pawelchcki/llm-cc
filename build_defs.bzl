@@ -1,5 +1,117 @@
 """Small build helpers for project targets."""
 
+# Single source of truth for both llama.cpp's GPU_TARGETS CMake option and the
+# generated runtime topology filter in generated/rocm_gpu_targets.h.
+ROCM_GPU_TARGETS = [
+    "gfx1100",
+    "gfx1101",
+    "gfx1102",
+]
+
+BackendConfigurationInfo = provider(
+    fields = {
+        "backend": "Resolved backend family.",
+        "dynamic": "Whether runtime GPU backend loading is enabled.",
+        "linux_cpu": "Whether this is a Linux CPU configuration.",
+    },
+)
+
+def _backend_configuration_probe_impl(ctx):
+    return [BackendConfigurationInfo(
+        backend = ctx.attr.backend,
+        dynamic = ctx.attr.dynamic,
+        linux_cpu = ctx.attr.linux_cpu,
+    )]
+
+backend_configuration_probe = rule(
+    implementation = _backend_configuration_probe_impl,
+    attrs = {
+        "backend": attr.string(mandatory = True),
+        "dynamic": attr.bool(mandatory = True),
+        "linux_cpu": attr.bool(mandatory = True),
+    },
+)
+
+def _backend_configuration_transition_impl(_settings, attr):
+    return {
+        "//:backend": attr.backend,
+        "//command_line_option:platforms": [attr.platform],
+    }
+
+_backend_configuration_transition = transition(
+    implementation = _backend_configuration_transition_impl,
+    inputs = [],
+    outputs = [
+        "//:backend",
+        "//command_line_option:platforms",
+    ],
+)
+
+def _backend_configuration_case_impl(ctx):
+    configuration = ctx.attr.probe[0][BackendConfigurationInfo]
+    expected = BackendConfigurationInfo(
+        backend = ctx.attr.expected_backend,
+        dynamic = ctx.attr.expected_dynamic,
+        linux_cpu = ctx.attr.expected_linux_cpu,
+    )
+    for field in ["backend", "dynamic", "linux_cpu"]:
+        actual_value = getattr(configuration, field)
+        expected_value = getattr(expected, field)
+        if actual_value != expected_value:
+            fail("%s: expected %s=%s, got %s" % (
+                ctx.label,
+                field,
+                expected_value,
+                actual_value,
+            ))
+    return [DefaultInfo()]
+
+backend_configuration_case = rule(
+    implementation = _backend_configuration_case_impl,
+    attrs = {
+        "backend": attr.string(mandatory = True),
+        "expected_backend": attr.string(mandatory = True),
+        "expected_dynamic": attr.bool(default = False),
+        "expected_linux_cpu": attr.bool(default = False),
+        "platform": attr.label(mandatory = True),
+        "probe": attr.label(
+            cfg = _backend_configuration_transition,
+            mandatory = True,
+            providers = [BackendConfigurationInfo],
+        ),
+        "_allowlist_function_transition": attr.label(
+            default = "@bazel_tools//tools/allowlists/function_transition_allowlist",
+        ),
+    },
+)
+
+def _rocm_targets_header_impl(ctx):
+    targets = ", ".join(['"%s"' % target for target in ctx.attr.targets])
+    ctx.actions.write(
+        output = ctx.outputs.out,
+        content = """#ifndef LLM_CC_GENERATED_ROCM_GPU_TARGETS_H_
+#define LLM_CC_GENERATED_ROCM_GPU_TARGETS_H_
+
+#include <array>
+#include <string_view>
+
+namespace llmcc {
+inline constexpr auto kRocmGpuTargets =
+    std::to_array<std::string_view>({%s});
+}  // namespace llmcc
+
+#endif  // LLM_CC_GENERATED_ROCM_GPU_TARGETS_H_
+""" % targets,
+    )
+
+rocm_targets_header = rule(
+    implementation = _rocm_targets_header_impl,
+    attrs = {
+        "out": attr.output(mandatory = True),
+        "targets": attr.string_list(mandatory = True),
+    },
+)
+
 def curl_cmake_options(**tls):
     options = {
         "BUILD_CURL_EXE": "OFF",
@@ -67,6 +179,13 @@ install_launcher = rule(
 def _file_short_path(file):
     return file.short_path
 
+def _rocm_runtime_destination(source):
+    marker = "rocm_sdk/"
+    index = source.short_path.find(marker)
+    if index < 0:
+        fail("ROCm runtime input is outside the pinned SDK tree: %s" % source.short_path)
+    return source.short_path[index + len(marker):]
+
 def _embedded_linux_binary_impl(ctx):
     binary_files = ctx.attr.binary[DefaultInfo].files.to_list()
     cuda_files = ctx.attr.cuda_module[DefaultInfo].files.to_list()
@@ -85,11 +204,7 @@ def _embedded_linux_binary_impl(ctx):
 
     runtime_files = ctx.attr.rocm_runtime[DefaultInfo].files.to_list()
     for source in sorted(runtime_files, key = _file_short_path):
-        marker = "rocm_sdk/"
-        index = source.short_path.find(marker)
-        if index < 0:
-            fail("ROCm runtime input is outside the pinned SDK tree: %s" % source.short_path)
-        destination = source.short_path[index + len(marker):]
+        destination = _rocm_runtime_destination(source)
         args.add("--rocm-file", source.path + "=" + destination)
 
     ctx.actions.run(
@@ -127,6 +242,113 @@ embedded_linux_binary = rule(
     },
 )
 
+def _backend_bundle_impl(ctx):
+    module_files = ctx.attr.module[DefaultInfo].files.to_list()
+    if len(module_files) != 1:
+        fail("backend bundle module must produce exactly one file")
+
+    runtime_files = []
+    if ctx.attr.runtime:
+        runtime_files = ctx.attr.runtime[DefaultInfo].files.to_list()
+    if ctx.attr.backend != "rocm" and runtime_files:
+        fail("backend bundle runtime files are only supported for ROCm")
+
+    output_dir = ctx.label.name
+    output = ctx.actions.declare_file(output_dir + "/" + ctx.attr.output_name)
+    checksum = ctx.actions.declare_file(output_dir + "/" + ctx.attr.output_name + ".sha256")
+    manifest = ctx.actions.declare_file(output_dir + "/manifest.json")
+
+    args = ctx.actions.args()
+    args.add(
+        "--file",
+        module_files[0].path + "=libllm-cc-backend-%s.so" % ctx.attr.backend,
+    )
+    if ctx.attr.backend == "rocm":
+        for source in sorted(runtime_files, key = _file_short_path):
+            args.add(
+                "--file",
+                source.path + "=" + _rocm_runtime_destination(source),
+            )
+
+    # TODO: Pass the pinned llama.cpp commit and GGML backend ABI when those
+    # values are exposed to this Bazel graph without duplicating them.
+    ctx.actions.run_shell(
+        arguments = [
+            ctx.version_file.path,
+            ctx.info_file.path,
+            ctx.executable._packager.path,
+            output.path,
+            checksum.path,
+            manifest.path,
+            ctx.attr.backend,
+            args,
+        ],
+        command = """
+set -euo pipefail
+version_status="$1"
+info_status="$2"
+packager="$3"
+output="$4"
+checksum="$5"
+manifest="$6"
+backend="$7"
+shift 7
+version=""
+git_sha=""
+read_status() {
+  while IFS=' ' read -r key value; do
+    case "$key" in
+      STABLE_LLM_CC_VERSION) version="$value" ;;
+      STABLE_LLM_CC_GIT_SHA) git_sha="$value" ;;
+    esac
+  done < "$1"
+}
+read_status "$version_status"
+read_status "$info_status"
+exec "$packager" \
+  --write-bundle "$output" \
+  --name "$backend" \
+  --manifest "$manifest" \
+  --checksum-output "$checksum" \
+  --version "$version" \
+  --git-sha "$git_sha" \
+  --llama-commit "" \
+  --ggml-abi "" \
+  "$@"
+""",
+        inputs = depset(
+            direct = module_files + [ctx.version_file, ctx.info_file],
+            transitive = [ctx.attr.runtime[DefaultInfo].files] if ctx.attr.runtime else [],
+        ),
+        outputs = [output, checksum, manifest],
+        tools = [ctx.executable._packager],
+        mnemonic = "LlmCcBackendBundle",
+        progress_message = "Creating %{label} backend bundle",
+    )
+    return [
+        DefaultInfo(files = depset([output, checksum, manifest])),
+        OutputGroupInfo(
+            bundle = depset([output]),
+            checksum = depset([checksum]),
+            manifest = depset([manifest]),
+        ),
+    ]
+
+backend_bundle = rule(
+    implementation = _backend_bundle_impl,
+    attrs = {
+        "backend": attr.string(mandatory = True, values = ["cuda", "rocm"]),
+        "module": attr.label(mandatory = True),
+        "output_name": attr.string(mandatory = True),
+        "runtime": attr.label(),
+        "_packager": attr.label(
+            executable = True,
+            cfg = "exec",
+            default = Label("//tools:embed_payloads"),
+        ),
+    },
+)
+
 def _payload_archive_impl(ctx):
     output = ctx.actions.declare_file(ctx.attr.output_name)
     binary_files = ctx.attr.binary[DefaultInfo].files.to_list()
@@ -134,61 +356,11 @@ def _payload_archive_impl(ctx):
         fail("payload binary must produce exactly one file")
 
     mappings = [(binary_files[0], "llm-cc")]
-    llama_files = ctx.attr.llama[DefaultInfo].files.to_list()
-    libraries = {}
-    for source in llama_files:
-        if source.basename in [
-            "libllama.so",
-            "libggml.so",
-            "libggml-base.so",
-            "libllm-cc-backend-cpu.so",
-            "libllm-cc-backend-cuda.so",
-            "libllm-cc-backend-rocm.so",
-        ]:
-            libraries[source.basename] = source
-
-    is_static = ctx.attr.kind == "static" or (ctx.attr.kind == "auto" and not libraries)
-    if is_static:
-        if libraries:
-            fail("the static CPU archive must be built with --config=cpu")
-    else:
-        required = [
-            "libllama.so",
-            "libggml.so",
-            "libggml-base.so",
-            "libllm-cc-backend-cpu.so",
-        ]
-        if ctx.attr.kind == "universal":
-            required += [
-                "libllm-cc-backend-cuda.so",
-                "libllm-cc-backend-rocm.so",
-            ]
-        for name in required:
-            if name not in libraries:
-                fail("%s is missing; build the universal archive with the default Linux x86-64 configuration" % name)
-        for name, source in libraries.items():
-            mappings.append((source, "lib/" + name))
-
-        if "libllm-cc-backend-cuda.so" in libraries:
-            for source in ctx.attr.cuda_runtime[DefaultInfo].files.to_list():
-                if ".so" in source.basename:
-                    mappings.append((source, "lib/cuda/" + source.basename))
-        if "libllm-cc-backend-rocm.so" in libraries:
-            for source in ctx.attr.rocm_runtime[DefaultInfo].files.to_list():
-                path = source.short_path
-                marker = "rocm_sdk/"
-                index = path.find(marker)
-                relative = path[index + len(marker):] if index >= 0 else source.basename
-                if relative.startswith("lib/"):
-                    relative = relative[len("lib/"):]
-                mappings.append((source, "lib/rocm/" + relative))
-            for source in ctx.attr.host_runtime[DefaultInfo].files.to_list():
-                mappings.append((source, "lib/rocm/" + source.basename))
 
     args = ctx.actions.args()
     args.add("--output", output)
     args.add("--root", ctx.attr.root_name)
-    if is_static:
+    if ctx.attr.require_static:
         args.add("--require-static")
     for source, destination in mappings:
         args.add("--file", source.path + "=" + destination)
@@ -209,12 +381,8 @@ payload_archive = rule(
     implementation = _payload_archive_impl,
     attrs = {
         "binary": attr.label(mandatory = True),
-        "cuda_runtime": attr.label(mandatory = True),
-        "host_runtime": attr.label(mandatory = True),
-        "kind": attr.string(mandatory = True, values = ["auto", "static", "universal"]),
-        "llama": attr.label(mandatory = True),
         "output_name": attr.string(mandatory = True),
-        "rocm_runtime": attr.label(mandatory = True),
+        "require_static": attr.bool(default = True),
         "root_name": attr.string(mandatory = True),
         "_packager": attr.label(
             default = Label("//tools:package_payload.sh"),
@@ -294,7 +462,7 @@ def llama_rocm_cmake_options():
         CMAKE_INSTALL_RPATH = "\\$$ORIGIN;\\$$ORIGIN/rocm;\\$$ORIGIN/rocm/llvm/lib;\\$$ORIGIN/rocm/rocm_sysdeps/lib",
         GGML_BACKEND_DL = "ON",
         GGML_HIP = "ON",
-        GPU_TARGETS = "gfx1100;gfx1101;gfx1102",
+        GPU_TARGETS = ";".join(ROCM_GPU_TARGETS),
     )
 
 def llama_cuda_cmake_options():

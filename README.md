@@ -18,17 +18,24 @@ bazel test //:unit
 bazel test //:integration
 ```
 
+Run `bazel test //:model_smoke_test` to opt into a CPU-only check against the
+smallest registered real model; this downloads a checksum-pinned 398 MB GGUF.
+
 The build downloads checksum-pinned LLVM, llama.cpp, tree-sitter and its Rust,
 C, C++, Java, Python, Go, JavaScript, and C# source bundles, nlohmann/json,
 curl, and, on non-macOS platforms, OpenSSL. macOS curl builds use Apple's
 Secure Transport and system trust store.
-On Linux x86-64, `//:llm-cc` is always a universal CPU + CUDA + ROCm
-development executable. Its private GPU modules stay in Bazel runfiles, so an
-application edit recompiles and relinks only affected application actions.
-Metal remains the standalone static macOS default. Smaller diagnostic builds
-remain available:
+`bazel build //:llm-cc` selects CPU on Linux and Metal on macOS. The Linux CPU
+binary includes no CUDA or ROCm implementation, but retains the dynamic backend
+loader and exported ggml ABI so fetched GPU bundles can be selected later. On
+Linux x86-64, `--config=universal` opts into the fat CPU + CUDA + ROCm build.
+Its private GPU modules stay in Bazel runfiles during development; packaging
+`//dist:linux_x86_64` appends them to the executable. The universal build is
+slow and needs about 80 GB of disk. Other explicit backend builds remain
+available:
 
 ```sh
+bazel build --config=release --config=universal //:llm-cc
 bazel build --config=release --config=rocm //:llm-cc
 bazel build --config=release --config=cuda //:llm-cc
 bazel build --config=release --config=metal //:llm-cc
@@ -56,9 +63,9 @@ while `--config=metal` retains a macOS 14.0 deployment target. Xcode and the
 Apple SDK are licensed host prerequisites and cannot be downloaded hermetically
 by the repository.
 
-The ROCm archive targets Linux x86_64 Radeon `gfx110X`. Use `--config=cpu` on
-other Linux platforms, or change the pinned TheRock artifact and `GPU_TARGETS`
-together when adding another AMD GPU family.
+The ROCm backend targets Linux x86_64 Radeon `gfx110X`. The default CPU build
+supports other Linux platforms; change the pinned TheRock artifact and
+`GPU_TARGETS` together when adding another AMD GPU family.
 
 Install to `$HOME/.local/bin`, or choose another prefix:
 
@@ -68,21 +75,40 @@ bazel run //:install -- --prefix /opt/llm-cc
 ```
 
 Installation atomically replaces one `bin/llm-cc` executable. On Linux that
-ELF contains the statically linked application, llama/ggml CPU code, and raw
-CUDA and ROCm payloads. On macOS it is the standalone static Metal
-Mach-O executable.
+ELF contains the statically linked application and llama/ggml CPU code by
+default. With `--config=universal`, it also contains raw CUDA and ROCm payloads.
+On macOS, both the default build and `--config=metal` produce the standalone
+static Metal Mach-O executable.
 
-Build deterministic release archives with:
+Build deterministic distribution artifacts with:
 
 ```sh
-bazel build --config=release //dist:linux_x86_64
-bazel build --config=release //dist:macos
+bazel build --config=release --config=universal //dist:linux_x86_64
+bazel build --config=release --config=metal //dist:macos
 ```
 
-The Linux target emits `llm-cc-0.1-linux-x86_64` and its SHA-256 checksum.
-Compatibility labels `//:universal_archive` and `//:install_payload` point to
-the same single-file output. `//:cpu_static_archive` remains available as an
-explicit CPU diagnostic artifact; it is never the Linux default.
+The Linux target emits `llm-cc-linux-x86_64` and its SHA-256 checksum.
+Compatibility labels `//:universal_archive` and `//:install_payload` resolve to
+that target. `//:cpu_static_archive` emits
+`llm-cc-linux-x86_64-cpu-static.tar.gz`, whose root directory has the same name
+without `.tar.gz`. Release automation adds versions to published asset names.
+
+Stamped builds also define `LLM_CC_GIT_SHA` and `LLM_CC_ARTIFACT_BASE_URL` in
+the generated version header. Development builds use the configured artifact
+resolver (defaulting to `https://ci-artifacts.pawelchcki.workers.dev`), while
+exact release tags stamp the matching GitHub release URL. The resolver Worker
+is not deployed yet. Until it is, the supported path is
+`llm-cc backends fetch <name> --url <public_url>` with the Public URL from the
+CI comment. In workspace status output, the literal artifact URL value `none`
+means fetching is disabled; it becomes an empty build-time constant.
+
+### Pull-request GPU bundles
+
+Each pull request publishes immutable CUDA and ROCm backend bundles. An
+automated pull-request comment links the bundles, their checksums, expiration
+dates, and stable resolver URLs. A stamped development build automatically uses
+the resolver URL for its commit to fetch the matching backend bundle once the
+resolver Worker is deployed.
 
 ## Analyze source and projects
 
@@ -99,6 +125,7 @@ Analysis options are:
 ```text
 --lang auto|rust|c|cpp|java|python|go|javascript|csharp
 --model GGUF
+--model-name NAME
 --no-download
 --gpu-layers N
 --backend auto|cpu|cuda|rocm
@@ -175,12 +202,17 @@ warnings and errors still go to stderr. If a Codex sandbox reports zero GPU
 memory, `llm-cc` identifies the sandbox and recommends running with permission
 to access the accelerator directly.
 
-Without `--model`, `llm-cc` first checks
-`models/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf`, then its model cache. If the
-default model is absent it downloads it over HTTPS to a `.partial` file and
-resumes that file on the next attempt. Interactive downloads show a progress
-bar, transferred size, and current average speed. Disable downloading with
-`--no-download`.
+## Models
+
+Without `--model`, `llm-cc` uses the first entry in its built-in registry,
+`deepseek-coder-v2-lite-base-q6_k`. The registry also contains
+`deepseek-coder-6.7b-base-q6_k`, `qwen2.5-coder-1.5b-q6_k`, and
+`qwen2.5-coder-0.5b-q4_k_m`. Select one with `--model-name NAME`;
+`--model-name` and `--model` are mutually exclusive. The tool first checks
+`models/<registered file>`, then its model cache. If the model is absent it
+downloads it over HTTPS to a `.partial` file and resumes that file on the next
+attempt. Interactive downloads show a progress bar, transferred size, and
+current average speed. Disable downloading with `--no-download`.
 
 The cache directory follows this precedence:
 
@@ -193,8 +225,13 @@ Inspect it with:
 ```sh
 llm-cc models path
 llm-cc models list
+llm-cc models list --available
 llm-cc models remove MODEL.gguf
 ```
+
+`models list` shows cached GGUF files and their timestamps. Add `--available`
+to show every built-in model, its approximate download size, and whether its
+registered file is cached.
 
 The default model is
 [DeepSeek-Coder-V2-Lite-Base Q6_K](https://huggingface.co/bartowski/DeepSeek-Coder-V2-Lite-Base-GGUF).
@@ -210,31 +247,13 @@ llm-cc score --model model.gguf --entropy --prompt 'The quick brown fox'
 llm-cc score --model model.gguf --entropy --file source.cpp
 ```
 
-`score` accepts `--prompt` or `--file`, `--bos auto|always|never`,
-`--context-size`, `--threads`, `--gpu-layers`, `--backend`,
-`--override-memory-check`, and `--entropy`. It emits one JSONL object per
-observed token. It never samples or
+`score` accepts a local `--model` or a registered `--model-name`, plus
+`--prompt` or `--file`, `--bos auto|always|never`, `--context-size`, `--threads`,
+`--gpu-layers`, `--backend`, `--no-download`, `--override-memory-check`, and
+`--entropy`. It emits one JSONL object per observed token. It never samples or
 generates a continuation. Its default maximum input context is 131,072 tokens;
 use `--context-size` to override it. Mean negative log-likelihood and perplexity
 go to stderr.
-
-`--backend auto` is the default. When GPU layers are requested it totals free
-VRAM for each usable family and chooses the larger aggregate, preferring CUDA
-on a tie. Explicit `cuda` or `rocm` loads only that GPU plugin plus CPU and
-fails clearly when the requested device is unavailable. `cpu` rejects nonzero
-GPU layers.
-
-The release ELF reads its raw payload footer through `/proc/self/exe`.
-CUDA is copied into an immutable sealed memfd and never touches disk.
-ROCm's exact pinned userspace and architecture-data closure is atomically
-materialized under a content-addressed, owner-only cache. Its location follows
-this precedence:
-
-1. `LLM_CC_RUNTIME_DIR`
-2. `$XDG_CACHE_HOME/llm-cc/runtime`
-3. `$HOME/.cache/llm-cc/runtime`
-
-CPU execution does not inspect or materialize either GPU payload.
 
 ```json
 {"position":0,"token_id":785,"piece":"The","bytes_hex":"546865","probability":null,"log_probability":null,"entropy":null}
@@ -244,6 +263,52 @@ The analyzer calls the same scorer in-process; no subprocess or second runtime
 is involved. One model is loaded per analyzer invocation, on the first entropy
 cache miss. Each missed file receives a bounded inference context; an all-hit
 invocation never loads model weights.
+
+## Backends
+
+Manage the versioned CUDA and ROCm bundle cache with:
+
+```sh
+llm-cc backends list
+llm-cc backends fetch cuda
+llm-cc backends fetch rocm --url https://example.invalid/backend.bundle
+llm-cc backends path [cuda|rocm]
+llm-cc backends remove cuda|rocm
+```
+
+`fetch` normally uses the artifact base URL stamped into the binary. `--url`
+overrides it with the exact bundle URL, and is the fallback for a build with no
+stamped artifact URL; the checksum is fetched from `<url>.sha256` and the
+manifest from the same directory. Cache hits revalidate both the bundle footer
+and, for stamped binaries, the manifest's build commit. `remove` deletes final
+files and any resumable `.partial` downloads. Automatic GPU resolution uses
+this order:
+
+1. `--backend-dir`, or `LLM_CC_BACKEND_DIR` when the option is absent
+2. an embedded payload footer in the executable
+3. beside-the-executable and Bazel runfiles plugins
+4. the versioned bundle in the runtime cache
+5. a fetched bundle, unless `--no-download` is set
+
+Within the configured backend directory, the resolver checks the distribution
+bundle name, then `cuda.bundle` or `rocm.bundle`, then the raw shared library.
+`LLM_CC_RUNTIME_DIR` overrides the root used for downloaded bundles and
+extracted ROCm files. Otherwise the runtime root is
+`$XDG_CACHE_HOME/llm-cc/runtime`, or `$HOME/.cache/llm-cc/runtime` when
+`XDG_CACHE_HOME` is unset.
+
+`--backend auto` is the default. When GPU layers are requested it totals free
+VRAM for each usable family and chooses the larger aggregate, preferring CUDA
+on a tie. CUDA driver availability is checked before resolving or fetching its
+bundle. Explicit `cuda` or `rocm` loads only that GPU plugin plus CPU and fails
+clearly when the requested device is unavailable. `cpu` rejects nonzero GPU
+layers.
+
+An embedded universal ELF reads its raw payload footer through `/proc/self/exe`.
+CUDA is copied into an immutable sealed memfd and never touches disk. ROCm's
+exact pinned userspace and architecture-data closure is atomically materialized
+under a content-addressed, owner-only cache. CPU execution does not inspect or
+materialize either GPU payload.
 
 ## Repository entropy cache
 
@@ -287,9 +352,9 @@ CI rejects any imported symbol above that ceiling. The `portable` profile is
 retained as an explicit alias:
 
 ```sh
-bazel build --config=release --config=portable //dist:linux_x86_64
-tools/check_glibc_version.sh bazel-bin/dist/llm-cc-0.1-linux-x86_64 2.28
-tools/check_static_link.sh bazel-bin/dist/llm-cc-0.1-linux-x86_64
+bazel build --config=release --config=portable --config=universal //dist:linux_x86_64
+tools/check_glibc_version.sh bazel-bin/dist/llm-cc-linux-x86_64 2.28
+tools/check_static_link.sh bazel-bin/dist/llm-cc-linux-x86_64
 ```
 
 The hermetic Linux build uses static OpenSSL and curl for model downloads. The
@@ -308,5 +373,13 @@ tools/run_clang_tidy.sh
 
 The project intentionally uses small standalone C++ tests instead of a test
 framework. CI runs the full Bazel test suite and the portable release gates.
+
+## Releases
+
+Conventional Commits drive Release Please, which opens the release pull request
+and creates the version tag when that pull request is merged. Each release
+includes the CPU binary, standalone CUDA and ROCm backend bundles, and a
+`SHA256SUMS` file covering the published assets. Bundle manifests are included
+when they are available from the matching commit's GPU build.
 
 Repository: [pawelchcki/llm-cc](https://github.com/pawelchcki/llm-cc)

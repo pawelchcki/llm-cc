@@ -6,16 +6,20 @@
 #include <algorithm>
 #include <array>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <utility>
 #include <vector>
 
+#include "src/backend_fetch.h"
 #include "src/payload.h"
+#include "src/rocm_topology.h"
 
-#if defined(__linux__)
+#ifdef __linux__
 #include <dlfcn.h>
 #include <unistd.h>
 #endif
@@ -23,7 +27,11 @@
 namespace llmcc {
 namespace {
 
-#if defined(LLM_CC_DYNAMIC_BACKENDS)
+class MissingBackendPluginError : public std::runtime_error {
+ public:
+  using std::runtime_error::runtime_error;
+};
+
 constexpr std::string_view PluginName(BackendKind backend) {
   switch (backend) {
     case BackendKind::kCpu:
@@ -38,8 +46,41 @@ constexpr std::string_view PluginName(BackendKind backend) {
   return {};
 }
 
+std::string BundleName(BackendKind backend) {
+  return std::string(BackendName(backend)) + ".bundle";
+}
+
+bool IsRegularFile(const std::filesystem::path& path) {
+  std::error_code error;
+  const bool regular = std::filesystem::is_regular_file(path, error);
+  if (error == std::errc::no_such_file_or_directory ||
+      error == std::errc::not_a_directory) {
+    return false;
+  }
+  if (error) {
+    throw std::runtime_error("could not inspect backend path " + path.string() +
+                             ": " + error.message());
+  }
+  return regular;
+}
+
+void ValidateBackendDirectory(const std::filesystem::path& directory) {
+  std::error_code error;
+  if (std::filesystem::is_directory(directory, error)) {
+    return;
+  }
+  std::string message =
+      "backend directory is not a directory: " + directory.string();
+  if (error) {
+    message += ": " + error.message();
+  }
+  throw std::runtime_error(message);
+}
+
+#ifdef LLM_CC_DYNAMIC_BACKENDS
+
 std::optional<std::filesystem::path> ExecutablePath() {
-#if defined(__linux__)
+#ifdef __linux__
   std::vector<char> buffer(1024);
   for (;;) {
     const ssize_t count =
@@ -84,11 +125,34 @@ struct LoadedPlugin {
   ggml_backend_reg_t registry;
   int backing_fd = -1;
   void* driver_handle = nullptr;
+  bool missing_with_download_disabled = false;
+  std::exception_ptr failure;
 };
 
-LoadedPlugin LoadPlugin(BackendKind backend, bool required) {
-#if defined(__linux__)
+std::string DownloadDisabledMessage(BackendKind backend) {
+  const std::string name(BackendName(backend));
+  return "missing " + name +
+         " backend bundle while --no-download is set; run 'llm-cc backends "
+         "fetch " +
+         name + "' or pass --url to that command";
+}
+
+LoadedPlugin LoadPlugin(
+    BackendKind backend, bool required,
+    const std::optional<std::filesystem::path>& backend_directory,
+    std::string_view version, bool no_download, bool fetch_backend) {
+#ifdef __linux__
   void* driver_handle = nullptr;
+#endif
+  const auto close_driver = [&]() {
+#ifdef __linux__
+    if (driver_handle != nullptr) {
+      dlclose(driver_handle);
+      driver_handle = nullptr;
+    }
+#endif
+  };
+#ifdef __linux__
   if (backend == BackendKind::kCuda) {
     driver_handle = dlopen("libcuda.so.1", RTLD_NOW | RTLD_GLOBAL);
     if (driver_handle == nullptr) {
@@ -102,80 +166,99 @@ LoadedPlugin LoadPlugin(BackendKind backend, bool required) {
     }
   }
 #endif
-  std::optional<PreparedPayload> embedded;
-  try {
-    embedded = PrepareEmbeddedPayload(BackendName(backend));
-  } catch (...) {
-#if defined(__linux__)
-    if (driver_handle != nullptr) {
-      dlclose(driver_handle);
+  std::optional<RocmTopology> rocm_topology;
+  if (backend == BackendKind::kRocm) {
+    rocm_topology = ConfigureRocmVisibility();
+    if (rocm_topology.has_value() && !rocm_topology->has_supported_device) {
+      if (required && rocm_topology->has_unsupported_device) {
+        throw std::runtime_error(RocmUnsupportedSystemMessage(*rocm_topology));
+      }
+      return {.backend = backend, .registry = nullptr};
     }
-#endif
+  }
+  std::optional<PreparedPayload> prepared;
+  ResolvedBackendPlugin resolved;
+  try {
+    std::function<std::optional<ResolvedBackendPlugin>()> fetch;
+    if (fetch_backend && !no_download) {
+      fetch = [backend, version] {
+        const std::filesystem::path path = FetchBackendBundle(
+            {.name = BackendName(backend), .version = version});
+        return std::optional<ResolvedBackendPlugin>(
+            {{.source = BackendPluginSource::kBundle,
+              .path = path,
+              .payload_verified = true}});
+      };
+    }
+    resolved = ResolveBackendPlugin(
+        backend, backend_directory, PluginCandidates(backend),
+        [&]() {
+          prepared = PrepareEmbeddedPayload(BackendName(backend));
+          return prepared.has_value();
+        },
+        [] { return RuntimeRoot(); }, version,
+        std::string_view{LLM_CC_GIT_SHA, sizeof(LLM_CC_GIT_SHA) - 1}, fetch);
+    if (resolved.source == BackendPluginSource::kBundle) {
+      prepared = PrepareEmbeddedPayloadFromFile(
+          resolved.path, BackendName(backend), resolved.payload_verified);
+      if (!prepared.has_value()) {
+        throw std::runtime_error(
+            "backend bundle does not begin with the expected " +
+            std::string(BackendName(backend)) +
+            " magic: " + resolved.path.string());
+      }
+    }
+  } catch (const MissingBackendPluginError&) {
+    const std::exception_ptr failure = std::current_exception();
+    close_driver();
+    if (required) {
+      if (no_download) {
+        throw std::runtime_error(DownloadDisabledMessage(backend));
+      }
+      throw;
+    }
+    return {.backend = backend,
+            .registry = nullptr,
+            .missing_with_download_disabled = no_download,
+            .failure = no_download ? nullptr : failure};
+  } catch (...) {
+    const std::exception_ptr failure = std::current_exception();
+    close_driver();
     if (required) {
       throw;
     }
-    return {.backend = backend, .registry = nullptr};
+    return {.backend = backend, .registry = nullptr, .failure = failure};
   }
-  if (embedded.has_value()) {
-    if (ggml_backend_reg_t registry = ggml_backend_load(embedded->path.c_str());
-        registry != nullptr) {
-      return {.backend = backend,
-              .registry = registry,
-              .backing_fd = embedded->backing_fd,
-              .driver_handle = driver_handle};
-    }
-#if defined(__linux__)
-    if (embedded->backing_fd >= 0) {
-      close(embedded->backing_fd);
-    }
-    if (driver_handle != nullptr) {
-      dlclose(driver_handle);
-    }
-#endif
-    if (required) {
-      throw std::runtime_error("could not load embedded " +
-                               std::string(BackendName(backend)) + " backend");
-    }
-    return {.backend = backend, .registry = nullptr};
+  const std::filesystem::path plugin_path =
+      prepared.has_value() ? prepared->path : resolved.path;
+  if (ggml_backend_reg_t registry = ggml_backend_load(plugin_path.c_str());
+      registry != nullptr) {
+    return {.backend = backend,
+            .registry = registry,
+            .backing_fd = prepared.has_value() ? prepared->backing_fd : -1,
+            .driver_handle = driver_handle};
   }
-  std::vector<std::filesystem::path> candidates = PluginCandidates(backend);
-  std::error_code error;
-  for (const auto& candidate : candidates) {
-    if (!std::filesystem::is_regular_file(candidate, error)) {
-      error.clear();
-      continue;
-    }
-    if (ggml_backend_reg_t registry = ggml_backend_load(candidate.c_str());
-        registry != nullptr) {
-      return {.backend = backend,
-              .registry = registry,
-              .driver_handle = driver_handle};
-    }
-    if (required) {
-#if defined(__linux__)
-      if (driver_handle != nullptr) {
-        dlclose(driver_handle);
-      }
-#endif
-      throw std::runtime_error("could not load " +
-                               std::string(BackendName(backend)) +
-                               " backend plugin: " + candidate.string());
-    }
-  }
-#if defined(__linux__)
-  if (driver_handle != nullptr) {
-    dlclose(driver_handle);
+#ifdef __linux__
+  if (prepared.has_value() && prepared->backing_fd >= 0) {
+    close(prepared->backing_fd);
   }
 #endif
+  close_driver();
+  std::string failure_message;
+  if (resolved.source == BackendPluginSource::kEmbedded) {
+    failure_message = "could not load embedded " +
+                      std::string(BackendName(backend)) + " backend";
+  } else {
+    failure_message = "could not load " + std::string(BackendName(backend)) +
+                      " backend plugin: " + resolved.path.string();
+  }
   if (required) {
-    std::string message = "missing " + std::string(BackendName(backend)) +
-                          " backend plugin " + std::string(PluginName(backend));
-    if (!candidates.empty()) {
-      message += " (searched beside the executable and in Bazel runfiles)";
-    }
-    throw std::runtime_error(message);
+    throw std::runtime_error(failure_message);
   }
-  return {.backend = backend, .registry = nullptr};
+  return {
+      .backend = backend,
+      .registry = nullptr,
+      .failure = std::make_exception_ptr(std::runtime_error(failure_message))};
 }
 
 void UnloadPlugin(LoadedPlugin& plugin) {
@@ -183,7 +266,7 @@ void UnloadPlugin(LoadedPlugin& plugin) {
     ggml_backend_unload(plugin.registry);
     plugin.registry = nullptr;
   }
-#if defined(__linux__)
+#ifdef __linux__
   if (plugin.backing_fd >= 0) {
     close(plugin.backing_fd);
     plugin.backing_fd = -1;
@@ -223,27 +306,147 @@ std::vector<BackendDevice> Inventory(std::span<const LoadedPlugin> plugins) {
 
 }  // namespace
 
-BackendRuntime::BackendRuntime(BackendKind requested, std::int32_t gpu_layers) {
+ResolvedBackendPlugin ResolveBackendPlugin(
+    BackendKind backend,
+    const std::optional<std::filesystem::path>& backend_directory,
+    std::span<const std::filesystem::path> runfile_candidates,
+    const std::function<bool()>& has_embedded_payload,
+    const std::function<std::filesystem::path()>& runtime_root,
+    std::string_view version, std::string_view git_sha,
+    const std::function<std::optional<ResolvedBackendPlugin>()>&
+        fetch_backend) {
+  if (backend != BackendKind::kCuda && backend != BackendKind::kRocm) {
+    throw std::invalid_argument("only CUDA and ROCm plugins can be resolved");
+  }
+
+  // Resolution order:
+  //   1. configured directory (standalone bundles before a raw plugin),
+  //   2. the executable's embedded payload,
+  //   3. beside-the-executable and Bazel runfiles candidates,
+  //   4. the versioned runtime cache,
+  //   5. the currently empty network-fetch seam below.
+  if (backend_directory.has_value()) {
+    ValidateBackendDirectory(*backend_directory);
+    std::vector<std::pair<std::filesystem::path, BackendPluginSource>>
+        candidates;
+    if (const auto artifact = BackendArtifactName(BackendName(backend));
+        artifact.has_value()) {
+      candidates.emplace_back(*backend_directory / (*artifact + ".bundle"),
+                              BackendPluginSource::kBundle);
+    }
+    candidates.emplace_back(*backend_directory / BundleName(backend),
+                            BackendPluginSource::kBundle);
+    candidates.emplace_back(*backend_directory / PluginName(backend),
+                            BackendPluginSource::kSharedLibrary);
+    for (const auto& [path, source] : candidates) {
+      if (IsRegularFile(path)) {
+        return {.source = source, .path = path};
+      }
+    }
+  }
+
+  // Step 2 deliberately stays between the configured directory and all
+  // development-tree paths so the historical fat-ELF behavior is unchanged.
+  if (has_embedded_payload && has_embedded_payload()) {
+    return {.source = BackendPluginSource::kEmbedded, .path = {}};
+  }
+
+  for (const std::filesystem::path& candidate : runfile_candidates) {
+    if (IsRegularFile(candidate)) {
+      return {.source = BackendPluginSource::kSharedLibrary, .path = candidate};
+    }
+  }
+
+  BackendFetchOptions cached_options{
+      .name = BackendName(backend),
+      .version = version,
+      .git_sha = git_sha,
+      .runtime_root = runtime_root(),
+  };
+  const std::filesystem::path cached_bundle = BackendBundlePath(cached_options);
+  if (IsRegularFile(cached_bundle)) {
+    try {
+      VerifyBackendBundle(cached_options);
+      return {.source = BackendPluginSource::kBundle,
+              .path = cached_bundle,
+              .payload_verified = true};
+    } catch (const std::exception&) {
+      if (!fetch_backend) {
+        throw;
+      }
+    }
+  }
+
+  // Step 5 is deliberately invoked only after every local source misses.
+  if (fetch_backend) {
+    if (auto fetched = fetch_backend(); fetched.has_value()) {
+      return *fetched;
+    }
+  }
+
+  std::string message = "missing " + std::string(BackendName(backend)) +
+                        " backend plugin " + std::string(PluginName(backend)) +
+                        " (set --backend-dir or LLM_CC_BACKEND_DIR";
+  if (backend_directory.has_value()) {
+    message += "; searched backend directory " + backend_directory->string();
+  }
+  message +=
+      ", the embedded executable, beside the executable and in Bazel "
+      "runfiles, and runtime cache " +
+      cached_bundle.string() + ")";
+  throw MissingBackendPluginError(message);
+}
+
+BackendRuntime::BackendRuntime(
+    BackendKind requested, std::int32_t gpu_layers, std::string_view version,
+    const std::optional<std::filesystem::path>& backend_directory,
+    bool no_download, bool fetch_backend) {
   if (gpu_layers < -1) {
     throw std::invalid_argument("--gpu-layers must be -1 or greater");
   }
-#if defined(LLM_CC_DYNAMIC_BACKENDS)
+#ifdef LLM_CC_DYNAMIC_BACKENDS
   std::array<LoadedPlugin, 2> gpu_plugins{};
   std::size_t gpu_count = 0;
+  const bool load_gpu = requested == BackendKind::kCuda ||
+                        requested == BackendKind::kRocm ||
+                        (gpu_layers != 0 && requested == BackendKind::kAuto);
+  if (load_gpu && backend_directory.has_value()) {
+    ValidateBackendDirectory(*backend_directory);
+  }
   if (requested == BackendKind::kCuda ||
       (gpu_layers != 0 && requested == BackendKind::kAuto)) {
     gpu_plugins[gpu_count++] =
-        LoadPlugin(BackendKind::kCuda, requested == BackendKind::kCuda);
+        LoadPlugin(BackendKind::kCuda, requested == BackendKind::kCuda,
+                   backend_directory, version, no_download, fetch_backend);
   }
   if (requested == BackendKind::kRocm ||
       (gpu_layers != 0 && requested == BackendKind::kAuto)) {
     gpu_plugins[gpu_count++] =
-        LoadPlugin(BackendKind::kRocm, requested == BackendKind::kRocm);
+        LoadPlugin(BackendKind::kRocm, requested == BackendKind::kRocm,
+                   backend_directory, version, no_download, fetch_backend);
   }
   try {
-    selected_ = SelectBackend(requested, gpu_layers,
-                              Inventory(std::span<const LoadedPlugin>(
-                                  gpu_plugins.data(), gpu_count)));
+    const std::vector<BackendDevice> devices =
+        Inventory(std::span<const LoadedPlugin>(gpu_plugins.data(), gpu_count));
+    if (devices.empty() && no_download) {
+      const auto missing =
+          std::find_if(gpu_plugins.begin(), gpu_plugins.begin() + gpu_count,
+                       [](const LoadedPlugin& plugin) {
+                         return plugin.missing_with_download_disabled;
+                       });
+      if (missing != gpu_plugins.begin() + gpu_count) {
+        throw std::runtime_error(DownloadDisabledMessage(missing->backend));
+      }
+    }
+    if (devices.empty()) {
+      const auto failed = std::find_if(
+          gpu_plugins.begin(), gpu_plugins.begin() + gpu_count,
+          [](const LoadedPlugin& plugin) { return plugin.failure != nullptr; });
+      if (failed != gpu_plugins.begin() + gpu_count) {
+        std::rethrow_exception(failed->failure);
+      }
+    }
+    selected_ = SelectBackend(requested, gpu_layers, devices);
   } catch (...) {
     for (std::size_t index = 0; index < gpu_count; ++index) {
       UnloadPlugin(gpu_plugins[index]);
@@ -267,7 +470,11 @@ BackendRuntime::BackendRuntime(BackendKind requested, std::int32_t gpu_layers) {
     plugin.driver_handle = nullptr;
   }
 #else
-#if defined(LLM_CC_BUILTIN_GPU)
+  static_cast<void>(version);
+  static_cast<void>(backend_directory);
+  static_cast<void>(no_download);
+  static_cast<void>(fetch_backend);
+#ifdef LLM_CC_BUILTIN_GPU
   if (requested == BackendKind::kCuda || requested == BackendKind::kRocm) {
     throw std::runtime_error(std::string(BackendName(requested)) +
                              " backend is not included in this build");
@@ -290,7 +497,7 @@ BackendRuntime::BackendRuntime(BackendKind requested, std::int32_t gpu_layers) {
 
 BackendRuntime::~BackendRuntime() {
   llama_backend_free();
-#if defined(LLM_CC_DYNAMIC_BACKENDS)
+#ifdef LLM_CC_DYNAMIC_BACKENDS
   LoadedPlugin plugin{
       .backend = selected_,
       .registry = static_cast<ggml_backend_reg_t>(plugin_registry_),

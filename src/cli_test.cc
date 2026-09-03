@@ -1,6 +1,7 @@
 #include <sys/wait.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -99,6 +100,9 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(
       Read(score_help).find("auto, cpu, cuda, or rocm") != std::string::npos,
       "score documents runtime backend selection");
+  llmcc::test::Expect(
+      Read(score_help).find("--model-name NAME") != std::string::npos,
+      "score documents registered model selection");
 
   const fs::path backend_error = fs::path(test_tmpdir) / "backend-error.txt";
   const std::string cpu_gpu_command =
@@ -157,6 +161,62 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(
       Read(removed_option_error).find("unknown option") != std::string::npos,
       "removed entropy option reports an unknown option");
+
+  const fs::path available_cache =
+      fs::path(test_tmpdir) / "available-model-cache";
+  fs::create_directories(available_cache);
+  const fs::path available_output =
+      fs::path(test_tmpdir) / "available-models.txt";
+  const std::string available_command =
+      "LLM_CC_CACHE_DIR=" + Quote(available_cache) + " " + Quote(binary) +
+      " models list --available >" + Quote(available_output);
+  llmcc::test::ExpectEq(Run(available_command), 0,
+                        "available models list succeeds");
+  const std::string available = Read(available_output);
+  for (std::string_view name :
+       {"deepseek-coder-v2-lite-base-q6_k", "deepseek-coder-6.7b-base-q6_k",
+        "qwen2.5-coder-1.5b-q6_k", "qwen2.5-coder-0.5b-q4_k_m"}) {
+    const std::size_t position = available.find(name);
+    llmcc::test::Expect(
+        position != std::string::npos &&
+            available.find("not cached", position) != std::string::npos,
+        "available registry model is listed as not cached");
+  }
+
+  const fs::path model_option_error =
+      fs::path(test_tmpdir) / "model-option-error.txt";
+  const int conflicting_model =
+      Run(Quote(binary) + " " + Quote(fixtures / "sample.rs") +
+          " --model-name x --model y 2>" + Quote(model_option_error));
+  llmcc::test::Expect(
+      WIFEXITED(conflicting_model) && WEXITSTATUS(conflicting_model) == 2,
+      "model selectors are rejected with exit 2");
+  llmcc::test::Expect(
+      Read(model_option_error).find("mutually exclusive") != std::string::npos,
+      "conflicting model selectors are explained");
+
+  const int unknown_model =
+      Run(Quote(binary) + " " + Quote(fixtures / "sample.rs") +
+          " --model-name nonsense 2>" + Quote(model_option_error));
+  llmcc::test::Expect(
+      WIFEXITED(unknown_model) && WEXITSTATUS(unknown_model) == 2,
+      "unknown registered model exits 2");
+  llmcc::test::Expect(
+      Read(model_option_error).find("valid model names") != std::string::npos,
+      "unknown registered model lists valid names");
+
+  const int uncached_model =
+      Run("LLM_CC_CACHE_DIR=" + Quote(available_cache) + " " + Quote(binary) +
+          " " + Quote(fixtures / "sample.rs") +
+          " --model-name qwen2.5-coder-0.5b-q4_k_m --no-download 2>" +
+          Quote(model_option_error) + " >/dev/null");
+  llmcc::test::Expect(
+      WIFEXITED(uncached_model) && WEXITSTATUS(uncached_model) == 2,
+      "uncached registered model fails without downloading");
+  llmcc::test::Expect(
+      Read(model_option_error).find("qwen2.5-coder-0.5b-q4_k_m") !=
+          std::string::npos,
+      "uncached model error names the selected model");
 
   const fs::path cache = fs::path(test_tmpdir) / "model-cache";
   fs::create_directories(cache);
@@ -217,6 +277,78 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::ExpectEq(Run(models_command), 0, "models path succeeds");
   llmcc::test::ExpectEq(Read(path_output), cache.string() + "\n",
                         "models path honors override");
+
+  const fs::path runtime_root = fs::path(test_tmpdir) / "backend-runtime";
+  fs::create_directories(runtime_root);
+  const std::string runtime_environment =
+      "LLM_CC_RUNTIME_DIR=" + Quote(runtime_root) + " ";
+  const fs::path backend_list_output =
+      fs::path(test_tmpdir) / "backend-list.txt";
+  llmcc::test::ExpectEq(Run(runtime_environment + Quote(binary) +
+                            " backends list >" + Quote(backend_list_output)),
+                        0, "empty backend list succeeds");
+  const std::string backend_list = Read(backend_list_output);
+  llmcc::test::Expect(
+      backend_list.find("cuda\tnot cached") != std::string::npos &&
+          backend_list.find("rocm\tnot cached") != std::string::npos,
+      "empty backend list reports both bundles as not cached");
+
+  const fs::path backend_error_output =
+      fs::path(test_tmpdir) / "backend-command-error.txt";
+  const int disabled_backend_fetch = Run(
+      runtime_environment + Quote(binary) +
+      " backends fetch cuda --no-download 2>" + Quote(backend_error_output));
+  llmcc::test::Expect(WIFEXITED(disabled_backend_fetch) &&
+                          WEXITSTATUS(disabled_backend_fetch) == 2,
+                      "backend fetch with --no-download exits 2");
+  llmcc::test::Expect(
+      Read(backend_error_output).find("cannot be used with --no-download") !=
+          std::string::npos,
+      "contradictory backend fetch options are explained");
+
+  const int unknown_backend =
+      Run(runtime_environment + Quote(binary) + " backends fetch nonsense 2>" +
+          Quote(backend_error_output));
+  llmcc::test::Expect(
+      WIFEXITED(unknown_backend) && WEXITSTATUS(unknown_backend) == 2,
+      "unknown backend fetch exits 2");
+
+  const fs::path backend_path_output =
+      fs::path(test_tmpdir) / "backend-path.txt";
+  llmcc::test::ExpectEq(Run(runtime_environment + Quote(binary) +
+                            " backends path >" + Quote(backend_path_output)),
+                        0, "backend path succeeds");
+  llmcc::test::Expect(
+      Read(backend_path_output).starts_with(runtime_root.string() + "/"),
+      "backend path honors the runtime root override");
+
+  std::string backend_bundle_text = Read(backend_path_output);
+  backend_bundle_text.erase(std::ranges::find(backend_bundle_text, '\n'),
+                            backend_bundle_text.end());
+  const fs::path backend_bundle = backend_bundle_text;
+  const std::array backend_partials = {
+      fs::path(backend_bundle.string() + ".partial"),
+      fs::path(backend_bundle.string() + ".sha256.partial"),
+      backend_bundle.parent_path() / "cuda.manifest.json.partial",
+  };
+  for (const fs::path& path : backend_partials) {
+    Write(path, "partial");
+  }
+
+  const fs::path backend_remove_output =
+      fs::path(test_tmpdir) / "backend-remove.txt";
+  llmcc::test::ExpectEq(
+      Run(runtime_environment + Quote(binary) + " backends remove cuda >" +
+          Quote(backend_remove_output)),
+      0, "removing an absent backend succeeds");
+  llmcc::test::Expect(
+      Read(backend_remove_output).find("not cached") != std::string::npos,
+      "removing an absent backend says it was not cached");
+  llmcc::test::Expect(
+      std::ranges::none_of(
+          backend_partials,
+          [](const fs::path& path) { return fs::exists(path); }),
+      "removing an absent backend also deletes every partial download");
 
   const fs::path repository = fs::path(test_tmpdir) / "analysis-repository";
   fs::create_directories(repository);
@@ -280,6 +412,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
       "analysis events are ordered");
   llmcc::test::Expect(events[3]["entropy_cache_hit"].get<bool>(),
                       "file reports entropy cache hit");
+
   const nlohmann::json& file = events[3];
   for (std::string_view field :
        {"token_count", "high_entropy_tokens", "lmcc_per_token", "density",
@@ -511,6 +644,41 @@ int main() {  // NOLINT(bugprone-exception-escape)
   const nlohmann::json status = nlohmann::json::parse(Read(status_output));
   llmcc::test::ExpectEq(status["entries"].get<std::uint64_t>(),
                         std::uint64_t{8}, "cache status counts entries");
+
+  const auto deferred_backend_identity = llmcc::InspectModel(
+      fake_model,
+      "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v1",
+      "cuda/gpu-layers=-1", 128U * 1024U);
+  llmcc::WriteEntropyCache(
+      repository, preprocessed, deferred_backend_identity,
+      std::vector<llmcc::EntropyRecord>{
+          {.position = 0,
+           .bytes = preprocessed.substr(0, 1),
+           .entropy = std::nullopt},
+          {.position = 1,
+           .bytes = preprocessed.substr(1, first_newline),
+           .entropy = 0.2},
+          {.position = 2,
+           .bytes = preprocessed.substr(first_newline + 1,
+                                        second_newline - first_newline),
+           .entropy = 1.2},
+          {.position = 3,
+           .bytes = preprocessed.substr(second_newline + 1),
+           .entropy = 0.4}});
+  const fs::path deferred_backend_output =
+      fs::path(test_tmpdir) / "deferred-backend.jsonl";
+  llmcc::test::ExpectEq(
+      Run(Quote(binary) + " " + Quote(source) + " --model " +
+          Quote(fake_model) +
+          " --backend cuda --gpu-layers -1 --no-download >" +
+          Quote(deferred_backend_output)),
+      0, "an all-hit analysis does not initialize an explicit GPU backend");
+  const std::vector<nlohmann::json> deferred_backend_events =
+      ReadEvents(deferred_backend_output);
+  llmcc::test::Expect(
+      deferred_backend_events.size() == 5 &&
+          deferred_backend_events[3]["entropy_cache_hit"].get<bool>(),
+      "the deferred explicit backend analysis reports its cache hit");
 
   return 0;
 }

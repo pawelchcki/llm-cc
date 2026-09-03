@@ -84,8 +84,10 @@ FileAnalysisResult ProjectAnalyzer::AnalyzeFile(const DiscoveredSource& source,
     if (first >= end) {
       continue;
     }
-    std::vector<Token> function_tokens(tokens.begin() + first,
-                                       tokens.begin() + end);
+    const std::span<const Token> function_span =
+        std::span<const Token>(tokens).subspan(first, end - first);
+    std::vector<Token> function_tokens(function_span.begin(),
+                                       function_span.end());
     function_tokens.front().start_byte =
         std::max(function_tokens.front().start_byte, function.start_byte);
     std::vector<StructuralEvent> function_events;
@@ -128,18 +130,18 @@ FileAnalysisResult ProjectAnalyzer::AnalyzeFile(const DiscoveredSource& source,
              line_starts[line + 1] <= token.start_byte) {
         ++line;
       }
-      if (!token.entropy.has_value()) {
-        continue;
-      }
-      if (lines.empty() || lines.back().line != line + 1) {
-        lines.push_back({.line = line + 1});
-      }
-      LineMetrics& metrics = lines.back();
-      metrics.max_entropy = std::max(metrics.max_entropy, *token.entropy);
-      metrics.entropy_sum += *token.entropy;
-      ++metrics.token_count;
-      if (*token.entropy >= file_tau) {
-        ++metrics.high_tokens;
+      if (token.entropy.has_value()) {
+        const double entropy = token.entropy.value_or(0.0);
+        if (lines.empty() || lines.back().line != line + 1) {
+          lines.push_back({.line = line + 1});
+        }
+        LineMetrics& metrics = lines.back();
+        metrics.max_entropy = std::max(metrics.max_entropy, entropy);
+        metrics.entropy_sum += entropy;
+        ++metrics.token_count;
+        if (entropy >= file_tau) {
+          ++metrics.high_tokens;
+        }
       }
     }
   }

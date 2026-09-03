@@ -271,8 +271,10 @@ void StreamDownload(std::istream& input, const std::filesystem::path& target,
   std::filesystem::rename(partial, target);
 }
 
-void DownloadDefaultModel(const std::filesystem::path& target) {
-  const std::string url(kDefaultModelUrl);
+void DownloadFile(std::string_view download_url,
+                  const std::filesystem::path& target,
+                  const DownloadOptions& options) {
+  const std::string url(download_url);
   if (target.has_parent_path()) {
     std::filesystem::create_directories(target.parent_path());
   }
@@ -285,11 +287,15 @@ void DownloadDefaultModel(const std::filesystem::path& target) {
   }
   CurlGlobal global;
   for (;;) {
-    std::cerr << (resume_offset == 0 ? "Downloading model from "
-                                     : "Resuming model download from ")
-              << (resume_offset == 0 ? std::string(kDefaultModelUrl)
-                                     : std::to_string(resume_offset) + " bytes")
-              << '\n';
+    if (options.show_progress) {
+      std::cerr << (resume_offset == 0 ? "Downloading " : "Resuming ")
+                << options.noun
+                << (resume_offset == 0 ? " from " : " download from ")
+                << (resume_offset == 0
+                        ? url
+                        : std::to_string(resume_offset) + " bytes")
+                << '\n';
+    }
 
     Curl curl(curl_easy_init(), curl_easy_cleanup);
     if (!curl) {
@@ -312,9 +318,12 @@ void DownloadDefaultModel(const std::filesystem::path& target) {
     SetOption(curl.get(), CURLOPT_ERRORBUFFER, error_buffer.data());
     SetOption(curl.get(), CURLOPT_WRITEFUNCTION, &WriteBytes);
     SetOption(curl.get(), CURLOPT_WRITEDATA, &write_context);
-    SetOption(curl.get(), CURLOPT_NOPROGRESS, 0L);
-    SetOption(curl.get(), CURLOPT_XFERINFOFUNCTION, &DownloadProgress::Update);
-    SetOption(curl.get(), CURLOPT_XFERINFODATA, &progress);
+    SetOption(curl.get(), CURLOPT_NOPROGRESS, options.show_progress ? 0L : 1L);
+    if (options.show_progress) {
+      SetOption(curl.get(), CURLOPT_XFERINFOFUNCTION,
+                &DownloadProgress::Update);
+      SetOption(curl.get(), CURLOPT_XFERINFODATA, &progress);
+    }
     if (resume_offset > 0) {
       SetOption(curl.get(), CURLOPT_RESUME_FROM_LARGE,
                 static_cast<curl_off_t>(resume_offset));
@@ -327,7 +336,9 @@ void DownloadDefaultModel(const std::filesystem::path& target) {
     }
 
     const CURLcode result = curl_easy_perform(curl.get());
-    progress.Finish();
+    if (options.show_progress) {
+      progress.Finish();
+    }
     long status = 0;
     curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status);
     if (resume_offset > 0 && status == 200) {
@@ -343,8 +354,11 @@ void DownloadDefaultModel(const std::filesystem::path& target) {
         detail = error_buffer[0] != '\0' ? error_buffer.data()
                                          : curl_easy_strerror(result);
       }
-      throw std::runtime_error("download failed for " +
-                               std::string(kDefaultModelUrl) + ": " + detail);
+      std::string message = "download failed for ";
+      message.append(url);
+      message.append(": ");
+      message.append(detail);
+      throw std::runtime_error(message);
     }
     if ((resume_offset > 0 && status != 206) ||
         (resume_offset == 0 && status != 200)) {
@@ -357,7 +371,21 @@ void DownloadDefaultModel(const std::filesystem::path& target) {
     break;
   }
   std::filesystem::rename(partial, target);
-  MarkModelDownloaded(target);
+  if (options.record_in_model_manifest) {
+    MarkModelDownloaded(target);
+  }
+}
+
+void DownloadModel(std::string_view model_url,
+                   const std::filesystem::path& target) {
+  DownloadFile(model_url, target,
+               {.noun = "model",
+                .show_progress = true,
+                .record_in_model_manifest = true});
+}
+
+void DownloadDefaultModel(const std::filesystem::path& target) {
+  DownloadModel(DefaultModel().url, target);
 }
 
 }  // namespace llmcc
