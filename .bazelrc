@@ -44,6 +44,21 @@ build:linux --extra_toolchains=@llvm_toolchain_portable//:cc-toolchain-x86_64-li
 # BuildBuddy Workflows injects the API key and BES configuration. This named
 # profile enables its shared cache without putting credentials in the repo.
 build:buildbuddy --remote_cache=grpcs://remote.buildbuddy.io
+build:buildbuddy --noannounce_rc
+build:buildbuddy --bes_backend=grpcs://remote.buildbuddy.io
+build:buildbuddy --bes_results_url=https://app.buildbuddy.io/invocation/
+build:buildbuddy --build_metadata=ROLE=CI
 build:buildbuddy --remote_upload_local_results=true
 build:buildbuddy --remote_download_minimal
 build:buildbuddy --remote_timeout=3600
+
+build:buildbuddy-rbe --config=buildbuddy
+build:buildbuddy-rbe --remote_executor=grpcs://remote.buildbuddy.io
+build:buildbuddy-rbe --remote_local_fallback=false
+
+# Windows RBE requires a self-hosted Windows executor with MSVC installed.
+# Add --remote_default_exec_properties=Pool=NAME when using a named pool.
+build:buildbuddy-rbe-windows --config=buildbuddy-rbe
+build:buildbuddy-rbe-windows --remote_default_exec_properties=OSFamily=windows
+build:buildbuddy-rbe-windows --remote_default_exec_properties=Arch=amd64
+build:buildbuddy-rbe-windows --remote_default_exec_properties=use-self-hosted-executors=true

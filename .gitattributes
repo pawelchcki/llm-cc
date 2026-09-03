@@ -1,0 +1,4 @@
+# Tooling files are consumed by Unix shells and parsers even from Windows.
+.bazelversion text eol=lf
+*.sh text eol=lf
+buildbuddy.yaml text eol=lf

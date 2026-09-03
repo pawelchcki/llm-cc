@@ -148,6 +148,14 @@ selects.config_setting_group(
 )
 
 selects.config_setting_group(
+    name = "backend_cpu_linux",
+    match_all = [
+        ":backend_cpu",
+        ":target_linux",
+    ],
+)
+
+selects.config_setting_group(
     name = "backend_metal_auto",
     match_all = [
         ":backend_auto",
@@ -661,6 +669,11 @@ cc_binary(
         ],
         ":backend_cpu_linux": [
         ":backend_cpu_windows": [],
+<<<<<<< HEAD
+=======
+        ":backend_cpu_linux": [
+            "-static",
+>>>>>>> 78989b6 (Configure BuildBuddy remote execution)
             "-ldl",
             "-lpthread",
             "-Wl,--dynamic-list=$(location //third_party:ggml_backend_abi.list)",
