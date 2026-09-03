@@ -127,7 +127,7 @@ void TestBaseUrls(const fs::path& root) {
   for (const auto& [label, base] :
        std::vector<std::pair<std::string, std::string>>{
            {"release", "https://github.com/example/releases/download/v1.2.3"},
-           {"resolver", "https://artifacts.example/pawelchcki/rethink-cc/abc"},
+           {"resolver", "https://artifacts.example/pawelchcki/llm-cc/abc"},
        }) {
     const std::string url = base + "/llm-cc-backend-cuda-linux-x86_64.bundle";
     FakeDownloads downloads;

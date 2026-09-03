@@ -18,6 +18,9 @@ bazel test //:unit
 bazel test //:integration
 ```
 
+Run `bazel test //:model_smoke_test` to opt into a CPU-only check against the
+smallest registered real model; this downloads a checksum-pinned 398 MB GGUF.
+
 The build downloads checksum-pinned LLVM, llama.cpp, tree-sitter and its Rust,
 C, C++, Java, Python, Go, JavaScript, and C# source bundles, nlohmann/json,
 curl, and, on non-macOS platforms, OpenSSL. macOS curl builds use Apple's

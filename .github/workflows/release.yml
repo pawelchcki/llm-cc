@@ -48,7 +48,7 @@ jobs:
         run: |
           set -euo pipefail
           commit_sha="$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
-          artifact_base="${RESOLVER_BASE%/}/pawelchcki/rethink-cc/${commit_sha}"
+          artifact_base="${RESOLVER_BASE%/}/pawelchcki/llm-cc/${commit_sha}"
           mkdir -p gpu-assets
 
           missing_backend() {

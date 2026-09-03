@@ -18,11 +18,11 @@ if command -v git >/dev/null 2>&1 &&
   git_sha="$resolved_git_sha"
   if head_tag="$(git -C "$repo_root" describe --tags --exact-match --match 'v*' HEAD 2>/dev/null)" &&
       [[ "$head_tag" == "v$raw_version" && "$version" == "$raw_version" ]]; then
-    artifact_base_url="https://github.com/pawelchcki/rethink-cc/releases/download/v$raw_version"
+    artifact_base_url="https://github.com/pawelchcki/llm-cc/releases/download/v$raw_version"
   else
     resolver_base="${LLM_CC_RESOLVER_BASE:-$default_resolver_base}"
     resolver_base="${resolver_base%/}"
-    artifact_base_url="$resolver_base/pawelchcki/rethink-cc/$git_sha"
+    artifact_base_url="$resolver_base/pawelchcki/llm-cc/$git_sha"
   fi
 fi
 

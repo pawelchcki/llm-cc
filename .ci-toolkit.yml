@@ -92,7 +92,7 @@ automations:
             - **Public URL:** {{ actions.publish-cuda-bundle.outputs.public_url | markdown_url_escape }}
             - **SHA-256:** `{{ actions.publish-cuda-bundle.outputs.sha256 | markdown_escape }}`
             - **Available until:** `{{ actions.publish-cuda-bundle.outputs.expires_at | markdown_escape }}`
-            - **Stable resolver:** https://ci-artifacts.pawelchcki.dev/pawelchcki/rethink-cc/{{ commit.sha }}/llm-cc-backend-cuda-linux-x86_64.bundle
+            - **Stable resolver:** https://ci-artifacts.pawelchcki.dev/pawelchcki/llm-cc/{{ commit.sha }}/llm-cc-backend-cuda-linux-x86_64.bundle
 
             Fetch it with `llm-cc backends fetch cuda --url {{ actions.publish-cuda-bundle.outputs.public_url | markdown_escape }}`.
 
@@ -101,6 +101,6 @@ automations:
             - **Public URL:** {{ actions.publish-rocm-bundle.outputs.public_url | markdown_url_escape }}
             - **SHA-256:** `{{ actions.publish-rocm-bundle.outputs.sha256 | markdown_escape }}`
             - **Available until:** `{{ actions.publish-rocm-bundle.outputs.expires_at | markdown_escape }}`
-            - **Stable resolver:** https://ci-artifacts.pawelchcki.dev/pawelchcki/rethink-cc/{{ commit.sha }}/llm-cc-backend-rocm-linux-x86_64.bundle
+            - **Stable resolver:** https://ci-artifacts.pawelchcki.dev/pawelchcki/llm-cc/{{ commit.sha }}/llm-cc-backend-rocm-linux-x86_64.bundle
 
             Fetch it with `llm-cc backends fetch rocm --url {{ actions.publish-rocm-bundle.outputs.public_url | markdown_escape }}`.

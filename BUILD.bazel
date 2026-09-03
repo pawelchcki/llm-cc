@@ -732,6 +732,26 @@ sh_test(
     use_bash_launcher = True,
 )
 
+sh_test(
+    name = "model_smoke_test",
+    srcs = ["//tools:model_smoke_test.sh"],
+    args = [
+        "$(location :llm-cc)",
+        "$(location @qwen2_5_coder_0_5b_q4_k_m//file)",
+        "$(location testdata/cli/sample.cpp)",
+    ],
+    data = [
+        ":llm-cc",
+        "testdata/cli/sample.cpp",
+        "@qwen2_5_coder_0_5b_q4_k_m//file",
+    ],
+    tags = [
+        "manual",
+        "requires-network",
+    ],
+    use_bash_launcher = True,
+)
+
 build_test(
     name = "starlark_test",
     targets = [

@@ -45,6 +45,7 @@ exports_files([
     "hermetic_clang_wrapper.sh",
     "install.sh",
     "materialize_tree.cc",
+    "model_smoke_test.sh",
     "package_payload.sh",
     "version.sh",
     "version_test.sh",
