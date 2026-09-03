@@ -1,7 +1,13 @@
 #include "src/download.h"
 
 #include <curl/curl.h>
+#if defined(_WIN32)
+#include <io.h>
+#define STDERR_FILENO 2
+#define isatty _isatty
+#else
 #include <unistd.h>
+#endif
 
 #include <algorithm>
 #include <array>

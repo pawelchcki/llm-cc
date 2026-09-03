@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 repo_root="$(dirname -- "$script_dir")"
-raw_version="$(<"$repo_root/VERSION")"
+raw_version="$(<"$repo_root/version.txt")"
 version="$("$script_dir/version.sh")"
 
 git_sha="unknown"

@@ -1,6 +1,12 @@
 #include "src/project.h"
 
+#if defined(_WIN32)
+#include <process.h>
+#define popen _popen
+#define pclose _pclose
+#else
 #include <sys/wait.h>
+#endif
 
 #include <array>
 #include <cstdio>
@@ -15,11 +21,23 @@ namespace llmcc {
 namespace {
 
 std::string ShellQuote(std::string_view value) {
+#if defined(_WIN32)
+  return "\"" + std::string(value) + "\"";
+#else
   std::string result = "'";
   for (char character : value) {
     result += character == '\'' ? "'\\''" : std::string(1, character);
   }
   return result + "'";
+#endif
+}
+
+std::string_view NullRedirect() {
+#if defined(_WIN32)
+  return " 2>NUL";
+#else
+  return " 2>/dev/null";
+#endif
 }
 
 struct CommandResult {
@@ -42,7 +60,11 @@ CommandResult Capture(std::string_view command) {
   }
   std::FILE* raw = pipe.release();
   const int raw_status = pclose(raw);
+#if defined(_WIN32)
+  const int status = raw_status;
+#else
   const int status = WIFEXITED(raw_status) ? WEXITSTATUS(raw_status) : -1;
+#endif
   return {.status = status, .output = std::move(output)};
 }
 
@@ -237,7 +259,7 @@ bool GitWalk(const std::filesystem::path& input,
   std::string command = "git -C " + ShellQuote(repository.string()) +
                         " ls-files --cached --others" +
                         (options.no_ignore ? "" : " --exclude-standard") +
-                        " -z 2>/dev/null";
+                        " -z" + std::string(NullRedirect());
   const CommandResult result = Capture(command);
   if (result.status != 0) {
     return false;
@@ -291,7 +313,7 @@ std::optional<std::filesystem::path> FindGitRepository(
   }
   const CommandResult result =
       Capture("git -C " + ShellQuote(probe.string()) +
-              " rev-parse --show-toplevel 2>/dev/null");
+              " rev-parse --show-toplevel" + std::string(NullRedirect()));
   if (result.status != 0) {
     return std::nullopt;
   }

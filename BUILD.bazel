@@ -660,6 +660,7 @@ cc_binary(
             "-lobjc",
         ],
         ":backend_cpu_linux": [
+        ":backend_cpu_windows": [],
             "-ldl",
             "-lpthread",
             "-Wl,--dynamic-list=$(location //third_party:ggml_backend_abi.list)",

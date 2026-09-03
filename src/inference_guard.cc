@@ -1,8 +1,10 @@
 #include "src/inference_guard.h"
 
+#if !defined(_WIN32)
 #include <fcntl.h>
 #include <sys/file.h>
 #include <unistd.h>
+#endif
 
 #include <cerrno>
 #include <cstdint>
@@ -14,6 +16,7 @@
 namespace llmcc {
 namespace {
 
+#if !defined(_WIN32)
 std::filesystem::path LockPath(std::string_view backend) {
   return std::filesystem::temp_directory_path() /
          ("llm-cc-" + std::to_string(getuid()) + "-" + std::string(backend) +
@@ -24,10 +27,14 @@ std::runtime_error SystemError(std::string_view operation) {
   return std::runtime_error(std::string(operation) + ": " +
                             std::strerror(errno));
 }
+#endif
 
 }  // namespace
 
 InferenceGuard::InferenceGuard(std::string_view backend) {
+#if defined(_WIN32)
+  static_cast<void>(backend);
+#else
   if (backend == "cpu") {
     return;
   }
@@ -58,12 +65,15 @@ InferenceGuard::InferenceGuard(std::string_view backend) {
       throw error;
     }
   }
+#endif
 }
 
 InferenceGuard::~InferenceGuard() {
+#if !defined(_WIN32)
   if (descriptor_ >= 0) {
     close(descriptor_);
   }
+#endif
 }
 
 std::optional<std::string> CodexSandboxGpuWarning(

@@ -4,7 +4,7 @@
   "include-component-in-tag": false,
   "packages": {
     ".": {
-      "version-file": "VERSION"
+      "version-file": "version.txt"
     }
   }
 }

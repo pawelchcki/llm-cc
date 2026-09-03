@@ -20,6 +20,10 @@ build:metal --macos_minimum_os=14.0
 # auto backend has the same deployment target as --config=metal.
 build:macos --macos_minimum_os=14.0
 
+# MSVC defaults to C++14, while llm-cc uses C++20 library and language
+# features, including std::span and designated initializers.
+build:windows --cxxopt=/std:c++20
+
 build:release --compilation_mode=opt
 build:release --strip=always
 build:release --stamp

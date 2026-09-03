@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 repo_root="$(dirname -- "$script_dir")"
-raw_version="$(<"$repo_root/VERSION")"
+raw_version="$(tr -d '[:space:]' < "$repo_root/version.txt")"
 
 if [[ ! "$raw_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "error: VERSION must contain exactly MAJOR.MINOR.PATCH, got '$raw_version'" >&2
