@@ -19,3 +19,54 @@ actions:
       - run: "bazel build --config=buildbuddy --config=release --config=portable //:cpu_static_archive"
       - run: "tools/check_glibc_version.sh bazel-bin/llm-cc 2.28"
       - run: "tools/check_static_link.sh bazel-bin/llm-cc"
+  - name: "GPU backends"
+    container_image: "ubuntu-24.04"
+    resource_requests: { disk: 80GB }
+    timeout: 2h
+    allow_concurrent_runs: false
+    allow_concurrent_runs_on_branches:
+      - "main"
+      - "gh-readonly-queue/*"
+    triggers:
+      push:
+        branches:
+          - "main"
+          - "gh-readonly-queue/*"
+      pull_request:
+        branches:
+          - "main"
+    steps:
+      - run: |
+          set -euo pipefail
+          # BuildBuddy checks pull requests out at a synthetic merge whose first parent is the PR head.
+          if [ "$(git show -s --format=%ce HEAD)" = "ci-runner@buildbuddy.io" ]; then
+            git checkout --detach HEAD^1
+          fi
+
+          bazel build --config=buildbuddy --config=release --config=universal \
+            //dist:backend_cuda //dist:backend_rocm
+
+          # Bundles are containers, not ELF files; check the actual module ELFs
+          # produced in the external llama_cpp output tree.
+          cuda_module="$(find -L bazel-bin/external -type f \
+            -path '*llama_cpp*' -name 'libllm-cc-backend-cuda.so' -print -quit)"
+          rocm_module="$(find -L bazel-bin/external -type f \
+            -path '*llama_cpp*' -name 'libllm-cc-backend-rocm.so' -print -quit)"
+          : "${cuda_module:?CUDA backend module not found under bazel-bin/external}"
+          : "${rocm_module:?ROCm backend module not found under bazel-bin/external}"
+          tools/check_glibc_version.sh "$cuda_module" 2.28
+          tools/check_glibc_version.sh "$rocm_module" 2.28
+
+          artifacts="$BUILDBUDDY_ARTIFACTS_DIRECTORY"
+          cp bazel-bin/dist/backend_cuda/llm-cc-backend-cuda-linux-x86_64.bundle \
+            "$artifacts/llm-cc-backend-cuda-linux-x86_64.bundle"
+          cp bazel-bin/dist/backend_cuda/llm-cc-backend-cuda-linux-x86_64.bundle.sha256 \
+            "$artifacts/llm-cc-backend-cuda-linux-x86_64.bundle.sha256"
+          cp bazel-bin/dist/backend_cuda/manifest.json \
+            "$artifacts/llm-cc-backend-cuda-linux-x86_64.manifest.json"
+          cp bazel-bin/dist/backend_rocm/llm-cc-backend-rocm-linux-x86_64.bundle \
+            "$artifacts/llm-cc-backend-rocm-linux-x86_64.bundle"
+          cp bazel-bin/dist/backend_rocm/llm-cc-backend-rocm-linux-x86_64.bundle.sha256 \
+            "$artifacts/llm-cc-backend-rocm-linux-x86_64.bundle.sha256"
+          cp bazel-bin/dist/backend_rocm/manifest.json \
+            "$artifacts/llm-cc-backend-rocm-linux-x86_64.manifest.json"

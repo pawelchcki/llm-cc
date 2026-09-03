@@ -95,6 +95,13 @@ release tags use the matching GitHub release URL. In workspace status output,
 the literal artifact URL value `none` means fetching is disabled; it becomes an
 empty build-time constant.
 
+### Pull-request GPU bundles
+
+Each pull request publishes immutable CUDA and ROCm backend bundles. An
+automated pull-request comment links the bundles, their checksums, expiration
+dates, and stable resolver URLs. A stamped development build automatically uses
+the resolver URL for its commit to fetch the matching backend bundle.
+
 ## Analyze source and projects
 
 Pass any number of files and directories. Directories are searched recursively;
