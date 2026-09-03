@@ -245,7 +245,7 @@ Arguments ParseArguments(int argc, char** argv) {
         llmcc::SelectBackend(arguments.backend, arguments.gpu_layers, {}));
   } catch (const std::invalid_argument& error) {
     Usage(error.what());
-  } catch (const std::runtime_error&) {
+  } catch (const std::runtime_error&) {  // NOLINT(bugprone-empty-catch)
     // Device availability is checked after the selected plugins are loaded.
   }
   return arguments;

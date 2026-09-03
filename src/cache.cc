@@ -256,7 +256,7 @@ std::filesystem::path ResolveModel(
   if (model.has_value()) {
     return *model;
   }
-  const std::filesystem::path legacy = current_dir / "models" / spec.file;
+  std::filesystem::path legacy = current_dir / "models" / spec.file;
   if (std::filesystem::exists(legacy)) {
     return legacy;
   }

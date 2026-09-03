@@ -289,7 +289,7 @@ AnalyzeArguments ParseAnalyzeArguments(int argc, char** argv) {
         llmcc::SelectBackend(arguments.backend, arguments.gpu_layers, {}));
   } catch (const std::invalid_argument& error) {
     Usage(error.what());
-  } catch (const std::runtime_error&) {
+  } catch (const std::runtime_error&) {  // NOLINT(bugprone-empty-catch)
     // Device availability is checked after the selected plugins are loaded.
   }
   return arguments;
@@ -838,9 +838,13 @@ std::string TerminalSafe(std::string_view text) {
       ++index;
       continue;
     }
-    std::uint32_t code_point = byte & (length == 2   ? 0x1f
-                                       : length == 3 ? 0x0f
-                                                     : 0x07);
+    std::uint32_t leading_mask = 0x07;
+    if (length == 2) {
+      leading_mask = 0x1f;
+    } else if (length == 3) {
+      leading_mask = 0x0f;
+    }
+    std::uint32_t code_point = byte & leading_mask;
     for (std::size_t offset = 1; offset < length; ++offset) {
       code_point = (code_point << 6) |
                    (static_cast<unsigned char>(text[index + offset]) & 0x3f);

@@ -354,7 +354,11 @@ void DownloadFile(std::string_view download_url,
         detail = error_buffer[0] != '\0' ? error_buffer.data()
                                          : curl_easy_strerror(result);
       }
-      throw std::runtime_error("download failed for " + url + ": " + detail);
+      std::string message = "download failed for ";
+      message.append(url);
+      message.append(": ");
+      message.append(detail);
+      throw std::runtime_error(message);
     }
     if ((resume_offset > 0 && status != 206) ||
         (resume_offset == 0 && status != 200)) {

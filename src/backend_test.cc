@@ -181,7 +181,7 @@ int main() try {
                  .string()),
          "missing-plugin error names the runtime cache path");
 
-#if defined(__linux__)
+#ifdef __linux__
   const fs::path corrupt_bundle = root / "corrupt.bundle";
   WriteBundleWithBadFooterHash(corrupt_bundle);
   Expect(ThrowsContaining<std::runtime_error>(

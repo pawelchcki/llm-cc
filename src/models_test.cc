@@ -1,11 +1,14 @@
 #include "src/models.h"
 
+#include <cstdlib>
+#include <exception>
+#include <iostream>
 #include <set>
 #include <string>
 
 #include "src/test_util.h"
 
-int main() {
+int main() try {
   const llmcc::ModelSpec& default_model = llmcc::DefaultModel();
   llmcc::test::ExpectEq(default_model.name,
                         std::string_view("deepseek-coder-v2-lite-base-q6_k"),
@@ -34,4 +37,7 @@ int main() {
   llmcc::test::ExpectEq(llmcc::FormatApproxSize(400'000'000ULL),
                         std::string("400 MB"), "megabytes are formatted");
   return 0;
+} catch (const std::exception& error) {
+  std::cerr << "FAIL: unexpected exception: " << error.what() << '\n';
+  return EXIT_FAILURE;
 }

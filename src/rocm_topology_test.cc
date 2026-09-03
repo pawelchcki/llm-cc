@@ -57,18 +57,25 @@ int main() try {
   WriteNode(mixed, "0", "gfx_target_version 0\nsimd_count 0\n");
   WriteNode(mixed, "2", "simd_count 96\ngfx_target_version 110000\n");
   const auto devices = llmcc::ReadAmdGpuDevices(mixed);
-  Expect(devices.has_value(), "mixed topology parses");
-  ExpectEq(devices->size(), std::size_t{2}, "CPU node is ignored");
-  ExpectEq((*devices)[0].architecture, std::string("gfx1100"),
+  if (!devices.has_value()) {
+    Expect(false, "mixed topology parses");
+    return EXIT_FAILURE;
+  }
+  const std::vector<AmdGpuDevice>& parsed_devices = devices.value();
+  ExpectEq(parsed_devices.size(), std::size_t{2}, "CPU node is ignored");
+  ExpectEq(parsed_devices[0].architecture, std::string("gfx1100"),
            "supported GPU is first GPU-agent ordinal");
-  ExpectEq((*devices)[1].architecture, std::string("gfx1036"),
+  ExpectEq(parsed_devices[1].architecture, std::string("gfx1036"),
            "unsupported GPU architecture is encoded like ROCm");
-  ExpectEq(llmcc::SelectRocmVisibleDevices(*devices, kSupported),
+  ExpectEq(llmcc::SelectRocmVisibleDevices(parsed_devices, kSupported),
            std::optional<std::string>("0"),
            "mixed topology selects supported GPU ordinal");
   const auto mixed_topology = llmcc::InspectRocmTopology(mixed, kSupported);
-  Expect(mixed_topology.has_value(), "mixed topology inspection succeeds");
-  ExpectEq(llmcc::RocmUnsupportedSystemMessage(*mixed_topology),
+  if (!mixed_topology.has_value()) {
+    Expect(false, "mixed topology inspection succeeds");
+    return EXIT_FAILURE;
+  }
+  ExpectEq(llmcc::RocmUnsupportedSystemMessage(mixed_topology.value()),
            std::string("the ROCm backend does not support this system; "
                        "detected AMD devices: gfx1100, gfx1036; this build "
                        "supports gfx1100, gfx1101, gfx1102"),

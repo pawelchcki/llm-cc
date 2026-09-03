@@ -24,7 +24,7 @@ std::filesystem::path RuntimeRoot() {
 
 }  // namespace llmcc
 
-#if defined(__linux__)
+#ifdef __linux__
 
 #include <fcntl.h>
 #include <linux/memfd.h>
@@ -128,7 +128,7 @@ class FileDescriptor {
   }
   ~FileDescriptor() { Reset(); }
 
-  int get() const { return fd_; }
+  [[nodiscard]] int get() const { return fd_; }
   int Release() { return std::exchange(fd_, -1); }
 
  private:
@@ -201,7 +201,7 @@ std::string Hex(std::span<const unsigned char> bytes) {
 std::array<unsigned char, payload::kSha256Size> HashRange(
     int fd, std::uint64_t offset, std::uint64_t length) {
   Digest digest;
-  std::array<char, 1024 * 1024> buffer{};
+  std::array<char, std::size_t{1024} * 1024> buffer{};
   std::uint64_t completed = 0;
   while (completed < length) {
     const std::size_t count = static_cast<std::size_t>(
@@ -249,7 +249,7 @@ std::optional<PayloadLocation> FindPayload(int fd, std::string_view name) {
   }
   for (std::uint32_t index = 0; index < payload::kPayloadCount; ++index) {
     const std::size_t entry =
-        payload::kFooterHeaderSize + index * payload::kFooterEntrySize;
+        payload::kFooterHeaderSize + (index * payload::kFooterEntrySize);
     const char* name_begin = footer.data() + entry;
     const std::size_t name_length =
         strnlen(name_begin, payload::kPayloadNameSize);
@@ -329,12 +329,9 @@ bool SafeRelativePath(std::string_view value) {
   if (value.empty() || value.front() == '/') {
     return false;
   }
-  for (const fs::path& component : fs::path(value)) {
-    if (component.empty() || component == "." || component == "..") {
-      return false;
-    }
-  }
-  return true;
+  return std::ranges::all_of(fs::path(value), [](const fs::path& component) {
+    return !component.empty() && component != "." && component != "..";
+  });
 }
 
 std::vector<ArchiveEntry> ReadArchiveEntries(int fd,
@@ -423,7 +420,7 @@ bool CacheIsValid(const fs::path& directory,
 void CopyEntry(int executable_fd, const ArchiveEntry& entry, int output_fd,
                std::string_view kind) {
   Digest digest;
-  std::array<char, 1024 * 1024> buffer{};
+  std::array<char, std::size_t{1024} * 1024> buffer{};
   std::uint64_t copied = 0;
   while (copied < entry.size) {
     const std::size_t count = static_cast<std::size_t>(
@@ -495,7 +492,7 @@ PreparedPayload PrepareCuda(int executable_fd,
 PreparedPayload PrepareRocm(int executable_fd,
                             const PayloadLocation& location) {
   static std::mutex cache_mutex;
-  const std::lock_guard lock(cache_mutex);
+  const std::scoped_lock lock(cache_mutex);
   if (HashRange(executable_fd, location.offset, location.length) !=
       location.hash) {
     throw std::runtime_error("ROCm payload SHA-256 mismatch");

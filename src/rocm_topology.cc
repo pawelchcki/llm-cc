@@ -35,7 +35,7 @@ std::optional<std::string> GfxArchitecture(std::uint64_t version) {
   if (major == 0 || minor > 15 || step > 15) {
     return std::nullopt;
   }
-  constexpr char kHex[] = "0123456789abcdef";
+  constexpr std::string_view kHex = "0123456789abcdef";
   return "gfx" + std::to_string(major) + kHex[minor] + kHex[step];
 }
 

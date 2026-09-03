@@ -18,7 +18,7 @@
 #include "src/payload.h"
 #include "src/rocm_topology.h"
 
-#if defined(__linux__)
+#ifdef __linux__
 #include <dlfcn.h>
 #include <unistd.h>
 #endif
@@ -81,10 +81,10 @@ void ValidateBackendDirectory(const std::filesystem::path& directory) {
   throw std::runtime_error(message);
 }
 
-#if defined(LLM_CC_DYNAMIC_BACKENDS)
+#ifdef LLM_CC_DYNAMIC_BACKENDS
 
 std::optional<std::filesystem::path> ExecutablePath() {
-#if defined(__linux__)
+#ifdef __linux__
   std::vector<char> buffer(1024);
   for (;;) {
     const ssize_t count =
@@ -144,11 +144,11 @@ LoadedPlugin LoadPlugin(
     BackendKind backend, bool required,
     const std::optional<std::filesystem::path>& backend_directory,
     std::string_view version, bool no_download, bool fetch_backend) {
-#if defined(__linux__)
+#ifdef __linux__
   void* driver_handle = nullptr;
 #endif
   const auto close_driver = [&]() {
-#if defined(__linux__)
+#ifdef __linux__
     if (driver_handle != nullptr) {
       dlclose(driver_handle);
       driver_handle = nullptr;
@@ -202,7 +202,7 @@ LoadedPlugin LoadPlugin(
     }
     return {.backend = backend, .registry = nullptr};
   }
-#if defined(__linux__)
+#ifdef __linux__
   if (backend == BackendKind::kCuda) {
     driver_handle = dlopen("libcuda.so.1", RTLD_NOW | RTLD_GLOBAL);
     if (driver_handle == nullptr) {
@@ -234,7 +234,7 @@ LoadedPlugin LoadPlugin(
             .backing_fd = prepared.has_value() ? prepared->backing_fd : -1,
             .driver_handle = driver_handle};
   }
-#if defined(__linux__)
+#ifdef __linux__
   if (prepared.has_value() && prepared->backing_fd >= 0) {
     close(prepared->backing_fd);
   }
@@ -261,7 +261,7 @@ void UnloadPlugin(LoadedPlugin& plugin) {
     ggml_backend_unload(plugin.registry);
     plugin.registry = nullptr;
   }
-#if defined(__linux__)
+#ifdef __linux__
   if (plugin.backing_fd >= 0) {
     close(plugin.backing_fd);
     plugin.backing_fd = -1;
@@ -383,7 +383,7 @@ BackendRuntime::BackendRuntime(
   if (gpu_layers < -1) {
     throw std::invalid_argument("--gpu-layers must be -1 or greater");
   }
-#if defined(LLM_CC_DYNAMIC_BACKENDS)
+#ifdef LLM_CC_DYNAMIC_BACKENDS
   std::array<LoadedPlugin, 2> gpu_plugins{};
   std::size_t gpu_count = 0;
   const bool load_gpu = requested == BackendKind::kCuda ||
@@ -445,7 +445,7 @@ BackendRuntime::BackendRuntime(
   static_cast<void>(backend_directory);
   static_cast<void>(no_download);
   static_cast<void>(fetch_backend);
-#if defined(LLM_CC_BUILTIN_GPU)
+#ifdef LLM_CC_BUILTIN_GPU
   if (requested == BackendKind::kCuda || requested == BackendKind::kRocm) {
     throw std::runtime_error(std::string(BackendName(requested)) +
                              " backend is not included in this build");
@@ -468,7 +468,7 @@ BackendRuntime::BackendRuntime(
 
 BackendRuntime::~BackendRuntime() {
   llama_backend_free();
-#if defined(LLM_CC_DYNAMIC_BACKENDS)
+#ifdef LLM_CC_DYNAMIC_BACKENDS
   LoadedPlugin plugin{
       .backend = selected_,
       .registry = static_cast<ggml_backend_reg_t>(plugin_registry_),
