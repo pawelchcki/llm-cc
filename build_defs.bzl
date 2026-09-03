@@ -244,62 +244,11 @@ def _payload_archive_impl(ctx):
         fail("payload binary must produce exactly one file")
 
     mappings = [(binary_files[0], "llm-cc")]
-    llama_files = ctx.attr.llama[DefaultInfo].files.to_list()
-    libraries = {}
-    for source in llama_files:
-        if source.basename in [
-            "libllama.so",
-            "libggml.so",
-            "libggml-base.so",
-            "libllm-cc-backend-cpu.so",
-            "libllm-cc-backend-cuda.so",
-            "libllm-cc-backend-rocm.so",
-        ]:
-            libraries[source.basename] = source
-
-    is_static = ctx.attr.kind == "static" or (ctx.attr.kind == "auto" and not libraries)
-    if is_static:
-        if libraries:
-            fail("the static CPU archive must be built with --config=cpu")
-    else:
-        required = [
-            "libllama.so",
-            "libggml.so",
-            "libggml-base.so",
-            "libllm-cc-backend-cpu.so",
-        ]
-        if ctx.attr.kind == "universal":
-            required += [
-                "libllm-cc-backend-cuda.so",
-                "libllm-cc-backend-rocm.so",
-            ]
-        for name in required:
-            if name not in libraries:
-                fail("%s is missing; build the universal archive with the default Linux x86-64 configuration" % name)
-        for name, source in libraries.items():
-            mappings.append((source, "lib/" + name))
-
-        if "libllm-cc-backend-cuda.so" in libraries:
-            for source in ctx.attr.cuda_runtime[DefaultInfo].files.to_list():
-                if ".so" in source.basename:
-                    mappings.append((source, "lib/cuda/" + source.basename))
-        if "libllm-cc-backend-rocm.so" in libraries:
-            for source in ctx.attr.rocm_runtime[DefaultInfo].files.to_list():
-                path = source.short_path
-                marker = "rocm_sdk/"
-                index = path.find(marker)
-                relative = path[index + len(marker):] if index >= 0 else source.basename
-                if relative.startswith("lib/"):
-                    relative = relative[len("lib/"):]
-                mappings.append((source, "lib/rocm/" + relative))
-            for source in ctx.attr.host_runtime[DefaultInfo].files.to_list():
-                mappings.append((source, "lib/rocm/" + source.basename))
 
     args = ctx.actions.args()
     args.add("--output", output)
     args.add("--root", ctx.attr.root_name)
-    if is_static:
-        args.add("--require-static")
+    args.add("--require-static")
     for source, destination in mappings:
         args.add("--file", source.path + "=" + destination)
     ctx.actions.run_shell(
@@ -319,12 +268,7 @@ payload_archive = rule(
     implementation = _payload_archive_impl,
     attrs = {
         "binary": attr.label(mandatory = True),
-        "cuda_runtime": attr.label(mandatory = True),
-        "host_runtime": attr.label(mandatory = True),
-        "kind": attr.string(mandatory = True, values = ["auto", "static", "universal"]),
-        "llama": attr.label(mandatory = True),
         "output_name": attr.string(mandatory = True),
-        "rocm_runtime": attr.label(mandatory = True),
         "root_name": attr.string(mandatory = True),
         "_packager": attr.label(
             default = Label("//tools:package_payload.sh"),

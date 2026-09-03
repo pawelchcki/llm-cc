@@ -751,12 +751,7 @@ alias(
 payload_archive(
     name = "cpu_static_archive",
     binary = ":llm-cc",
-    cuda_runtime = "@cuda_sdk//:runtime_files",
-    host_runtime = "@cuda_host_toolchain//x86_64-buildroot-linux-gnu/sysroot:runtime_files",
-    kind = "static",
-    llama = ":llama_cpp",
     output_name = "llm-cc-linux-x86_64-cpu-static.tar.gz",
-    rocm_runtime = "@rocm_sdk//:runtime_files",
     root_name = "llm-cc-linux-x86_64-cpu-static",
     tags = ["manual"],
     target_compatible_with = select({
