@@ -1,7 +1,10 @@
 #include "src/project.h"
 
 #if defined(_WIN32)
-#include <process.h>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 #else
 #include <sys/wait.h>
 #endif
@@ -27,17 +30,27 @@ std::string PathUtf8(const std::filesystem::path& path) {
   return path.generic_string();
 #endif
 }
-#if defined(_WIN32)
-std::wstring ShellQuote(std::wstring_view value) {
-  std::wstring result = L"\"";
-  for (wchar_t character : value) {
-    // cmd.exe expands %NAME% even inside quotes; a caret suppresses it.
-    result += character == L'%' ? L"^%" : std::wstring(1, character);
-  }
-  return result + L"\"";
-}
 
-std::wstring_view NullRedirect() { return L" 2>NUL"; }
+#if defined(_WIN32)
+std::wstring WindowsArgument(std::wstring_view value) {
+  std::wstring result = L"\"";
+  std::size_t backslashes = 0;
+  for (wchar_t character : value) {
+    if (character == L'\\') {
+      ++backslashes;
+    } else if (character == L'"') {
+      result.append(backslashes * 2 + 1, L'\\');
+      result += character;
+      backslashes = 0;
+    } else {
+      result.append(backslashes, L'\\');
+      backslashes = 0;
+      result += character;
+    }
+  }
+  result.append(backslashes * 2, L'\\');
+  return result + L'"';
+}
 #else
 std::string ShellQuote(std::string_view value) {
   std::string result = "'";
@@ -57,16 +70,55 @@ struct CommandResult {
 
 #if defined(_WIN32)
 CommandResult Capture(std::wstring_view command) {
-  using Pipe = std::unique_ptr<std::FILE, decltype(&_pclose)>;
-  Pipe pipe(_wpopen(std::wstring(command).c_str(), L"rb"),  // NOLINT
-            _pclose);
+  SECURITY_ATTRIBUTES security{sizeof(security), nullptr, TRUE};
+  HANDLE read_pipe = nullptr;
+  HANDLE write_pipe = nullptr;
+  if (!CreatePipe(&read_pipe, &write_pipe, &security, 0) ||
+      !SetHandleInformation(read_pipe, HANDLE_FLAG_INHERIT, 0)) {
+    if (read_pipe) CloseHandle(read_pipe);
+    if (write_pipe) CloseHandle(write_pipe);
+    return {.status = -1, .output = {}};
+  }
+  HANDLE null_error = CreateFileW(L"NUL", GENERIC_WRITE,
+                                  FILE_SHARE_READ | FILE_SHARE_WRITE, &security,
+                                  OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  STARTUPINFOW startup{};
+  startup.cb = sizeof(startup);
+  startup.dwFlags = STARTF_USESTDHANDLES;
+  startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+  startup.hStdOutput = write_pipe;
+  startup.hStdError = null_error;
+  PROCESS_INFORMATION process{};
+  std::wstring mutable_command(command);
+  const BOOL started = CreateProcessW(nullptr, mutable_command.data(), nullptr,
+                                      nullptr, TRUE, CREATE_NO_WINDOW, nullptr,
+                                      nullptr, &startup, &process);
+  CloseHandle(write_pipe);
+  if (null_error != INVALID_HANDLE_VALUE) CloseHandle(null_error);
+  if (!started) {
+    CloseHandle(read_pipe);
+    return {.status = -1, .output = {}};
+  }
+  std::string output;
+  std::array<char, 4096> buffer{};
+  DWORD count = 0;
+  while (ReadFile(read_pipe, buffer.data(), static_cast<DWORD>(buffer.size()),
+                  &count, nullptr) && count != 0) {
+    output.append(buffer.data(), count);
+  }
+  CloseHandle(read_pipe);
+  WaitForSingleObject(process.hProcess, INFINITE);
+  DWORD status = static_cast<DWORD>(-1);
+  GetExitCodeProcess(process.hProcess, &status);
+  CloseHandle(process.hThread);
+  CloseHandle(process.hProcess);
+  return {.status = static_cast<int>(status), .output = std::move(output)};
+}
 #else
 CommandResult Capture(std::string_view command) {
   using Pipe = std::unique_ptr<std::FILE, decltype(&pclose)>;
   Pipe pipe(popen(std::string(command).c_str(), "r"),  // NOLINT
             pclose);
-#endif
-
   if (!pipe) {
     return {.status = -1, .output = {}};
   }
@@ -77,19 +129,11 @@ CommandResult Capture(std::string_view command) {
     output.append(buffer.data(), count);
   }
   std::FILE* raw = pipe.release();
-#if defined(_WIN32)
-  const int raw_status = _pclose(raw);
-#else
   const int raw_status = pclose(raw);
-#endif
-#if defined(_WIN32)
-  const int status = raw_status;
-#else
   const int status = WIFEXITED(raw_status) ? WEXITSTATUS(raw_status) : -1;
-#endif
   return {.status = status, .output = std::move(output)};
 }
-
+#endif
 std::filesystem::path Canonical(const std::filesystem::path& path) {
   std::error_code error;
   const auto result = std::filesystem::canonical(path, error);
@@ -289,10 +333,10 @@ bool GitWalk(const std::filesystem::path& input,
              const DiscoveryOptions& options,
              std::map<std::string, DiscoveredSource>& files) {
 #if defined(_WIN32)
-  std::wstring command = L"git -C " + ShellQuote(repository.native()) +
+  std::wstring command = L"git.exe -C " + WindowsArgument(repository.native()) +
                          L" ls-files --cached --others" +
                          (options.no_ignore ? L"" : L" --exclude-standard") +
-                         L" -z" + std::wstring(NullRedirect());
+                         L" -z";
 #else
   std::string command = "git -C " + ShellQuote(repository.native()) +
                         " ls-files --cached --others" +
@@ -353,8 +397,8 @@ std::optional<std::filesystem::path> FindGitRepository(
   }
 #if defined(_WIN32)
   const CommandResult result =
-      Capture(L"git -C " + ShellQuote(probe.native()) +
-              L" rev-parse --show-toplevel" + std::wstring(NullRedirect()));
+      Capture(L"git.exe -C " + WindowsArgument(probe.native()) +
+              L" rev-parse --show-toplevel");
 #else
   const CommandResult result =
       Capture("git -C " + ShellQuote(probe.native()) +

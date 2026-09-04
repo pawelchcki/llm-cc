@@ -963,7 +963,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
                           .include_headers = arguments.include_headers,
                           .no_ignore = arguments.no_ignore});
   const std::string requested_model =
-      arguments.model.has_value() ? arguments.model->string()
+      arguments.model.has_value() ? PathUtf8(*arguments.model)
                                   : arguments.model_name.value_or("default");
   if (!text) {
     Emit({{"type", "start"},
