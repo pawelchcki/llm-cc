@@ -1004,10 +1004,20 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
     if (arguments.gpu_layers == 0) {
       return llmcc::BackendKind::kCpu;
     }
-    llmcc::BackendRuntime runtime(arguments.backend, arguments.gpu_layers,
-                                  LLM_CC_VERSION, arguments.backend_directory,
-                                  arguments.no_download, fetch_backend);
-    return runtime.selected();
+    llmcc::BackendLogCapture backend_log;
+    try {
+      llmcc::BackendRuntime runtime(arguments.backend, arguments.gpu_layers,
+                                    LLM_CC_VERSION, arguments.backend_directory,
+                                    arguments.no_download, fetch_backend);
+      return runtime.selected();
+    } catch (const std::exception& error) {
+      // The capture swallows the loader's diagnostics, so re-attach them to the
+      // generic plugin error before unwinding.
+      const std::string detail = backend_log.Error();
+      throw std::runtime_error(
+          std::string(error.what()) +
+          (detail.empty() ? std::string() : ": " + detail));
+    }
   }();
   const std::string backend_identity =
       BackendCacheIdentity(resolved_backend, arguments.gpu_layers);

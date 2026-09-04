@@ -362,18 +362,30 @@ int main() {  // NOLINT(bugprone-exception-escape)
         "31m\xe2\x80\xae\"); // café \rforged\n"
         "}\n");
   Write(fake_model, "not model weights");
+  const fs::path backend_diagnostics =
+      fs::path(test_tmpdir) / "backend-diagnostics.txt";
+#ifdef LLMCC_TEST_BACKEND_METAL
+  // A nonzero GPU-layer count keeps RunAnalyze off its kCpu shortcut so the
+  // early backend probe, whose diagnostics this test covers, actually runs.
+  constexpr std::string_view probe_gpu_layers = " --gpu-layers 1";
+#else
+  constexpr std::string_view probe_gpu_layers = "";
+#endif
+  const std::string uncached_command =
+      Quote(binary) + " " + Quote(source) + " --model " + Quote(fake_model) +
+      std::string(probe_gpu_layers) + " --no-cache >/dev/null 2>" +
+      Quote(backend_diagnostics);
+  llmcc::test::Expect(Run(uncached_command) != 0,
+                      "invalid model analysis fails");
+  llmcc::test::Expect(
+      Read(backend_diagnostics).find("ggml_metal_") == std::string::npos,
+      "analysis suppresses routine Metal backend diagnostics");
   const auto [preprocessed, offsets] =
       llmcc::StripComments(Read(source), llmcc::Language::kRust);
   static_cast<void>(offsets);
-#ifdef LLMCC_TEST_BACKEND_METAL
-  constexpr std::string_view backend = "metal";
-#elif defined LLMCC_TEST_BACKEND_CUDA
-  constexpr std::string_view backend = "cuda";
-#elif defined LLMCC_TEST_BACKEND_ROCM
-  constexpr std::string_view backend = "rocm";
-#else
+  // The cache-only command below keeps the default --gpu-layers 0, which
+  // RunAnalyze resolves to kCpu in every backend configuration.
   constexpr std::string_view backend = "cpu";
-#endif
   const auto identity = llmcc::InspectModel(
       fake_model,
       "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v1", backend,

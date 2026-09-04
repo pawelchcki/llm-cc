@@ -494,32 +494,6 @@ void CheckAvailableMemory(const Arguments& arguments, bool use_gpu,
 using Model = std::unique_ptr<llama_model, decltype(&llama_model_free)>;
 using Context = std::unique_ptr<llama_context, decltype(&llama_free)>;
 
-class BackendLogCapture {
- public:
-  BackendLogCapture() { llama_log_set(Record, this); }
-  BackendLogCapture(const BackendLogCapture&) = delete;
-  BackendLogCapture& operator=(const BackendLogCapture&) = delete;
-  ~BackendLogCapture() { llama_log_set(nullptr, nullptr); }
-
-  [[nodiscard]] std::string Error() const {
-    std::string result = errors_;
-    while (!result.empty() &&
-           (result.back() == '\n' || result.back() == '\r')) {
-      result.pop_back();
-    }
-    return result;
-  }
-
- private:
-  static void Record(ggml_log_level level, const char* text, void* user_data) {
-    if (level == GGML_LOG_LEVEL_ERROR && text != nullptr) {
-      static_cast<BackendLogCapture*>(user_data)->errors_ += text;
-    }
-  }
-
-  std::string errors_;
-};
-
 struct ScoreOptions {
   BosMode bos;
   std::uint32_t context_size;
@@ -543,7 +517,7 @@ void WriteSummary(std::ostream* diagnostics, std::size_t tokens,
                << " perplexity=" << std::exp(mean_nll) << '\n';
 }
 
-void ScoreInput(llama_model* model, BackendLogCapture& backend_log,
+void ScoreInput(llama_model* model, llmcc::BackendLogCapture& backend_log,
                 std::string_view input, const ScoreOptions& options,
                 std::ostream& output, std::ostream* diagnostics) {
   const llama_vocab* vocabulary = llama_model_get_vocab(model);
@@ -655,7 +629,7 @@ int Run(const Arguments& arguments, std::ostream& output,
         const std::optional<std::string>& input_override = std::nullopt) {
   const std::string input =
       input_override.has_value() ? *input_override : ReadInput(arguments);
-  BackendLogCapture backend_log;
+  llmcc::BackendLogCapture backend_log;
   llmcc::BackendRuntime backend(
       arguments.backend, arguments.gpu_layers, LLM_CC_VERSION,
       arguments.backend_directory, arguments.no_download,
