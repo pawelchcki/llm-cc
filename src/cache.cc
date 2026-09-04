@@ -16,6 +16,15 @@ namespace {
 
 constexpr std::string_view kManifestFile = "models.json";
 
+std::string PathUtf8(const std::filesystem::path& path) {
+#if defined(_WIN32)
+  const std::u8string value = path.u8string();
+  return std::string(reinterpret_cast<const char*>(value.data()), value.size());
+#else
+  return path.string();
+#endif
+}
+
 std::optional<std::filesystem::path> EnvironmentPath(const char* name) {
   const char* value = std::getenv(name);
   if (value == nullptr || *value == '\0') {
@@ -210,7 +219,7 @@ void MarkModelDownloaded(const std::filesystem::path& model) {
     return;
   }
   ModelManifest manifest = ReadManifest(model.parent_path());
-  manifest[model.filename().string()].downloaded_at = EpochSeconds();
+  manifest[PathUtf8(model.filename())].downloaded_at = EpochSeconds();
   WriteManifest(model.parent_path(), manifest);
 }
 
@@ -233,7 +242,7 @@ void MarkCachedModelUsed(const std::filesystem::path& cache_dir,
     return;
   }
   ModelManifest manifest = ReadManifest(cache_dir);
-  manifest[model.filename().string()].last_used_at = EpochSeconds();
+  manifest[PathUtf8(model.filename())].last_used_at = EpochSeconds();
   WriteManifest(cache_dir, manifest);
 }
 
@@ -271,7 +280,7 @@ void ListModels(const std::filesystem::path& cache_dir, std::ostream& output) {
   std::map<std::string, std::uintmax_t> models;
   for (const auto& entry : std::filesystem::directory_iterator(cache_dir)) {
     if (entry.is_regular_file() && entry.path().extension() == ".gguf") {
-      models.emplace(entry.path().filename().string(), entry.file_size());
+      models.emplace(PathUtf8(entry.path().filename()), entry.file_size());
     }
   }
   for (const auto& [file_name, size] : models) {

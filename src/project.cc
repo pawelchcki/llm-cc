@@ -332,7 +332,7 @@ void FilesystemWalk(const std::filesystem::path& directory,
   }
   while (iterator != end) {
     const auto entry = *iterator;
-    const auto name = entry.path().filename().string();
+    const auto name = PathUtf8(entry.path().filename());
     const bool directory_entry = entry.is_directory(error);
     if (error) {
       error.clear();
@@ -340,13 +340,15 @@ void FilesystemWalk(const std::filesystem::path& directory,
       continue;
     }
     bool skip_directory =
-        name == ".llm-cc-cache" ||
-        (!options.no_ignore &&
-         (GeneratedDirectory(name) || PythonVirtualEnvironment(entry.path()) ||
-          (name == "out" && entry.path().parent_path() == directory))) ||
-        name == ".git";
+        directory_entry &&
+        (name == ".llm-cc-cache" ||
+         (!options.no_ignore &&
+          (GeneratedDirectory(name) || PythonVirtualEnvironment(entry.path()) ||
+           (name == "out" && entry.path().parent_path() == directory))) ||
+         name == ".git");
 #if defined(_WIN32)
-    skip_directory = skip_directory || IsDirectoryReparsePoint(entry.path());
+    skip_directory = skip_directory ||
+                     (directory_entry && IsDirectoryReparsePoint(entry.path()));
 #endif
     if (directory_entry && skip_directory) {
       iterator.disable_recursion_pending();
