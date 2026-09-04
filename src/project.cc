@@ -80,9 +80,8 @@ CommandResult Capture(std::wstring_view command) {
     return {.status = -1, .output = {}};
   }
   HANDLE null_error =
-      CreateFileW(L"NUL", GENERIC_WRITE,
-                  FILE_SHARE_READ | FILE_SHARE_WRITE, &security, OPEN_EXISTING,
-                  FILE_ATTRIBUTE_NORMAL, nullptr);
+      CreateFileW(L"NUL", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                  &security, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
   STARTUPINFOW startup{};
   startup.cb = sizeof(startup);
   startup.dwFlags = STARTF_USESTDHANDLES;
@@ -103,8 +102,8 @@ CommandResult Capture(std::wstring_view command) {
   std::string output;
   std::array<char, 4096> buffer{};
   DWORD count = 0;
-  while (ReadFile(read_pipe, buffer.data(),
-                  static_cast<DWORD>(buffer.size()), &count, nullptr) &&
+  while (ReadFile(read_pipe, buffer.data(), static_cast<DWORD>(buffer.size()),
+                  &count, nullptr) &&
          count != 0) {
     output.append(buffer.data(), count);
   }
