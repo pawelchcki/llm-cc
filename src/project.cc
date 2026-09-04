@@ -187,7 +187,7 @@ bool GeneratedPath(const std::filesystem::path& path,
   return std::ranges::any_of(relative,
                              [](const auto& component) {
                                return component == ".llm-cc-cache" ||
-                                      GeneratedDirectory(component.string());
+                                      GeneratedDirectory(PathUtf8(component));
                              }) ||
          PythonVirtualEnvironmentPath(path, repository) ||
          TopLevelOutPath(path, repository) ||

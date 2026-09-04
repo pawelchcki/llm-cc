@@ -21,6 +21,14 @@
 namespace llmcc {
 namespace {
 
+std::string PathUtf8(const std::filesystem::path& path) {
+#if defined(_WIN32)
+  const std::u8string value = path.u8string();
+  return std::string(reinterpret_cast<const char*>(value.data()), value.size());
+#else
+  return path.generic_string();
+#endif
+}
 using Clock = std::chrono::system_clock;
 constexpr std::string_view kNamespace = ".llm-cc-cache/llm-cc";
 
@@ -315,7 +323,7 @@ std::string EntropyCacheKey(std::string_view source,
   identity += '\0';
   identity += Sha256Hex(source);
   identity += '\0';
-  identity += model.canonical_path.generic_string();
+  identity += PathUtf8(model.canonical_path);
   identity += '\0' + std::to_string(model.size) + '\0' +
               std::to_string(model.modification_time) + '\0' +
               model.inference_abi + '\0' + model.backend + '\0' +
