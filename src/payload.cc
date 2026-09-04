@@ -28,8 +28,8 @@ std::optional<std::filesystem::path> RuntimeEnvironmentPath(
 }  // namespace
 
 std::filesystem::path RuntimeRoot() {
-  if (const auto override = RuntimeEnvironmentPath(
-          "LLM_CC_RUNTIME_DIR", L"LLM_CC_RUNTIME_DIR")) {
+  if (const auto override =
+          RuntimeEnvironmentPath("LLM_CC_RUNTIME_DIR", L"LLM_CC_RUNTIME_DIR")) {
     return *override;
   }
   if (const auto xdg =
