@@ -18,6 +18,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <system_error>
+#include <vector>
 
 namespace llmcc {
 namespace {
@@ -69,7 +70,26 @@ struct CommandResult {
 };
 
 #if defined(_WIN32)
-CommandResult Capture(std::wstring_view command) {
+CommandResult Capture(std::wstring_view arguments) {
+  const DWORD path_size = GetEnvironmentVariableW(L"PATH", nullptr, 0);
+  if (path_size == 0) {
+    return {.status = -1, .output = {}};
+  }
+  std::vector<wchar_t> search_path(path_size);
+  if (GetEnvironmentVariableW(L"PATH", search_path.data(), path_size) == 0) {
+    return {.status = -1, .output = {}};
+  }
+  const DWORD executable_size =
+      SearchPathW(search_path.data(), L"git.exe", nullptr, 0, nullptr, nullptr);
+  if (executable_size == 0) {
+    return {.status = -1, .output = {}};
+  }
+  std::vector<wchar_t> executable(executable_size + 1);
+  if (SearchPathW(search_path.data(), L"git.exe", nullptr,
+                  static_cast<DWORD>(executable.size()), executable.data(),
+                  nullptr) == 0) {
+    return {.status = -1, .output = {}};
+  }
   SECURITY_ATTRIBUTES security{sizeof(security), nullptr, TRUE};
   HANDLE read_pipe = nullptr;
   HANDLE write_pipe = nullptr;
@@ -89,10 +109,11 @@ CommandResult Capture(std::wstring_view command) {
   startup.hStdOutput = write_pipe;
   startup.hStdError = null_error;
   PROCESS_INFORMATION process{};
-  std::wstring mutable_command(command);
-  const BOOL started =
-      CreateProcessW(nullptr, mutable_command.data(), nullptr, nullptr, TRUE,
-                     CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process);
+  std::wstring mutable_command =
+      WindowsArgument(executable.data()) + L" " + std::wstring(arguments);
+  const BOOL started = CreateProcessW(executable.data(), mutable_command.data(),
+                                      nullptr, nullptr, TRUE, CREATE_NO_WINDOW,
+                                      nullptr, nullptr, &startup, &process);
   CloseHandle(write_pipe);
   if (null_error != INVALID_HANDLE_VALUE) CloseHandle(null_error);
   if (!started) {
@@ -334,7 +355,7 @@ bool GitWalk(const std::filesystem::path& input,
              const DiscoveryOptions& options,
              std::map<std::string, DiscoveredSource>& files) {
 #if defined(_WIN32)
-  std::wstring command = L"git.exe -C " + WindowsArgument(repository.native()) +
+  std::wstring command = L"-C " + WindowsArgument(repository.native()) +
                          L" ls-files --cached --others" +
                          (options.no_ignore ? L"" : L" --exclude-standard") +
                          L" -z";
@@ -397,9 +418,8 @@ std::optional<std::filesystem::path> FindGitRepository(
     return std::nullopt;
   }
 #if defined(_WIN32)
-  const CommandResult result =
-      Capture(L"git.exe -C " + WindowsArgument(probe.native()) +
-              L" rev-parse --show-toplevel");
+  const CommandResult result = Capture(
+      L"-C " + WindowsArgument(probe.native()) + L" rev-parse --show-toplevel");
 #else
   const CommandResult result =
       Capture("git -C " + ShellQuote(probe.native()) +
