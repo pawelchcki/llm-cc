@@ -339,16 +339,16 @@ void FilesystemWalk(const std::filesystem::path& directory,
       iterator.increment(error);
       continue;
     }
-    if (directory_entry &&
+    bool skip_directory =
+        name == ".llm-cc-cache" ||
+        (!options.no_ignore &&
+         (GeneratedDirectory(name) || PythonVirtualEnvironment(entry.path()) ||
+          (name == "out" && entry.path().parent_path() == directory))) ||
+        name == ".git";
 #if defined(_WIN32)
-        (IsDirectoryReparsePoint(entry.path()) ||
+    skip_directory = skip_directory || IsDirectoryReparsePoint(entry.path());
 #endif
-         (name == ".llm-cc-cache" ||
-          (!options.no_ignore &&
-           (GeneratedDirectory(name) ||
-            PythonVirtualEnvironment(entry.path()) ||
-            (name == "out" && entry.path().parent_path() == directory))) ||
-          name == ".git"))) {
+    if (directory_entry && skip_directory) {
       iterator.disable_recursion_pending();
     } else if (entry.is_regular_file(error) && !error) {
       const auto canonical = std::filesystem::canonical(entry.path(), error);
