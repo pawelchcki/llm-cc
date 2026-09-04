@@ -120,8 +120,7 @@ std::filesystem::path CacheDir() {
     return *user_profile / "AppData/Local/llm-cc/models";
   }
 #endif
-  throw std::runtime_error(
-      "cache root is unavailable; set LLM_CC_CACHE_DIR");
+  throw std::runtime_error("cache root is unavailable; set LLM_CC_CACHE_DIR");
 }
 
 std::filesystem::path CacheDirFrom(
