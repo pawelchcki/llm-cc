@@ -6,6 +6,7 @@
 #include <functional>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 
 namespace llmcc {
@@ -23,6 +24,21 @@ BackendKind SelectBackend(BackendKind requested, std::int32_t gpu_layers,
                           std::span<const BackendDevice> devices);
 bool DeviceOutputGuaranteed(BackendKind backend, std::int32_t gpu_layers,
                             bool metal_backend);
+
+// Suppresses routine llama.cpp and ggml diagnostics while retaining errors for
+// actionable failure messages.
+class BackendLogCapture {
+ public:
+  BackendLogCapture();
+  BackendLogCapture(const BackendLogCapture&) = delete;
+  BackendLogCapture& operator=(const BackendLogCapture&) = delete;
+  ~BackendLogCapture();
+
+  [[nodiscard]] std::string Error() const;
+
+ private:
+  std::string errors_;
+};
 
 enum class BackendPluginSource : std::uint8_t {
   kBundle,

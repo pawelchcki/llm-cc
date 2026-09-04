@@ -21,7 +21,7 @@ std::string FormatUnit(std::uint64_t bytes, std::uint64_t unit,
 const ModelSpec& DefaultModel() { return kModels.front(); }
 
 const ModelSpec* FindModel(std::string_view name) {
-  const auto* const model = std::ranges::find(kModels, name, &ModelSpec::name);
+  const auto model = std::ranges::find(kModels, name, &ModelSpec::name);
   return model == kModels.end() ? nullptr : &*model;
 }
 

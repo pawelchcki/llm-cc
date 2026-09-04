@@ -27,6 +27,12 @@
 namespace llmcc {
 namespace {
 
+void RecordBackendLog(ggml_log_level level, const char* text, void* user_data) {
+  if (level == GGML_LOG_LEVEL_ERROR && text != nullptr) {
+    *static_cast<std::string*>(user_data) += text;
+  }
+}
+
 class MissingBackendPluginError : public std::runtime_error {
  public:
   using std::runtime_error::runtime_error;
@@ -305,6 +311,20 @@ std::vector<BackendDevice> Inventory(std::span<const LoadedPlugin> plugins) {
 #endif
 
 }  // namespace
+
+BackendLogCapture::BackendLogCapture() {
+  llama_log_set(RecordBackendLog, &errors_);
+}
+
+BackendLogCapture::~BackendLogCapture() { llama_log_set(nullptr, nullptr); }
+
+std::string BackendLogCapture::Error() const {
+  std::string result = errors_;
+  while (!result.empty() && (result.back() == '\n' || result.back() == '\r')) {
+    result.pop_back();
+  }
+  return result;
+}
 
 ResolvedBackendPlugin ResolveBackendPlugin(
     BackendKind backend,

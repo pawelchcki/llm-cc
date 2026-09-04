@@ -1,7 +1,17 @@
 #include "src/download.h"
 
 #include <curl/curl.h>
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <io.h>
+#include <windows.h>
+#define STDERR_FILENO 2
+#define isatty _isatty
+#else
 #include <unistd.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -23,6 +33,14 @@
 namespace llmcc {
 namespace {
 
+std::string PathUtf8(const std::filesystem::path& path) {
+#if defined(_WIN32)
+  const std::u8string value = path.u8string();
+  return std::string(reinterpret_cast<const char*>(value.data()), value.size());
+#else
+  return path.string();
+#endif
+}
 class CurlGlobal {
  public:
   CurlGlobal() {
@@ -176,8 +194,13 @@ std::size_t WriteBytes(char* contents, std::size_t size, std::size_t count,
 }
 
 std::optional<std::filesystem::path> CertificateBundle() {
+#if defined(_WIN32)
+  const wchar_t* configured = _wgetenv(L"SSL_CERT_FILE");
+  if (configured != nullptr && *configured != L'\0') {
+#else
   const char* configured = std::getenv("SSL_CERT_FILE");
   if (configured != nullptr && *configured != '\0') {
+#endif
     std::filesystem::path path(configured);
     if (std::filesystem::is_regular_file(path)) {
       return path;
@@ -268,7 +291,16 @@ void StreamDownload(std::istream& input, const std::filesystem::path& target,
                              std::to_string(*total_length));
   }
   FinishOutput(output, partial);
+#if defined(_WIN32)
+  if (!MoveFileExW(partial.c_str(), target.c_str(),
+                   MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+    throw std::system_error(static_cast<int>(GetLastError()),
+                            std::system_category(),
+                            "failed to install downloaded file");
+  }
+#else
   std::filesystem::rename(partial, target);
+#endif
 }
 
 void DownloadFile(std::string_view download_url,
@@ -331,7 +363,7 @@ void DownloadFile(std::string_view download_url,
     const auto certificates = CertificateBundle();
     std::string certificate_path;
     if (certificates.has_value()) {
-      certificate_path = certificates->string();
+      certificate_path = PathUtf8(*certificates);
       SetOption(curl.get(), CURLOPT_CAINFO, certificate_path.c_str());
     }
 
@@ -370,7 +402,16 @@ void DownloadFile(std::string_view download_url,
     }
     break;
   }
+#if defined(_WIN32)
+  if (!MoveFileExW(partial.c_str(), target.c_str(),
+                   MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+    throw std::system_error(static_cast<int>(GetLastError()),
+                            std::system_category(),
+                            "failed to install downloaded file");
+  }
+#else
   std::filesystem::rename(partial, target);
+#endif
   if (options.record_in_model_manifest) {
     MarkModelDownloaded(target);
   }

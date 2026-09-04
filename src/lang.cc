@@ -302,7 +302,7 @@ const LanguageMetadata& Metadata(Language language) {
                        .functions = kCSharpFunctions,
                        .callables = kCSharpCallables},
   };
-  const auto* const match =
+  const auto match =
       std::ranges::find(metadata, language, &LanguageMetadata::language);
   if (match == metadata.end()) {
     throw std::logic_error("unknown source language");

@@ -15,6 +15,7 @@
 #include <string>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 #if defined(__linux__) || defined(__APPLE__)
 #include <fcntl.h>
@@ -24,6 +25,13 @@
 
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
+#endif
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 #endif
 
 #include "src/download.h"
@@ -37,6 +45,18 @@ constexpr std::size_t kFooterSize = 64;
 constexpr std::size_t kNameSize = 16;
 constexpr std::size_t kSha256Size = 32;
 constexpr std::size_t kHashBufferSize = 64 * 1024;
+
+fs::path ChecksumPath(const fs::path& bundle) {
+  auto checksum = bundle;
+  checksum += fs::path(".sha256");
+  return checksum;
+}
+
+fs::path PartialPath(const fs::path& path) {
+  auto partial = path;
+  partial += fs::path(".partial");
+  return partial;
+}
 
 constexpr std::array<std::uint32_t, 64> kShaConstants = {
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1,
@@ -206,6 +226,21 @@ std::string Hex(std::span<const unsigned char> bytes) {
 fs::path RunningExecutablePath() {
 #ifdef __linux__
   return "/proc/self/exe";
+#elif defined(_WIN32)
+  std::vector<wchar_t> path(260);
+  for (;;) {
+    const DWORD length = GetModuleFileNameW(nullptr, path.data(),
+                                            static_cast<DWORD>(path.size()));
+    if (length == 0) {
+      throw std::system_error(static_cast<int>(GetLastError()),
+                              std::system_category(),
+                              "cannot resolve the running executable path");
+    }
+    if (length < path.size()) {
+      return fs::path(std::wstring(path.data(), length));
+    }
+    path.resize(path.size() * 2);
+  }
 #elif defined(__APPLE__)
   std::uint32_t size = 1024;
   std::string path(size, '\0');
@@ -385,6 +420,16 @@ void CheckNotSymlink(const fs::path& path) {
     throw std::runtime_error("refusing to follow backend cache symlink " +
                              path.string());
   }
+#if defined(_WIN32)
+  if (!error) {
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    if (attributes != INVALID_FILE_ATTRIBUTES &&
+        (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+      throw std::runtime_error(
+          "refusing to follow backend cache reparse point " + path.string());
+    }
+  }
+#endif
 }
 
 void EnsureCacheDirectory(const BackendFetchOptions& options,
@@ -421,6 +466,22 @@ class BackendCacheLock {
         throw std::runtime_error(message);
       }
     }
+#elif defined(_WIN32)
+    handle_ = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE,
+                          FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                          OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle_ == INVALID_HANDLE_VALUE) {
+      throw std::system_error(static_cast<int>(GetLastError()),
+                              std::system_category(),
+                              "cannot open backend cache lock");
+    }
+    if (!LockFileEx(handle_, LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, &overlapped_)) {
+      const DWORD error = GetLastError();
+      CloseHandle(handle_);
+      handle_ = INVALID_HANDLE_VALUE;
+      throw std::system_error(static_cast<int>(error), std::system_category(),
+                              "cannot acquire backend cache lock");
+    }
 #else
     static_cast<void>(path);
     lock_ = std::unique_lock<std::mutex>(FallbackMutex());
@@ -432,6 +493,11 @@ class BackendCacheLock {
     if (descriptor_ >= 0) {
       close(descriptor_);
     }
+#elif defined(_WIN32)
+    if (handle_ != INVALID_HANDLE_VALUE) {
+      UnlockFileEx(handle_, 0, 1, 0, &overlapped_);
+      CloseHandle(handle_);
+    }
 #endif
   }
 
@@ -441,6 +507,9 @@ class BackendCacheLock {
  private:
 #if defined(__linux__) || defined(__APPLE__)
   int descriptor_ = -1;
+#elif defined(_WIN32)
+  HANDLE handle_ = INVALID_HANDLE_VALUE;
+  OVERLAPPED overlapped_{};
 #else
   static std::mutex& FallbackMutex() {
     static std::mutex mutex;
@@ -503,7 +572,7 @@ std::optional<fs::path> DownloadManifest(const BundleDownloader& download,
                             std::string("manifest.json")};
   for (std::size_t index = 0; index < files.size(); ++index) {
     RemoveFile(destination);
-    RemoveFile(destination.string() + ".partial");
+    RemoveFile(PartialPath(destination));
     try {
       download(JoinUrl(base, files[index]), destination,
                {.noun = "backend bundle",
@@ -512,7 +581,7 @@ std::optional<fs::path> DownloadManifest(const BundleDownloader& download,
       return destination;
     } catch (const std::exception&) {
       RemoveFile(destination);
-      RemoveFile(destination.string() + ".partial");
+      RemoveFile(PartialPath(destination));
     }
   }
   return std::nullopt;
@@ -566,7 +635,7 @@ fs::path BackendBundlePath(const BackendFetchOptions& options) {
 
 void VerifyBackendBundle(const BackendFetchOptions& options) {
   const fs::path bundle = BackendBundlePath(options);
-  const fs::path checksum = bundle.string() + ".sha256";
+  const fs::path checksum = ChecksumPath(bundle);
   const fs::path manifest =
       bundle.parent_path() / (std::string(options.name) + ".manifest.json");
   CheckNotSymlink(bundle);
@@ -596,7 +665,7 @@ void VerifyBackendBundle(const BackendFetchOptions& options) {
 fs::path FetchBackendBundle(const BackendFetchOptions& options,
                             const BundleDownloader& downloader) {
   const fs::path bundle = BackendBundlePath(options);
-  const fs::path checksum = bundle.string() + ".sha256";
+  const fs::path checksum = ChecksumPath(bundle);
   const fs::path manifest =
       bundle.parent_path() / (std::string(options.name) + ".manifest.json");
   CheckNotSymlink(options.runtime_root / "backends");
@@ -625,7 +694,7 @@ fs::path FetchBackendBundle(const BackendFetchOptions& options,
   EnsureCacheDirectory(options, bundle.parent_path());
   for (const fs::path& path : {bundle, checksum, manifest}) {
     CheckNotSymlink(path);
-    CheckNotSymlink(path.string() + ".partial");
+    CheckNotSymlink(PartialPath(path));
   }
   BackendCacheLock cache_lock(bundle.parent_path() /
                               ("." + std::string(options.name) + ".lock"));
