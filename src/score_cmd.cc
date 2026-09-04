@@ -29,6 +29,13 @@
 #include <mach/mach.h>
 #endif
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #include "generated/version.h"
 #include "src/backend.h"
 #include "src/cache.h"
@@ -368,7 +375,14 @@ std::uint64_t ModelFileSize(const std::filesystem::path& path) {
 }
 
 std::optional<std::uint64_t> HostAvailableMemory() {
-#ifdef __APPLE__
+#ifdef _WIN32
+  MEMORYSTATUSEX status{};
+  status.dwLength = sizeof(status);
+  if (!GlobalMemoryStatusEx(&status)) {
+    return std::nullopt;
+  }
+  return status.ullAvailPhys;
+#elif defined(__APPLE__)
   vm_statistics64_data_t statistics{};
   mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
   if (host_statistics64(mach_host_self(), HOST_VM_INFO64,

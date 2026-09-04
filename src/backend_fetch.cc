@@ -15,6 +15,7 @@
 #include <string>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 #if defined(__linux__) || defined(__APPLE__)
 #include <fcntl.h>
@@ -24,6 +25,13 @@
 
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
+#endif
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 #endif
 
 #include "src/download.h"
@@ -205,6 +213,21 @@ std::string Hex(std::span<const unsigned char> bytes) {
 fs::path RunningExecutablePath() {
 #ifdef __linux__
   return "/proc/self/exe";
+#elif defined(_WIN32)
+  std::vector<wchar_t> path(260);
+  for (;;) {
+    const DWORD length =
+        GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
+    if (length == 0) {
+      throw std::system_error(static_cast<int>(GetLastError()),
+                              std::system_category(),
+                              "cannot resolve the running executable path");
+    }
+    if (length < path.size()) {
+      return fs::path(std::wstring(path.data(), length));
+    }
+    path.resize(path.size() * 2);
+  }
 #elif defined(__APPLE__)
   std::uint32_t size = 1024;
   std::string path(size, '\0');

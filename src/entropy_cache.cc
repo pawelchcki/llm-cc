@@ -12,6 +12,12 @@
 #include <system_error>
 #include <thread>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 namespace llmcc {
 namespace {
 
@@ -379,12 +385,21 @@ void WriteEntropyCache(const std::filesystem::path& repository,
     if (!output) {
       throw std::runtime_error("failed to write entropy cache entry");
     }
+#ifdef _WIN32
+    if (!MoveFileExW(std::filesystem::path(temporary).c_str(), target.c_str(),
+                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+      throw std::system_error(static_cast<int>(GetLastError()),
+                              std::system_category(),
+                              "failed to install entropy cache entry");
+    }
+#else
     std::error_code error;
     std::filesystem::rename(temporary, target, error);
     if (error) {
       throw std::runtime_error("failed to install entropy cache entry: " +
                                error.message());
     }
+#endif
   } catch (...) {
     std::error_code ignored;
     std::filesystem::remove(temporary, ignored);
