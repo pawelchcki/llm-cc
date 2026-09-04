@@ -12,9 +12,23 @@
 #include <system_error>
 #include <thread>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 namespace llmcc {
 namespace {
 
+std::string PathUtf8(const std::filesystem::path& path) {
+#if defined(_WIN32)
+  const std::u8string value = path.u8string();
+  return std::string(reinterpret_cast<const char*>(value.data()), value.size());
+#else
+  return path.generic_string();
+#endif
+}
 using Clock = std::chrono::system_clock;
 constexpr std::string_view kNamespace = ".llm-cc-cache/llm-cc";
 
@@ -59,6 +73,17 @@ void CheckCachePath(const std::filesystem::path& repository) {
       throw std::runtime_error("refusing to follow cache-directory symlink " +
                                path.string());
     }
+#if defined(_WIN32)
+    if (!error) {
+      const DWORD attributes = GetFileAttributesW(path.c_str());
+      if (attributes != INVALID_FILE_ATTRIBUTES &&
+          (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+        throw std::runtime_error(
+            "refusing to follow cache-directory reparse point " +
+            PathUtf8(path));
+      }
+    }
+#endif
   }
 }
 
@@ -309,7 +334,7 @@ std::string EntropyCacheKey(std::string_view source,
   identity += '\0';
   identity += Sha256Hex(source);
   identity += '\0';
-  identity += model.canonical_path.generic_string();
+  identity += PathUtf8(model.canonical_path);
   identity += '\0' + std::to_string(model.size) + '\0' +
               std::to_string(model.modification_time) + '\0' +
               model.inference_abi + '\0' + model.backend + '\0' +
@@ -369,7 +394,8 @@ void WriteEntropyCache(const std::filesystem::path& repository,
           std::chrono::steady_clock::now().time_since_epoch().count()) +
       "." + std::to_string(temporary_sequence.fetch_add(1)) + "." +
       std::to_string(std::hash<std::thread::id>{}(std::this_thread::get_id()));
-  const auto temporary = target.string() + ".tmp." + suffix;
+  auto temporary = target;
+  temporary += std::filesystem::path(".tmp." + suffix);
   try {
     const auto bytes = nlohmann::json::to_cbor(encoded);
     std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
@@ -379,12 +405,21 @@ void WriteEntropyCache(const std::filesystem::path& repository,
     if (!output) {
       throw std::runtime_error("failed to write entropy cache entry");
     }
+#ifdef _WIN32
+    if (!MoveFileExW(std::filesystem::path(temporary).c_str(), target.c_str(),
+                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+      throw std::system_error(static_cast<int>(GetLastError()),
+                              std::system_category(),
+                              "failed to install entropy cache entry");
+    }
+#else
     std::error_code error;
     std::filesystem::rename(temporary, target, error);
     if (error) {
       throw std::runtime_error("failed to install entropy cache entry: " +
                                error.message());
     }
+#endif
   } catch (...) {
     std::error_code ignored;
     std::filesystem::remove(temporary, ignored);

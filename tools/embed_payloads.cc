@@ -1,5 +1,10 @@
 #include <sys/stat.h>
 
+#if defined(_WIN32)
+#include <io.h>
+#define chmod _chmod
+#endif
+
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -441,7 +446,7 @@ int main(int argc, char** argv) {
     if (!combined) {
       throw std::runtime_error("cannot finish " + output.string());
     }
-    if (chmod(output.c_str(), 0755) != 0) {
+    if (chmod(output.string().c_str(), 0755) != 0) {
       throw std::runtime_error("cannot make output executable: " +
                                std::string(std::strerror(errno)));
     }

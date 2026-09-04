@@ -16,12 +16,42 @@ namespace {
 
 constexpr std::string_view kManifestFile = "models.json";
 
+std::string PathUtf8(const std::filesystem::path& path) {
+#if defined(_WIN32)
+  const std::u8string value = path.u8string();
+  return std::string(reinterpret_cast<const char*>(value.data()), value.size());
+#else
+  return path.string();
+#endif
+}
+
 std::optional<std::filesystem::path> EnvironmentPath(const char* name) {
   const char* value = std::getenv(name);
   if (value == nullptr || *value == '\0') {
     return std::nullopt;
   }
   return std::filesystem::path(value);
+}
+
+#if defined(_WIN32)
+std::optional<std::filesystem::path> EnvironmentPath(const wchar_t* name) {
+  const wchar_t* value = _wgetenv(name);
+  if (value == nullptr || *value == L'\0') {
+    return std::nullopt;
+  }
+  return std::filesystem::path(value);
+}
+#endif
+
+std::optional<std::filesystem::path> NativeEnvironmentPath(
+    const char* narrow_name, const wchar_t* wide_name) {
+#if defined(_WIN32)
+  static_cast<void>(narrow_name);
+  return EnvironmentPath(wide_name);
+#else
+  static_cast<void>(wide_name);
+  return EnvironmentPath(narrow_name);
+#endif
 }
 
 std::filesystem::path ManifestPath(const std::filesystem::path& cache_dir) {
@@ -61,11 +91,16 @@ std::uint64_t EpochSeconds() {
 }
 
 bool IsBareFileName(std::string_view file_name) {
-  return !file_name.empty() && file_name != "." && file_name != ".." &&
-         file_name.find('/') == std::string_view::npos &&
-         file_name.find('\\') == std::string_view::npos;
+  const bool bare = !file_name.empty() && file_name != "." &&
+                    file_name != ".." &&
+                    file_name.find('/') == std::string_view::npos &&
+                    file_name.find('\\') == std::string_view::npos;
+#if defined(_WIN32)
+  return bare && file_name.find(':') == std::string_view::npos;
+#else
+  return bare;
+#endif
 }
-
 void RemoveIfPresent(const std::filesystem::path& path) {
   std::error_code error;
   std::filesystem::remove(path, error);
@@ -98,9 +133,33 @@ std::tuple<std::int64_t, std::int64_t, std::int64_t> CivilDate(
 }  // namespace
 
 std::filesystem::path CacheDir() {
-  return CacheDirFrom(EnvironmentPath("LLM_CC_CACHE_DIR"),
-                      EnvironmentPath("XDG_CACHE_HOME"),
-                      EnvironmentPath("HOME"));
+  if (const auto override_dir =
+          NativeEnvironmentPath("LLM_CC_CACHE_DIR", L"LLM_CC_CACHE_DIR");
+      override_dir.has_value() && !override_dir->empty()) {
+    return *override_dir;
+  }
+  if (const auto xdg =
+          NativeEnvironmentPath("XDG_CACHE_HOME", L"XDG_CACHE_HOME");
+      xdg.has_value() && !xdg->empty()) {
+    return *xdg / "llm-cc/models";
+  }
+  if (const auto home = NativeEnvironmentPath("HOME", L"HOME");
+      home.has_value() && !home->empty()) {
+    return *home / ".cache/llm-cc/models";
+  }
+#if defined(_WIN32)
+  if (const auto local_app_data =
+          NativeEnvironmentPath("LOCALAPPDATA", L"LOCALAPPDATA");
+      local_app_data.has_value() && !local_app_data->empty()) {
+    return *local_app_data / "llm-cc/models";
+  }
+  if (const auto user_profile =
+          NativeEnvironmentPath("USERPROFILE", L"USERPROFILE");
+      user_profile.has_value() && !user_profile->empty()) {
+    return *user_profile / "AppData/Local/llm-cc/models";
+  }
+#endif
+  throw std::runtime_error("cache root is unavailable; set LLM_CC_CACHE_DIR");
 }
 
 std::filesystem::path CacheDirFrom(
@@ -121,7 +180,9 @@ std::filesystem::path CacheDirFrom(
 }
 
 std::filesystem::path PartialPath(const std::filesystem::path& target) {
-  return target.string() + ".partial";
+  auto partial = target;
+  partial += std::filesystem::path(".partial");
+  return partial;
 }
 
 ModelManifest ReadManifest(const std::filesystem::path& cache_dir) {
@@ -158,7 +219,7 @@ void MarkModelDownloaded(const std::filesystem::path& model) {
     return;
   }
   ModelManifest manifest = ReadManifest(model.parent_path());
-  manifest[model.filename().string()].downloaded_at = EpochSeconds();
+  manifest[PathUtf8(model.filename())].downloaded_at = EpochSeconds();
   WriteManifest(model.parent_path(), manifest);
 }
 
@@ -181,7 +242,7 @@ void MarkCachedModelUsed(const std::filesystem::path& cache_dir,
     return;
   }
   ModelManifest manifest = ReadManifest(cache_dir);
-  manifest[model.filename().string()].last_used_at = EpochSeconds();
+  manifest[PathUtf8(model.filename())].last_used_at = EpochSeconds();
   WriteManifest(cache_dir, manifest);
 }
 
@@ -219,7 +280,7 @@ void ListModels(const std::filesystem::path& cache_dir, std::ostream& output) {
   std::map<std::string, std::uintmax_t> models;
   for (const auto& entry : std::filesystem::directory_iterator(cache_dir)) {
     if (entry.is_regular_file() && entry.path().extension() == ".gguf") {
-      models.emplace(entry.path().filename().string(), entry.file_size());
+      models.emplace(PathUtf8(entry.path().filename()), entry.file_size());
     }
   }
   for (const auto& [file_name, size] : models) {
@@ -239,7 +300,8 @@ void RemoveModel(const std::filesystem::path& cache_dir,
     throw std::invalid_argument(
         "model name must be a bare file name without path separators");
   }
-  const std::filesystem::path target = cache_dir / file_name;
+  const std::filesystem::path target =
+      cache_dir / std::filesystem::u8path(file_name);
   RemoveIfPresent(target);
   RemoveIfPresent(PartialPath(target));
   ModelManifest manifest = ReadManifest(cache_dir);

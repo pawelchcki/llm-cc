@@ -4,6 +4,7 @@
 #include <llama.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <charconv>
 #include <cmath>
 #include <cstdint>
@@ -29,6 +30,15 @@
 #include <mach/mach.h>
 #endif
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <fcntl.h>
+#include <io.h>
+#include <windows.h>
+#endif
+
 #include "generated/version.h"
 #include "src/backend.h"
 #include "src/cache.h"
@@ -39,6 +49,14 @@
 
 namespace {
 
+std::string Utf8Path(const std::filesystem::path& path) {
+#if defined(_WIN32)
+  const std::u8string value = path.u8string();
+  return std::string(reinterpret_cast<const char*>(value.data()), value.size());
+#else
+  return path.string();
+#endif
+}
 enum class BosMode : std::uint8_t { kAuto, kAlways, kNever };
 
 constexpr std::size_t kDecodeBatchSize = 64;
@@ -144,13 +162,13 @@ void SetOption(Arguments& arguments, std::string_view option,
     Usage("--prompt and --file are mutually exclusive");
   }
   if (option == "--model") {
-    arguments.model = value;
+    arguments.model = std::filesystem::u8path(value);
   } else if (option == "--model-name") {
     arguments.model_name = value;
   } else if (option == "--prompt") {
     arguments.prompt = value;
   } else if (option == "--file") {
-    arguments.file = value;
+    arguments.file = std::filesystem::u8path(value);
   } else if (option == "--bos") {
     if (value == "auto") {
       arguments.bos = BosMode::kAuto;
@@ -183,7 +201,7 @@ void SetOption(Arguments& arguments, std::string_view option,
       Usage(error.what());
     }
   } else if (option == "--backend-dir") {
-    arguments.backend_directory = value;
+    arguments.backend_directory = std::filesystem::u8path(value);
   } else {
     Usage("unknown option: " + std::string(option));
   }
@@ -268,6 +286,14 @@ std::string ReadInput(const Arguments& arguments) {
     }
     return ReadStream(input);
   }
+#if defined(_WIN32)
+  DWORD console_mode = 0;
+  if (!GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &console_mode) &&
+      _setmode(_fileno(stdin), _O_BINARY) == -1) {
+    throw std::system_error(errno, std::generic_category(),
+                            "cannot set stdin to binary mode");
+  }
+#endif
   return ReadStream(std::cin);
 }
 
@@ -360,7 +386,14 @@ std::uint64_t ModelFileSize(const std::filesystem::path& path) {
 }
 
 std::optional<std::uint64_t> HostAvailableMemory() {
-#ifdef __APPLE__
+#ifdef _WIN32
+  MEMORYSTATUSEX status{};
+  status.dwLength = sizeof(status);
+  if (!GlobalMemoryStatusEx(&status)) {
+    return std::nullopt;
+  }
+  return status.ullAvailPhys;
+#elif defined(__APPLE__)
   vm_statistics64_data_t statistics{};
   mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
   if (host_statistics64(mach_host_self(), HOST_VM_INFO64,
@@ -635,9 +668,9 @@ int Run(const Arguments& arguments, std::ostream& output,
 
   llama_model_params model_parameters = llama_model_default_params();
   model_parameters.n_gpu_layers = arguments.gpu_layers;
-  Model model(
-      llama_model_load_from_file(arguments.model.c_str(), model_parameters),
-      llama_model_free);
+  const std::string model_path = Utf8Path(arguments.model);
+  Model model(llama_model_load_from_file(model_path.c_str(), model_parameters),
+              llama_model_free);
   if (!model) {
     const std::string detail = backend_log.Error();
     throw std::runtime_error(
@@ -686,7 +719,9 @@ class EntropyScorer::Impl {
     CheckAvailableMemory(arguments, use_gpu, gpu_available);
     llama_model_params parameters = llama_model_default_params();
     parameters.n_gpu_layers = inference_options.gpu_layers;
-    model_.reset(llama_model_load_from_file(model_path.c_str(), parameters));
+    const std::string utf8_model_path = Utf8Path(model_path);
+    model_.reset(
+        llama_model_load_from_file(utf8_model_path.c_str(), parameters));
     if (!model_) {
       const std::string detail = backend_log_.Error();
       throw std::runtime_error(

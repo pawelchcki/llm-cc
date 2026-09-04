@@ -36,6 +36,26 @@
 
 namespace {
 
+std::string PathUtf8(const std::filesystem::path& path) {
+#if defined(_WIN32)
+  const std::u8string value = path.u8string();
+  return std::string(reinterpret_cast<const char*>(value.data()), value.size());
+#else
+  return path.string();
+#endif
+}
+
+std::filesystem::path ChecksumPath(const std::filesystem::path& bundle) {
+  auto checksum = bundle;
+  checksum += std::filesystem::path(".sha256");
+  return checksum;
+}
+
+std::filesystem::path PartialPath(const std::filesystem::path& path) {
+  auto partial = path;
+  partial += std::filesystem::path(".partial");
+  return partial;
+}
 struct AnalyzeArguments {
   std::vector<std::filesystem::path> sources;
   std::optional<llmcc::Language> language;
@@ -167,7 +187,7 @@ void SetAnalyzeOption(AnalyzeArguments& arguments, std::string_view option,
       arguments.language_name = llmcc::LanguageName(*arguments.language);
     }
   } else if (option == "--model") {
-    arguments.model = value;
+    arguments.model = std::filesystem::u8path(value);
   } else if (option == "--model-name") {
     arguments.model_name = value;
   } else if (option == "--gpu-layers") {
@@ -182,7 +202,7 @@ void SetAnalyzeOption(AnalyzeArguments& arguments, std::string_view option,
       Usage(error.what());
     }
   } else if (option == "--backend-dir") {
-    arguments.backend_directory = value;
+    arguments.backend_directory = std::filesystem::u8path(value);
   } else if (option == "--context") {
     arguments.context = ParseNumber<std::uint32_t>(option, value);
     if (arguments.context == 0) {
@@ -240,7 +260,7 @@ AnalyzeArguments ParseAnalyzeArguments(int argc, char** argv) {
       continue;
     }
     if (!option.starts_with('-')) {
-      arguments.sources.emplace_back(option);
+      arguments.sources.emplace_back(std::filesystem::u8path(option));
       continue;
     }
     if (index + 1 >= argc) {
@@ -297,9 +317,13 @@ AnalyzeArguments ParseAnalyzeArguments(int argc, char** argv) {
 
 std::string ReadFile(const std::filesystem::path& path) {
   using File = std::unique_ptr<std::FILE, decltype(&std::fclose)>;
+#if defined(_WIN32)
+  File input(_wfopen(path.c_str(), L"rb"), std::fclose);
+#else
   File input(std::fopen(path.c_str(), "rb"), std::fclose);
+#endif
   if (!input) {
-    throw std::runtime_error("failed to read " + path.string());
+    throw std::runtime_error("failed to read " + PathUtf8(path));
   }
   std::string contents;
   std::array<char, std::size_t{64} * 1024> buffer{};
@@ -311,7 +335,7 @@ std::string ReadFile(const std::filesystem::path& path) {
       continue;
     }
     if (std::ferror(input.get()) != 0) {
-      throw std::runtime_error("failed while reading " + path.string());
+      throw std::runtime_error("failed while reading " + PathUtf8(path));
     }
     break;
   }
@@ -347,7 +371,7 @@ int RunModels(int argc, char** argv) {
     return 0;
   }
   if (action == "path" && argc == 3) {
-    std::cout << cache_dir.string() << '\n';
+    std::cout << PathUtf8(cache_dir) << '\n';
     return 0;
   }
   if (action == "remove" && argc == 4) {
@@ -377,7 +401,7 @@ void RemoveBackendFile(const std::filesystem::path& path) {
   std::filesystem::remove(path, error);
   if (error && error != std::errc::no_such_file_or_directory) {
     throw std::runtime_error("could not remove backend cache file " +
-                             path.string() + ": " + error.message());
+                             PathUtf8(path) + ": " + error.message());
   }
 }
 
@@ -395,7 +419,7 @@ int RunBackends(int argc, char** argv) {
       if (error && error != std::errc::no_such_file_or_directory &&
           error != std::errc::not_a_directory) {
         throw std::runtime_error("could not inspect backend bundle " +
-                                 path.string() + ": " + error.message());
+                                 PathUtf8(path) + ": " + error.message());
       }
       if (!cached) {
         std::cout << name << "\tnot cached\n";
@@ -404,9 +428,9 @@ int RunBackends(int argc, char** argv) {
       const std::uintmax_t size = std::filesystem::file_size(path, error);
       if (error) {
         throw std::runtime_error("could not measure backend bundle " +
-                                 path.string() + ": " + error.message());
+                                 PathUtf8(path) + ": " + error.message());
       }
-      std::cout << name << "\tcached\t" << path.string() << '\t' << size
+      std::cout << name << "\tcached\t" << PathUtf8(path) << '\t' << size
                 << " bytes\n";
     }
     return 0;
@@ -434,8 +458,8 @@ int RunBackends(int argc, char** argv) {
     if (no_download) {
       Usage("backends fetch cannot be used with --no-download");
     }
-    std::cout << llmcc::FetchBackendBundle(BackendOptions(name, explicit_url))
-                     .string()
+    std::cout << PathUtf8(llmcc::FetchBackendBundle(
+                     BackendOptions(name, explicit_url)))
               << '\n';
     return 0;
   }
@@ -443,7 +467,7 @@ int RunBackends(int argc, char** argv) {
     const llmcc::BackendFetchOptions options =
         BackendOptions(argc == 4 ? argv[3] : "cuda");
     const std::filesystem::path bundle = llmcc::BackendBundlePath(options);
-    std::cout << (argc == 4 ? bundle : bundle.parent_path()).string() << '\n';
+    std::cout << PathUtf8(argc == 4 ? bundle : bundle.parent_path()) << '\n';
     return 0;
   }
   if (action == "remove" && argc == 4) {
@@ -455,19 +479,19 @@ int RunBackends(int argc, char** argv) {
     if (error && error != std::errc::no_such_file_or_directory &&
         error != std::errc::not_a_directory) {
       throw std::runtime_error("could not inspect backend bundle " +
-                               bundle.string() + ": " + error.message());
+                               PathUtf8(bundle) + ": " + error.message());
     }
     const std::array files = {
         bundle,
-        std::filesystem::path(bundle.string() + ".sha256"),
+        ChecksumPath(bundle),
         bundle.parent_path() / (std::string(name) + ".manifest.json"),
     };
     for (const std::filesystem::path& path : files) {
       RemoveBackendFile(path);
-      RemoveBackendFile(path.string() + ".partial");
+      RemoveBackendFile(PartialPath(path));
     }
     if (cached) {
-      std::cout << name << "\tremoved\t" << bundle.string() << '\n';
+      std::cout << name << "\tremoved\t" << PathUtf8(bundle) << '\n';
     } else {
       std::cout << name << "\tnot cached\n";
     }
@@ -499,7 +523,7 @@ CacheArguments ParseCacheArguments(int argc, char** argv) {
         Usage("--format expects text or json");
       }
     } else if (!value.starts_with('-') && !path_set) {
-      arguments.path = value;
+      arguments.path = std::filesystem::u8path(value);
       path_set = true;
     } else {
       Usage("invalid cache option: " + std::string(value));
@@ -516,7 +540,7 @@ int RunCache(int argc, char** argv) {
   const CacheArguments arguments = ParseCacheArguments(argc, argv);
   const auto repository = llmcc::FindGitRepository(arguments.path);
   if (!repository.has_value()) {
-    throw std::invalid_argument(arguments.path.string() +
+    throw std::invalid_argument(PathUtf8(arguments.path) +
                                 " is not inside a Git worktree");
   }
   if (arguments.action == "prune") {
@@ -526,15 +550,15 @@ int RunCache(int argc, char** argv) {
   }
   const auto status = llmcc::GetRepositoryCacheStatus(*repository);
   if (arguments.format == "json") {
-    std::cout << nlohmann::json{{"repository", status.repository.string()},
-                                {"directory", status.directory.string()},
+    std::cout << nlohmann::json{{"repository", PathUtf8(status.repository)},
+                                {"directory", PathUtf8(status.directory)},
                                 {"entries", status.entries},
                                 {"bytes", status.bytes}}
                      .dump()
               << '\n';
   } else {
-    std::cout << "repository: " << status.repository.string() << '\n'
-              << "directory: " << status.directory.string() << '\n'
+    std::cout << "repository: " << PathUtf8(status.repository) << '\n'
+              << "directory: " << PathUtf8(status.directory) << '\n'
               << "entries: " << status.entries << '\n'
               << "bytes: " << status.bytes << '\n';
   }
@@ -700,7 +724,7 @@ nlohmann::json ConfigurationJson(
         {"namespace", ".llm-cc-cache/llm-cc/v1/entropy"},
         {"limit_bytes", llmcc::kEntropyCacheLimit}}}};
   if (identity != nullptr) {
-    configuration["model"] = identity->canonical_path.string();
+    configuration["model"] = PathUtf8(identity->canonical_path);
     configuration["model_size"] = identity->size;
     configuration["model_modification_time"] = identity->modification_time;
     configuration["backend"] = identity->backend;
@@ -874,7 +898,7 @@ void PrintFileText(const llmcc::DiscoveredSource& source,
                    const llmcc::FileAnalysisResult& result,
                    std::string_view score_mode) {
   const llmcc::Metrics& metrics = result.analysis.metrics;
-  std::cout << TerminalSafe(source.path.string()) << "   score "
+  std::cout << TerminalSafe(PathUtf8(source.path)) << "   score "
             << FormatScore(metrics, score_mode) << " ("
             << ScoreLabel(score_mode) << ")   density ";
   if (metrics.token_count == 0) {
@@ -939,7 +963,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
                           .include_headers = arguments.include_headers,
                           .no_ignore = arguments.no_ignore});
   const std::string requested_model =
-      arguments.model.has_value() ? arguments.model->string()
+      arguments.model.has_value() ? PathUtf8(*arguments.model)
                                   : arguments.model_name.value_or("default");
   if (!text) {
     Emit({{"type", "start"},
@@ -1018,7 +1042,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       try {
         static_cast<void>(llmcc::GetRepositoryCacheStatus(repository));
       } catch (const std::exception& error) {
-        warning("entropy cache is unavailable for " + repository.string() +
+        warning("entropy cache is unavailable for " + PathUtf8(repository) +
                 ": " + error.what());
       }
     }
@@ -1053,7 +1077,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
     const std::string language(llmcc::LanguageName(source.language));
     if (!text) {
       Emit({{"type", "file_start"},
-            {"path", source.path.string()},
+            {"path", PathUtf8(source.path)},
             {"language", language}});
     }
     try {
@@ -1064,7 +1088,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       } else {
         nlohmann::json event = llmcc::AnalysisJson(result.analysis);
         event["type"] = "file";
-        event["path"] = source.path.string();
+        event["path"] = PathUtf8(source.path);
         event["language"] = language;
         event["entropy_cache_hit"] = result.entropy_cache_hit;
         event["score"] =
@@ -1095,11 +1119,11 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       ++totals.failed;
       ++languages[language].failed;
       if (text) {
-        std::cerr << "error: " << TerminalSafe(source.path.string()) << ": "
+        std::cerr << "error: " << TerminalSafe(PathUtf8(source.path)) << ": "
                   << TerminalSafe(error.what()) << '\n';
       } else {
         Emit({{"type", "error"},
-              {"path", source.path.string()},
+              {"path", PathUtf8(source.path)},
               {"language", language},
               {"message", error.what()},
               {"fatal", true}});
@@ -1109,11 +1133,11 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       ++totals.failed;
       ++languages[language].failed;
       if (text) {
-        std::cerr << "error: " << TerminalSafe(source.path.string()) << ": "
+        std::cerr << "error: " << TerminalSafe(PathUtf8(source.path)) << ": "
                   << TerminalSafe(error.what()) << '\n';
       } else {
         Emit({{"type", "error"},
-              {"path", source.path.string()},
+              {"path", PathUtf8(source.path)},
               {"language", language},
               {"message", error.what()}});
       }
@@ -1132,7 +1156,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
+int Main(int argc, char** argv) {
   try {
     int result = 0;
     if (argc > 1 && std::string_view(argv[1]) == "score") {
@@ -1161,3 +1185,21 @@ int main(int argc, char** argv) {
     return 2;
   }
 }
+
+#if defined(_WIN32)
+int wmain(int argc, wchar_t** wide_argv) {
+  std::vector<std::string> encoded;
+  encoded.reserve(argc);
+  for (int index = 0; index < argc; ++index) {
+    encoded.push_back(PathUtf8(std::filesystem::path(wide_argv[index])));
+  }
+  std::vector<char*> argv;
+  argv.reserve(argc);
+  for (std::string& argument : encoded) {
+    argv.push_back(argument.data());
+  }
+  return Main(argc, argv.data());
+}
+#else
+int main(int argc, char** argv) { return Main(argc, argv); }
+#endif

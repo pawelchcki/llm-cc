@@ -280,10 +280,10 @@ cc_library(
         "ggml/include",
         "ggml/src",
     ],
-    linkopts = [
-        "-ldl",
-        "-lpthread",
-    ],
+    linkopts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-ldl", "-lpthread"],
+    }),
 )
 
 cc_library(
@@ -329,6 +329,10 @@ cc_library(
         "LLAMA_COMMIT=\\\"c589f0ed10c643678c4707dd160c21ac7633ebc0\\\"",
         "LLAMA_VERSION=\\\"0.0.0\\\"",
     ],
+    copts = select({
+        "@platforms//os:windows": ["/Zc:char8_t-"],
+        "//conditions:default": [],
+    }),
     includes = [
         "include",
         "src",

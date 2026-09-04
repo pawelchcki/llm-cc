@@ -31,10 +31,10 @@ make_repo() {
   mkdir -p "$repo/tools"
   cp "$version_script" "$repo/tools/version.sh"
   cp "$status_script" "$repo/tools/bazel_status.sh"
-  printf '%s\n' "$version" > "$repo/VERSION"
+  printf '%s\n' "$version" > "$repo/version.txt"
   printf 'tracked\n' > "$repo/tracked.txt"
   git -C "$repo" init -q
-  git -C "$repo" add VERSION tools/bazel_status.sh tools/version.sh tracked.txt
+  git -C "$repo" add version.txt tools/bazel_status.sh tools/version.sh tracked.txt
   git -C "$repo" commit -q -m initial
   printf '%s\n' "$repo"
 }

@@ -1,25 +1,56 @@
 #include "src/payload.h"
 
 #include <cstdlib>
+#include <optional>
 #include <stdexcept>
 
 namespace llmcc {
 
+namespace {
+
+std::optional<std::filesystem::path> RuntimeEnvironmentPath(
+    const char* narrow_name, const wchar_t* wide_name) {
+#if defined(_WIN32)
+  static_cast<void>(narrow_name);
+  const wchar_t* value = _wgetenv(wide_name);
+  return value != nullptr && *value != L'\0'
+             ? std::optional<std::filesystem::path>(value)
+             : std::nullopt;
+#else
+  static_cast<void>(wide_name);
+  const char* value = std::getenv(narrow_name);
+  return value != nullptr && *value != '\0'
+             ? std::optional<std::filesystem::path>(value)
+             : std::nullopt;
+#endif
+}
+
+}  // namespace
+
 std::filesystem::path RuntimeRoot() {
-  if (const char* override = std::getenv("LLM_CC_RUNTIME_DIR");
-      override != nullptr && *override != '\0') {
-    return override;
+  if (const auto override =
+          RuntimeEnvironmentPath("LLM_CC_RUNTIME_DIR", L"LLM_CC_RUNTIME_DIR")) {
+    return *override;
   }
-  if (const char* xdg = std::getenv("XDG_CACHE_HOME");
-      xdg != nullptr && *xdg != '\0') {
-    return std::filesystem::path(xdg) / "llm-cc" / "runtime";
+  if (const auto xdg =
+          RuntimeEnvironmentPath("XDG_CACHE_HOME", L"XDG_CACHE_HOME")) {
+    return *xdg / "llm-cc" / "runtime";
   }
-  if (const char* home = std::getenv("HOME");
-      home != nullptr && *home != '\0') {
-    return std::filesystem::path(home) / ".cache" / "llm-cc" / "runtime";
+  if (const auto home = RuntimeEnvironmentPath("HOME", L"HOME")) {
+    return *home / ".cache" / "llm-cc" / "runtime";
   }
+#if defined(_WIN32)
+  if (const auto local_app_data =
+          RuntimeEnvironmentPath("LOCALAPPDATA", L"LOCALAPPDATA")) {
+    return *local_app_data / "llm-cc" / "runtime";
+  }
+  if (const auto user_profile =
+          RuntimeEnvironmentPath("USERPROFILE", L"USERPROFILE")) {
+    return *user_profile / "AppData" / "Local" / "llm-cc" / "runtime";
+  }
+#endif
   throw std::runtime_error(
-      "HOME is unset; set LLM_CC_RUNTIME_DIR for the runtime cache");
+      "runtime cache root is unavailable; set LLM_CC_RUNTIME_DIR");
 }
 
 }  // namespace llmcc

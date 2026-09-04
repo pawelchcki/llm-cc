@@ -24,11 +24,11 @@ load(
 
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["VERSION"])
+exports_files(["version.txt"])
 
 genrule(
     name = "version_header",
-    srcs = ["VERSION"],
+    srcs = ["version.txt"],
     outs = ["generated/version.h"],
     # Follow --stamp: development builds use the VERSION fallback, while
     # release/install builds receive the workspace status files.
@@ -44,7 +44,7 @@ if [[ -f "$$status_file" ]]; then
   artifact_base_url=$$(grep '^STABLE_LLM_CC_ARTIFACT_BASE_URL ' "$$status_file" | cut -d' ' -f2- || true)
 fi
 if [[ -z "$$version" ]]; then
-  base=$$(tr -d '[:space:]' < $(location VERSION))
+  base=$$(tr -d '[:space:]' < $(location version.txt))
   version="$$base-dev.0+unknown"
 fi
 case "$$version" in
@@ -139,11 +139,32 @@ config_setting(
     constraint_values = ["@platforms//os:macos"],
 )
 
+config_setting(
+    name = "host_windows",
+    constraint_values = ["@platforms//os:windows"],
+)
+
+selects.config_setting_group(
+    name = "backend_cpu_windows",
+    match_all = [
+        ":backend_cpu",
+        ":host_windows",
+    ],
+)
+
 selects.config_setting_group(
     name = "backend_universal",
     match_all = [
         ":backend_universal_explicit",
         ":target_linux_x86_64",
+    ],
+)
+
+selects.config_setting_group(
+    name = "backend_cpu_linux",
+    match_all = [
+        ":backend_cpu",
+        ":target_linux",
     ],
 )
 
@@ -168,14 +189,6 @@ selects.config_setting_group(
     match_any = [
         ":backend_cpu_auto",
         ":backend_cpu_explicit",
-    ],
-)
-
-selects.config_setting_group(
-    name = "backend_cpu_linux",
-    match_all = [
-        ":backend_cpu",
-        ":target_linux",
     ],
 )
 
@@ -344,6 +357,7 @@ configure_make_variant(
     set_file_prefix_map = True,
     target_compatible_with = select({
         ":host_macos": ["@platforms//:incompatible"],
+        ":host_windows": ["@platforms//:incompatible"],
         "//conditions:default": [],
     }),
     targets = [
@@ -362,6 +376,10 @@ cmake(
             CURL_USE_OPENSSL = "OFF",
             CURL_USE_SECTRANSP = "ON",
         ),
+        ":host_windows": curl_cmake_options(
+            CURL_USE_OPENSSL = "OFF",
+            CURL_USE_SCHANNEL = "ON",
+        ),
         "//conditions:default": curl_cmake_options(
             CURL_USE_OPENSSL = "ON",
             CURL_USE_SECTRANSP = "OFF",
@@ -374,13 +392,17 @@ cmake(
     }),
     deps = select({
         ":host_macos": [],
+        ":host_windows": [],
         "//conditions:default": [
             ":openssl",
         ],
     }),
     generate_args = ["-GNinja"],
     lib_source = "@curl//:all",
-    out_static_libs = ["libcurl.a"],
+    out_static_libs = select({
+        ":host_windows": ["libcurl.lib"],
+        "//conditions:default": ["libcurl.a"],
+    }),
     set_file_prefix_map = True,
 )
 
@@ -455,6 +477,7 @@ cc_library(
     ],
     deps = select({
         ":host_macos": [],
+        ":host_windows": [],
         "//conditions:default": [
             ":linux_compat",
             ":openssl",
@@ -501,12 +524,23 @@ cc_library(
     name = "download",
     srcs = ["src/download.cc"],
     hdrs = ["src/download.h"],
+    defines = select({
+        ":host_windows": ["CURL_STATICLIB"],
+        "//conditions:default": [],
+    }),
     linkopts = select({
         ":host_macos": [
             "-framework CoreFoundation",
             "-framework CoreServices",
             "-framework Security",
             "-framework SystemConfiguration",
+        ],
+        ":host_windows": [
+            "advapi32.lib",
+            "crypt32.lib",
+            "normaliz.lib",
+            "wldap32.lib",
+            "ws2_32.lib",
         ],
         "//conditions:default": [],
     }),
@@ -659,6 +693,7 @@ cc_binary(
             "-framework MetalKit",
             "-lobjc",
         ],
+        ":backend_cpu_windows": [],
         ":backend_cpu_linux": [
             "-ldl",
             "-lpthread",
@@ -725,16 +760,26 @@ filegroup(
 sh_test(
     name = "format_test",
     srcs = ["//tools:format_test.sh"],
-    args = [
-        "$(location @llvm_toolchain_llvm//:bin/clang-format)",
-        "$(location :.clang-format)",
-        "$(locations :cpp_sources)",
-    ],
-    data = [
-        ".clang-format",
-        ":cpp_sources",
-        "@llvm_toolchain_llvm//:bin/clang-format",
-    ],
+    args = select({
+        ":host_windows": [],
+        "//conditions:default": [
+            "$(location @llvm_toolchain_llvm//:bin/clang-format)",
+            "$(location :.clang-format)",
+            "$(locations :cpp_sources)",
+        ],
+    }),
+    data = select({
+        ":host_windows": [],
+        "//conditions:default": [
+            ".clang-format",
+            ":cpp_sources",
+            "@llvm_toolchain_llvm//:bin/clang-format",
+        ],
+    }),
+    target_compatible_with = select({
+        ":host_windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
 )
 
 sh_test(
@@ -947,6 +992,10 @@ cc_test(
 cc_test(
     name = "backend_fetch_test",
     srcs = ["src/backend_fetch_test.cc"],
+    target_compatible_with = select({
+        ":host_windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
     deps = [
         ":backend_fetch",
         ":entropy_cache",
@@ -956,6 +1005,10 @@ cc_test(
 
 cc_test(
     name = "cache_test",
+    target_compatible_with = select({
+        ":host_windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
     srcs = ["src/cache_test.cc"],
     deps = [
         ":cache",
@@ -974,6 +1027,10 @@ cc_test(
 
 cc_test(
     name = "entropy_cache_test",
+    target_compatible_with = select({
+        ":host_windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
     srcs = ["src/entropy_cache_test.cc"],
     deps = [
         ":entropy_cache",
@@ -1025,6 +1082,10 @@ cc_test(
 cc_test(
     name = "inference_guard_test",
     srcs = ["src/inference_guard_test.cc"],
+    target_compatible_with = select({
+        ":host_windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
     deps = [
         ":inference_guard",
         ":test_util",
@@ -1088,6 +1149,10 @@ cc_test(
 cc_test(
     name = "rocm_topology_test",
     srcs = ["src/rocm_topology_test.cc"],
+    target_compatible_with = select({
+        ":host_windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
     deps = [
         ":rocm_topology",
         ":test_util",
