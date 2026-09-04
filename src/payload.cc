@@ -18,8 +18,19 @@ std::filesystem::path RuntimeRoot() {
       home != nullptr && *home != '\0') {
     return std::filesystem::path(home) / ".cache" / "llm-cc" / "runtime";
   }
+#if defined(_WIN32)
+  if (const char* local_app_data = std::getenv("LOCALAPPDATA");
+      local_app_data != nullptr && *local_app_data != '\0') {
+    return std::filesystem::path(local_app_data) / "llm-cc" / "runtime";
+  }
+  if (const char* user_profile = std::getenv("USERPROFILE");
+      user_profile != nullptr && *user_profile != '\0') {
+    return std::filesystem::path(user_profile) / "AppData" / "Local" /
+           "llm-cc" / "runtime";
+  }
+#endif
   throw std::runtime_error(
-      "HOME is unset; set LLM_CC_RUNTIME_DIR for the runtime cache");
+      "runtime cache root is unavailable; set LLM_CC_RUNTIME_DIR");
 }
 
 }  // namespace llmcc

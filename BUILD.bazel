@@ -1137,6 +1137,10 @@ cc_test(
 cc_test(
     name = "rocm_topology_test",
     srcs = ["src/rocm_topology_test.cc"],
+    target_compatible_with = select({
+        ":host_windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
     deps = [
         ":rocm_topology",
         ":test_util",

@@ -39,6 +39,14 @@
 
 namespace {
 
+std::string Utf8Path(const std::filesystem::path& path) {
+#if defined(_WIN32)
+  const std::u8string value = path.u8string();
+  return std::string(reinterpret_cast<const char*>(value.data()), value.size());
+#else
+  return path.string();
+#endif
+}
 enum class BosMode : std::uint8_t { kAuto, kAlways, kNever };
 
 constexpr std::size_t kDecodeBatchSize = 64;
@@ -635,8 +643,8 @@ int Run(const Arguments& arguments, std::ostream& output,
 
   llama_model_params model_parameters = llama_model_default_params();
   model_parameters.n_gpu_layers = arguments.gpu_layers;
-  Model model(llama_model_load_from_file(arguments.model.string().c_str(),
-                                         model_parameters),
+  const std::string model_path = Utf8Path(arguments.model);
+  Model model(llama_model_load_from_file(model_path.c_str(), model_parameters),
               llama_model_free);
   if (!model) {
     const std::string detail = backend_log.Error();
@@ -686,8 +694,9 @@ class EntropyScorer::Impl {
     CheckAvailableMemory(arguments, use_gpu, gpu_available);
     llama_model_params parameters = llama_model_default_params();
     parameters.n_gpu_layers = inference_options.gpu_layers;
+    const std::string utf8_model_path = Utf8Path(model_path);
     model_.reset(
-        llama_model_load_from_file(model_path.string().c_str(), parameters));
+        llama_model_load_from_file(utf8_model_path.c_str(), parameters));
     if (!model_) {
       const std::string detail = backend_log_.Error();
       throw std::runtime_error(
