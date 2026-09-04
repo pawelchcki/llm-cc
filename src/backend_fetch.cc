@@ -216,8 +216,8 @@ fs::path RunningExecutablePath() {
 #elif defined(_WIN32)
   std::vector<wchar_t> path(260);
   for (;;) {
-    const DWORD length =
-        GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
+    const DWORD length = GetModuleFileNameW(
+        nullptr, path.data(), static_cast<DWORD>(path.size()));
     if (length == 0) {
       throw std::system_error(static_cast<int>(GetLastError()),
                               std::system_category(),
