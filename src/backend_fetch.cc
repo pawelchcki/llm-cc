@@ -45,6 +45,12 @@ constexpr std::size_t kFooterSize = 64;
 constexpr std::size_t kNameSize = 16;
 constexpr std::size_t kSha256Size = 32;
 
+fs::path ChecksumPath(const fs::path& bundle) {
+  auto checksum = bundle;
+  checksum += fs::path(".sha256");
+  return checksum;
+}
+
 constexpr std::array<std::uint32_t, 64> kShaConstants = {
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1,
     0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
@@ -612,7 +618,7 @@ fs::path BackendBundlePath(const BackendFetchOptions& options) {
 
 void VerifyBackendBundle(const BackendFetchOptions& options) {
   const fs::path bundle = BackendBundlePath(options);
-  const fs::path checksum = bundle.string() + ".sha256";
+  const fs::path checksum = ChecksumPath(bundle);
   const fs::path manifest =
       bundle.parent_path() / (std::string(options.name) + ".manifest.json");
   CheckNotSymlink(bundle);
@@ -642,7 +648,7 @@ void VerifyBackendBundle(const BackendFetchOptions& options) {
 fs::path FetchBackendBundle(const BackendFetchOptions& options,
                             const BundleDownloader& downloader) {
   const fs::path bundle = BackendBundlePath(options);
-  const fs::path checksum = bundle.string() + ".sha256";
+  const fs::path checksum = ChecksumPath(bundle);
   const fs::path manifest =
       bundle.parent_path() / (std::string(options.name) + ".manifest.json");
   CheckNotSymlink(options.runtime_root / "backends");

@@ -44,6 +44,12 @@ std::string PathUtf8(const std::filesystem::path& path) {
   return path.string();
 #endif
 }
+
+std::filesystem::path ChecksumPath(const std::filesystem::path& bundle) {
+  auto checksum = bundle;
+  checksum += std::filesystem::path(".sha256");
+  return checksum;
+}
 struct AnalyzeArguments {
   std::vector<std::filesystem::path> sources;
   std::optional<llmcc::Language> language;
@@ -471,7 +477,7 @@ int RunBackends(int argc, char** argv) {
     }
     const std::array files = {
         bundle,
-        std::filesystem::path(bundle.string() + ".sha256"),
+        ChecksumPath(bundle),
         bundle.parent_path() / (std::string(name) + ".manifest.json"),
     };
     for (const std::filesystem::path& path : files) {
@@ -538,15 +544,15 @@ int RunCache(int argc, char** argv) {
   }
   const auto status = llmcc::GetRepositoryCacheStatus(*repository);
   if (arguments.format == "json") {
-    std::cout << nlohmann::json{{"repository", status.repository.string()},
-                                {"directory", status.directory.string()},
+    std::cout << nlohmann::json{{"repository", PathUtf8(status.repository)},
+                                {"directory", PathUtf8(status.directory)},
                                 {"entries", status.entries},
                                 {"bytes", status.bytes}}
                      .dump()
               << '\n';
   } else {
-    std::cout << "repository: " << status.repository.string() << '\n'
-              << "directory: " << status.directory.string() << '\n'
+    std::cout << "repository: " << PathUtf8(status.repository) << '\n'
+              << "directory: " << PathUtf8(status.directory) << '\n'
               << "entries: " << status.entries << '\n'
               << "bytes: " << status.bytes << '\n';
   }
