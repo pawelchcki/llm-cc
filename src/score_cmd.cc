@@ -635,10 +635,9 @@ int Run(const Arguments& arguments, std::ostream& output,
 
   llama_model_params model_parameters = llama_model_default_params();
   model_parameters.n_gpu_layers = arguments.gpu_layers;
-  Model model(
-      llama_model_load_from_file(arguments.model.string().c_str(),
-                                 model_parameters),
-      llama_model_free);
+  Model model(llama_model_load_from_file(arguments.model.string().c_str(),
+                                         model_parameters),
+              llama_model_free);
   if (!model) {
     const std::string detail = backend_log.Error();
     throw std::runtime_error(
