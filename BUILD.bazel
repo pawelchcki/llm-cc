@@ -992,6 +992,10 @@ cc_test(
 cc_test(
     name = "backend_fetch_test",
     srcs = ["src/backend_fetch_test.cc"],
+    target_compatible_with = select({
+        ":host_windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
     deps = [
         ":backend_fetch",
         ":entropy_cache",

@@ -18,6 +18,14 @@
 namespace llmcc {
 namespace {
 
+std::string PathUtf8(const std::filesystem::path& path) {
+#if defined(_WIN32)
+  const std::u8string value = path.u8string();
+  return std::string(reinterpret_cast<const char*>(value.data()), value.size());
+#else
+  return path.generic_string();
+#endif
+}
 #if defined(_WIN32)
 std::wstring ShellQuote(std::wstring_view value) {
   std::wstring result = L"\"";
@@ -195,7 +203,7 @@ void AddFile(const std::filesystem::path& path, bool explicit_file,
     return;
   }
   if (!explicit_file &&
-      !IsSourcePath(canonical.string(), options.include_headers)) {
+      !IsSourcePath(PathUtf8(canonical), options.include_headers)) {
     return;
   }
   Language language;
@@ -203,7 +211,7 @@ void AddFile(const std::filesystem::path& path, bool explicit_file,
     language = *options.language;
   } else {
     try {
-      language = InferLanguage(canonical.string());
+      language = InferLanguage(PathUtf8(canonical));
     } catch (const std::invalid_argument&) {
       if (explicit_file) {
         throw;
@@ -212,7 +220,7 @@ void AddFile(const std::filesystem::path& path, bool explicit_file,
     }
   }
   files.emplace(
-      canonical.generic_string(),
+      PathUtf8(canonical),
       DiscoveredSource{
           .path = canonical, .language = language, .repository = repository});
 }

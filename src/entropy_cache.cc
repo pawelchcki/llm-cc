@@ -375,7 +375,8 @@ void WriteEntropyCache(const std::filesystem::path& repository,
           std::chrono::steady_clock::now().time_since_epoch().count()) +
       "." + std::to_string(temporary_sequence.fetch_add(1)) + "." +
       std::to_string(std::hash<std::thread::id>{}(std::this_thread::get_id()));
-  const auto temporary = target.string() + ".tmp." + suffix;
+  auto temporary = target;
+  temporary += std::filesystem::path(".tmp." + suffix);
   try {
     const auto bytes = nlohmann::json::to_cbor(encoded);
     std::ofstream output(temporary, std::ios::binary | std::ios::trunc);

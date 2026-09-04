@@ -712,7 +712,7 @@ nlohmann::json ConfigurationJson(
         {"namespace", ".llm-cc-cache/llm-cc/v1/entropy"},
         {"limit_bytes", llmcc::kEntropyCacheLimit}}}};
   if (identity != nullptr) {
-    configuration["model"] = identity->canonical_path.string();
+    configuration["model"] = PathUtf8(identity->canonical_path);
     configuration["model_size"] = identity->size;
     configuration["model_modification_time"] = identity->modification_time;
     configuration["backend"] = identity->backend;
