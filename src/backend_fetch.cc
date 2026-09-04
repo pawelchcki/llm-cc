@@ -443,6 +443,22 @@ class BackendCacheLock {
         throw std::runtime_error(message);
       }
     }
+#elif defined(_WIN32)
+    handle_ = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE,
+                          FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                          OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle_ == INVALID_HANDLE_VALUE) {
+      throw std::system_error(static_cast<int>(GetLastError()),
+                              std::system_category(),
+                              "cannot open backend cache lock");
+    }
+    if (!LockFileEx(handle_, LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, &overlapped_)) {
+      const DWORD error = GetLastError();
+      CloseHandle(handle_);
+      handle_ = INVALID_HANDLE_VALUE;
+      throw std::system_error(static_cast<int>(error), std::system_category(),
+                              "cannot acquire backend cache lock");
+    }
 #else
     static_cast<void>(path);
     lock_ = std::unique_lock<std::mutex>(FallbackMutex());
@@ -454,6 +470,11 @@ class BackendCacheLock {
     if (descriptor_ >= 0) {
       close(descriptor_);
     }
+#elif defined(_WIN32)
+    if (handle_ != INVALID_HANDLE_VALUE) {
+      UnlockFileEx(handle_, 0, 1, 0, &overlapped_);
+      CloseHandle(handle_);
+    }
 #endif
   }
 
@@ -463,6 +484,9 @@ class BackendCacheLock {
  private:
 #if defined(__linux__) || defined(__APPLE__)
   int descriptor_ = -1;
+#elif defined(_WIN32)
+  HANDLE handle_ = INVALID_HANDLE_VALUE;
+  OVERLAPPED overlapped_{};
 #else
   static std::mutex& FallbackMutex() {
     static std::mutex mutex;

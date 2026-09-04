@@ -102,6 +102,14 @@ std::filesystem::path CacheDir() {
       override_dir.has_value() && !override_dir->empty()) {
     return *override_dir;
   }
+  if (const auto xdg = EnvironmentPath("XDG_CACHE_HOME");
+      xdg.has_value() && !xdg->empty()) {
+    return *xdg / "llm-cc/models";
+  }
+  if (const auto home = EnvironmentPath("HOME");
+      home.has_value() && !home->empty()) {
+    return *home / ".cache/llm-cc/models";
+  }
 #if defined(_WIN32)
   if (const auto local_app_data = EnvironmentPath("LOCALAPPDATA");
       local_app_data.has_value() && !local_app_data->empty()) {
@@ -112,9 +120,8 @@ std::filesystem::path CacheDir() {
     return *user_profile / "AppData/Local/llm-cc/models";
   }
 #endif
-  return CacheDirFrom(EnvironmentPath("LLM_CC_CACHE_DIR"),
-                      EnvironmentPath("XDG_CACHE_HOME"),
-                      EnvironmentPath("HOME"));
+  throw std::runtime_error(
+      "cache root is unavailable; set LLM_CC_CACHE_DIR");
 }
 
 std::filesystem::path CacheDirFrom(

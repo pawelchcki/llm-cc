@@ -36,6 +36,14 @@
 
 namespace {
 
+std::string PathUtf8(const std::filesystem::path& path) {
+#if defined(_WIN32)
+  const std::u8string value = path.u8string();
+  return std::string(reinterpret_cast<const char*>(value.data()), value.size());
+#else
+  return path.string();
+#endif
+}
 struct AnalyzeArguments {
   std::vector<std::filesystem::path> sources;
   std::optional<llmcc::Language> language;
@@ -878,7 +886,7 @@ void PrintFileText(const llmcc::DiscoveredSource& source,
                    const llmcc::FileAnalysisResult& result,
                    std::string_view score_mode) {
   const llmcc::Metrics& metrics = result.analysis.metrics;
-  std::cout << TerminalSafe(source.path.string()) << "   score "
+  std::cout << TerminalSafe(PathUtf8(source.path)) << "   score "
             << FormatScore(metrics, score_mode) << " ("
             << ScoreLabel(score_mode) << ")   density ";
   if (metrics.token_count == 0) {
@@ -1057,7 +1065,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
     const std::string language(llmcc::LanguageName(source.language));
     if (!text) {
       Emit({{"type", "file_start"},
-            {"path", source.path.string()},
+            {"path", PathUtf8(source.path)},
             {"language", language}});
     }
     try {
@@ -1068,7 +1076,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       } else {
         nlohmann::json event = llmcc::AnalysisJson(result.analysis);
         event["type"] = "file";
-        event["path"] = source.path.string();
+        event["path"] = PathUtf8(source.path);
         event["language"] = language;
         event["entropy_cache_hit"] = result.entropy_cache_hit;
         event["score"] =
@@ -1099,11 +1107,11 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       ++totals.failed;
       ++languages[language].failed;
       if (text) {
-        std::cerr << "error: " << TerminalSafe(source.path.string()) << ": "
+        std::cerr << "error: " << TerminalSafe(PathUtf8(source.path)) << ": "
                   << TerminalSafe(error.what()) << '\n';
       } else {
         Emit({{"type", "error"},
-              {"path", source.path.string()},
+              {"path", PathUtf8(source.path)},
               {"language", language},
               {"message", error.what()},
               {"fatal", true}});
@@ -1113,11 +1121,11 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       ++totals.failed;
       ++languages[language].failed;
       if (text) {
-        std::cerr << "error: " << TerminalSafe(source.path.string()) << ": "
+        std::cerr << "error: " << TerminalSafe(PathUtf8(source.path)) << ": "
                   << TerminalSafe(error.what()) << '\n';
       } else {
         Emit({{"type", "error"},
-              {"path", source.path.string()},
+              {"path", PathUtf8(source.path)},
               {"language", language},
               {"message", error.what()}});
       }

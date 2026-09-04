@@ -4,6 +4,7 @@
 #include <llama.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <charconv>
 #include <cmath>
 #include <cstdint>
@@ -33,6 +34,8 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#include <fcntl.h>
+#include <io.h>
 #include <windows.h>
 #endif
 
@@ -283,6 +286,12 @@ std::string ReadInput(const Arguments& arguments) {
     }
     return ReadStream(input);
   }
+#if defined(_WIN32)
+  if (_setmode(_fileno(stdin), _O_BINARY) == -1) {
+    throw std::system_error(errno, std::generic_category(),
+                            "cannot set stdin to binary mode");
+  }
+#endif
   return ReadStream(std::cin);
 }
 

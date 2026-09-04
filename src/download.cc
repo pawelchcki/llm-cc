@@ -2,7 +2,11 @@
 
 #include <curl/curl.h>
 #if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <io.h>
+#include <windows.h>
 #define STDERR_FILENO 2
 #define isatty _isatty
 #else
@@ -274,7 +278,16 @@ void StreamDownload(std::istream& input, const std::filesystem::path& target,
                              std::to_string(*total_length));
   }
   FinishOutput(output, partial);
+#if defined(_WIN32)
+  if (!MoveFileExW(partial.c_str(), target.c_str(),
+                   MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+    throw std::system_error(static_cast<int>(GetLastError()),
+                            std::system_category(),
+                            "failed to install downloaded file");
+  }
+#else
   std::filesystem::rename(partial, target);
+#endif
 }
 
 void DownloadFile(std::string_view download_url,
@@ -376,7 +389,16 @@ void DownloadFile(std::string_view download_url,
     }
     break;
   }
+#if defined(_WIN32)
+  if (!MoveFileExW(partial.c_str(), target.c_str(),
+                   MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+    throw std::system_error(static_cast<int>(GetLastError()),
+                            std::system_category(),
+                            "failed to install downloaded file");
+  }
+#else
   std::filesystem::rename(partial, target);
+#endif
   if (options.record_in_model_manifest) {
     MarkModelDownloaded(target);
   }
