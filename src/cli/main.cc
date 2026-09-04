@@ -1042,7 +1042,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       try {
         static_cast<void>(llmcc::GetRepositoryCacheStatus(repository));
       } catch (const std::exception& error) {
-        warning("entropy cache is unavailable for " + repository.string() +
+        warning("entropy cache is unavailable for " + PathUtf8(repository) +
                 ": " + error.what());
       }
     }
