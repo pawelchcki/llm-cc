@@ -458,7 +458,8 @@ int RunBackends(int argc, char** argv) {
     if (no_download) {
       Usage("backends fetch cannot be used with --no-download");
     }
-    std::cout << PathUtf8(llmcc::FetchBackendBundle(BackendOptions(name, explicit_url)))
+    std::cout << PathUtf8(llmcc::FetchBackendBundle(
+                     BackendOptions(name, explicit_url)))
               << '\n';
     return 0;
   }

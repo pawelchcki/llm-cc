@@ -114,7 +114,8 @@ bool IsWithin(const std::filesystem::path& path,
   auto path_iterator = path.begin();
   for (auto iterator = directory.begin(); iterator != directory.end();
        ++iterator, ++path_iterator) {
-    if (path_iterator == path.end() || !PathComponentEqual(*path_iterator, *iterator)) {
+    if (path_iterator == path.end() ||
+        !PathComponentEqual(*path_iterator, *iterator)) {
       return false;
     }
   }
