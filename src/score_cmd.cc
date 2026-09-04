@@ -686,8 +686,8 @@ class EntropyScorer::Impl {
     CheckAvailableMemory(arguments, use_gpu, gpu_available);
     llama_model_params parameters = llama_model_default_params();
     parameters.n_gpu_layers = inference_options.gpu_layers;
-    model_.reset(llama_model_load_from_file(model_path.string().c_str(),
-                                            parameters));
+    model_.reset(
+        llama_model_load_from_file(model_path.string().c_str(), parameters));
     if (!model_) {
       const std::string detail = backend_log_.Error();
       throw std::runtime_error(
