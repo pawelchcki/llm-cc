@@ -24,6 +24,27 @@ std::optional<std::filesystem::path> EnvironmentPath(const char* name) {
   return std::filesystem::path(value);
 }
 
+#if defined(_WIN32)
+std::optional<std::filesystem::path> EnvironmentPath(const wchar_t* name) {
+  const wchar_t* value = _wgetenv(name);
+  if (value == nullptr || *value == L'\0') {
+    return std::nullopt;
+  }
+  return std::filesystem::path(value);
+}
+#endif
+
+std::optional<std::filesystem::path> NativeEnvironmentPath(
+    const char* narrow_name, const wchar_t* wide_name) {
+#if defined(_WIN32)
+  static_cast<void>(narrow_name);
+  return EnvironmentPath(wide_name);
+#else
+  static_cast<void>(wide_name);
+  return EnvironmentPath(narrow_name);
+#endif
+}
+
 std::filesystem::path ManifestPath(const std::filesystem::path& cache_dir) {
   return cache_dir / kManifestFile;
 }
@@ -98,24 +119,24 @@ std::tuple<std::int64_t, std::int64_t, std::int64_t> CivilDate(
 }  // namespace
 
 std::filesystem::path CacheDir() {
-  if (const auto override_dir = EnvironmentPath("LLM_CC_CACHE_DIR");
+  if (const auto override_dir = NativeEnvironmentPath("LLM_CC_CACHE_DIR", L"LLM_CC_CACHE_DIR");
       override_dir.has_value() && !override_dir->empty()) {
     return *override_dir;
   }
-  if (const auto xdg = EnvironmentPath("XDG_CACHE_HOME");
+  if (const auto xdg = NativeEnvironmentPath("XDG_CACHE_HOME", L"XDG_CACHE_HOME");
       xdg.has_value() && !xdg->empty()) {
     return *xdg / "llm-cc/models";
   }
-  if (const auto home = EnvironmentPath("HOME");
+  if (const auto home = NativeEnvironmentPath("HOME", L"HOME");
       home.has_value() && !home->empty()) {
     return *home / ".cache/llm-cc/models";
   }
 #if defined(_WIN32)
-  if (const auto local_app_data = EnvironmentPath("LOCALAPPDATA");
+  if (const auto local_app_data = NativeEnvironmentPath("LOCALAPPDATA", L"LOCALAPPDATA");
       local_app_data.has_value() && !local_app_data->empty()) {
     return *local_app_data / "llm-cc/models";
   }
-  if (const auto user_profile = EnvironmentPath("USERPROFILE");
+  if (const auto user_profile = NativeEnvironmentPath("USERPROFILE", L"USERPROFILE");
       user_profile.has_value() && !user_profile->empty()) {
     return *user_profile / "AppData/Local/llm-cc/models";
   }
@@ -141,7 +162,9 @@ std::filesystem::path CacheDirFrom(
 }
 
 std::filesystem::path PartialPath(const std::filesystem::path& target) {
-  return target.string() + ".partial";
+  auto partial = target;
+  partial += std::filesystem::path(".partial");
+  return partial;
 }
 
 ModelManifest ReadManifest(const std::filesystem::path& cache_dir) {

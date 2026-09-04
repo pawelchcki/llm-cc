@@ -175,7 +175,7 @@ void SetAnalyzeOption(AnalyzeArguments& arguments, std::string_view option,
       arguments.language_name = llmcc::LanguageName(*arguments.language);
     }
   } else if (option == "--model") {
-    arguments.model = value;
+    arguments.model = std::filesystem::u8path(value);
   } else if (option == "--model-name") {
     arguments.model_name = value;
   } else if (option == "--gpu-layers") {
@@ -190,7 +190,7 @@ void SetAnalyzeOption(AnalyzeArguments& arguments, std::string_view option,
       Usage(error.what());
     }
   } else if (option == "--backend-dir") {
-    arguments.backend_directory = value;
+    arguments.backend_directory = std::filesystem::u8path(value);
   } else if (option == "--context") {
     arguments.context = ParseNumber<std::uint32_t>(option, value);
     if (arguments.context == 0) {
@@ -248,7 +248,7 @@ AnalyzeArguments ParseAnalyzeArguments(int argc, char** argv) {
       continue;
     }
     if (!option.starts_with('-')) {
-      arguments.sources.emplace_back(option);
+      arguments.sources.emplace_back(std::filesystem::u8path(option));
       continue;
     }
     if (index + 1 >= argc) {
@@ -511,7 +511,7 @@ CacheArguments ParseCacheArguments(int argc, char** argv) {
         Usage("--format expects text or json");
       }
     } else if (!value.starts_with('-') && !path_set) {
-      arguments.path = value;
+      arguments.path = std::filesystem::u8path(value);
       path_set = true;
     } else {
       Usage("invalid cache option: " + std::string(value));
@@ -1144,7 +1144,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
+int Main(int argc, char** argv) {
   try {
     int result = 0;
     if (argc > 1 && std::string_view(argv[1]) == "score") {
@@ -1173,3 +1173,21 @@ int main(int argc, char** argv) {
     return 2;
   }
 }
+
+#if defined(_WIN32)
+int wmain(int argc, wchar_t** wide_argv) {
+  std::vector<std::string> encoded;
+  encoded.reserve(argc);
+  for (int index = 0; index < argc; ++index) {
+    encoded.push_back(PathUtf8(std::filesystem::path(wide_argv[index])));
+  }
+  std::vector<char*> argv;
+  argv.reserve(argc);
+  for (std::string& argument : encoded) {
+    argv.push_back(argument.data());
+  }
+  return Main(argc, argv.data());
+}
+#else
+int main(int argc, char** argv) { return Main(argc, argv); }
+#endif

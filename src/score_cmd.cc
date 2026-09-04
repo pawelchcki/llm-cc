@@ -162,13 +162,13 @@ void SetOption(Arguments& arguments, std::string_view option,
     Usage("--prompt and --file are mutually exclusive");
   }
   if (option == "--model") {
-    arguments.model = value;
+    arguments.model = std::filesystem::u8path(value);
   } else if (option == "--model-name") {
     arguments.model_name = value;
   } else if (option == "--prompt") {
     arguments.prompt = value;
   } else if (option == "--file") {
-    arguments.file = value;
+    arguments.file = std::filesystem::u8path(value);
   } else if (option == "--bos") {
     if (value == "auto") {
       arguments.bos = BosMode::kAuto;
@@ -201,7 +201,7 @@ void SetOption(Arguments& arguments, std::string_view option,
       Usage(error.what());
     }
   } else if (option == "--backend-dir") {
-    arguments.backend_directory = value;
+    arguments.backend_directory = std::filesystem::u8path(value);
   } else {
     Usage("unknown option: " + std::string(option));
   }
