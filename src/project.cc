@@ -166,28 +166,40 @@ std::filesystem::path Canonical(const std::filesystem::path& path) {
   return result;
 }
 
-bool PathComponentEqual(const std::filesystem::path& left,
-                        const std::filesystem::path& right) {
-#if defined(_WIN32)
-  return _wcsicmp(left.c_str(), right.c_str()) == 0;
-#else
-  return left == right;
-#endif
-}
-
 bool IsWithin(const std::filesystem::path& path,
               const std::filesystem::path& directory) {
+#if defined(_WIN32)
+  const auto path_size = std::distance(path.begin(), path.end());
+  const auto directory_size = std::distance(directory.begin(), directory.end());
+  if (path_size < directory_size) {
+    return false;
+  }
+  std::filesystem::path ancestor = path;
+  for (auto count = path_size; count > directory_size; --count) {
+    ancestor = ancestor.parent_path();
+  }
+  std::error_code error;
+  return std::filesystem::equivalent(ancestor, directory, error) && !error;
+#else
   auto path_iterator = path.begin();
   for (auto iterator = directory.begin(); iterator != directory.end();
        ++iterator, ++path_iterator) {
-    if (path_iterator == path.end() ||
-        !PathComponentEqual(*path_iterator, *iterator)) {
+    if (path_iterator == path.end() || *path_iterator != *iterator) {
       return false;
     }
   }
   return true;
+#endif
 }
 
+#if defined(_WIN32)
+bool IsDirectoryReparsePoint(const std::filesystem::path& path) {
+  const DWORD attributes = GetFileAttributesW(path.c_str());
+  return attributes != INVALID_FILE_ATTRIBUTES &&
+         (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 &&
+         (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+}
+#endif
 bool AlwaysExcluded(const std::filesystem::path& path) {
   return std::ranges::any_of(
       path, [](const auto& component) { return component == ".llm-cc-cache"; });
@@ -328,11 +340,15 @@ void FilesystemWalk(const std::filesystem::path& directory,
       continue;
     }
     if (directory_entry &&
-        (name == ".llm-cc-cache" ||
-         (!options.no_ignore &&
-          (GeneratedDirectory(name) || PythonVirtualEnvironment(entry.path()) ||
-           (name == "out" && entry.path().parent_path() == directory))) ||
-         name == ".git")) {
+#if defined(_WIN32)
+        (IsDirectoryReparsePoint(entry.path()) ||
+#endif
+         (name == ".llm-cc-cache" ||
+          (!options.no_ignore &&
+           (GeneratedDirectory(name) ||
+            PythonVirtualEnvironment(entry.path()) ||
+            (name == "out" && entry.path().parent_path() == directory))) ||
+          name == ".git"))) {
       iterator.disable_recursion_pending();
     } else if (entry.is_regular_file(error) && !error) {
       const auto canonical = std::filesystem::canonical(entry.path(), error);

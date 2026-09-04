@@ -291,7 +291,8 @@ void RemoveModel(const std::filesystem::path& cache_dir,
     throw std::invalid_argument(
         "model name must be a bare file name without path separators");
   }
-  const std::filesystem::path target = cache_dir / file_name;
+  const std::filesystem::path target =
+      cache_dir / std::filesystem::u8path(file_name);
   RemoveIfPresent(target);
   RemoveIfPresent(PartialPath(target));
   ModelManifest manifest = ReadManifest(cache_dir);
