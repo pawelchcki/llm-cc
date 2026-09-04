@@ -82,11 +82,15 @@ std::uint64_t EpochSeconds() {
 }
 
 bool IsBareFileName(std::string_view file_name) {
-  return !file_name.empty() && file_name != "." && file_name != ".." &&
-         file_name.find('/') == std::string_view::npos &&
-         file_name.find('\\') == std::string_view::npos;
+  const bool bare = !file_name.empty() && file_name != "." && file_name != ".." &&
+                    file_name.find('/') == std::string_view::npos &&
+                    file_name.find('\\') == std::string_view::npos;
+#if defined(_WIN32)
+  return bare && file_name.find(':') == std::string_view::npos;
+#else
+  return bare;
+#endif
 }
-
 void RemoveIfPresent(const std::filesystem::path& path) {
   std::error_code error;
   std::filesystem::remove(path, error);

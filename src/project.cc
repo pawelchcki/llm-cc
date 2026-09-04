@@ -433,7 +433,7 @@ DiscoveryResult DiscoverSources(
     std::error_code error;
     const bool regular = std::filesystem::is_regular_file(input, error);
     if (error) {
-      throw std::runtime_error("cannot inspect input " + input.string() + ": " +
+      throw std::runtime_error("cannot inspect input " + PathUtf8(input) + ": " +
                                error.message());
     }
     const auto repository = FindGitRepository(input);
@@ -449,10 +449,10 @@ DiscoveryResult DiscoverSources(
       if (GitWalk(input, *repository, options, files)) {
         continue;
       }
-      result.warnings.push_back("Git discovery failed for " + input.string() +
+      result.warnings.push_back("Git discovery failed for " + PathUtf8(input) +
                                 "; falling back to filesystem discovery");
     } else {
-      result.warnings.push_back("Git is unavailable or " + input.string() +
+      result.warnings.push_back("Git is unavailable or " + PathUtf8(input) +
                                 " is not in a Git worktree; falling back to "
                                 "filesystem discovery");
     }

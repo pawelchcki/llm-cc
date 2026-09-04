@@ -419,6 +419,17 @@ void CheckNotSymlink(const fs::path& path) {
     throw std::runtime_error("refusing to follow backend cache symlink " +
                              path.string());
   }
+#if defined(_WIN32)
+  if (!error) {
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    if (attributes != INVALID_FILE_ATTRIBUTES &&
+        (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+      throw std::runtime_error(
+          "refusing to follow backend cache reparse point " +
+          path.string());
+    }
+  }
+#endif
 }
 
 void EnsureCacheDirectory(const BackendFetchOptions& options,
