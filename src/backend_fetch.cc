@@ -51,6 +51,12 @@ fs::path ChecksumPath(const fs::path& bundle) {
   return checksum;
 }
 
+fs::path PartialPath(const fs::path& path) {
+  auto partial = path;
+  partial += fs::path(".partial");
+  return partial;
+}
+
 constexpr std::array<std::uint32_t, 64> kShaConstants = {
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1,
     0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
@@ -555,7 +561,7 @@ std::optional<fs::path> DownloadManifest(const BundleDownloader& download,
                             std::string("manifest.json")};
   for (std::size_t index = 0; index < files.size(); ++index) {
     RemoveFile(destination);
-    RemoveFile(destination.string() + ".partial");
+    RemoveFile(PartialPath(destination));
     try {
       download(JoinUrl(base, files[index]), destination,
                {.noun = "backend bundle",
@@ -564,7 +570,7 @@ std::optional<fs::path> DownloadManifest(const BundleDownloader& download,
       return destination;
     } catch (const std::exception&) {
       RemoveFile(destination);
-      RemoveFile(destination.string() + ".partial");
+      RemoveFile(PartialPath(destination));
     }
   }
   return std::nullopt;
@@ -677,7 +683,7 @@ fs::path FetchBackendBundle(const BackendFetchOptions& options,
   EnsureCacheDirectory(options, bundle.parent_path());
   for (const fs::path& path : {bundle, checksum, manifest}) {
     CheckNotSymlink(path);
-    CheckNotSymlink(path.string() + ".partial");
+    CheckNotSymlink(PartialPath(path));
   }
   BackendCacheLock cache_lock(bundle.parent_path() /
                               ("." + std::string(options.name) + ".lock"));

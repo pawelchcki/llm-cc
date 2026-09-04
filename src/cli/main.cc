@@ -41,7 +41,7 @@ std::string PathUtf8(const std::filesystem::path& path) {
   const std::u8string value = path.u8string();
   return std::string(reinterpret_cast<const char*>(value.data()), value.size());
 #else
-  return path.string();
+  return PathUtf8(path);
 #endif
 }
 
@@ -49,6 +49,12 @@ std::filesystem::path ChecksumPath(const std::filesystem::path& bundle) {
   auto checksum = bundle;
   checksum += std::filesystem::path(".sha256");
   return checksum;
+}
+
+std::filesystem::path PartialPath(const std::filesystem::path& path) {
+  auto partial = path;
+  partial += std::filesystem::path(".partial");
+  return partial;
 }
 struct AnalyzeArguments {
   std::vector<std::filesystem::path> sources;
@@ -317,7 +323,7 @@ std::string ReadFile(const std::filesystem::path& path) {
   File input(std::fopen(path.c_str(), "rb"), std::fclose);
 #endif
   if (!input) {
-    throw std::runtime_error("failed to read " + path.string());
+    throw std::runtime_error("failed to read " + PathUtf8(path));
   }
   std::string contents;
   std::array<char, std::size_t{64} * 1024> buffer{};
@@ -329,7 +335,7 @@ std::string ReadFile(const std::filesystem::path& path) {
       continue;
     }
     if (std::ferror(input.get()) != 0) {
-      throw std::runtime_error("failed while reading " + path.string());
+      throw std::runtime_error("failed while reading " + PathUtf8(path));
     }
     break;
   }
@@ -365,7 +371,7 @@ int RunModels(int argc, char** argv) {
     return 0;
   }
   if (action == "path" && argc == 3) {
-    std::cout << cache_dir.string() << '\n';
+    std::cout << PathUtf8(cache_dir) << '\n';
     return 0;
   }
   if (action == "remove" && argc == 4) {
@@ -395,7 +401,7 @@ void RemoveBackendFile(const std::filesystem::path& path) {
   std::filesystem::remove(path, error);
   if (error && error != std::errc::no_such_file_or_directory) {
     throw std::runtime_error("could not remove backend cache file " +
-                             path.string() + ": " + error.message());
+                             PathUtf8(path) + ": " + error.message());
   }
 }
 
@@ -413,7 +419,7 @@ int RunBackends(int argc, char** argv) {
       if (error && error != std::errc::no_such_file_or_directory &&
           error != std::errc::not_a_directory) {
         throw std::runtime_error("could not inspect backend bundle " +
-                                 path.string() + ": " + error.message());
+                                 PathUtf8(path) + ": " + error.message());
       }
       if (!cached) {
         std::cout << name << "\tnot cached\n";
@@ -422,9 +428,9 @@ int RunBackends(int argc, char** argv) {
       const std::uintmax_t size = std::filesystem::file_size(path, error);
       if (error) {
         throw std::runtime_error("could not measure backend bundle " +
-                                 path.string() + ": " + error.message());
+                                 PathUtf8(path) + ": " + error.message());
       }
-      std::cout << name << "\tcached\t" << path.string() << '\t' << size
+      std::cout << name << "\tcached\t" << PathUtf8(path) << '\t' << size
                 << " bytes\n";
     }
     return 0;
@@ -452,8 +458,7 @@ int RunBackends(int argc, char** argv) {
     if (no_download) {
       Usage("backends fetch cannot be used with --no-download");
     }
-    std::cout << llmcc::FetchBackendBundle(BackendOptions(name, explicit_url))
-                     .string()
+    std::cout << PathUtf8(llmcc::FetchBackendBundle(BackendOptions(name, explicit_url)))
               << '\n';
     return 0;
   }
@@ -461,7 +466,7 @@ int RunBackends(int argc, char** argv) {
     const llmcc::BackendFetchOptions options =
         BackendOptions(argc == 4 ? argv[3] : "cuda");
     const std::filesystem::path bundle = llmcc::BackendBundlePath(options);
-    std::cout << (argc == 4 ? bundle : bundle.parent_path()).string() << '\n';
+    std::cout << PathUtf8(argc == 4 ? bundle : bundle.parent_path()) << '\n';
     return 0;
   }
   if (action == "remove" && argc == 4) {
@@ -473,7 +478,7 @@ int RunBackends(int argc, char** argv) {
     if (error && error != std::errc::no_such_file_or_directory &&
         error != std::errc::not_a_directory) {
       throw std::runtime_error("could not inspect backend bundle " +
-                               bundle.string() + ": " + error.message());
+                               PathUtf8(bundle) + ": " + error.message());
     }
     const std::array files = {
         bundle,
@@ -482,10 +487,10 @@ int RunBackends(int argc, char** argv) {
     };
     for (const std::filesystem::path& path : files) {
       RemoveBackendFile(path);
-      RemoveBackendFile(path.string() + ".partial");
+      RemoveBackendFile(PartialPath(path));
     }
     if (cached) {
-      std::cout << name << "\tremoved\t" << bundle.string() << '\n';
+      std::cout << name << "\tremoved\t" << PathUtf8(bundle) << '\n';
     } else {
       std::cout << name << "\tnot cached\n";
     }
@@ -534,7 +539,7 @@ int RunCache(int argc, char** argv) {
   const CacheArguments arguments = ParseCacheArguments(argc, argv);
   const auto repository = llmcc::FindGitRepository(arguments.path);
   if (!repository.has_value()) {
-    throw std::invalid_argument(arguments.path.string() +
+    throw std::invalid_argument(PathUtf8(arguments.path) +
                                 " is not inside a Git worktree");
   }
   if (arguments.action == "prune") {

@@ -8,6 +8,7 @@
 
 #include <array>
 #include <cstdio>
+#include <cwchar>
 #include <map>
 #include <memory>
 #include <set>
@@ -99,12 +100,21 @@ std::filesystem::path Canonical(const std::filesystem::path& path) {
   return result;
 }
 
+bool PathComponentEqual(const std::filesystem::path& left,
+                        const std::filesystem::path& right) {
+#if defined(_WIN32)
+  return _wcsicmp(left.c_str(), right.c_str()) == 0;
+#else
+  return left == right;
+#endif
+}
+
 bool IsWithin(const std::filesystem::path& path,
               const std::filesystem::path& directory) {
   auto path_iterator = path.begin();
   for (auto iterator = directory.begin(); iterator != directory.end();
        ++iterator, ++path_iterator) {
-    if (path_iterator == path.end() || *path_iterator != *iterator) {
+    if (path_iterator == path.end() || !PathComponentEqual(*path_iterator, *iterator)) {
       return false;
     }
   }

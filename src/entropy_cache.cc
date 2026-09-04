@@ -73,6 +73,17 @@ void CheckCachePath(const std::filesystem::path& repository) {
       throw std::runtime_error("refusing to follow cache-directory symlink " +
                                path.string());
     }
+#if defined(_WIN32)
+    if (!error) {
+      const DWORD attributes = GetFileAttributesW(path.c_str());
+      if (attributes != INVALID_FILE_ATTRIBUTES &&
+          (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+        throw std::runtime_error(
+            "refusing to follow cache-directory reparse point " +
+            PathUtf8(path));
+      }
+    }
+#endif
   }
 }
 
