@@ -2,8 +2,6 @@
 
 #if defined(_WIN32)
 #include <process.h>
-#define popen _popen
-#define pclose _pclose
 #else
 #include <sys/wait.h>
 #endif
@@ -20,40 +18,46 @@
 namespace llmcc {
 namespace {
 
-std::string ShellQuote(std::string_view value) {
 #if defined(_WIN32)
-  std::string result = "\"";
-  for (char character : value) {
+std::wstring ShellQuote(std::wstring_view value) {
+  std::wstring result = L"\"";
+  for (wchar_t character : value) {
     // cmd.exe expands %NAME% even inside quotes; a caret suppresses it.
-    result += character == '%' ? "^%" : std::string(1, character);
+    result += character == L'%' ? L"^%" : std::wstring(1, character);
   }
-  return result + "\"";
+  return result + L"\"";
+}
+
+std::wstring_view NullRedirect() { return L" 2>NUL"; }
 #else
+std::string ShellQuote(std::string_view value) {
   std::string result = "'";
   for (char character : value) {
     result += character == '\'' ? "'\\''" : std::string(1, character);
   }
   return result + "'";
-#endif
 }
 
-std::string_view NullRedirect() {
-#if defined(_WIN32)
-  return " 2>NUL";
-#else
-  return " 2>/dev/null";
+std::string_view NullRedirect() { return " 2>/dev/null"; }
 #endif
-}
 
 struct CommandResult {
   int status;
   std::string output;
 };
 
+#if defined(_WIN32)
+CommandResult Capture(std::wstring_view command) {
+  using Pipe = std::unique_ptr<std::FILE, decltype(&_pclose)>;
+  Pipe pipe(_wpopen(std::wstring(command).c_str(), L"rb"),  // NOLINT
+            _pclose);
+#else
 CommandResult Capture(std::string_view command) {
   using Pipe = std::unique_ptr<std::FILE, decltype(&pclose)>;
   Pipe pipe(popen(std::string(command).c_str(), "r"),  // NOLINT
             pclose);
+#endif
+
   if (!pipe) {
     return {.status = -1, .output = {}};
   }
@@ -64,7 +68,11 @@ CommandResult Capture(std::string_view command) {
     output.append(buffer.data(), count);
   }
   std::FILE* raw = pipe.release();
+#if defined(_WIN32)
+  const int raw_status = _pclose(raw);
+#else
   const int raw_status = pclose(raw);
+#endif
 #if defined(_WIN32)
   const int status = raw_status;
 #else
@@ -261,10 +269,17 @@ bool GitWalk(const std::filesystem::path& input,
              const std::filesystem::path& repository,
              const DiscoveryOptions& options,
              std::map<std::string, DiscoveredSource>& files) {
-  std::string command = "git -C " + ShellQuote(repository.string()) +
+#if defined(_WIN32)
+  std::wstring command = L"git -C " + ShellQuote(repository.native()) +
+                         L" ls-files --cached --others" +
+                         (options.no_ignore ? L"" : L" --exclude-standard") +
+                         L" -z" + std::wstring(NullRedirect());
+#else
+  std::string command = "git -C " + ShellQuote(repository.native()) +
                         " ls-files --cached --others" +
                         (options.no_ignore ? "" : " --exclude-standard") +
                         " -z" + std::string(NullRedirect());
+#endif
   const CommandResult result = Capture(command);
   if (result.status != 0) {
     return false;
@@ -277,7 +292,8 @@ bool GitWalk(const std::filesystem::path& input,
         result.output.data() + start,
         (end == std::string::npos ? result.output.size() : end) - start);
     if (!relative.empty()) {
-      const std::filesystem::path candidate = repository / relative;
+      const std::filesystem::path candidate =
+          repository / std::filesystem::u8path(relative);
       std::error_code error;
       const auto canonical = std::filesystem::canonical(candidate, error);
       if (!error && IsWithin(canonical, input)) {
@@ -316,9 +332,15 @@ std::optional<std::filesystem::path> FindGitRepository(
   if (error || probe.empty()) {
     return std::nullopt;
   }
+#if defined(_WIN32)
   const CommandResult result =
-      Capture("git -C " + ShellQuote(probe.string()) +
+      Capture(L"git -C " + ShellQuote(probe.native()) +
+              L" rev-parse --show-toplevel" + std::wstring(NullRedirect()));
+#else
+  const CommandResult result =
+      Capture("git -C " + ShellQuote(probe.native()) +
               " rev-parse --show-toplevel" + std::string(NullRedirect()));
+#endif
   if (result.status != 0) {
     return std::nullopt;
   }
@@ -329,7 +351,8 @@ std::optional<std::filesystem::path> FindGitRepository(
   if (root.empty()) {
     return std::nullopt;
   }
-  const auto canonical = std::filesystem::canonical(root, error);
+  const auto canonical =
+      std::filesystem::canonical(std::filesystem::u8path(root), error);
   return error ? std::nullopt : std::optional<std::filesystem::path>(canonical);
 }
 
