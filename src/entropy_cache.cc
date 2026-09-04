@@ -89,9 +89,8 @@ CacheLocation ActiveLocation(const std::filesystem::path& repository) {
   if (error) {
     canonical = repository.lexically_normal();
   }
-  return {
-      .base = base,
-      .directory = base / Sha256Hex(canonical.generic_string()) / "v1/entropy"};
+  return {.base = base,
+          .directory = base / Sha256Hex(PathUtf8(canonical)) / "v1/entropy"};
 }
 
 CacheLocation LegacyLocation(const std::filesystem::path& repository) {

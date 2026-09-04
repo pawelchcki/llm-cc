@@ -387,6 +387,17 @@ int main() {  // NOLINT(bugprone-exception-escape)
       "\"\"\"documentation only\"\"\"\n", llmcc::Language::kPython);
   llmcc::test::Expect(only_docstring.meaningful_ranges.empty(),
                       "docstring-only module has no semantic content");
+  const auto parenthesized_docstrings = llmcc::PrepareSource(
+      "(\"\"\"module documentation\"\"\")\n"
+      "def documented():\n"
+      "    (\"function documentation\")\n"
+      "    return 1\n",
+      llmcc::Language::kPython);
+  llmcc::test::Expect(parenthesized_docstrings.cleaned.find("documentation") ==
+                              std::string::npos &&
+                          parenthesized_docstrings.cleaned.find("return 1") !=
+                              std::string::npos,
+                      "parenthesized Python docstrings are removed");
   const auto prefixed_expressions = llmcc::PrepareSource(
       "b\"bytes\"\nf\"value {1}\"\n", llmcc::Language::kPython);
   llmcc::test::Expect(

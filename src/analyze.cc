@@ -31,6 +31,13 @@ FileAnalysisResult ProjectAnalyzer::AnalyzeFile(const DiscoveredSource& source,
   const std::string& preprocessed = prepared.cleaned;
   assert(std::ranges::count(preprocessed, '\n') ==
          std::ranges::count(contents, '\n'));
+  if (prepared.meaningful_ranges.empty()) {
+    Analysis analysis =
+        llmcc::Analyze({}, {}, {}, options_.tau_rule, options_.alpha, {},
+                       options_.hierarchy_mode);
+    MapAnalysisOffsets(analysis, prepared.original_offsets);
+    return {.analysis = std::move(analysis), .entropy_cache_hit = false};
+  }
   const auto& events = prepared.structural_events;
   EntropyCacheLookup cached;
   if (options_.cache && source.repository.has_value()) {
@@ -68,13 +75,9 @@ FileAnalysisResult ProjectAnalyzer::AnalyzeFile(const DiscoveredSource& source,
   }
   const auto tokens = AlignTokens(preprocessed, records);
   const auto& line_starts = prepared.line_starts;
-  Analysis analysis =
-      prepared.meaningful_ranges.empty()
-          ? llmcc::Analyze({}, {}, {}, options_.tau_rule, options_.alpha, {},
-                           options_.hierarchy_mode)
-          : llmcc::Analyze(tokens, events, line_starts, options_.tau_rule,
-                           options_.alpha, prepared.meaningful_ranges,
-                           options_.hierarchy_mode);
+  Analysis analysis = llmcc::Analyze(
+      tokens, events, line_starts, options_.tau_rule, options_.alpha,
+      prepared.meaningful_ranges, options_.hierarchy_mode);
   const double file_tau = analysis.tau;
 
   const auto line_at = [&](std::size_t byte) {

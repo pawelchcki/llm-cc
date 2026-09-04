@@ -5,11 +5,14 @@
 #include <llama.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <charconv>
 #include <cmath>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -614,6 +617,132 @@ struct ScoreOptions {
   const std::function<void(std::size_t, std::size_t)>* progress = nullptr;
 };
 
+class HostReductionPool {
+ public:
+  explicit HostReductionPool(std::size_t worker_count) {
+    workers_.reserve(worker_count > 0 ? worker_count - 1 : 0);
+    try {
+      for (std::size_t worker = 1; worker < worker_count; ++worker) {
+        workers_.emplace_back([this] { WorkerLoop(); });
+      }
+    } catch (...) {
+      StopWorkers();
+      workers_.clear();
+      throw;
+    }
+  }
+
+  HostReductionPool(const HostReductionPool&) = delete;
+  HostReductionPool& operator=(const HostReductionPool&) = delete;
+
+  ~HostReductionPool() { StopWorkers(); }
+
+  void Reduce(std::span<float* const> logits_rows,
+              std::span<const llama_token> targets, std::size_t vocabulary_size,
+              bool entropy, std::span<llmcc::TokenScore> scores) {
+    if (logits_rows.size() != targets.size() ||
+        logits_rows.size() != scores.size()) {
+      throw std::logic_error("host reduction row count mismatch");
+    }
+    {
+      std::lock_guard lock(mutex_);
+      logits_rows_ = logits_rows;
+      targets_ = targets;
+      scores_ = scores;
+      vocabulary_size_ = vocabulary_size;
+      entropy_ = entropy;
+      worker_error_ = nullptr;
+      workers_pending_ = workers_.size();
+      next_row_.store(0, std::memory_order_relaxed);
+      ++generation_;
+    }
+    task_ready_.notify_all();
+    ReduceRows();
+
+    std::exception_ptr error;
+    {
+      std::unique_lock lock(mutex_);
+      task_done_.wait(lock, [this] { return workers_pending_ == 0; });
+      error = worker_error_;
+      logits_rows_ = {};
+      targets_ = {};
+      scores_ = {};
+    }
+    if (error) {
+      std::rethrow_exception(error);
+    }
+  }
+
+ private:
+  void StopWorkers() {
+    {
+      std::lock_guard lock(mutex_);
+      stopping_ = true;
+    }
+    task_ready_.notify_all();
+  }
+
+  void WorkerLoop() {
+    std::size_t observed_generation = 0;
+    for (;;) {
+      {
+        std::unique_lock lock(mutex_);
+        task_ready_.wait(lock, [this, &observed_generation] {
+          return stopping_ || generation_ != observed_generation;
+        });
+        if (stopping_) {
+          return;
+        }
+        observed_generation = generation_;
+      }
+      ReduceRows();
+      {
+        std::lock_guard lock(mutex_);
+        --workers_pending_;
+        if (workers_pending_ == 0) {
+          task_done_.notify_one();
+        }
+      }
+    }
+  }
+
+  void ReduceRows() {
+    for (;;) {
+      const std::size_t index =
+          next_row_.fetch_add(1, std::memory_order_relaxed);
+      if (index >= scores_.size()) {
+        return;
+      }
+      try {
+        scores_[index] = llmcc::ScoreToken(
+            std::span<const float>(logits_rows_[index], vocabulary_size_),
+            static_cast<std::size_t>(targets_[index]), entropy_);
+      } catch (...) {
+        std::lock_guard lock(mutex_);
+        if (!worker_error_) {
+          worker_error_ = std::current_exception();
+        }
+        return;
+      }
+    }
+  }
+
+  std::mutex mutex_;
+  std::condition_variable task_ready_;
+  std::condition_variable task_done_;
+  std::span<float* const> logits_rows_;
+  std::span<const llama_token> targets_;
+  std::span<llmcc::TokenScore> scores_;
+  std::size_t vocabulary_size_ = 0;
+  bool entropy_ = false;
+  bool stopping_ = false;
+  std::size_t generation_ = 0;
+  std::size_t workers_pending_ = 0;
+  std::atomic_size_t next_row_ = 0;
+  std::exception_ptr worker_error_;
+  std::vector<std::jthread> workers_;
+};
+
 void WriteSummary(std::ostream* diagnostics, std::size_t tokens,
                   std::size_t scored, double negative_log_likelihood,
                   bool device_reduction) {
@@ -734,6 +863,11 @@ void ScoreInput(llama_model* model, llmcc::BackendLogCapture& backend_log,
   llama_seq_id sequence = 0;
   std::vector<llama_seq_id*> sequences(batch_size, &sequence);
   std::vector<std::int8_t> output_logits(batch_size, 1);
+  std::optional<HostReductionPool> host_reduction;
+  if (!options.device_reduction) {
+    host_reduction.emplace(std::min<std::size_t>(
+        batch_size, std::max<std::int32_t>(1, options.threads)));
+  }
   for (std::size_t source = 0; source + 1 < tokens.size();
        source += batch_size) {
     const std::size_t count = std::min(batch_size, tokens.size() - 1 - source);
@@ -775,43 +909,11 @@ void ScoreInput(llama_model* model, llmcc::BackendLogCapture& backend_log,
               "tokenizer produced a token outside the vocabulary");
         }
       }
-      std::atomic_size_t next_row = 0;
-      std::mutex error_mutex;
-      std::exception_ptr worker_error;
-      const std::size_t worker_count = std::min<std::size_t>(
-          count, std::max<std::int32_t>(1, options.threads));
-      const auto reduce_rows = [&]() {
-        for (;;) {
-          const std::size_t index = next_row.fetch_add(1);
-          if (index >= count) {
-            return;
-          }
-          try {
-            const llama_token target = tokens[source + index + 1];
-            host_scores[index] = llmcc::ScoreToken(
-                std::span<const float>(
-                    logits_rows[index],
-                    static_cast<std::size_t>(vocabulary_size)),
-                static_cast<std::size_t>(target), options.entropy);
-          } catch (...) {
-            std::lock_guard lock(error_mutex);
-            if (!worker_error) {
-              worker_error = std::current_exception();
-            }
-            return;
-          }
-        }
-      };
-      std::vector<std::jthread> workers;
-      workers.reserve(worker_count - 1);
-      for (std::size_t worker = 1; worker < worker_count; ++worker) {
-        workers.emplace_back(reduce_rows);
-      }
-      reduce_rows();
-      workers.clear();
-      if (worker_error) {
-        std::rethrow_exception(worker_error);
-      }
+      host_reduction->Reduce(
+          logits_rows,
+          std::span<const llama_token>(tokens.data() + source + 1, count),
+          static_cast<std::size_t>(vocabulary_size), options.entropy,
+          host_scores);
     }
     for (std::size_t index = 0; index < count; ++index) {
       const std::size_t target_index = source + index + 1;

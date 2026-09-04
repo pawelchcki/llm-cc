@@ -176,6 +176,27 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::ExpectEq(failing_factories, 1,
                         "failed scorer initialization is not retried");
 
+  const llmcc::DiscoveredSource docstring_only{
+      .path = repository / "documentation.py",
+      .language = llmcc::Language::kPython,
+      .repository = std::nullopt};
+  int empty_factories = 0;
+  llmcc::ProjectAnalyzer empty_analyzer(
+      {.model = identity, .cache = false},
+      [&]() -> std::unique_ptr<llmcc::EntropyProvider> {
+        ++empty_factories;
+        throw std::runtime_error("empty source loaded scorer");
+      });
+  const auto empty_result = empty_analyzer.AnalyzeFile(
+      docstring_only, "(\"\"\"documentation only\"\"\")\n");
+  llmcc::test::ExpectEq(empty_factories, 0,
+                        "semantically empty source loads no scorer");
+  llmcc::test::Expect(!empty_analyzer.ScorerLoaded(),
+                      "semantically empty source leaves scorer unloaded");
+  llmcc::test::Expect(
+      empty_result.functions.empty() && empty_result.hotspots.empty(),
+      "semantically empty source has no derived findings");
+
   const llmcc::DiscoveredSource namespace_source{
       .path = repository / "namespace.cc",
       .language = llmcc::Language::kCpp,
