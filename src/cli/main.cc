@@ -415,16 +415,16 @@ class ProgressReporter {
 
   void StartFile(std::size_t index, std::size_t total,
                  const std::filesystem::path& path) {
+    if (!enabled_) {
+      return;
+    }
     file_index_ = index;
     file_total_ = total;
-    path_ = path.string();
     started_ = std::chrono::steady_clock::now();
     last_update_ = {};
-    if (enabled_) {
-      std::cerr << "llm-cc: [" << index << '/' << total << "] analyzing "
-                << TerminalSafe(path_) << '\n'
-                << std::flush;
-    }
+    std::cerr << "llm-cc: [" << index << '/' << total << "] analyzing "
+              << TerminalSafe(PathUtf8(path)) << '\n'
+              << std::flush;
   }
 
   void Tokens(std::size_t completed, std::size_t total) {
@@ -467,7 +467,6 @@ class ProgressReporter {
   bool enabled_;
   std::size_t file_index_ = 0;
   std::size_t file_total_ = 0;
-  std::string path_;
   TimePoint started_{};
   TimePoint last_update_{};
 };

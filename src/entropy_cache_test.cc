@@ -55,6 +55,19 @@ int main() {  // NOLINT(bugprone-exception-escape)
                           initial_status.directory,
                       "canonical worktree roots use independent cache buckets");
   const fs::path entry = *fs::directory_iterator(initial_status.directory);
+#if !defined(_WIN32)
+  const auto public_permissions = fs::perms::group_all | fs::perms::others_all;
+  const fs::path bucket = initial_status.directory.parent_path().parent_path();
+  llmcc::test::Expect((fs::status(bucket).permissions() & public_permissions) ==
+                          fs::perms::none,
+                      "repository cache bucket is private");
+  llmcc::test::Expect((fs::status(initial_status.directory).permissions() &
+                       public_permissions) == fs::perms::none,
+                      "entropy cache directory is private");
+  llmcc::test::Expect(
+      (fs::status(entry).permissions() & public_permissions) == fs::perms::none,
+      "entropy cache entry is private");
+#endif
   fs::last_write_time(
       entry, fs::file_time_type::clock::now() - std::chrono::hours(48));
   static_cast<void>(llmcc::ReadEntropyCache(repository, "ab", identity));

@@ -3,12 +3,14 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <limits>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <stdexcept>
 #include <system_error>
 #include <thread>
@@ -18,6 +20,10 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #endif
 namespace llmcc {
 namespace {
@@ -30,6 +36,24 @@ std::string PathUtf8(const std::filesystem::path& path) {
   return path.generic_string();
 #endif
 }
+
+std::optional<std::filesystem::path> EnvironmentPath(const char* narrow_name,
+                                                     const wchar_t* wide_name) {
+#if defined(_WIN32)
+  static_cast<void>(narrow_name);
+  const wchar_t* value = _wgetenv(wide_name);
+  return value != nullptr && *value != L'\0'
+             ? std::optional<std::filesystem::path>(value)
+             : std::nullopt;
+#else
+  static_cast<void>(wide_name);
+  const char* value = std::getenv(narrow_name);
+  return value != nullptr && *value != '\0'
+             ? std::optional<std::filesystem::path>(value)
+             : std::nullopt;
+#endif
+}
+
 using Clock = std::chrono::system_clock;
 constexpr std::string_view kLegacyNamespace = ".llm-cc-cache/llm-cc";
 
@@ -65,18 +89,26 @@ std::uint64_t EpochSeconds() {
 }
 
 std::filesystem::path EntropyCacheBaseDirectory() {
-  if (const char* override = std::getenv("LLM_CC_ENTROPY_CACHE_DIR");
-      override != nullptr && *override != '\0') {
-    return override;
+  if (const auto override = EnvironmentPath("LLM_CC_ENTROPY_CACHE_DIR",
+                                            L"LLM_CC_ENTROPY_CACHE_DIR")) {
+    return *override;
   }
-  if (const char* xdg = std::getenv("XDG_CACHE_HOME");
-      xdg != nullptr && *xdg != '\0') {
-    return std::filesystem::path(xdg) / "llm-cc/entropy";
+  if (const auto xdg = EnvironmentPath("XDG_CACHE_HOME", L"XDG_CACHE_HOME")) {
+    return *xdg / "llm-cc/entropy";
   }
-  if (const char* home = std::getenv("HOME");
-      home != nullptr && *home != '\0') {
-    return std::filesystem::path(home) / ".cache/llm-cc/entropy";
+  if (const auto home = EnvironmentPath("HOME", L"HOME")) {
+    return *home / ".cache/llm-cc/entropy";
   }
+#if defined(_WIN32)
+  if (const auto local_app_data =
+          EnvironmentPath("LOCALAPPDATA", L"LOCALAPPDATA")) {
+    return *local_app_data / "llm-cc/entropy";
+  }
+  if (const auto user_profile =
+          EnvironmentPath("USERPROFILE", L"USERPROFILE")) {
+    return *user_profile / "AppData/Local/llm-cc/entropy";
+  }
+#endif
   throw std::runtime_error(
       "cannot determine entropy cache directory; set "
       "LLM_CC_ENTROPY_CACHE_DIR");
@@ -141,7 +173,76 @@ void EnsureCacheDirectory(const CacheLocation& location) {
                              location.directory.string() + ": " +
                              error.message());
   }
+#if !defined(_WIN32)
+  const auto bucket = location.directory.parent_path().parent_path();
+  const auto restrict = [&](const std::filesystem::path& path) {
+    std::filesystem::permissions(path, std::filesystem::perms::owner_all,
+                                 std::filesystem::perm_options::replace, error);
+    if (error) {
+      throw std::runtime_error("cannot restrict entropy cache " +
+                               path.string() + ": " + error.message());
+    }
+  };
+  auto path = bucket;
+  restrict(path);
+  for (const auto& component : location.directory.lexically_relative(bucket)) {
+    path /= component;
+    restrict(path);
+  }
+#endif
   CheckCachePath(location);
+}
+
+void WritePrivateFile(const std::filesystem::path& path,
+                      std::span<const std::uint8_t> bytes) {
+#if defined(_WIN32)
+  std::ofstream output(path, std::ios::binary | std::ios::trunc);
+  output.write(reinterpret_cast<const char*>(bytes.data()),
+               static_cast<std::streamsize>(bytes.size()));
+  output.close();
+  if (!output) {
+    throw std::runtime_error("failed to write entropy cache entry");
+  }
+#else
+  int descriptor =
+      open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
+           S_IRUSR | S_IWUSR);
+  if (descriptor < 0) {
+    throw std::system_error(errno, std::generic_category(),
+                            "failed to create entropy cache entry");
+  }
+  try {
+    std::size_t offset = 0;
+    while (offset < bytes.size()) {
+      const std::size_t count = std::min<std::size_t>(
+          bytes.size() - offset,
+          static_cast<std::size_t>(std::numeric_limits<ssize_t>::max()));
+      const ssize_t written = write(descriptor, bytes.data() + offset, count);
+      if (written < 0 && errno == EINTR) {
+        continue;
+      }
+      if (written < 0) {
+        throw std::system_error(errno, std::generic_category(),
+                                "failed to write entropy cache entry");
+      }
+      if (written == 0) {
+        throw std::runtime_error("failed to write entropy cache entry");
+      }
+      offset += static_cast<std::size_t>(written);
+    }
+    if (close(descriptor) != 0) {
+      descriptor = -1;
+      throw std::system_error(errno, std::generic_category(),
+                              "failed to close entropy cache entry");
+    }
+    descriptor = -1;
+  } catch (...) {
+    if (descriptor >= 0) {
+      close(descriptor);
+    }
+    throw;
+  }
+#endif
 }
 
 std::filesystem::path EntryPath(const CacheLocation& location,
@@ -494,13 +595,7 @@ void WriteEntropyCache(const std::filesystem::path& repository,
   temporary += std::filesystem::path(".tmp." + suffix);
   try {
     const auto bytes = nlohmann::json::to_cbor(encoded);
-    std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-    output.write(reinterpret_cast<const char*>(bytes.data()),
-                 static_cast<std::streamsize>(bytes.size()));
-    output.close();
-    if (!output) {
-      throw std::runtime_error("failed to write entropy cache entry");
-    }
+    WritePrivateFile(temporary, bytes);
 #ifdef _WIN32
     if (!MoveFileExW(std::filesystem::path(temporary).c_str(), target.c_str(),
                      MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
