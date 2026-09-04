@@ -433,8 +433,8 @@ DiscoveryResult DiscoverSources(
     std::error_code error;
     const bool regular = std::filesystem::is_regular_file(input, error);
     if (error) {
-      throw std::runtime_error("cannot inspect input " + PathUtf8(input) + ": " +
-                               error.message());
+      throw std::runtime_error("cannot inspect input " + PathUtf8(input) +
+                               ": " + error.message());
     }
     const auto repository = FindGitRepository(input);
     if (regular) {

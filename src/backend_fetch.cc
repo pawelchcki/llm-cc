@@ -425,8 +425,7 @@ void CheckNotSymlink(const fs::path& path) {
     if (attributes != INVALID_FILE_ATTRIBUTES &&
         (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
       throw std::runtime_error(
-          "refusing to follow backend cache reparse point " +
-          path.string());
+          "refusing to follow backend cache reparse point " + path.string());
     }
   }
 #endif
