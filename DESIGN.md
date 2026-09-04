@@ -81,11 +81,32 @@ the runtime unity C source and official complete-source grammar bundles.
 llama, ggml CPU, CUDA, HIP, and Metal are native per-source Bazel actions.
 Only stable leaf dependencies such as OpenSSL and curl retain foreign builds.
 
-Linux development keeps GPU modules in runfiles. The release statically links
-the application and CPU stack, exports only the small ggml backend ABI, and
-appends deterministic compressed CUDA and ROCm bundles. CUDA is loaded from a
-sealed memfd; ROCm is extracted into a content-addressed private cache only
-when selected. CPU execution does not touch either payload.
+Linux development keeps GPU modules in runfiles. The Linux distribution base
+statically links the application and CPU stack and exports only the small ggml
+backend ABI; the distribution packaging path can append deterministic CUDA and
+ROCm bundles. CUDA is loaded from a sealed memfd; ROCm is extracted into a
+content-addressed private cache only when selected. CPU execution does not
+touch either payload.
+
+CUDA and ROCm are also emitted as standalone bundle artifacts. A standalone
+bundle places its bundle body at offset zero. The body records each file's
+destination, mode, size, and SHA-256 before its bytes. A trailing 64-byte
+footer entry names the backend and records offset zero, the body length, and a
+SHA-256 over the complete body. Each bundle is accompanied by a checksum and
+`manifest.json`; the manifest records the backend name, llm-cc version, build
+Git SHA, compatibility fields, bundle SHA-256, and size.
+
+Stamped binaries contain an artifact base URL. For development builds it is
+formed from the configured resolver as
+`<resolver>/<owner>/<repo>/<sha>`, and bundle downloads append `<file>`, giving
+`<resolver>/<owner>/<repo>/<sha>/<file>`. The default resolver is
+`https://ci-artifacts.pawelchcki.workers.dev`, but the resolver Worker is not
+deployed yet. Until it is, the supported path is
+`llm-cc backends fetch <name> --url <public_url>` with the Public URL from the
+CI comment. For a stamped binary, fetching and cache reuse require a manifest
+and reject the bundle unless the manifest's `git_sha` equals the binary's Git
+SHA, enforcing a same-commit contract. Cache reuse also repeats the bundle
+footer verification.
 
 The default Linux toolchain is pinned Clang with a glibc 2.24 sysroot; the
 `portable` profile is an alias for the same hermetic configuration. CI enforces

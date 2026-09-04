@@ -1,0 +1,141 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up Bazel
+        uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}
+          repository-cache: true
+
+      - name: Build and verify portable CPU binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          bazel build --config=release --config=portable //:cpu_static_archive
+          tools/check_glibc_version.sh bazel-bin/llm-cc 2.28
+          tools/check_static_link.sh bazel-bin/llm-cc
+
+          version="${GITHUB_REF_NAME#v}"
+          actual="$(bazel-bin/llm-cc --version)"
+          expected="llm-cc ${version}"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "::error::Version stamp mismatch: expected '$expected', got '$actual'" >&2
+            exit 1
+          fi
+
+      - name: Fetch and verify GPU backends
+        timeout-minutes: 135
+        env:
+          RESOLVER_BASE: ${{ vars.LLM_CC_RESOLVER_BASE || 'https://ci-artifacts.pawelchcki.workers.dev' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit_sha="$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
+          artifact_base="${RESOLVER_BASE%/}/pawelchcki/llm-cc/${commit_sha}"
+          mkdir -p gpu-assets
+          deadline=$((SECONDS + 7500))
+
+          missing_backend() {
+            echo "::error::GPU backends for this commit are missing or invalid (${commit_sha}); refusing to publish a CPU-only release." >&2
+            exit 1
+          }
+
+          fetch_artifact() {
+            local url="$1"
+            local destination="$2"
+            while ! curl --fail --location --silent --show-error \
+              --output "$destination" "$url"; do
+              rm -f "$destination"
+              if ((SECONDS >= deadline)); then
+                return 1
+              fi
+              echo "Waiting for ${url}"
+              sleep 60
+            done
+          }
+
+          for backend in cuda rocm; do
+            bundle="llm-cc-backend-${backend}-linux-x86_64.bundle"
+            manifest="llm-cc-backend-${backend}-linux-x86_64.manifest.json"
+            if ! fetch_artifact "${artifact_base}/${bundle}.sha256" \
+              "gpu-assets/${bundle}.sha256"; then
+              missing_backend
+            fi
+            if ! fetch_artifact "${artifact_base}/${manifest}" \
+              "gpu-assets/${manifest}"; then
+              missing_backend
+            fi
+            if ! fetch_artifact "${artifact_base}/${bundle}" \
+              "gpu-assets/${bundle}"; then
+              missing_backend
+            fi
+            if ! (cd gpu-assets && sha256sum -c "${bundle}.sha256"); then
+              missing_backend
+            fi
+          done
+
+      - name: Prepare versioned release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          commit_sha="$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
+          output_dir="release-assets"
+          mkdir -p "$output_dir"
+
+          tar -xzf bazel-bin/llm-cc-linux-x86_64-cpu-static.tar.gz \
+            -C "$output_dir" --strip-components=1 \
+            llm-cc-linux-x86_64-cpu-static/llm-cc
+          mv "$output_dir/llm-cc" \
+            "$output_dir/llm-cc-${version}-linux-x86_64"
+
+          assets=("llm-cc-${version}-linux-x86_64")
+          for backend in cuda rocm; do
+            source="gpu-assets/llm-cc-backend-${backend}-linux-x86_64.bundle"
+            unversioned="llm-cc-backend-${backend}-linux-x86_64.bundle"
+            target="llm-cc-backend-${backend}-${version}-linux-x86_64.bundle"
+            cp "$source" "$output_dir/$unversioned"
+            cp "$source" "$output_dir/$target"
+            cp "${source}.sha256" "$output_dir/${unversioned}.sha256"
+            (cd "$output_dir" && sha256sum "$target" > "${target}.sha256")
+            assets+=("$unversioned" "${unversioned}.sha256" "$target" "${target}.sha256")
+
+            source_manifest="gpu-assets/llm-cc-backend-${backend}-linux-x86_64.manifest.json"
+            unversioned_manifest="llm-cc-backend-${backend}-linux-x86_64.manifest.json"
+            target_manifest="llm-cc-backend-${backend}-${version}-linux-x86_64.manifest.json"
+            jq --arg version "$version" --arg git_sha "$commit_sha" '
+              if .git_sha == $git_sha then
+                .version = $version
+              else
+                error("backend manifest git_sha does not match tagged commit")
+              end
+            ' "$source_manifest" > "$output_dir/$unversioned_manifest"
+            cp "$output_dir/$unversioned_manifest" "$output_dir/$target_manifest"
+            assets+=("$unversioned_manifest" "$target_manifest")
+          done
+
+          (cd "$output_dir" && sha256sum "${assets[@]}" > SHA256SUMS)
+
+      - name: Upload assets to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber

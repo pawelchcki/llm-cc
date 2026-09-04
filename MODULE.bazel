@@ -95,9 +95,18 @@ register_toolchains(
 )
 
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
 cuda_sdk_repository = use_repo_rule("//tools:gpu_sdk_repositories.bzl", "cuda_sdk_repository")
 
 cuda_sdk_repository(name = "cuda_sdk")
+
+# Optional 397,808,128-byte model used only by //:model_smoke_test.
+http_file(
+    name = "qwen2_5_coder_0_5b_q4_k_m",
+    downloaded_file_path = "Qwen2.5-Coder-0.5B-Q4_K_M.gguf",
+    sha256 = "fefe9d34df79d3ad3db33519d81112be76096626a5fdb87a98092035dc79ad68",
+    urls = ["https://huggingface.co/bartowski/Qwen2.5-Coder-0.5B-GGUF/resolve/main/Qwen2.5-Coder-0.5B-Q4_K_M.gguf"],
+)
 
 # Pinned GCC bundle used only for its libstdc++ headers and libraries. CUDA's
 # x86 headers reject libc++, but NVCC still delegates every host compile to

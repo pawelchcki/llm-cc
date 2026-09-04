@@ -90,6 +90,45 @@ std::string Hex(std::span<const unsigned char> bytes) {
   return output.str();
 }
 
+std::string JsonString(std::string_view value) {
+  std::ostringstream output;
+  output << '"';
+  for (const unsigned char byte : value) {
+    switch (byte) {
+      case '"':
+        output << "\\\"";
+        break;
+      case '\\':
+        output << "\\\\";
+        break;
+      case '\b':
+        output << "\\b";
+        break;
+      case '\f':
+        output << "\\f";
+        break;
+      case '\n':
+        output << "\\n";
+        break;
+      case '\r':
+        output << "\\r";
+        break;
+      case '\t':
+        output << "\\t";
+        break;
+      default:
+        if (byte < 0x20) {
+          output << "\\u00" << std::hex << std::setfill('0') << std::setw(2)
+                 << static_cast<unsigned int>(byte) << std::dec;
+        } else {
+          output << static_cast<char>(byte);
+        }
+    }
+  }
+  output << '"';
+  return output.str();
+}
+
 std::array<unsigned char, llmcc::payload::kSha256Size> HashFile(
     const fs::path& path) {
   std::ifstream input(path, std::ios::binary);
@@ -173,6 +212,65 @@ BundleResult WriteBundle(std::ofstream& output, std::span<const char, 8> magic,
           .hash = digest.Finish()};
 }
 
+BundleEntry ParseMapping(std::string_view mapping, std::string_view kind) {
+  const std::size_t separator = mapping.find('=');
+  if (separator == std::string_view::npos) {
+    throw std::runtime_error("invalid " + std::string(kind) + " file mapping");
+  }
+  const std::string destination(mapping.substr(separator + 1));
+  if (!SafeDestination(destination)) {
+    throw std::runtime_error("unsafe " + std::string(kind) +
+                             " destination: " + destination);
+  }
+  const fs::path source(mapping.substr(0, separator));
+  return {.source = source,
+          .destination = destination,
+          .size = static_cast<std::uint64_t>(fs::file_size(source)),
+          .hash = HashFile(source)};
+}
+
+void CheckDuplicateDestinations(std::span<const BundleEntry> entries,
+                                std::string_view kind) {
+  for (std::size_t left = 0; left < entries.size(); ++left) {
+    for (std::size_t right = left + 1; right < entries.size(); ++right) {
+      if (entries[left].destination == entries[right].destination) {
+        throw std::runtime_error("duplicate " + std::string(kind) +
+                                 " destination: " + entries[left].destination);
+      }
+    }
+  }
+}
+
+void WriteChecksum(
+    const fs::path& checksum_output, const fs::path& output,
+    const std::array<unsigned char, llmcc::payload::kSha256Size>& hash) {
+  std::ofstream checksum(checksum_output, std::ios::trunc);
+  checksum << Hex(hash) << "  " << output.filename().string() << '\n';
+  if (!checksum) {
+    throw std::runtime_error("cannot write checksum");
+  }
+}
+
+void WriteManifest(const fs::path& manifest_path, std::string_view name,
+                   std::string_view version, std::string_view git_sha,
+                   std::string_view llama_commit, std::string_view ggml_abi,
+                   std::string_view sha256, std::uint64_t size) {
+  std::ofstream manifest(manifest_path, std::ios::trunc);
+  manifest << "{\n"
+           << "  \"name\": " << JsonString(name) << ",\n"
+           << "  \"version\": " << JsonString(version) << ",\n"
+           << "  \"git_sha\": " << JsonString(git_sha) << ",\n"
+           << "  \"llama_cpp_commit\": " << JsonString(llama_commit) << ",\n"
+           << "  \"ggml_backend_api_version\": " << JsonString(ggml_abi)
+           << ",\n"
+           << "  \"sha256\": " << JsonString(sha256) << ",\n"
+           << "  \"size\": " << size << "\n"
+           << "}\n";
+  if (!manifest) {
+    throw std::runtime_error("cannot write manifest");
+  }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -182,7 +280,18 @@ int main(int argc, char** argv) {
     fs::path rocm_module;
     fs::path output;
     fs::path checksum_output;
+    fs::path bundle_output;
+    fs::path manifest_output;
+    std::string name;
+    std::string version;
+    std::string git_sha;
+    std::string llama_commit;
+    std::string ggml_abi;
     std::vector<BundleEntry> rocm_entries;
+    std::vector<BundleEntry> bundle_entries;
+    bool has_binary = false;
+    bool has_rocm_file = false;
+    bool has_write_bundle = false;
     for (int index = 1; index < argc; ++index) {
       const std::string_view argument(argv[index]);
       auto value = [&]() -> std::string_view {
@@ -193,6 +302,7 @@ int main(int argc, char** argv) {
         return argv[index];
       };
       if (argument == "--binary") {
+        has_binary = true;
         binary = value();
       } else if (argument == "--cuda") {
         cuda = value();
@@ -203,24 +313,81 @@ int main(int argc, char** argv) {
       } else if (argument == "--checksum-output") {
         checksum_output = value();
       } else if (argument == "--rocm-file") {
-        const std::string mapping(value());
-        const std::size_t separator = mapping.find('=');
-        if (separator == std::string::npos) {
-          throw std::runtime_error("invalid ROCm file mapping");
-        }
-        const std::string destination = mapping.substr(separator + 1);
-        if (!SafeDestination(destination)) {
-          throw std::runtime_error("unsafe ROCm destination: " + destination);
-        }
-        const fs::path source = mapping.substr(0, separator);
-        rocm_entries.push_back(
-            {.source = source,
-             .destination = destination,
-             .size = static_cast<std::uint64_t>(fs::file_size(source)),
-             .hash = HashFile(source)});
+        has_rocm_file = true;
+        rocm_entries.push_back(ParseMapping(value(), "ROCm"));
+      } else if (argument == "--write-bundle") {
+        has_write_bundle = true;
+        bundle_output = value();
+      } else if (argument == "--name") {
+        name = value();
+      } else if (argument == "--file") {
+        bundle_entries.push_back(ParseMapping(value(), "bundle"));
+      } else if (argument == "--manifest") {
+        manifest_output = value();
+      } else if (argument == "--version") {
+        version = value();
+      } else if (argument == "--git-sha") {
+        git_sha = value();
+      } else if (argument == "--llama-commit") {
+        llama_commit = value();
+      } else if (argument == "--ggml-abi") {
+        ggml_abi = value();
       } else {
         throw std::runtime_error("unknown argument: " + std::string(argument));
       }
+    }
+
+    if (has_binary && has_write_bundle) {
+      throw std::runtime_error(
+          "--binary and --write-bundle are mutually exclusive");
+    }
+    if (has_write_bundle) {
+      if (bundle_output.empty()) {
+        throw std::runtime_error("bundle output path is empty");
+      }
+      if (!cuda.empty() || !rocm_module.empty() || !output.empty() ||
+          has_rocm_file) {
+        throw std::runtime_error(
+            "fat executable arguments cannot be used with --write-bundle");
+      }
+      if (name != "cuda" && name != "rocm") {
+        throw std::runtime_error("unknown bundle name: " + name);
+      }
+      CheckDuplicateDestinations(bundle_entries, "bundle");
+
+      std::ofstream bundle(bundle_output, std::ios::binary | std::ios::trunc);
+      if (!bundle) {
+        throw std::runtime_error("cannot create " + bundle_output.string());
+      }
+      const std::span<const char, 8> magic = name == "cuda"
+                                                 ? llmcc::payload::kCudaMagic
+                                                 : llmcc::payload::kRocmMagic;
+      const BundleResult result = WriteBundle(
+          bundle, magic, std::span<const BundleEntry>(bundle_entries),
+          name == "cuda" ? "CUDA" : "ROCm");
+      WriteFooterEntry(bundle, name, result.offset, result.length, result.hash);
+      bundle.close();
+      if (!bundle) {
+        throw std::runtime_error("cannot finish " + bundle_output.string());
+      }
+
+      const auto bundle_hash = HashFile(bundle_output);
+      if (!checksum_output.empty()) {
+        WriteChecksum(checksum_output, bundle_output, bundle_hash);
+      }
+      if (!manifest_output.empty()) {
+        WriteManifest(manifest_output, name, version, git_sha, llama_commit,
+                      ggml_abi, Hex(bundle_hash),
+                      static_cast<std::uint64_t>(fs::file_size(bundle_output)));
+      }
+      return 0;
+    }
+
+    if (!name.empty() || !bundle_entries.empty() || !manifest_output.empty() ||
+        !version.empty() || !git_sha.empty() || !llama_commit.empty() ||
+        !ggml_abi.empty()) {
+      throw std::runtime_error(
+          "standalone bundle arguments require --write-bundle");
     }
     if (binary.empty() || cuda.empty() || rocm_module.empty() ||
         output.empty() || checksum_output.empty()) {
@@ -280,12 +447,7 @@ int main(int argc, char** argv) {
     }
 
     const auto combined_hash = HashFile(output);
-    std::ofstream checksum(checksum_output, std::ios::trunc);
-    checksum << Hex(combined_hash) << "  " << output.filename().string()
-             << '\n';
-    if (!checksum) {
-      throw std::runtime_error("cannot write checksum");
-    }
+    WriteChecksum(checksum_output, output, combined_hash);
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "error: " << error.what() << '\n';

@@ -10,13 +10,14 @@ build:cpu --//:backend=cpu
 build:cuda --//:backend=cuda
 build:rocm --//:backend=rocm
 build:metal --//:backend=metal
+build:universal --//:backend=universal
 
 # Metal kernels are embedded as source, avoiding build-time metallib output
 # that varies between Xcode builds. Bazel discovers the active Xcode toolchain.
 build:metal --macos_minimum_os=14.0
 
 # Applied automatically on macOS by --enable_platform_specific_config so the
-# default auto backend has the same deployment target as --config=metal.
+# auto backend has the same deployment target as --config=metal.
 build:macos --macos_minimum_os=14.0
 
 build:release --compilation_mode=opt

@@ -290,6 +290,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
   const auto extracted_cpp =
       llmcc::Functions(cpp_functions, llmcc::Language::kCpp);
   std::vector<std::string> cpp_names;
+  cpp_names.reserve(extracted_cpp.size());
   for (const auto& function : extracted_cpp) {
     cpp_names.push_back(function.name);
   }
@@ -304,6 +305,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
   const auto extracted_rust =
       llmcc::Functions(rust_functions, llmcc::Language::kRust);
   std::vector<std::string> rust_names;
+  rust_names.reserve(extracted_rust.size());
   for (const auto& function : extracted_rust) {
     rust_names.push_back(function.name);
   }

@@ -1,4 +1,4 @@
-#if defined(__linux__)
+#ifdef __linux__
 
 #include <sys/syscall.h>
 #include <sys/types.h>

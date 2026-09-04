@@ -33,23 +33,32 @@ int main() {  // NOLINT(bugprone-exception-escape)
                         "runtime override is set");
 
   auto cuda = llmcc::PrepareEmbeddedPayloadFromExecutable(executable, "cuda");
-  llmcc::test::Expect(cuda.has_value() && cuda->backing_fd >= 0,
+  if (!cuda.has_value()) {
+    llmcc::test::Expect(false, "CUDA payload is materialized in a memfd");
+    return EXIT_FAILURE;
+  }
+  const llmcc::PreparedPayload& cuda_payload = cuda.value();
+  llmcc::test::Expect(cuda_payload.backing_fd >= 0,
                       "CUDA payload is materialized in a memfd");
   struct stat cuda_status{};
-  llmcc::test::Expect(
-      fstat(cuda->backing_fd, &cuda_status) == 0 && cuda_status.st_size > 0,
-      "CUDA memfd contains the embedded module");
+  llmcc::test::Expect(fstat(cuda_payload.backing_fd, &cuda_status) == 0 &&
+                          cuda_status.st_size > 0,
+                      "CUDA memfd contains the embedded module");
   constexpr int kAllSeals =
       F_SEAL_SEAL | F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE;
-  llmcc::test::ExpectEq(fcntl(cuda->backing_fd, F_GET_SEALS), kAllSeals,
+  llmcc::test::ExpectEq(fcntl(cuda_payload.backing_fd, F_GET_SEALS), kAllSeals,
                         "CUDA memfd is immutable");
-  close(cuda->backing_fd);
+  close(cuda_payload.backing_fd);
 
   auto rocm = llmcc::PrepareEmbeddedPayloadFromExecutable(executable, "rocm");
-  llmcc::test::Expect(rocm.has_value() && rocm->backing_fd < 0 &&
-                          fs::is_regular_file(rocm->path),
+  if (!rocm.has_value()) {
+    llmcc::test::Expect(false,
+                        "ROCm payload is extracted into its private cache");
+    return EXIT_FAILURE;
+  }
+  llmcc::test::Expect(rocm->backing_fd < 0 && fs::is_regular_file(rocm->path),
                       "ROCm payload is extracted into its private cache");
-  const fs::path module = rocm->path;
+  const fs::path module = rocm.value().path;
   const std::uintmax_t module_size = fs::file_size(module);
   const auto module_time = fs::last_write_time(module);
 

@@ -21,12 +21,25 @@ llama_root="$output_base/external/+http_archive+llama_cpp"
 json_root="$output_base/external/+http_archive+nlohmann_json"
 tree_sitter_root="$output_base/external/+http_archive+tree_sitter"
 curl_root="$output_base/external/+http_archive+curl"
+llvm_root="$output_base/external/toolchains_llvm++llvm+llvm_toolchain_llvm"
 fixes_file="$(mktemp "${TMPDIR:-/tmp}/llm-cc-clang-tidy.XXXXXX")"
 trap 'rm -f "$fixes_file"' EXIT
 
 platform_args=()
 if [[ "$(uname -s)" == Darwin ]]; then
   platform_args=(-isysroot "$(xcrun --sdk macosx --show-sdk-path)")
+elif [[ "$(uname -s)" == Linux ]]; then
+  sysroot="$output_base/external/+http_archive+linux_glibc_sysroot"
+  platform_args=(
+    --target=x86_64-unknown-linux-gnu
+    -resource-dir "$llvm_root/lib/clang/22"
+    -stdlib=libc++
+    --sysroot="$sysroot"
+    -nostdinc++
+    -cxx-isystem "$llvm_root/include/c++/v1"
+    -cxx-isystem "$llvm_root/include/x86_64-unknown-linux-gnu/c++/v1"
+    -idirafter "$llvm_root/lib/clang/22/include"
+  )
 fi
 
 bazel run @llvm_toolchain_llvm//:bin/clang-tidy -- \

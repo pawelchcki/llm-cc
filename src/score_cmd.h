@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -27,6 +28,9 @@ struct InferenceOptions {
   std::uint32_t batch_size = kDefaultBatchSize;
   EntropyReduction entropy_reduction = EntropyReduction::kAuto;
   std::function<void(std::size_t, std::size_t)> progress;
+  std::optional<std::filesystem::path> backend_directory;
+  bool no_download = false;
+  bool fetch_backend = true;
 };
 
 class EntropyScorer {

@@ -179,7 +179,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
   ExpectEq(metric_analysis.metrics.lmcc, metric_analysis.llm_cc,
            "metric lmcc duplicates score");
   Expect(std::abs(metric_analysis.metrics.lmcc_per_token -
-                  metric_analysis.llm_cc / 2.0) < 1e-12,
+                  (metric_analysis.llm_cc / 2.0)) < 1e-12,
          "metric lmcc per token");
   Expect(std::abs(metric_analysis.metrics.density - 0.5) < 1e-12,
          "metric density");

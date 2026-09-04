@@ -4,13 +4,17 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <array>
 #include <cerrno>
+#include <cstdlib>
+#include <exception>
+#include <iostream>
 #include <optional>
 #include <string>
 
 #include "src/test_util.h"
 
-int main() {
+int main() try {
   llmcc::InferenceGuard cpu_guard("cpu");
 
   llmcc::test::Expect(
@@ -25,9 +29,9 @@ int main() {
           warning->find("outside the sandbox") != std::string::npos,
       "Codex sandbox with zero GPU memory gives actionable guidance");
 
-  int start[2];
-  int acquired[2];
-  llmcc::test::Expect(pipe(start) == 0 && pipe(acquired) == 0,
+  std::array<int, 2> start{};
+  std::array<int, 2> acquired{};
+  llmcc::test::Expect(pipe(start.data()) == 0 && pipe(acquired.data()) == 0,
                       "lock test pipes created");
   const std::string backend = "test-" + std::to_string(getpid());
   const pid_t child = fork();
@@ -68,4 +72,7 @@ int main() {
                           WIFEXITED(status) && WEXITSTATUS(status) == 0,
                       "lock test child exits successfully");
   return 0;
+} catch (const std::exception& error) {
+  std::cerr << "FAIL: unexpected exception: " << error.what() << '\n';
+  return EXIT_FAILURE;
 }
