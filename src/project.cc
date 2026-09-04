@@ -79,9 +79,10 @@ CommandResult Capture(std::wstring_view command) {
     if (write_pipe) CloseHandle(write_pipe);
     return {.status = -1, .output = {}};
   }
-  HANDLE null_error = CreateFileW(L"NUL", GENERIC_WRITE,
-                                  FILE_SHARE_READ | FILE_SHARE_WRITE, &security,
-                                  OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  HANDLE null_error =
+      CreateFileW(L"NUL", GENERIC_WRITE,
+                  FILE_SHARE_READ | FILE_SHARE_WRITE, &security, OPEN_EXISTING,
+                  FILE_ATTRIBUTE_NORMAL, nullptr);
   STARTUPINFOW startup{};
   startup.cb = sizeof(startup);
   startup.dwFlags = STARTF_USESTDHANDLES;
@@ -90,9 +91,9 @@ CommandResult Capture(std::wstring_view command) {
   startup.hStdError = null_error;
   PROCESS_INFORMATION process{};
   std::wstring mutable_command(command);
-  const BOOL started = CreateProcessW(nullptr, mutable_command.data(), nullptr,
-                                      nullptr, TRUE, CREATE_NO_WINDOW, nullptr,
-                                      nullptr, &startup, &process);
+  const BOOL started =
+      CreateProcessW(nullptr, mutable_command.data(), nullptr, nullptr, TRUE,
+                     CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process);
   CloseHandle(write_pipe);
   if (null_error != INVALID_HANDLE_VALUE) CloseHandle(null_error);
   if (!started) {
@@ -102,8 +103,9 @@ CommandResult Capture(std::wstring_view command) {
   std::string output;
   std::array<char, 4096> buffer{};
   DWORD count = 0;
-  while (ReadFile(read_pipe, buffer.data(), static_cast<DWORD>(buffer.size()),
-                  &count, nullptr) && count != 0) {
+  while (ReadFile(read_pipe, buffer.data(),
+                  static_cast<DWORD>(buffer.size()), &count, nullptr) &&
+         count != 0) {
     output.append(buffer.data(), count);
   }
   CloseHandle(read_pipe);
