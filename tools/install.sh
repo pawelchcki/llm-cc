@@ -63,13 +63,41 @@ if ((${#bundle_sources[@]} != ${#checksum_sources[@]} ||
 fi
 
 bin_dir="$prefix/bin"
-install_root="$prefix/lib/llm-cc"
-mkdir -p "$bin_dir" "$install_root"
-work_dir="$(mktemp -d "$prefix/.llm-cc-install.XXXXXXXX")"
+mkdir -p "$bin_dir"
+physical_bin_dir="$(cd -P -- "$bin_dir" && pwd)"
+install_prefix="$(dirname -- "$physical_bin_dir")"
+install_root="$install_prefix/lib/llm-cc"
+
+# Serialize changes to the executable and its sibling backend root. flock is
+# preferred because the kernel releases it even after an uncatchable signal;
+# the mkdir fallback keeps source installs portable to systems without flock.
+lock_path="$install_prefix/.llm-cc-install.lock"
+lock_dir=""
+lock_owned=0
+if command -v flock >/dev/null 2>&1; then
+  exec 9>"$lock_path"
+  flock 9
+else
+  lock_dir="$lock_path.d"
+  while ((lock_owned == 0)); do
+    trap '' INT TERM
+    if mkdir -- "$lock_dir" 2>/dev/null; then
+      lock_owned=1
+    fi
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    ((lock_owned)) || sleep 0.1
+  done
+fi
+
+mkdir -p "$install_root"
+work_dir="$(mktemp -d "$physical_bin_dir/.llm-cc-install.XXXXXXXX")"
 stage_dir=""
+staged_bundle_dir=""
+staged_binary=""
 bundle_dir=""
 old_bundle_dir=""
-installed_binary="$bin_dir/llm-cc"
+installed_binary="$physical_bin_dir/llm-cc"
 old_binary=""
 committed=0
 old_bundle_moved=0
@@ -78,7 +106,22 @@ old_binary_moved=0
 binary_installed=0
 rollback() {
   # The old executable and bundle set remain recoverable until both swaps have
-  # completed. This also handles an interruption between either pair of moves.
+  # completed. Infer successful moves from the filesystem so an interruption
+  # between a move and its bookkeeping assignment remains recoverable.
+  if [[ -n "$staged_binary" && ! -e "$staged_binary" &&
+        -e "$installed_binary" ]]; then
+    binary_installed=1
+  fi
+  if [[ -n "$old_binary" && -e "$old_binary" ]]; then
+    old_binary_moved=1
+  fi
+  if [[ -n "$staged_bundle_dir" && ! -e "$staged_bundle_dir" &&
+        -e "$bundle_dir" ]]; then
+    bundle_set_installed=1
+  fi
+  if [[ -n "$old_bundle_dir" && -e "$old_bundle_dir" ]]; then
+    old_bundle_moved=1
+  fi
   if ((binary_installed)) && [[ -e "$installed_binary" ]]; then
     if ! mv -- "$installed_binary" "$work_dir/rejected-llm-cc"; then
       return 1
@@ -104,18 +147,22 @@ rollback() {
 }
 on_exit() {
   status=$?
+  trap - EXIT INT TERM
   if ((status != 0 && committed == 0)); then
     if ! rollback; then
       echo "error: installation rollback failed; recover from $work_dir or $old_bundle_dir" >&2
-      trap - EXIT
+      ((lock_owned == 0)) || rmdir -- "$lock_dir"
       exit "$status"
     fi
   fi
   [[ -z "$stage_dir" ]] || rm -rf -- "$stage_dir"
   rm -rf -- "$work_dir"
+  ((lock_owned == 0)) || rmdir -- "$lock_dir"
   exit "$status"
 }
 trap on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # Check that the replacement executable starts before changing either active
 # bundles or the old executable.
@@ -134,6 +181,7 @@ bundle_dir="$(dirname -- "$backend_path")"
 bundle_parent="$(dirname -- "$bundle_dir")"
 mkdir -p "$bundle_parent"
 stage_dir="$(mktemp -d "$bundle_parent/.${bundle_dir##*/}.incoming.XXXXXXXX")"
+staged_bundle_dir="$stage_dir"
 
 for index in "${!bundle_sources[@]}"; do
   source_bundle="${bundle_sources[index]}"
