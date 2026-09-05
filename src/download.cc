@@ -96,9 +96,12 @@ class DownloadProgress {
     const bool complete = progress->download_total_ > 0 &&
                           progress->downloaded_ >= progress->download_total_;
     if (llmcc::CliSessionActive()) {
+      const std::uint64_t total =
+          progress->download_total_ > 0
+              ? progress->resume_offset_ + progress->download_total_
+              : 0;
       llmcc::ReportCounter(progress->resume_offset_ + progress->downloaded_,
-                           progress->resume_offset_ + progress->download_total_,
-                           "bytes");
+                           total, "bytes");
     } else {
       progress->Render(complete);
     }

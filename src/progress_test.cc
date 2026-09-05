@@ -155,6 +155,20 @@ int main() {
            "counter advance resets stalled age");
     Expect(output.str().find("example.rs") != std::string::npos,
            "phase retains current file");
+    progress.Phase("downloading");
+    progress.Counter(25, 0, "bytes");
+    ticks = 15;
+    progress.Heartbeat();
+    Expect(output.str().find("25/? bytes stalled_s=5") != std::string::npos,
+           "unknown transfer size is distinct from a known total");
+    // Learning the final size must report completion even if no more bytes
+    // arrive, without waiting for the next heartbeat.
+    progress.Counter(25, 25, "bytes");
+    Expect(output.str().find("25/25 bytes") != std::string::npos,
+           "completion is reported when the total becomes known");
+    const auto complete = output.str();
+    progress.Counter(25, 25, "bytes");
+    Expect(output.str() == complete, "repeated completion is throttled");
   }
   const auto stopped = output.str();
   std::this_thread::sleep_for(20ms);

@@ -223,7 +223,8 @@ project result. `--progress auto` (the default) and `always` write an immediate
 phase message and a heartbeat every five seconds to stderr, including when
 redirected. These report elapsed time, the current file, token or byte counters,
 and time since counters advanced when available, even during blocked model loads,
-cache/GPU lock waits, or inference batches. `never` suppresses routine progress;
+cache/GPU lock waits, or inference batches. Downloads with an unknown total size
+show `completed/? bytes`. `never` suppresses routine progress;
 errors and warnings remain. Analysis, `score`, and `backends fetch` share this
 behavior and stdout JSONL is unchanged.
 

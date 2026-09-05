@@ -1023,16 +1023,10 @@ void ScoreInput(llama_model* model, llmcc::BackendLogCapture& backend_log,
                negative_log_likelihood, options.device_reduction);
 }
 
-int Run(const Arguments& arguments, std::ostream& output,
-        std::ostream& diagnostics,
-        const std::optional<std::string>& input_override = std::nullopt) {
-  const std::string input =
-      input_override.has_value() ? *input_override : ReadInput(arguments);
-  llmcc::BackendLogCapture backend_log;
-  llmcc::BackendRuntime backend(
-      arguments.backend, arguments.gpu_layers, LLM_CC_VERSION,
-      arguments.backend_directory, arguments.no_download,
-      ShouldFetchBackend(arguments.backend, arguments.gpu_layers));
+int Run(const Arguments& arguments, const llmcc::BackendRuntime& backend,
+        llmcc::BackendLogCapture& backend_log, std::ostream& output,
+        std::ostream& diagnostics) {
+  const std::string input = ReadInput(arguments);
   llmcc::InferenceGuard inference_guard(llmcc::BackendName(backend.selected()));
   const bool use_gpu = arguments.gpu_layers != 0;
   const std::optional<std::uint64_t> gpu_available =
@@ -1276,19 +1270,21 @@ int RunScoreCommand(int argc, char** argv) {
     ProgressReporter progress(arguments.progress);
     CliSession session(progress, arguments.assume_yes, arguments.no_download);
     progress.Phase("resolving inference backend");
-    if (arguments.gpu_layers != 0) {
-      BackendLogCapture capture;
+    BackendLogCapture capture;
+    // Keep the preflight backend alive through model loading and inference.
+    // Unloading it here would force another device probe and plugin load.
+    BackendRuntime backend = [&] {
       try {
-        BackendRuntime backend(arguments.backend, arguments.gpu_layers,
-                               LLM_CC_VERSION, arguments.backend_directory,
-                               arguments.no_download, true);
-        arguments.backend = backend.selected();
+        return BackendRuntime(
+            arguments.backend, arguments.gpu_layers, LLM_CC_VERSION,
+            arguments.backend_directory, arguments.no_download,
+            ShouldFetchBackend(arguments.backend, arguments.gpu_layers));
       } catch (const std::exception& error) {
         const auto detail = capture.Error();
         throw std::runtime_error(std::string(error.what()) +
                                  (detail.empty() ? "" : ": " + detail));
       }
-    }
+    }();
     progress.Phase("resolving model");
     if (arguments.model_name.has_value()) {
       arguments.model =
@@ -1297,7 +1293,7 @@ int RunScoreCommand(int argc, char** argv) {
                        CacheDir(), DownloadModel);
     }
     progress.Phase("reading scoring input");
-    return Run(arguments, std::cout, std::cerr);
+    return Run(arguments, backend, capture, std::cout, std::cerr);
   } catch (const std::exception& error) {
     std::cerr << "error: " << error.what() << '\n';
     if (gpu_requested) {

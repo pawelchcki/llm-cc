@@ -139,7 +139,8 @@ void ProgressReporter::Render(Clock::time_point now) {
           << std::chrono::duration_cast<std::chrono::seconds>(now - started_)
                  .count();
   if (!unit_.empty()) {
-    output_ << ' ' << completed_ << '/' << total_ << ' ' << unit_
+    output_ << ' ' << completed_ << '/'
+            << (total_ == 0 ? "?" : std::to_string(total_)) << ' ' << unit_
             << " stalled_s="
             << std::chrono::duration_cast<std::chrono::seconds>(now - advanced_)
                    .count();
@@ -169,7 +170,8 @@ void ProgressReporter::Counter(std::uint64_t completed, std::uint64_t total,
   const auto now = now_();
   const bool advanced = completed != completed_ || unit_ != unit;
   if (advanced) advanced_ = now;
-  const bool finished = advanced && total != 0 && completed == total;
+  const bool finished =
+      (advanced || total != total_) && total != 0 && completed == total;
   completed_ = completed;
   total_ = total;
   unit_ = unit;

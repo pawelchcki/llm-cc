@@ -35,6 +35,7 @@ class ProgressReporter {
   void StartFile(std::size_t index, std::size_t total,
                  const std::filesystem::path& path);
   void Tokens(std::size_t completed, std::size_t total);
+  // A zero total means that the amount of work is not yet known.
   void Counter(std::uint64_t completed, std::uint64_t total,
                std::string_view unit);
   void FinishFile(bool cache_hit);
