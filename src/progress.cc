@@ -255,18 +255,30 @@ void ConfirmDownload(std::string_view url, const std::filesystem::path& target,
   CheckDownloadAllowed();
   session->progress.Pause(true);
   try {
-#ifdef _WIN32
-    std::ifstream terminal("CONIN$");
-#else
-    std::ifstream terminal("/dev/tty");
-#endif
-    RequireDownloadConsent(
-        session->assume_yes, session->no_download,
-        terminal ? &terminal : nullptr, std::cerr,
+    const std::string prompt =
         std::string(description) + " source=" + std::string(url) +
-            " destination=" + target.string() + " size=" +
-            (bytes ? std::to_string(*bytes) + " bytes (approximate)"
-                   : "unknown"));
+        " destination=" + target.string() + " size=" +
+        (bytes ? std::to_string(*bytes) + " bytes (approximate)" : "unknown");
+    if (session->assume_yes) {
+      RequireDownloadConsent(true, session->no_download, nullptr, std::cerr,
+                             prompt);
+    } else {
+#ifdef _WIN32
+      std::ifstream terminal_input("CONIN$");
+      std::ofstream terminal_output("CONOUT$");
+      RequireDownloadConsent(
+          false, session->no_download,
+          terminal_input && terminal_output ? &terminal_input : nullptr,
+          terminal_output ? static_cast<std::ostream&>(terminal_output)
+                          : std::cerr,
+          prompt);
+#else
+      std::fstream terminal("/dev/tty", std::ios::in | std::ios::out);
+      RequireDownloadConsent(
+          false, session->no_download, terminal ? &terminal : nullptr,
+          terminal ? static_cast<std::ostream&>(terminal) : std::cerr, prompt);
+#endif
+    }
   } catch (...) {
     session->progress.Pause(false);
     throw;

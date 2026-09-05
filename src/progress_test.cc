@@ -85,16 +85,28 @@ int main() {
                 "--prompt", "--backend", "--gpu-layers", "-1",
                 "--entropy-reduction", "device", "--entropy", "--no-download"},
                true),
+#ifdef _WIN32
+      std::string("CPU rerun: llm-cc score \"--model\" \"model.gguf\" "
+                  "\"--prompt\" \"--backend\" \"--entropy\" "
+                  "\"--no-download\" --force-cpu"),
+#else
       std::string("CPU rerun: llm-cc score '--model' 'model.gguf' '--prompt' "
                   "'--backend' '--entropy' '--no-download' --force-cpu"),
+#endif
       "CPU recovery preserves flag-like prompt text and scoring switches");
   llmcc::test::ExpectEq(
       recovery({"llm-cc", "--force-cpu", "--no-cache", "--include-headers",
                 "--model", "--force-cpu", "source's file.cc", "-y",
                 "--backend-dir", "backends"}),
+#ifdef _WIN32
+      std::string("CPU rerun: llm-cc \"--no-cache\" \"--include-headers\" "
+                  "\"--model\" \"--force-cpu\" \"source's file.cc\" \"-y\" "
+                  "--force-cpu"),
+#else
       std::string(
           "CPU rerun: llm-cc '--no-cache' '--include-headers' '--model' "
           "'--force-cpu' 'source'\\''s file.cc' '-y' --force-cpu"),
+#endif
       "CPU recovery preserves model paths, source quoting and analysis flags");
 
   std::ostringstream consent;

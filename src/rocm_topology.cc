@@ -220,6 +220,15 @@ std::optional<RocmTopology> ConfigureRocmVisibility(
   }
 }
 
+bool RocmDeviceAccessible(const std::filesystem::path& device_path) noexcept {
+  try {
+    std::fstream device(device_path, std::ios::in | std::ios::out);
+    return device.is_open();
+  } catch (...) {
+    return false;
+  }
+}
+
 std::string RocmUnsupportedSystemMessage(const RocmTopology& topology) {
   std::vector<std::string_view> detected;
   detected.reserve(topology.devices.size());

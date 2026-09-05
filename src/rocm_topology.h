@@ -44,6 +44,11 @@ std::optional<RocmTopology> ConfigureRocmVisibility(
     const std::filesystem::path& nodes_directory =
         "/sys/class/kfd/kfd/topology/nodes") noexcept;
 
+// Verifies that the current process can open the KFD device for both reading
+// and writing. A visible sysfs topology alone does not imply container access.
+bool RocmDeviceAccessible(
+    const std::filesystem::path& device_path = "/dev/kfd") noexcept;
+
 std::string RocmUnsupportedSystemMessage(const RocmTopology& topology);
 
 }  // namespace llmcc

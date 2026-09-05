@@ -225,8 +225,11 @@ LoadedPlugin LoadPlugin(
   std::optional<RocmTopology> rocm_topology;
   if (backend == BackendKind::kRocm) {
     rocm_topology = ConfigureRocmVisibility();
-    // Without a successful hardware probe, only local plugins may be tried.
-    if (!rocm_topology.has_value()) fetch_backend = false;
+    // Without a successful hardware probe and usable KFD device, only local
+    // plugins may be tried. Containers can expose topology without /dev/kfd.
+    if (!rocm_topology.has_value() || !RocmDeviceAccessible()) {
+      fetch_backend = false;
+    }
     if (rocm_topology.has_value() && !rocm_topology->has_supported_device) {
       if (required && rocm_topology->has_unsupported_device) {
         throw std::runtime_error(RocmUnsupportedSystemMessage(*rocm_topology) +

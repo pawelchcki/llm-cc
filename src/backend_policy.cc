@@ -32,6 +32,29 @@ std::string CpuRecoveryCommand(int argc, char** argv, bool score) {
   std::string result = "CPU rerun: llm-cc";
   if (score) result += " score";
   const auto append_argument = [&](std::string_view arg) {
+#ifdef _WIN32
+    result += " \"";
+    std::size_t backslashes = 0;
+    for (char ch : arg) {
+      if (ch == '\\') {
+        ++backslashes;
+        continue;
+      }
+      if (ch == '"') {
+        result.append(backslashes * 2 + 1, '\\');
+        result += ch;
+        backslashes = 0;
+        continue;
+      }
+      result.append(backslashes, '\\');
+      backslashes = 0;
+      result += static_cast<unsigned char>(ch) < 32 || ch == 127 ? '?' : ch;
+    }
+    // Backslashes before the closing quote must be doubled for the Windows
+    // command-line parser to retain them in the argument.
+    result.append(backslashes * 2, '\\');
+    result += '"';
+#else
     result += " '";
     for (char ch : arg) {
       if (ch == '\'')
@@ -42,6 +65,7 @@ std::string CpuRecoveryCommand(int argc, char** argv, bool score) {
         result += ch;
     }
     result += "'";
+#endif
   };
   for (int i = 1; i < argc; ++i) {
     const std::string_view arg = argv[i];
