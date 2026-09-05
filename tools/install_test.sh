@@ -50,6 +50,15 @@ BUILD_KEY=first-build bash "$script" "$source_binary" \
 bundle_dir="$root/lib/llm-cc/backends/first-build"
 [[ -x "$root/bin/llm-cc" && -f "$bundle_dir/cuda.bundle" ]]
 
+# Failure before the replacement executable is staged preserves the active
+# executable and bundle set.
+if BUILD_KEY=first-build bash "$script" "$TEST_TMPDIR/missing-llm-cc" \
+  -- --prefix "$root"; then
+  echo 'expected executable staging failure' >&2
+  exit 1
+fi
+[[ -x "$root/bin/llm-cc" && -f "$bundle_dir/cuda.bundle" ]]
+
 # A failure before the full set is staged leaves the active installation.
 if BUILD_KEY=first-build FAIL_ROCM=1 bash "$script" "$source_binary" \
   --bundle "$rocm_bundle" --checksum "$rocm_bundle.sha256" \

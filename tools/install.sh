@@ -109,18 +109,22 @@ old_bundle_moved=0
 bundle_set_installed=0
 old_binary_moved=0
 binary_installed=0
+bundle_install_started=0
+binary_install_started=0
 rollback() {
   # The old executable and bundle set remain recoverable until both swaps have
   # completed. Infer successful moves from the filesystem so an interruption
   # between a move and its bookkeeping assignment remains recoverable.
-  if [[ -n "$staged_binary" && ! -e "$staged_binary" &&
+  if ((binary_install_started)) &&
+     [[ -n "$staged_binary" && ! -e "$staged_binary" &&
         -e "$installed_binary" ]]; then
     binary_installed=1
   fi
   if [[ -n "$old_binary" && -e "$old_binary" ]]; then
     old_binary_moved=1
   fi
-  if [[ -n "$staged_bundle_dir" && ! -e "$staged_bundle_dir" &&
+  if ((bundle_install_started)) &&
+     [[ -n "$staged_bundle_dir" && ! -e "$staged_bundle_dir" &&
         -e "$bundle_dir" ]]; then
     bundle_set_installed=1
   fi
@@ -217,6 +221,7 @@ if [[ -e "$bundle_dir" ]]; then
   mv -- "$bundle_dir" "$old_bundle_dir"
   old_bundle_moved=1
 fi
+bundle_install_started=1
 mv -- "$stage_dir" "$bundle_dir"
 stage_dir=""
 bundle_set_installed=1
@@ -226,6 +231,7 @@ if [[ -e "$installed_binary" ]]; then
   mv -- "$installed_binary" "$old_binary"
   old_binary_moved=1
 fi
+binary_install_started=1
 mv -- "$staged_binary" "$installed_binary"
 binary_installed=1
 

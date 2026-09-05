@@ -551,6 +551,17 @@ BackendRuntime::BackendRuntime(
     const std::vector<BackendDevice> devices =
         Inventory(std::span<const LoadedPlugin>(gpu_plugins.data(), gpu_count));
     if (devices.empty()) {
+      // A missing bundle is recorded only after the corresponding hardware
+      // probe succeeds. Prefer that actionable result over failures from an
+      // unavailable optional hardware family.
+      const auto missing =
+          std::find_if(gpu_plugins.begin(), gpu_plugins.begin() + gpu_count,
+                       [](const LoadedPlugin& plugin) {
+                         return plugin.missing_with_download_disabled;
+                       });
+      if (missing != gpu_plugins.begin() + gpu_count) {
+        throw std::runtime_error(MissingGpuBackendMessage(missing->backend));
+      }
       const auto failed = std::find_if(
           gpu_plugins.begin(), gpu_plugins.begin() + gpu_count,
           [](const LoadedPlugin& plugin) { return plugin.failure != nullptr; });
@@ -561,14 +572,6 @@ BackendRuntime::BackendRuntime(
           throw std::runtime_error(std::string(error.what()) + "; " +
                                    GpuOffloadHelp());
         }
-      }
-      const auto missing =
-          std::find_if(gpu_plugins.begin(), gpu_plugins.begin() + gpu_count,
-                       [](const LoadedPlugin& plugin) {
-                         return plugin.missing_with_download_disabled;
-                       });
-      if (missing != gpu_plugins.begin() + gpu_count) {
-        throw std::runtime_error(MissingGpuBackendMessage(missing->backend));
       }
     }
     try {
