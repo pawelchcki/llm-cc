@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "generated/build_config.h"
 #include "src/backend_fetch.h"
 #include "src/entropy_cache.h"
 #include "src/payload.h"
@@ -147,6 +148,14 @@ int main() try {
          "full Metal offload guarantees device output");
   Expect(!llmcc::DeviceOutputGuaranteed(BackendKind::kCpu, -1, false),
          "a CPU build cannot guarantee device output");
+  Expect(llmcc::AutomaticBackendFetchEnabled() ==
+             (LLM_CC_AUTO_FETCH_BACKENDS != 0),
+         "runtime download policy follows generated build configuration");
+  Expect(llmcc::AutomaticBackendFetchAllowed(true) ==
+             (LLM_CC_AUTO_FETCH_BACKENDS != 0),
+         "requested automatic download follows generated policy");
+  Expect(!llmcc::AutomaticBackendFetchAllowed(false),
+         "an explicit no-fetch request never permits downloading");
 
   namespace fs = std::filesystem;
   const char* temporary = std::getenv("TEST_TMPDIR");
@@ -188,6 +197,114 @@ int main() try {
            "bundle wins over raw shared library");
   Expect(!embedded_probed && !runtime_probed,
          "later resolution stages are not probed");
+
+  // A valid bundle installed under the executable prefix wins over development
+  // runfiles and the user cache, while retaining normal bundle verification.
+  const fs::path installed_root = root / "custom prefix" / "lib" / "llm-cc";
+  const fs::path installed_bundle =
+      llmcc::BackendBundlePath({.name = "cuda",
+                                .version = "test-version",
+                                .git_sha = "expected",
+                                .runtime_root = installed_root});
+  const std::string installed_contents = Bundle("cuda");
+  fs::create_directories(installed_bundle.parent_path());
+  WriteFile(installed_bundle, installed_contents);
+  WriteFile(installed_bundle.string() + ".sha256",
+            llmcc::Sha256Hex(installed_contents) + "\n");
+  WriteFile(installed_bundle.parent_path() / "cuda.manifest.json",
+            R"({"git_sha":"expected"})");
+  const fs::path runfile_plugin = root / "runfiles" / "cuda.so";
+  fs::create_directories(runfile_plugin.parent_path());
+  WriteFile(runfile_plugin);
+  const llmcc::ResolvedBackendPlugin installed = llmcc::ResolveBackendPlugin(
+      BackendKind::kCuda, std::nullopt, std::array{runfile_plugin},
+      [] { return false; }, [&] { return runtime_root; }, "test-version",
+      "expected", {}, [&] { return std::optional<fs::path>(installed_root); });
+  ExpectEq(installed.source, llmcc::BackendPluginSource::kInstalledBundle,
+           "installed bundle wins over runfiles and cache");
+  ExpectEq(installed.path, installed_bundle,
+           "installed bundle uses the executable-prefix build key");
+
+  const llmcc::ResolvedBackendPlugin embedded_before_installed =
+      llmcc::ResolveBackendPlugin(
+          BackendKind::kCuda, std::nullopt, std::span<const fs::path>{},
+          [] { return true; }, [&] { return runtime_root; }, "test-version",
+          "expected", {},
+          [&] { return std::optional<fs::path>(installed_root); });
+  ExpectEq(embedded_before_installed.source,
+           llmcc::BackendPluginSource::kEmbedded,
+           "embedded payload wins over installed bundle");
+
+  WriteFile(installed_bundle.string() + ".sha256", std::string(64, '0'));
+  Expect(ThrowsContaining<std::runtime_error>(
+             [&] {
+               static_cast<void>(llmcc::ResolveBackendPlugin(
+                   BackendKind::kCuda, std::nullopt,
+                   std::span<const fs::path>{}, [] { return false; },
+                   [&] { return runtime_root; }, "test-version", "expected", {},
+                   [&] { return std::optional<fs::path>(installed_root); }));
+             },
+             "reinstall with 'bazel run --config=cuda //:install'"),
+         "bad installed checksum gives a reinstall hint");
+  WriteFile(installed_bundle.string() + ".sha256",
+            llmcc::Sha256Hex(installed_contents) + "\n");
+  WriteFile(installed_bundle.parent_path() / "cuda.manifest.json",
+            R"({"git_sha":"different"})");
+  Expect(ThrowsContaining<std::runtime_error>(
+             [&] {
+               static_cast<void>(llmcc::ResolveBackendPlugin(
+                   BackendKind::kCuda, std::nullopt,
+                   std::span<const fs::path>{}, [] { return false; },
+                   [&] { return runtime_root; }, "test-version", "expected", {},
+                   [&] { return std::optional<fs::path>(installed_root); }));
+             },
+             "different commit"),
+         "wrong installed commit is rejected");
+  WriteFile(installed_bundle.parent_path() / "cuda.manifest.json",
+            R"({"git_sha":"expected"})");
+  WriteFile(installed_bundle, "bad footer");
+  WriteFile(installed_bundle.string() + ".sha256",
+            llmcc::Sha256Hex("bad footer") + "\n");
+  Expect(ThrowsContaining<std::runtime_error>(
+             [&] {
+               static_cast<void>(llmcc::ResolveBackendPlugin(
+                   BackendKind::kCuda, std::nullopt,
+                   std::span<const fs::path>{}, [] { return false; },
+                   [&] { return runtime_root; }, "test-version", "expected", {},
+                   [&] { return std::optional<fs::path>(installed_root); }));
+             },
+             "footer is truncated"),
+         "bad installed footer is rejected");
+  WriteFile(installed_bundle, installed_contents);
+  WriteFile(installed_bundle.string() + ".sha256",
+            llmcc::Sha256Hex(installed_contents) + "\n");
+
+  fs::remove(installed_bundle);
+  fs::remove(installed_bundle.string() + ".sha256");
+  WriteFile(installed_bundle.string() + ".partial", "partial");
+  Expect(ThrowsContaining<std::runtime_error>(
+             [&] {
+               static_cast<void>(llmcc::ResolveBackendPlugin(
+                   BackendKind::kCuda, std::nullopt,
+                   std::span<const fs::path>{}, [] { return false; },
+                   [&] { return runtime_root; }, "test-version", "expected", {},
+                   [&] { return std::optional<fs::path>(installed_root); }));
+             },
+             "reinstall with 'bazel run --config=cuda //:install'"),
+         "partial installed bundle gives a reinstall hint");
+  fs::remove(installed_bundle.string() + ".partial");
+  WriteFile(installed_bundle.string() + ".sha256.partial", "partial");
+  Expect(ThrowsContaining<std::runtime_error>(
+             [&] {
+               static_cast<void>(llmcc::ResolveBackendPlugin(
+                   BackendKind::kCuda, std::nullopt,
+                   std::span<const fs::path>{}, [] { return false; },
+                   [&] { return runtime_root; }, "test-version", "expected", {},
+                   [&] { return std::optional<fs::path>(installed_root); }));
+             },
+             "reinstall with 'bazel run --config=cuda //:install'"),
+         "partial installed checksum gives a reinstall hint");
+  fs::remove(installed_bundle.string() + ".sha256.partial");
 
   Expect(ThrowsContaining<std::runtime_error>(
              [&] {
@@ -260,6 +377,28 @@ int main() try {
   Expect(ThrowsContaining<std::runtime_error>(resolve_missing,
                                               missing_cache.string()),
          "missing-plugin error names the runtime cache path");
+
+  bool automatic_fetch_attempted = false;
+  const std::function<std::optional<llmcc::ResolvedBackendPlugin>()>
+      source_policy_fetch = llmcc::AutomaticBackendFetchAllowed(true)
+                                ? [&] {
+                                    automatic_fetch_attempted = true;
+                                    return std::optional<
+                                        llmcc::ResolvedBackendPlugin>{};
+                                  }
+                                : std::function<std::optional<
+                                      llmcc::ResolvedBackendPlugin>()>{};
+  static_cast<void>(ThrowsContaining<std::runtime_error>(
+      [&] {
+        static_cast<void>(llmcc::ResolveBackendPlugin(
+            BackendKind::kCuda, std::nullopt, std::span<const fs::path>{},
+            [] { return false; }, [&] { return empty_runtime; }, "test-version",
+            {}, source_policy_fetch));
+      },
+      "missing cuda backend plugin"));
+  Expect(
+      automatic_fetch_attempted == llmcc::AutomaticBackendFetchEnabled(),
+      "automatic resolution attempts a download only in distribution builds");
 
 #ifdef __linux__
   const fs::path corrupt_bundle = root / "corrupt.bundle";

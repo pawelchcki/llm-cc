@@ -27,7 +27,8 @@ curl, and, on non-macOS platforms, OpenSSL. macOS curl builds use Apple's
 Secure Transport and system trust store.
 `bazel build //:llm-cc` selects CPU on Linux and Metal on macOS. The Linux CPU
 binary includes no CUDA or ROCm implementation, but retains the dynamic backend
-loader and exported ggml ABI so fetched GPU bundles can be selected later. On
+loader and exported ggml ABI so locally installed GPU bundles can be selected.
+On
 Linux x86-64, `--config=universal` opts into the fat CPU + CUDA + ROCm build.
 Its private GPU modules stay in Bazel runfiles during development; packaging
 `//dist:linux_x86_64` appends them to the executable. The universal build is
@@ -72,13 +73,18 @@ Install to `$HOME/.local/bin`, or choose another prefix:
 ```sh
 bazel run //:install
 bazel run //:install -- --prefix /opt/llm-cc
+bazel run --config=cuda //:install
+bazel run --config=rocm //:install -- --prefix /opt/llm-cc
 ```
 
-Installation atomically replaces one `bin/llm-cc` executable. On Linux that
-ELF contains the statically linked application and llama/ggml CPU code by
-default. With `--config=universal`, it also contains raw CUDA and ROCm payloads.
-On macOS, both the default build and `--config=metal` produce the standalone
-static Metal Mach-O executable.
+Installation uses atomic replacement for `bin/llm-cc` and for the matching
+build-key directory beneath `lib/llm-cc/backends/`. A plain Linux install is CPU-only;
+`--config=cuda` installs the CUDA bundle, and `--config=rocm` installs the ROCm
+bundle with its runtime closure. The installer stages and verifies its new
+executable before swapping the complete bundle set, so a CPU reinstall removes
+stale same-build GPU bundles. `--config=universal` retains its embedded CUDA
+and ROCm payloads. On macOS, the default and `--config=metal` produce the
+standalone static Metal Mach-O executable.
 
 Build deterministic distribution artifacts with:
 
@@ -102,12 +108,18 @@ is not deployed yet. Until it is, the supported path is
 CI comment. In workspace status output, the literal artifact URL value `none`
 means fetching is disabled; it becomes an empty build-time constant.
 
+Automatic backend downloads are disabled in source builds, including stamped
+and `--config=release` builds. `--config=distribution` combines release
+settings with automatic backend fetching for published CPU binaries. This is
+independent of model downloads, and `llm-cc backends fetch` always remains an
+explicit fetch command.
+
 ### Pull-request GPU bundles
 
 Each pull request publishes immutable CUDA and ROCm backend bundles. An
 automated pull-request comment links the bundles, their checksums, expiration
-dates, and stable resolver URLs. A stamped development build automatically uses
-the resolver URL for its commit to fetch the matching backend bundle once the
+dates, and stable resolver URLs. A distribution build automatically uses the
+resolver URL for its commit to fetch the matching backend bundle once the
 resolver Worker is deployed.
 
 ## Analyze source and projects
@@ -326,9 +338,11 @@ this order:
 
 1. `--backend-dir`, or `LLM_CC_BACKEND_DIR` when the option is absent
 2. an embedded payload footer in the executable
-3. beside-the-executable and Bazel runfiles plugins
-4. the versioned bundle in the runtime cache
-5. a fetched bundle, unless `--no-download` is set
+3. a verified installed bundle under the actual executable's prefix
+4. beside-the-executable and Bazel runfiles plugins
+5. the versioned bundle in the runtime cache
+6. a fetched bundle when the build enables automatic fetching and
+   `--no-download` is absent
 
 Within the configured backend directory, the resolver checks the distribution
 bundle name, then `cuda.bundle` or `rocm.bundle`, then the raw shared library.
@@ -336,6 +350,13 @@ bundle name, then `cuda.bundle` or `rocm.bundle`, then the raw shared library.
 extracted ROCm files. Otherwise the runtime root is
 `$XDG_CACHE_HOME/llm-cc/runtime`, or `$HOME/.cache/llm-cc/runtime` when
 `XDG_CACHE_HOME` is unset.
+
+Installed bundles use the same version/build-key path as the runtime cache, at
+`<prefix>/lib/llm-cc/backends/<build-key>/`, and are found relative to the
+canonical running executable. A malformed installed bundle is rejected with a
+reinstall command. If GPU offload has no usable local bundle, the error names
+the matching `--config=cuda` or `--config=rocm` install command, the explicit
+`backends fetch` command, and `--backend cpu --gpu-layers 0`.
 
 `--backend auto` is the default. When GPU layers are requested it totals free
 VRAM for each usable family and chooses the larger aggregate, preferring CUDA
