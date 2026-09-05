@@ -1,5 +1,11 @@
 api_version: ci-toolkit/v1alpha1
 
+releases:
+  uses: toolkit.release-please@v1
+  with:
+    strategy: simple
+    version_file: version.txt
+
 automations:
   - id: cuda-backend-bundle
     triggers:
