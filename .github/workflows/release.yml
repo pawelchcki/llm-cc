@@ -44,7 +44,7 @@ jobs:
       - name: Fetch and verify GPU backends
         timeout-minutes: 135
         env:
-          RESOLVER_BASE: ${{ vars.LLM_CC_RESOLVER_BASE || 'https://ci-artifacts.pawelchcki.workers.dev' }}
+          RESOLVER_BASE: ${{ vars.LLM_CC_RESOLVER_BASE || 'https://ci-toolkit.pawelchcki.workers.dev/artifacts' }}
         shell: bash
         run: |
           set -euo pipefail
