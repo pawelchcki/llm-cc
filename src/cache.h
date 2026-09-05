@@ -21,6 +21,8 @@ struct ModelTimestamps {
   std::optional<std::uint64_t> last_used_at;
 };
 using ModelManifest = std::map<std::string, ModelTimestamps>;
+using ModelDownloader =
+    std::function<void(std::string_view, const std::filesystem::path&)>;
 
 std::filesystem::path CacheDir();
 std::filesystem::path CacheDirFrom(
@@ -35,14 +37,18 @@ void MarkCachedModelUsed(const std::filesystem::path& cache_dir,
 void ListModels(const std::filesystem::path& cache_dir, std::ostream& output);
 void RemoveModel(const std::filesystem::path& cache_dir,
                  std::string_view file_name);
+// Serializes acquisition of one target, while allowing unrelated targets to
+// download in parallel. The downloader is called only when target is absent.
+std::filesystem::path AcquireModel(std::string_view url,
+                                   const std::filesystem::path& target,
+                                   const ModelDownloader& downloader);
 std::string FormatTimestamp(std::optional<std::uint64_t> timestamp);
 
-std::filesystem::path ResolveModel(
-    std::optional<std::filesystem::path> model, const ModelSpec& spec,
-    bool no_download, const std::filesystem::path& current_dir,
-    const std::filesystem::path& cache_dir,
-    const std::function<void(std::string_view, const std::filesystem::path&)>&
-        downloader);
+std::filesystem::path ResolveModel(std::optional<std::filesystem::path> model,
+                                   const ModelSpec& spec, bool no_download,
+                                   const std::filesystem::path& current_dir,
+                                   const std::filesystem::path& cache_dir,
+                                   const ModelDownloader& downloader);
 
 std::filesystem::path ResolveModel(
     std::optional<std::filesystem::path> model, bool no_download,

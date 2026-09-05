@@ -21,6 +21,7 @@ cc_binary(
     deps = [
         "//:linux_compat",
         "//:payload_format",
+        "//:sha256",
     ],
 )
 

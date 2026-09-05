@@ -17,7 +17,7 @@ struct ModelSpec {
   std::string_view note;
 };
 
-inline constexpr std::array<ModelSpec, 4> kModels = {{
+inline constexpr std::array<ModelSpec, 5> kModels = {{
     {.name = "deepseek-coder-v2-lite-base-q6_k",
      .file = "DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf",
      .url = "https://huggingface.co/bartowski/"
@@ -37,8 +37,16 @@ inline constexpr std::array<ModelSpec, 4> kModels = {{
      .url = "https://huggingface.co/QuantFactory/"
             "Qwen2.5-Coder-1.5B-GGUF/resolve/main/"
             "Qwen2.5-Coder-1.5B.Q6_K.gguf",
-     .approx_bytes = 1'200'000'000ULL,
-     .note = ""},
+     .approx_bytes = 1'300'000'000ULL,
+     .note = "smaller alternative: low memory"},
+    {.name = "qwen2.5-coder-3b-q6_k",
+     .file = "Qwen2.5-Coder-3B-Q6_K.gguf",
+     .url = "https://huggingface.co/bartowski/"
+            "Qwen2.5-Coder-3B-GGUF/resolve/"
+            "465c183318f1fcb5774394eee76f1b7f224494ec/"
+            "Qwen2.5-Coder-3B-Q6_K.gguf",
+     .approx_bytes = 2'500'000'000ULL,
+     .note = "smaller alternative: closer rankings"},
     {.name = "qwen2.5-coder-0.5b-q4_k_m",
      .file = "Qwen2.5-Coder-0.5B-Q4_K_M.gguf",
      .url = "https://huggingface.co/bartowski/"

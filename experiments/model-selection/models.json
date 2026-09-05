@@ -1,0 +1,47 @@
+[
+  {
+    "name": "qwen-0.5b-q4",
+    "repo": "bartowski/Qwen2.5-Coder-0.5B-GGUF",
+    "revision": "01c1b8072277dfbfd0d051ec95b7a43bb23d2f6a",
+    "file": "Qwen2.5-Coder-0.5B-Q4_K_M.gguf",
+    "bytes": 397808128,
+    "sha256": "fefe9d34df79d3ad3db33519d81112be76096626a5fdb87a98092035dc79ad68",
+    "url": "https://huggingface.co/bartowski/Qwen2.5-Coder-0.5B-GGUF/resolve/01c1b8072277dfbfd0d051ec95b7a43bb23d2f6a/Qwen2.5-Coder-0.5B-Q4_K_M.gguf"
+  },
+  {
+    "name": "qwen-0.5b-q6",
+    "repo": "bartowski/Qwen2.5-Coder-0.5B-GGUF",
+    "revision": "01c1b8072277dfbfd0d051ec95b7a43bb23d2f6a",
+    "file": "Qwen2.5-Coder-0.5B-Q6_K.gguf",
+    "bytes": 505736704,
+    "sha256": "d36ec2edb47fc203cf62224f2c523f2e60ac709628242eb111203e0d45635e25",
+    "url": "https://huggingface.co/bartowski/Qwen2.5-Coder-0.5B-GGUF/resolve/01c1b8072277dfbfd0d051ec95b7a43bb23d2f6a/Qwen2.5-Coder-0.5B-Q6_K.gguf"
+  },
+  {
+    "name": "qwen-1.5b-q6",
+    "repo": "QuantFactory/Qwen2.5-Coder-1.5B-GGUF",
+    "revision": "73c3c696087d8d57a3005e31f2afe78f43059739",
+    "file": "Qwen2.5-Coder-1.5B.Q6_K.gguf",
+    "bytes": 1272739680,
+    "sha256": "05de834c633e92becf8acb12d94f61e3fbb70d3bb7f10d98340eac3c774ca688",
+    "url": "https://huggingface.co/QuantFactory/Qwen2.5-Coder-1.5B-GGUF/resolve/73c3c696087d8d57a3005e31f2afe78f43059739/Qwen2.5-Coder-1.5B.Q6_K.gguf"
+  },
+  {
+    "name": "qwen-3b-q6",
+    "repo": "bartowski/Qwen2.5-Coder-3B-GGUF",
+    "revision": "465c183318f1fcb5774394eee76f1b7f224494ec",
+    "file": "Qwen2.5-Coder-3B-Q6_K.gguf",
+    "bytes": 2538159200,
+    "sha256": "37e2e03ee32f3429ea22c38472888e5631ca81350f546d7a918850c3a442329e",
+    "url": "https://huggingface.co/bartowski/Qwen2.5-Coder-3B-GGUF/resolve/465c183318f1fcb5774394eee76f1b7f224494ec/Qwen2.5-Coder-3B-Q6_K.gguf"
+  },
+  {
+    "name": "deepseek-v2-lite-q6",
+    "repo": "bartowski/DeepSeek-Coder-V2-Lite-Base-GGUF",
+    "revision": "babc004c32d74af2553661d912673f1d22dcb3f1",
+    "file": "DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf",
+    "bytes": 14066972416,
+    "sha256": "5a2e25280075d769abdb111de8211d9d3367f2ae0d0e6166a288ee6e8ed0345d",
+    "url": "https://huggingface.co/bartowski/DeepSeek-Coder-V2-Lite-Base-GGUF/resolve/babc004c32d74af2553661d912673f1d22dcb3f1/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf"
+  }
+]

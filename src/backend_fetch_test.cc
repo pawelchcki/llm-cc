@@ -16,7 +16,7 @@
 #include <thread>
 #include <vector>
 
-#include "src/entropy_cache.h"
+#include "src/sha256.h"
 #include "src/test_util.h"
 
 namespace fs = std::filesystem;

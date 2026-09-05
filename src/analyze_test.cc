@@ -119,12 +119,24 @@ int main() {  // NOLINT(bugprone-exception-escape)
   fs::create_directories(repository);
   std::ofstream(model) << "model";
   const auto identity = llmcc::InspectModel(model, "abi", "cpu", 100);
+  const auto uncached_identity =
+      llmcc::InspectModel(model, "abi", "cpu", 100, 64, "auto", "host", false);
+  llmcc::test::Expect(uncached_identity.content_digest.empty(),
+                      "disabled entropy caching skips model digest work");
   const llmcc::DiscoveredSource first{.path = repository / "a.rs",
                                       .language = llmcc::Language::kRust,
                                       .repository = repository};
   const llmcc::DiscoveredSource second{.path = repository / "b.rs",
                                        .language = llmcc::Language::kRust,
                                        .repository = repository};
+  const llmcc::DiscoveredSource non_git_copy{
+      .path = fs::path(temporary) / "outside-git" / "a.rs",
+      .language = llmcc::Language::kRust,
+      .repository = std::nullopt};
+  const llmcc::DiscoveredSource linked_worktree_copy{
+      .path = fs::path(temporary) / "linked-worktree" / "a.rs",
+      .language = llmcc::Language::kRust,
+      .repository = fs::path(temporary) / "linked-worktree"};
   int factories = 0;
   int calls = 0;
   llmcc::ProjectAnalyzer analyzer(
@@ -148,9 +160,15 @@ int main() {  // NOLINT(bugprone-exception-escape)
       });
   const auto first_hit = cached.AnalyzeFile(first, "fn a() {}\n");
   const auto second_hit = cached.AnalyzeFile(second, "fn b() {}\n");
-  llmcc::test::Expect(
-      first_hit.entropy_cache_hit && second_hit.entropy_cache_hit,
-      "alpha and percentile reuse cached entropy");
+  const auto non_git_hit = cached.AnalyzeFile(non_git_copy, "fn a() {}\n");
+  const auto linked_worktree_hit =
+      cached.AnalyzeFile(linked_worktree_copy, "fn a() {}\n");
+  llmcc::test::Expect(first_hit.entropy_cache_hit &&
+                          second_hit.entropy_cache_hit &&
+                          non_git_hit.entropy_cache_hit &&
+                          linked_worktree_hit.entropy_cache_hit,
+                      "alpha and percentile reuse cached entropy across "
+                      "repositories and non-Git copies");
   llmcc::test::ExpectEq(hit_factories, 0, "cache hits load no scorer");
 
   const llmcc::DiscoveredSource miss{.path = repository / "0-miss.rs",

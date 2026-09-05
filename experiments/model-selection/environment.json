@@ -1,0 +1,6 @@
+{
+  "platform": "Linux-6.8.0-1063-aws-x86_64-with-glibc2.39",
+  "binary_sha256": "6cc269c5aa46466f451cd604f2b2ffd1154d1a9b2d2ca0c20e98d51d62124dbb",
+  "binary_version": "llm-cc 0.1.0-dev.0+unknown",
+  "gpu": "NVIDIA A10G, 580.178.04, 23028 MiB\nNVIDIA A10G, 580.178.04, 23028 MiB\nNVIDIA A10G, 580.178.04, 23028 MiB\nNVIDIA A10G, 580.178.04, 23028 MiB"
+}

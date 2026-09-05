@@ -1,0 +1,112 @@
+llm-cc: discovering sources
+llm-cc: resolving model
+llm-cc: selecting inference backend
+llm-cc: [1/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/after/libdd_go_hook/test/test_go_ctx.c
+llm-cc: loading model after entropy cache miss
+llm-cc: [1/26] 0/655 tokens
+llm-cc: [1/26] 655/655 tokens
+llm-cc: [1/26] complete cache=miss elapsed_ms=3848
+llm-cc: [2/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/after/libdd_go_hook/test/test_go_hook_engine.c
+llm-cc: [2/26] 0/179 tokens
+llm-cc: [2/26] 179/179 tokens
+llm-cc: [2/26] complete cache=miss elapsed_ms=81
+llm-cc: [3/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/after/libdd_go_hook/test/test_go_pclntab.c
+llm-cc: [3/26] 0/943 tokens
+llm-cc: [3/26] 943/943 tokens
+llm-cc: [3/26] complete cache=miss elapsed_ms=1032
+llm-cc: [4/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/after/libdd_go_hook/test/test_go_read.c
+llm-cc: [4/26] 0/502 tokens
+llm-cc: [4/26] 502/502 tokens
+llm-cc: [4/26] complete cache=miss elapsed_ms=217
+llm-cc: [5/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/before/libdd_go_hook/test/test_go_ctx.c
+llm-cc: [5/26] 0/738 tokens
+llm-cc: [5/26] 738/738 tokens
+llm-cc: [5/26] complete cache=miss elapsed_ms=321
+llm-cc: [6/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/before/libdd_go_hook/test/test_go_hook_engine.c
+llm-cc: [6/26] 0/181 tokens
+llm-cc: [6/26] 181/181 tokens
+llm-cc: [6/26] complete cache=miss elapsed_ms=81
+llm-cc: [7/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/before/libdd_go_hook/test/test_go_pclntab.c
+llm-cc: [7/26] 0/552 tokens
+llm-cc: [7/26] 552/552 tokens
+llm-cc: [7/26] complete cache=miss elapsed_ms=245
+llm-cc: [8/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/before/libdd_go_hook/test/test_go_read.c
+llm-cc: [8/26] 0/555 tokens
+llm-cc: [8/26] 555/555 tokens
+llm-cc: [8/26] complete cache=miss elapsed_ms=249
+llm-cc: [9/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/bench/bench_python_format.c
+llm-cc: [9/26] 0/1462 tokens
+llm-cc: [9/26] 1024/1462 tokens
+llm-cc: [9/26] 1462/1462 tokens
+llm-cc: [9/26] complete cache=miss elapsed_ms=1232
+llm-cc: [10/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/bench/bench_python_stack_capture.py
+llm-cc: [10/26] 0/3081 tokens
+llm-cc: [10/26] 1024/3081 tokens
+llm-cc: [10/26] 3081/3081 tokens
+llm-cc: [10/26] complete cache=miss elapsed_ms=1982
+llm-cc: [11/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/src/go_abi.c
+llm-cc: [11/26] 0/1324 tokens
+llm-cc: [11/26] 1324/1324 tokens
+llm-cc: [11/26] complete cache=miss elapsed_ms=571
+llm-cc: [12/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/src/go_ctx.c
+llm-cc: [12/26] 0/953 tokens
+llm-cc: [12/26] 953/953 tokens
+llm-cc: [12/26] complete cache=miss elapsed_ms=408
+llm-cc: [13/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/src/go_pclntab.c
+llm-cc: [13/26] 0/2383 tokens
+llm-cc: [13/26] 2383/2383 tokens
+llm-cc: [13/26] complete cache=miss elapsed_ms=1022
+llm-cc: [14/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/src/go_read.c
+llm-cc: [14/26] 0/266 tokens
+llm-cc: [14/26] 266/266 tokens
+llm-cc: [14/26] complete cache=miss elapsed_ms=125
+llm-cc: [15/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/src/go_type.c
+llm-cc: [15/26] 0/6000 tokens
+llm-cc: [15/26] 1024/6000 tokens
+llm-cc: [15/26] 3584/6000 tokens
+llm-cc: [15/26] 6000/6000 tokens
+llm-cc: [15/26] complete cache=miss elapsed_ms=3166
+llm-cc: [16/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/src/go_x86_decode.c
+llm-cc: [16/26] 0/1267 tokens
+llm-cc: [16/26] 1267/1267 tokens
+llm-cc: [16/26] complete cache=miss elapsed_ms=538
+llm-cc: [17/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/test/fixtures/hello_http.go
+llm-cc: [17/26] 0/108 tokens
+llm-cc: [17/26] 108/108 tokens
+llm-cc: [17/26] complete cache=miss elapsed_ms=53
+llm-cc: [18/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/test/fixtures/hello_parent_child.go
+llm-cc: [18/26] 0/330 tokens
+llm-cc: [18/26] 330/330 tokens
+llm-cc: [18/26] complete cache=miss elapsed_ms=150
+llm-cc: [19/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/test/test_go_abi.c
+llm-cc: [19/26] 0/780 tokens
+llm-cc: [19/26] 780/780 tokens
+llm-cc: [19/26] complete cache=miss elapsed_ms=345
+llm-cc: [20/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/test/test_go_arm64_decode.c
+llm-cc: [20/26] 0/2222 tokens
+llm-cc: [20/26] 2222/2222 tokens
+llm-cc: [20/26] complete cache=miss elapsed_ms=978
+llm-cc: [21/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/test/test_go_type.c
+llm-cc: [21/26] 0/1859 tokens
+llm-cc: [21/26] 1859/1859 tokens
+llm-cc: [21/26] complete cache=miss elapsed_ms=826
+llm-cc: [22/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/test/test_go_x86_decode.c
+llm-cc: [22/26] 0/1142 tokens
+llm-cc: [22/26] 1142/1142 tokens
+llm-cc: [22/26] complete cache=miss elapsed_ms=485
+llm-cc: [23/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_nccl_profiler/test/analyze_spans.py
+llm-cc: [23/26] 0/1071 tokens
+llm-cc: [23/26] 1071/1071 tokens
+llm-cc: [23/26] complete cache=miss elapsed_ms=475
+llm-cc: [24/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_nccl_profiler/test/nccl_allreduce_workload.py
+llm-cc: [24/26] 0/173 tokens
+llm-cc: [24/26] 173/173 tokens
+llm-cc: [24/26] complete cache=miss elapsed_ms=79
+llm-cc: [25/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_nccl_profiler/test/test_inspector_dd_span_accessor.cc
+llm-cc: [25/26] 0/741 tokens
+llm-cc: [25/26] 741/741 tokens
+llm-cc: [25/26] complete cache=miss elapsed_ms=321
+llm-cc: [26/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_nccl_profiler/test/test_inspector_event_pool.cc
+llm-cc: [26/26] 0/990 tokens
+llm-cc: [26/26] 990/990 tokens
+llm-cc: [26/26] complete cache=miss elapsed_ms=439

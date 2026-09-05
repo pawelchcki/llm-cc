@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <optional>
 #include <span>
@@ -11,23 +12,13 @@
 #include <vector>
 
 #include "src/jsonl.h"
+#include "src/model_identity.h"
 
 namespace llmcc {
 
-inline constexpr std::uint64_t kEntropyCacheLimit = 512ULL * 1024 * 1024;
-inline constexpr std::uint64_t kEntropyCacheMaxAgeSeconds = 7ULL * 24 * 60 * 60;
-
-struct ModelIdentity {
-  std::filesystem::path canonical_path;
-  std::uint64_t size;
-  std::int64_t modification_time;
-  std::string inference_abi;
-  std::string backend;
-  std::uint32_t context_limit;
-  std::uint32_t batch_size = 64;
-  std::string reduction_policy = "auto";
-  std::string effective_reducer = "host";
-};
+inline constexpr std::uint64_t kEntropyCacheLimit = 1024ULL * 1024 * 1024;
+inline constexpr std::uint64_t kEntropyCacheMaxAgeSeconds =
+    20ULL * 24 * 60 * 60;
 
 struct EntropyCacheLookup {
   bool hit = false;
@@ -47,32 +38,41 @@ struct RepositoryCacheStatus {
   std::map<std::string, std::uint64_t> entries_by_inference_abi;
 };
 
-ModelIdentity InspectModel(const std::filesystem::path& model,
-                           std::string_view inference_abi,
-                           std::string_view backend,
-                           std::uint32_t context_limit,
-                           std::uint32_t batch_size = 64,
-                           std::string_view reduction_policy = "auto",
-                           std::string_view effective_reducer = "host");
-std::string Sha256Hex(std::string_view contents);
+struct EntropyCacheStatus {
+  std::filesystem::path directory;
+  std::uint64_t entries = 0;
+  std::uint64_t bytes = 0;
+  std::uint64_t malformed_entries = 0;
+  std::uint64_t limit = kEntropyCacheLimit;
+  std::uint64_t retention_seconds = kEntropyCacheMaxAgeSeconds;
+  unsigned storage_version = 2;
+  std::map<std::string, std::uint64_t> entries_by_inference_abi;
+};
+
 std::string EntropyCacheKey(std::string_view preprocessed_source,
                             const ModelIdentity& model);
+std::filesystem::path EntropyCacheBaseDirectory();
+std::filesystem::path GlobalEntropyCacheDirectory();
+void CheckEntropyCacheAvailability();
+EntropyCacheLookup ReadEntropyCache(std::string_view preprocessed_source,
+                                    const ModelIdentity& model);
+void WriteEntropyCache(std::string_view preprocessed_source,
+                       const ModelIdentity& model,
+                       std::span<const EntropyRecord> records);
+EntropyCacheStatus GetEntropyCacheStatus(bool inspect_provenance = true);
+void PruneEntropyCache(bool force = true);
+void ClearEntropyCache();
+
+// Test seams.  A value of zero restores the system clock/default budget.
+void SetEntropyCacheTestNow(std::uint64_t epoch_seconds);
+void SetEntropyCacheTestLimit(std::uint64_t bytes);
+void SetEntropyCacheTestDeleteFailure(bool enabled);
 std::filesystem::path RepositoryCacheDirectory(
     const std::filesystem::path& repository);
 std::filesystem::path LegacyRepositoryCacheDirectory(
     const std::filesystem::path& repository);
-void CheckRepositoryCacheAvailability(const std::filesystem::path& repository);
-EntropyCacheLookup ReadEntropyCache(const std::filesystem::path& repository,
-                                    std::string_view preprocessed_source,
-                                    const ModelIdentity& model);
-void WriteEntropyCache(const std::filesystem::path& repository,
-                       std::string_view preprocessed_source,
-                       const ModelIdentity& model,
-                       std::span<const EntropyRecord> records);
 RepositoryCacheStatus GetRepositoryCacheStatus(
     const std::filesystem::path& repository);
-void PruneRepositoryCache(const std::filesystem::path& repository,
-                          bool force = true);
 void ClearRepositoryCache(const std::filesystem::path& repository);
 void ClearLegacyRepositoryCache(const std::filesystem::path& repository);
 
