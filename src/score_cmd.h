@@ -3,21 +3,31 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "src/backend.h"
+#include "src/jsonl.h"
 
 namespace llmcc {
 
 inline constexpr std::uint32_t kDefaultContextSize = 128U * 1024U;
+inline constexpr std::uint32_t kDefaultBatchSize = 64;
+
+enum class EntropyReduction : std::uint8_t { kAuto, kHost, kDevice };
+std::string_view EntropyReductionName(EntropyReduction reduction);
 
 struct InferenceOptions {
   std::uint32_t context_size = kDefaultContextSize;
   std::int32_t gpu_layers = 0;
   BackendKind backend = BackendKind::kAuto;
+  std::uint32_t batch_size = kDefaultBatchSize;
+  EntropyReduction entropy_reduction = EntropyReduction::kAuto;
+  std::function<void(std::size_t, std::size_t)> progress;
   std::optional<std::filesystem::path> backend_directory;
   bool no_download = false;
   bool fetch_backend = true;
@@ -34,6 +44,7 @@ class EntropyScorer {
   EntropyScorer& operator=(EntropyScorer&&) noexcept;
 
   std::string Score(std::string_view input);
+  std::vector<EntropyRecord> ScoreRecords(std::string_view input);
 
  private:
   class Impl;

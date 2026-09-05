@@ -347,6 +347,66 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::ExpectEq(llmcc::LineStarts(""), std::vector<std::size_t>({0}),
                         "empty source has first line");
 
+  const std::string python_docstrings =
+      "\"\"\"module doc\ncontinued\"\"\"\n"
+      "assigned = \"keep assigned\"\n"
+      "\"keep expression\"\n"
+      "class C:\n"
+      "    r\"\"\"class doc\"\"\"\n"
+      "    async def method(self):\n"
+      "        u\"method doc\"\n"
+      "        value = b\"keep bytes\"\n"
+      "        return f\"keep {value}\"\n";
+  const llmcc::PreparedSource prepared =
+      llmcc::PrepareSource(python_docstrings, llmcc::Language::kPython);
+  llmcc::test::Expect(
+      prepared.cleaned.find("module doc") == std::string::npos &&
+          prepared.cleaned.find("class doc") == std::string::npos &&
+          prepared.cleaned.find("method doc") == std::string::npos,
+      "actual Python docstrings are removed at every scope");
+  for (std::string_view preserved :
+       {"keep assigned", "keep expression", "keep bytes", "keep {value}"}) {
+    llmcc::test::Expect(prepared.cleaned.find(preserved) != std::string::npos,
+                        "non-docstring Python strings are preserved");
+  }
+  llmcc::test::ExpectEq(std::ranges::count(prepared.cleaned, '\n'),
+                        std::ranges::count(python_docstrings, '\n'),
+                        "docstring removal preserves every newline");
+  const std::size_t assigned = prepared.cleaned.find("assigned");
+  llmcc::test::ExpectEq(prepared.original_offsets.at(assigned),
+                        python_docstrings.find("assigned"),
+                        "prepared source maps retained bytes to originals");
+  llmcc::test::ExpectEq(prepared.functions.size(), std::size_t{1},
+                        "async function survives docstring removal");
+  llmcc::test::ExpectEq(
+      prepared.original_offsets.at(prepared.functions.front().start_byte),
+      python_docstrings.find("async def"),
+      "function span is remapped without reparsing an empty suite");
+
+  const auto only_docstring = llmcc::PrepareSource(
+      "\"\"\"documentation only\"\"\"\n", llmcc::Language::kPython);
+  llmcc::test::Expect(only_docstring.meaningful_ranges.empty(),
+                      "docstring-only module has no semantic content");
+  const auto parenthesized_docstrings = llmcc::PrepareSource(
+      "(\"module \"  # explanation\n"
+      " \"documentation\")\n"
+      "def documented():\n"
+      "    (\"function documentation\"  # explanation\n"
+      "    )\n"
+      "    return 1\n",
+      llmcc::Language::kPython);
+  llmcc::test::Expect(parenthesized_docstrings.cleaned.find("documentation") ==
+                              std::string::npos &&
+                          parenthesized_docstrings.cleaned.find("return 1") !=
+                              std::string::npos,
+                      "parenthesized Python docstrings are removed");
+  const auto prefixed_expressions = llmcc::PrepareSource(
+      "b\"bytes\"\nf\"value {1}\"\n", llmcc::Language::kPython);
+  llmcc::test::Expect(
+      prefixed_expressions.cleaned.find("bytes") != std::string::npos &&
+          prefixed_expressions.cleaned.find("value") != std::string::npos,
+      "bytes and f-string expressions are not docstrings");
+
   llmcc::test::ExpectEq(llmcc::InferLanguage("source.rs"),
                         llmcc::Language::kRust, "infer Rust");
   llmcc::test::ExpectEq(llmcc::ParseLanguage("c++"), llmcc::Language::kCpp,
@@ -373,6 +433,10 @@ int main() {  // NOLINT(bugprone-exception-escape)
                           language, "canonical language name round trips");
   }
   const std::vector<std::pair<std::string_view, llmcc::Language>> extensions = {
+      {"source.c", llmcc::Language::kC},
+      {"source.h", llmcc::Language::kC},
+      {"kernel.cu", llmcc::Language::kCpp},
+      {"kernel.cuh", llmcc::Language::kCpp},
       {"Source.java", llmcc::Language::kJava},
       {"source.py", llmcc::Language::kPython},
       {"source.pyw", llmcc::Language::kPython},
@@ -388,6 +452,18 @@ int main() {  // NOLINT(bugprone-exception-escape)
     llmcc::test::ExpectEq(llmcc::InferLanguage(path), language,
                           "source extension is inferred");
   }
+  llmcc::test::Expect(llmcc::IsSourcePath("kernel.cu", false) &&
+                          !llmcc::IsSourcePath("kernel.cuh", false) &&
+                          llmcc::IsSourcePath("kernel.cuh", true),
+                      "CUDA source and header discovery is classified");
+  const auto cuda = llmcc::PrepareSource(
+      "__global__ void tiny(int *out) { *out = threadIdx.x; }\n"
+      "void launch(int *out) { tiny<<<1, 1>>>(out); }\n",
+      llmcc::Language::kCpp);
+  llmcc::test::Expect(
+      cuda.functions.size() == 2 && cuda.functions[0].name == "tiny" &&
+          cuda.functions[1].name == "launch",
+      "CUDA kernel and launch syntax use C++ function extraction");
   llmcc::test::Expect(!llmcc::IsSourcePath("component.jsx", false) &&
                           !llmcc::IsSourcePath("component.ts", false) &&
                           !llmcc::IsSourcePath("component.tsx", false) &&

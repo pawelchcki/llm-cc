@@ -31,6 +31,20 @@ struct FunctionSpan {
   bool operator==(const FunctionSpan&) const = default;
 };
 
+// All source-derived data used by analysis.  The original text is parsed only
+// once; ranges collected from that tree are remapped after comments and Python
+// docstrings are removed.
+struct PreparedSource {
+  std::string cleaned;
+  OffsetMap original_offsets;
+  std::vector<std::size_t> line_starts;
+  std::vector<SourceRange> meaningful_ranges;
+  std::vector<StructuralEvent> structural_events;
+  std::vector<FunctionSpan> functions;
+};
+
+PreparedSource PrepareSource(std::string_view source, Language language);
+
 std::pair<std::string, OffsetMap> StripComments(std::string_view source,
                                                 Language language);
 std::vector<std::size_t> LineStarts(std::string_view source);

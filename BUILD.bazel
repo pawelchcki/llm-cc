@@ -458,6 +458,16 @@ cc_library(
         ":backend_metal": ["LLM_CC_BUILTIN_GPU"],
         "//conditions:default": [],
     }),
+    linkopts = select({
+        ":backend_metal": [
+            "-framework Accelerate",
+            "-framework Foundation",
+            "-framework Metal",
+            "-framework MetalKit",
+            "-lobjc",
+        ],
+        "//conditions:default": [],
+    }),
     deps = [
         ":backend_fetch",
         ":backend_policy",
@@ -620,6 +630,7 @@ cc_library(
         ":cache",
         ":download",
         ":inference_guard",
+        ":jsonl",
         ":llama",
         ":models",
         ":scoring",
@@ -1165,6 +1176,15 @@ cc_test(
     deps = [":scoring"],
 )
 
+cc_test(
+    name = "score_cmd_test",
+    srcs = ["src/score_cmd_test.cc"],
+    deps = [
+        ":score_cmd",
+        ":test_util",
+    ],
+)
+
 test_suite(
     name = "unit",
     tests = [
@@ -1181,6 +1201,7 @@ test_suite(
         ":models_test",
         ":project_test",
         ":rocm_topology_test",
+        ":score_cmd_test",
         ":scoring_test",
         ":starlark_test",
         ":version_test",

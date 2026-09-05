@@ -1,11 +1,21 @@
+#if defined(_WIN32)
+#include <io.h>
+#define STDERR_FILENO 2
+#define isatty _isatty
+#else
+#include <unistd.h>
+#endif
+
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <locale>
@@ -70,12 +80,16 @@ struct AnalyzeArguments {
   llmcc::BackendKind backend = llmcc::BackendKind::kAuto;
   std::optional<std::filesystem::path> backend_directory;
   std::uint32_t context = llmcc::kDefaultContextSize;
+  std::uint32_t batch_size = llmcc::kDefaultBatchSize;
+  llmcc::EntropyReduction entropy_reduction = llmcc::EntropyReduction::kAuto;
+  llmcc::HierarchyMode hierarchy_mode = llmcc::HierarchyMode::kStructural;
   std::optional<double> tau;
   std::optional<double> tau_percentile;
   double alpha = 0.8;
   std::size_t hotspots = 10;
   std::string score_mode = "lmcc";
   std::string format = "jsonl";
+  std::string progress = "auto";
 };
 
 constexpr std::string_view kUsageBeforeContext =
@@ -86,22 +100,28 @@ constexpr std::string_view kUsageBeforeContext =
     "[--prompt TEXT | --file PATH] [OPTIONS]\n"
     "  llm-cc models list [--available]|remove FILE|path\n"
     "  llm-cc backends list|fetch|path|remove\n"
-    "  llm-cc cache status|prune|clear [PATH] [--format text|json]\n\n"
+    "  llm-cc cache status|prune|clear [PATH] [--format text|json] "
+    "[--legacy]\n\n"
     "Analysis options:\n"
-    "  --lang NAME          auto, rust, c, cpp, java, python, go, javascript,\n"
-    "                       or csharp (default: auto)\n"
+    "  --lang NAME          infer per file with auto, or force every input to\n"
+    "                       rust, c, cpp, java, python, go, javascript, or\n"
+    "                       csharp (default: auto)\n"
     "  --include-headers     include headers during recursive discovery\n"
     "  --no-ignore           include ignored and generated source files\n"
-    "  --no-cache            disable repository-local entropy caching\n"
+    "  --no-cache            disable repository-scoped entropy caching\n"
     "  --no-download         do not fetch the model or backend bundle\n"
     "  --model GGUF          llama.cpp-compatible model\n"
     "  --model-name NAME     registered model (default: "
     "deepseek-coder-v2-lite-base-q6_k)\n"
     "  --score lmcc|density|mean  headline score mode (default: lmcc)\n"
+    "  --hierarchy structural|reference  hierarchy contract (default: "
+    "structural)\n"
     "  --tau N               absolute entropy threshold in nats (default: "
     "0.67)\n"
     "  --gpu-layers N        transformer layers to offload (-1 means all)\n"
     "  --backend NAME        auto, cpu, cuda, or rocm (default: auto)\n"
+    "  --batch-size N        decode rows per batch (default: 64)\n"
+    "  --entropy-reduction M auto, host, or device (default: auto)\n"
     "  --backend-dir DIR     GPU backend bundle/shared-library directory\n"
     "  --context N           maximum input tokens (default: ";
 
@@ -110,6 +130,7 @@ constexpr std::string_view kUsageAfterContext =
     "  --tau-percentile N    use the Nth percentile instead of --tau\n"
     "  --hotspots N          hotspot lines per file (default: 10, 0 disables)\n"
     "  --format jsonl|text   output format (default: jsonl; json is an alias)\n"
+    "  --progress M          auto, always, or never on stderr (default: auto)\n"
     "  --alpha N             branching weight (default: 0.8)\n"
     "  -V, --version         show the program version\n"
     "  -h, --help            show this help\n";
@@ -208,6 +229,29 @@ void SetAnalyzeOption(AnalyzeArguments& arguments, std::string_view option,
     if (arguments.context == 0) {
       Usage("--context must be positive");
     }
+  } else if (option == "--batch-size") {
+    arguments.batch_size = ParseNumber<std::uint32_t>(option, value);
+    if (arguments.batch_size == 0) {
+      Usage("--batch-size must be positive");
+    }
+  } else if (option == "--entropy-reduction") {
+    if (value == "auto") {
+      arguments.entropy_reduction = llmcc::EntropyReduction::kAuto;
+    } else if (value == "host") {
+      arguments.entropy_reduction = llmcc::EntropyReduction::kHost;
+    } else if (value == "device") {
+      arguments.entropy_reduction = llmcc::EntropyReduction::kDevice;
+    } else {
+      Usage("--entropy-reduction expects auto, host, or device");
+    }
+  } else if (option == "--hierarchy") {
+    if (value == "structural") {
+      arguments.hierarchy_mode = llmcc::HierarchyMode::kStructural;
+    } else if (value == "reference") {
+      arguments.hierarchy_mode = llmcc::HierarchyMode::kReference;
+    } else {
+      Usage("--hierarchy expects structural or reference");
+    }
   } else if (option == "--tau-percentile") {
     arguments.tau_percentile = ParseNumber<double>(option, value);
   } else if (option == "--tau") {
@@ -224,6 +268,12 @@ void SetAnalyzeOption(AnalyzeArguments& arguments, std::string_view option,
     arguments.format = value == "json" ? "jsonl" : std::string(value);
     if (arguments.format != "jsonl" && arguments.format != "text") {
       Usage("--format expects jsonl, json, or text");
+    }
+  } else if (option == "--progress") {
+    arguments.progress = value;
+    if (arguments.progress != "auto" && arguments.progress != "always" &&
+        arguments.progress != "never") {
+      Usage("--progress expects auto, always, or never");
     }
   } else if (option == "--alpha") {
     arguments.alpha = ParseNumber<double>(option, value);
@@ -348,6 +398,78 @@ void Emit(const nlohmann::json& event) {
     throw std::runtime_error("failed to write output");
   }
 }
+
+std::string TerminalSafe(std::string_view text);
+
+class ProgressReporter {
+ public:
+  explicit ProgressReporter(std::string_view mode)
+      : enabled_(mode == "always" ||
+                 (mode == "auto" && isatty(STDERR_FILENO) != 0)) {}
+
+  void Phase(std::string_view message) const {
+    if (enabled_) {
+      std::cerr << "llm-cc: " << message << '\n' << std::flush;
+    }
+  }
+
+  void StartFile(std::size_t index, std::size_t total,
+                 const std::filesystem::path& path) {
+    if (!enabled_) {
+      return;
+    }
+    file_index_ = index;
+    file_total_ = total;
+    started_ = std::chrono::steady_clock::now();
+    last_update_ = {};
+    std::cerr << "llm-cc: [" << index << '/' << total << "] analyzing "
+              << TerminalSafe(PathUtf8(path)) << '\n'
+              << std::flush;
+  }
+
+  void Tokens(std::size_t completed, std::size_t total) {
+    if (!enabled_) {
+      return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (completed != 0 && completed != total && last_update_ != TimePoint{} &&
+        now - last_update_ < std::chrono::seconds(1)) {
+      return;
+    }
+    last_update_ = now;
+    std::cerr << "llm-cc: [" << file_index_ << '/' << file_total_ << "] "
+              << completed << '/' << total << " tokens\n"
+              << std::flush;
+  }
+
+  void FinishFile(bool cache_hit) const {
+    if (!enabled_) {
+      return;
+    }
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - started_);
+    std::cerr << "llm-cc: [" << file_index_ << '/' << file_total_
+              << "] complete cache=" << (cache_hit ? "hit" : "miss")
+              << " elapsed_ms=" << elapsed.count() << '\n'
+              << std::flush;
+  }
+
+  void FailFile() const {
+    if (enabled_) {
+      std::cerr << "llm-cc: [" << file_index_ << '/' << file_total_
+                << "] failed\n"
+                << std::flush;
+    }
+  }
+
+ private:
+  using TimePoint = std::chrono::steady_clock::time_point;
+  bool enabled_;
+  std::size_t file_index_ = 0;
+  std::size_t file_total_ = 0;
+  TimePoint started_{};
+  TimePoint last_update_{};
+};
 
 int RunModels(int argc, char** argv) {
   if (argc < 3) {
@@ -504,6 +626,7 @@ struct CacheArguments {
   std::string_view action;
   std::filesystem::path path = std::filesystem::current_path();
   std::string_view format = "text";
+  bool legacy = false;
 };
 
 CacheArguments ParseCacheArguments(int argc, char** argv) {
@@ -522,6 +645,8 @@ CacheArguments ParseCacheArguments(int argc, char** argv) {
       if (arguments.format != "text" && arguments.format != "json") {
         Usage("--format expects text or json");
       }
+    } else if (value == "--legacy") {
+      arguments.legacy = true;
     } else if (!value.starts_with('-') && !path_set) {
       arguments.path = std::filesystem::u8path(value);
       path_set = true;
@@ -532,6 +657,9 @@ CacheArguments ParseCacheArguments(int argc, char** argv) {
   if (arguments.action != "status" && arguments.action != "prune" &&
       arguments.action != "clear") {
     Usage("cache requires status, prune, or clear");
+  }
+  if (arguments.legacy && arguments.action != "clear") {
+    Usage("--legacy is only valid with cache clear");
   }
   return arguments;
 }
@@ -547,20 +675,43 @@ int RunCache(int argc, char** argv) {
     llmcc::PruneRepositoryCache(*repository);
   } else if (arguments.action == "clear") {
     llmcc::ClearRepositoryCache(*repository);
+    if (arguments.legacy) {
+      llmcc::ClearLegacyRepositoryCache(*repository);
+    }
   }
   const auto status = llmcc::GetRepositoryCacheStatus(*repository);
   if (arguments.format == "json") {
     std::cout << nlohmann::json{{"repository", PathUtf8(status.repository)},
                                 {"directory", PathUtf8(status.directory)},
+                                {"storage_version", 1},
+                                {"inference_abi", llmcc::InferenceAbi()},
                                 {"entries", status.entries},
-                                {"bytes", status.bytes}}
+                                {"bytes", status.bytes},
+                                {"legacy_directory",
+                                 PathUtf8(status.legacy_directory)},
+                                {"legacy_entries", status.legacy_entries},
+                                {"legacy_bytes", status.legacy_bytes},
+                                {"entries_by_inference_abi",
+                                 status.entries_by_inference_abi},
+                                {"unknown_provenance_entries",
+                                 status.unknown_provenance_entries},
+                                {"malformed_entries", status.malformed_entries}}
                      .dump()
               << '\n';
   } else {
     std::cout << "repository: " << PathUtf8(status.repository) << '\n'
               << "directory: " << PathUtf8(status.directory) << '\n'
+              << "storage version: 1\n"
+              << "inference ABI: " << llmcc::InferenceAbi() << '\n'
               << "entries: " << status.entries << '\n'
-              << "bytes: " << status.bytes << '\n';
+              << "bytes: " << status.bytes << '\n'
+              << "legacy directory: " << PathUtf8(status.legacy_directory)
+              << '\n'
+              << "legacy entries: " << status.legacy_entries << '\n'
+              << "legacy bytes: " << status.legacy_bytes << '\n'
+              << "unknown provenance entries: "
+              << status.unknown_provenance_entries << '\n'
+              << "malformed entries: " << status.malformed_entries << '\n';
   }
   return 0;
 }
@@ -571,18 +722,23 @@ class LlamaEntropyProvider : public llmcc::EntropyProvider {
       const std::filesystem::path& cache_dir,
       const std::filesystem::path& model, std::uint32_t context,
       std::int32_t gpu_layers, llmcc::BackendKind backend,
+      std::uint32_t batch_size, llmcc::EntropyReduction entropy_reduction,
+      std::function<void(std::size_t, std::size_t)> progress,
       const std::optional<std::filesystem::path>& backend_directory,
       bool no_download, bool fetch_backend)
       : scorer_((llmcc::MarkCachedModelUsed(cache_dir, model), model),
                 {.context_size = context,
                  .gpu_layers = gpu_layers,
                  .backend = backend,
+                 .batch_size = batch_size,
+                 .entropy_reduction = entropy_reduction,
+                 .progress = std::move(progress),
                  .backend_directory = backend_directory,
                  .no_download = no_download,
                  .fetch_backend = fetch_backend}) {}
 
   std::vector<llmcc::EntropyRecord> Score(std::string_view source) override {
-    return llmcc::ParseEntropyJsonl(scorer_.Score(source));
+    return scorer_.ScoreRecords(source);
   }
 
  private:
@@ -663,7 +819,8 @@ nlohmann::json TotalsMetricsJson(const MetricTotals& totals,
 
 nlohmann::json TotalsJson(const MetricTotals& totals,
                           const std::map<std::string, MetricTotals>& languages,
-                          bool fatal, std::string_view score_mode) {
+                          bool fatal, std::string_view score_mode,
+                          llmcc::HierarchyMode hierarchy_mode) {
   nlohmann::json language_json = nlohmann::json::object();
   for (const auto& [name, value] : languages) {
     nlohmann::json item = TotalsMetricsJson(value, score_mode);
@@ -676,16 +833,21 @@ nlohmann::json TotalsJson(const MetricTotals& totals,
     language_json[name] = std::move(item);
   }
   nlohmann::json result = TotalsMetricsJson(totals, score_mode);
-  result.update({{"type", "totals"},
-                 {"discovered", totals.discovered},
-                 {"analyzed", totals.analyzed},
-                 {"failed", totals.failed},
-                 {"llm_cc", totals.llm_cc},
-                 {"total_branch", totals.total_branch},
-                 {"total_comp_level", totals.total_comp_level},
-                 {"languages", std::move(language_json)},
-                 {"partial", fatal || totals.failed != 0 ||
-                                 totals.analyzed != totals.discovered}});
+  result.update(
+      {{"type", "totals"},
+       {"analysis_version", 2},
+       {"hierarchy_mode", hierarchy_mode == llmcc::HierarchyMode::kStructural
+                              ? "structural"
+                              : "reference"},
+       {"discovered", totals.discovered},
+       {"analyzed", totals.analyzed},
+       {"failed", totals.failed},
+       {"llm_cc", totals.llm_cc},
+       {"total_branch", totals.total_branch},
+       {"total_comp_level", totals.total_comp_level},
+       {"languages", std::move(language_json)},
+       {"partial",
+        fatal || totals.failed != 0 || totals.analyzed != totals.discovered}});
   return result;
 }
 
@@ -693,6 +855,9 @@ nlohmann::json ConfigurationJson(
     const AnalyzeArguments& arguments, std::string_view requested_model,
     const llmcc::ModelIdentity* identity = nullptr) {
   const bool percentile = arguments.tau_percentile.has_value();
+  const char* effective_reducer =
+      arguments.entropy_reduction == llmcc::EntropyReduction::kDevice ? "device"
+                                                                      : "host";
   nlohmann::json configured_tau = nullptr;
   if (!percentile) {
     configured_tau = arguments.tau.value_or(0.67);
@@ -703,12 +868,22 @@ nlohmann::json ConfigurationJson(
   }
   nlohmann::json configuration = {
       {"type", "configuration"},
+      {"analysis_version", 2},
+      {"hierarchy_mode",
+       arguments.hierarchy_mode == llmcc::HierarchyMode::kStructural
+           ? "structural"
+           : "reference"},
       {"language", arguments.language_name},
       {"include_headers", arguments.include_headers},
       {"no_ignore", arguments.no_ignore},
+      {"progress", arguments.progress},
       {"no_download", arguments.no_download},
       {"model", requested_model},
       {"context", arguments.context},
+      {"batch_size", arguments.batch_size},
+      {"entropy_reduction",
+       llmcc::EntropyReductionName(arguments.entropy_reduction)},
+      {"effective_entropy_reducer", effective_reducer},
       {"score_mode", arguments.score_mode},
       {"tau_rule", percentile ? "percentile" : "absolute"},
       {"tau", std::move(configured_tau)},
@@ -721,13 +896,14 @@ nlohmann::json ConfigurationJson(
       {"cache",
        {{"enabled", !arguments.no_cache},
         {"version", 1},
-        {"namespace", ".llm-cc-cache/llm-cc/v1/entropy"},
+        {"namespace", "external/v1/entropy"},
         {"limit_bytes", llmcc::kEntropyCacheLimit}}}};
   if (identity != nullptr) {
     configuration["model"] = PathUtf8(identity->canonical_path);
     configuration["model_size"] = identity->size;
     configuration["model_modification_time"] = identity->modification_time;
     configuration["backend"] = identity->backend;
+    configuration["effective_entropy_reducer"] = identity->effective_reducer;
   }
   return configuration;
 }
@@ -950,7 +1126,14 @@ void PrintTotalsText(const MetricTotals& totals, std::string_view score_mode) {
 }
 
 int RunAnalyze(const AnalyzeArguments& arguments) {
+  if (arguments.entropy_reduction == llmcc::EntropyReduction::kDevice &&
+      arguments.gpu_layers != -1) {
+    throw std::invalid_argument(
+        "device entropy reduction requires GPU execution");
+  }
   const bool text = arguments.format == "text";
+  ProgressReporter progress(arguments.progress);
+  progress.Phase("discovering sources");
   const auto warning = [&](std::string_view message) {
     if (text) {
       std::cerr << "warning: " << TerminalSafe(message) << '\n';
@@ -982,12 +1165,14 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
     if (text) {
       PrintTotalsText({}, arguments.score_mode);
     } else {
-      Emit(TotalsJson({}, {}, false, arguments.score_mode));
+      Emit(TotalsJson({}, {}, false, arguments.score_mode,
+                      arguments.hierarchy_mode));
     }
     return 0;
   }
 
   const std::filesystem::path model_cache = llmcc::CacheDir();
+  progress.Phase("resolving model");
   const llmcc::ModelSpec& model_spec =
       arguments.model_name.has_value()
           ? *llmcc::FindModel(*arguments.model_name)
@@ -997,6 +1182,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       std::filesystem::current_path(), model_cache, llmcc::DownloadModel);
   const bool fetch_backend =
       ShouldFetchBackend(arguments.backend, arguments.gpu_layers);
+  progress.Phase("selecting inference backend");
   const llmcc::BackendKind resolved_backend = [&]() {
     if (arguments.backend != llmcc::BackendKind::kAuto) {
       return arguments.backend;
@@ -1019,11 +1205,25 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
           (detail.empty() ? std::string() : ": " + detail));
     }
   }();
+  const bool device_available =
+      llmcc::DeviceOutputGuaranteed(resolved_backend, arguments.gpu_layers,
+                                    llmcc::CompiledBackend() == "metal");
+  if (arguments.entropy_reduction == llmcc::EntropyReduction::kDevice &&
+      !device_available) {
+    throw std::invalid_argument(
+        "device entropy reduction requires GPU execution");
+  }
+  const bool device_reduction =
+      arguments.entropy_reduction == llmcc::EntropyReduction::kDevice ||
+      (arguments.entropy_reduction == llmcc::EntropyReduction::kAuto &&
+       device_available);
   const std::string backend_identity =
       BackendCacheIdentity(resolved_backend, arguments.gpu_layers);
-  const auto identity =
-      llmcc::InspectModel(resolved_model, llmcc::InferenceAbi(),
-                          backend_identity, arguments.context);
+  const auto identity = llmcc::InspectModel(
+      resolved_model, llmcc::InferenceAbi(), backend_identity,
+      arguments.context, arguments.batch_size,
+      llmcc::EntropyReductionName(arguments.entropy_reduction),
+      device_reduction ? "device" : "host");
   if (!text) {
     Emit(ConfigurationJson(arguments, requested_model, &identity));
   }
@@ -1050,7 +1250,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
     }
     for (const auto& repository : repositories) {
       try {
-        static_cast<void>(llmcc::GetRepositoryCacheStatus(repository));
+        llmcc::CheckRepositoryCacheAvailability(repository);
       } catch (const std::exception& error) {
         warning("entropy cache is unavailable for " + PathUtf8(repository) +
                 ": " + error.what());
@@ -1068,12 +1268,18 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
                                 .value = arguments.tau.value_or(0.67)},
        .alpha = arguments.alpha,
        .cache = entropy_cache,
-       .hotspots = arguments.hotspots},
+       .hotspots = arguments.hotspots,
+       .hierarchy_mode = arguments.hierarchy_mode},
       [&]() {
+        progress.Phase("loading model after entropy cache miss");
         return std::make_unique<LlamaEntropyProvider>(
             model_cache, identity.canonical_path, arguments.context,
-            arguments.gpu_layers, resolved_backend, arguments.backend_directory,
-            arguments.no_download, fetch_backend);
+            arguments.gpu_layers, resolved_backend, arguments.batch_size,
+            arguments.entropy_reduction,
+            [&](std::size_t completed, std::size_t total) {
+              progress.Tokens(completed, total);
+            },
+            arguments.backend_directory, arguments.no_download, fetch_backend);
       });
 
   MetricTotals totals;
@@ -1083,7 +1289,9 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
     ++languages[std::string(llmcc::LanguageName(source.language))].discovered;
   }
   bool fatal = false;
+  std::size_t file_index = 0;
   for (const auto& source : discovery.sources) {
+    progress.StartFile(++file_index, discovery.sources.size(), source.path);
     const std::string language(llmcc::LanguageName(source.language));
     if (!text) {
       Emit({{"type", "file_start"},
@@ -1093,6 +1301,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
     try {
       const std::string contents = ReadFile(source.path);
       auto result = analyzer.AnalyzeFile(source, contents);
+      progress.FinishFile(result.entropy_cache_hit);
       if (text) {
         PrintFileText(source, contents, result, arguments.score_mode);
       } else {
@@ -1126,6 +1335,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       ++language_totals.analyzed;
       Accumulate(result.analysis, language_totals);
     } catch (const llmcc::ScorerInitializationError& error) {
+      progress.FailFile();
       ++totals.failed;
       ++languages[language].failed;
       if (text) {
@@ -1140,6 +1350,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       }
       fatal = true;
     } catch (const std::exception& error) {
+      progress.FailFile();
       ++totals.failed;
       ++languages[language].failed;
       if (text) {
@@ -1156,7 +1367,8 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
   if (text) {
     PrintTotalsText(totals, arguments.score_mode);
   } else {
-    Emit(TotalsJson(totals, languages, fatal, arguments.score_mode));
+    Emit(TotalsJson(totals, languages, fatal, arguments.score_mode,
+                    arguments.hierarchy_mode));
   }
   if (fatal) {
     return 2;

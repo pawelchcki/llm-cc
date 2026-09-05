@@ -44,6 +44,7 @@ namespace {
 constexpr std::size_t kFooterSize = 64;
 constexpr std::size_t kNameSize = 16;
 constexpr std::size_t kSha256Size = 32;
+constexpr std::size_t kHashBufferSize = 64 * 1024;
 
 fs::path ChecksumPath(const fs::path& bundle) {
   auto checksum = bundle;
@@ -181,7 +182,7 @@ std::array<unsigned char, kSha256Size> HashFileRange(const fs::path& path,
     throw std::runtime_error("cannot open backend bundle " + path.string());
   }
   Sha256 hash;
-  std::array<char, std::size_t{1024} * 1024> buffer{};
+  std::array<char, kHashBufferSize> buffer{};
   std::uint64_t remaining = length;
   while (remaining > 0) {
     const std::size_t requested = static_cast<std::size_t>(
@@ -364,7 +365,7 @@ BundleHashes HashBundle(const fs::path& path, std::uint64_t body_size) {
   }
   Sha256 whole;
   Sha256 body;
-  std::array<char, std::size_t{1024} * 1024> buffer{};
+  std::array<char, kHashBufferSize> buffer{};
   const std::uint64_t total_size = body_size + kFooterSize;
   std::uint64_t completed = 0;
   while (completed < total_size) {

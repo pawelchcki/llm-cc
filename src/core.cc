@@ -2,56 +2,48 @@
 
 #include <algorithm>
 #include <cmath>
-#include <deque>
-#include <functional>
 #include <limits>
+#include <map>
+#include <queue>
 #include <set>
 #include <utility>
 
 namespace llmcc {
 namespace {
 
-using Range = std::pair<std::size_t, std::size_t>;
-
-std::vector<Range> PartitionAtShallowest(std::span<const SemanticUnit> units,
-                                         std::size_t first, std::size_t end) {
-  if (first >= end) {
-    return {};
-  }
-  std::size_t shallowest = std::numeric_limits<std::size_t>::max();
-  for (std::size_t i = first; i < end; ++i) {
-    shallowest = std::min(shallowest, units[i].nesting_depth);
-  }
-  std::vector<std::size_t> starts;
-  for (std::size_t i = first; i < end; ++i) {
-    if (units[i].nesting_depth == shallowest) {
-      starts.push_back(i);
-    }
-  }
-  std::vector<Range> ranges;
-  if (starts.front() > first) {
-    ranges.emplace_back(first, starts.front());
-  }
-  for (std::size_t i = 0; i < starts.size(); ++i) {
-    ranges.emplace_back(starts[i], i + 1 < starts.size() ? starts[i + 1] : end);
-  }
-  return ranges;
-}
-
 std::pair<std::uint64_t, std::uint64_t> Totals(std::span<const Unit> units) {
   std::uint64_t branches = 0;
   std::uint64_t levels = 0;
+  std::vector<const Unit*> pending;
   for (const Unit& unit : units) {
-    const auto [child_branches, child_levels] = Totals(unit.children);
-    branches += unit.branching + child_branches;
-    levels += unit.level + child_levels;
+    pending.push_back(&unit);
+  }
+  while (!pending.empty()) {
+    const Unit& unit = *pending.back();
+    pending.pop_back();
+    branches += unit.branching;
+    levels += unit.level;
+    for (const Unit& child : unit.children) {
+      pending.push_back(&child);
+    }
   }
   return {branches, levels};
 }
 
+std::vector<Unit> BuildHierarchyImpl(
+    std::span<const SemanticUnit> semantic_units, bool suppress_single_root);
+
+std::size_t FirstOverlappingToken(std::span<const Token> tokens,
+                                  std::size_t byte) {
+  const auto iterator = std::ranges::partition_point(
+      tokens, [&](const Token& token) { return token.end_byte <= byte; });
+  return static_cast<std::size_t>(std::distance(tokens.begin(), iterator));
+}
+
 void ValidateInputs(std::span<const Token> tokens,
                     std::span<const StructuralEvent> events,
-                    std::span<const std::size_t> line_starts) {
+                    std::span<const std::size_t> line_starts,
+                    std::span<const SourceRange> meaningful_ranges) {
   std::size_t previous_end = 0;
   for (std::size_t i = 0; i < tokens.size(); ++i) {
     const Token& token = tokens[i];
@@ -73,6 +65,15 @@ void ValidateInputs(std::span<const Token> tokens,
       (line_starts.front() != 0 || !std::ranges::is_sorted(line_starts) ||
        std::ranges::adjacent_find(line_starts) != line_starts.end())) {
     throw AnalysisError("line starts must begin at zero and be ascending");
+  }
+  std::size_t previous_range_end = 0;
+  for (const SourceRange& range : meaningful_ranges) {
+    if (range.start_byte >= range.end_byte || range.end_byte > source_end ||
+        range.start_byte < previous_range_end) {
+      throw AnalysisError(
+          "meaningful source ranges must be ordered and non-overlapping");
+    }
+    previous_range_end = range.end_byte;
   }
 }
 
@@ -114,8 +115,10 @@ std::size_t TokenIndexAt(std::span<const Token> tokens, std::size_t byte) {
 std::pair<double, std::vector<SemanticUnit>> DetectSemanticUnits(
     std::span<const Token> tokens,
     std::span<const StructuralEvent> structural_events,
-    std::span<const std::size_t> line_starts, TauRule tau_rule) {
-  ValidateInputs(tokens, structural_events, line_starts);
+    std::span<const std::size_t> line_starts, TauRule tau_rule,
+    std::span<const SourceRange> meaningful_ranges,
+    HierarchyMode hierarchy_mode) {
+  ValidateInputs(tokens, structural_events, line_starts, meaningful_ranges);
   std::vector<double> entropy_values;
   for (const Token& token : tokens) {
     if (token.entropy.has_value()) {
@@ -140,6 +143,14 @@ std::pair<double, std::vector<SemanticUnit>> DetectSemanticUnits(
     return {tau, {}};
   }
 
+  const bool source_layout_supplied = !meaningful_ranges.empty();
+  const std::size_t meaningful_start =
+      source_layout_supplied ? meaningful_ranges.front().start_byte
+                             : tokens.front().start_byte;
+  const std::size_t meaningful_end = source_layout_supplied
+                                         ? meaningful_ranges.back().end_byte
+                                         : tokens.back().end_byte;
+
   std::vector<std::size_t> first_token_on_line(tokens.size());
   if (line_starts.empty()) {
     for (std::size_t i = 0; i < tokens.size(); ++i) {
@@ -161,118 +172,189 @@ std::pair<double, std::vector<SemanticUnit>> DetectSemanticUnits(
     }
   }
 
-  std::set<std::size_t> boundaries = {0, tokens.size()};
-  for (std::size_t i = 1; i < tokens.size(); ++i) {
-    if (tokens[i].entropy.has_value()) {
-      const double entropy = tokens[i].entropy.value_or(0.0);
-      if (entropy >= tau) {
-        boundaries.insert(first_token_on_line[i]);
+  const std::size_t source_start =
+      FirstOverlappingToken(tokens, meaningful_start);
+  const std::size_t source_end = TokenIndexAt(tokens, meaningful_end);
+  std::set<std::size_t> boundaries = {source_start, source_end};
+  bool marker_at_source_start = false;
+  for (std::size_t i = source_start; i < source_end; ++i) {
+    if (tokens[i].entropy.has_value() && *tokens[i].entropy >= tau) {
+      const std::size_t boundary =
+          std::max(first_token_on_line[i], source_start);
+      if (boundary == source_start) {
+        marker_at_source_start = true;
+      } else if (boundary > source_start && boundary < source_end) {
+        boundaries.insert(boundary);
       }
     }
   }
   // Structural boundaries deliberately remain token-granular, an extension
   // over the reference implementation's entropy-only line snapping.
-  for (const StructuralEvent& event : structural_events) {
-    boundaries.insert(TokenIndexAt(tokens, event.byte_offset));
+  if (hierarchy_mode == HierarchyMode::kStructural) {
+    for (const StructuralEvent& event : structural_events) {
+      const std::size_t boundary = TokenIndexAt(tokens, event.byte_offset);
+      if (boundary > source_start && boundary < source_end) {
+        boundaries.insert(boundary);
+      }
+    }
   }
 
   std::vector<std::size_t> indices(boundaries.begin(), boundaries.end());
   std::vector<SemanticUnit> units;
-  for (std::size_t i = 1; i < indices.size(); ++i) {
-    const std::size_t start_index = indices[i - 1];
-    const std::size_t end_index = indices[i];
+  std::vector<StructuralEvent> events(structural_events.begin(),
+                                      structural_events.end());
+  std::ranges::sort(events, {}, &StructuralEvent::scope_start);
+  using EndDepth = std::pair<std::size_t, std::size_t>;
+  std::priority_queue<EndDepth, std::vector<EndDepth>, std::greater<>> ending;
+  std::multiset<std::size_t> active_depths;
+  std::size_t event_index = 0;
+  std::size_t range_index = 0;
+  // The authors' reference tree keeps the pre-marker text in the implicit
+  // root and creates one block for each entropy marker. Structural mode is a
+  // true partition, so it retains the interval before the first boundary too.
+  const std::size_t first_interval =
+      hierarchy_mode == HierarchyMode::kReference && !marker_at_source_start
+          ? 1
+          : 0;
+  for (std::size_t i = first_interval; i + 1 < indices.size(); ++i) {
+    const std::size_t start_index = indices[i];
+    const std::size_t end_index = indices[i + 1];
     if (start_index == end_index) {
       continue;
     }
-    const std::size_t start_byte = tokens[start_index].start_byte;
-    std::size_t depth = 0;
-    for (const StructuralEvent& event : structural_events) {
-      if (event.scope_start <= start_byte && start_byte < event.byte_offset) {
-        depth = std::max(depth, event.depth);
-      }
+    const std::size_t interval_start = tokens[start_index].start_byte;
+    const std::size_t interval_end = tokens[end_index - 1].end_byte;
+    while (range_index < meaningful_ranges.size() &&
+           meaningful_ranges[range_index].end_byte <= interval_start) {
+      ++range_index;
     }
+    std::size_t start_byte = interval_start;
+    if (source_layout_supplied) {
+      if (range_index >= meaningful_ranges.size() ||
+          meaningful_ranges[range_index].start_byte >= interval_end) {
+        continue;
+      }
+      start_byte =
+          std::max(interval_start, meaningful_ranges[range_index].start_byte);
+    }
+    while (event_index < events.size() &&
+           events[event_index].scope_start <= start_byte) {
+      ending.emplace(events[event_index].byte_offset,
+                     events[event_index].depth);
+      active_depths.insert(events[event_index].depth);
+      ++event_index;
+    }
+    while (!ending.empty() && ending.top().first <= start_byte) {
+      const auto found = active_depths.find(ending.top().second);
+      if (found != active_depths.end()) {
+        active_depths.erase(found);
+      }
+      ending.pop();
+    }
+    const std::size_t depth =
+        active_depths.empty() ? 0 : *active_depths.rbegin();
     units.push_back({.start_byte = start_byte,
-                     .end_byte = tokens[end_index - 1].end_byte,
+                     .end_byte = std::min(interval_end, meaningful_end),
                      .nesting_depth = depth});
   }
   return {tau, std::move(units)};
 }
 
 std::vector<Unit> BuildHierarchy(std::span<const SemanticUnit> semantic_units) {
-  if (semantic_units.empty()) {
+  return BuildHierarchyImpl(semantic_units, true);
+}
+
+namespace {
+
+std::vector<Unit> BuildHierarchyImpl(
+    std::span<const SemanticUnit> semantic_units, bool suppress_single_root) {
+  // A single effective semantic interval is represented by the implicit root,
+  // not by a duplicate whole-input child.
+  if (semantic_units.empty() ||
+      (suppress_single_root && semantic_units.size() == 1)) {
     return {};
   }
   struct ArenaUnit {
-    std::size_t first;
-    std::size_t end;
+    std::size_t start_byte;
+    std::size_t end_byte;
+    std::size_t depth;
     std::uint64_t level;
     std::vector<std::size_t> children;
   };
   std::vector<ArenaUnit> arena;
-  for (const auto [first, end] :
-       PartitionAtShallowest(semantic_units, 0, semantic_units.size())) {
-    arena.push_back({.first = first, .end = end, .level = 2, .children = {}});
-  }
-  std::vector<std::size_t> roots(arena.size());
-  for (std::size_t i = 0; i < roots.size(); ++i) {
-    roots[i] = i;
-  }
-  std::deque<std::size_t> queue(roots.begin(), roots.end());
-  while (!queue.empty()) {
-    const std::size_t parent = queue.front();
-    queue.pop_front();
-    const std::size_t first = arena[parent].first;
-    const std::size_t end = arena[parent].end;
-    if (end - first <= 1) {
-      continue;
+  arena.reserve(semantic_units.size());
+  std::vector<std::size_t> roots;
+  std::vector<std::size_t> stack;
+  for (const SemanticUnit& semantic : semantic_units) {
+    while (!stack.empty() &&
+           arena[stack.back()].depth >= semantic.nesting_depth) {
+      stack.pop_back();
     }
-    const std::uint64_t level = arena[parent].level + 1;
-    for (const auto [child_first, child_end] :
-         PartitionAtShallowest(semantic_units, first + 1, end)) {
-      const std::size_t child = arena.size();
-      arena.push_back({.first = child_first,
-                       .end = child_end,
-                       .level = level,
-                       .children = {}});
-      arena[parent].children.push_back(child);
-      queue.push_back(child);
+    const std::uint64_t level =
+        stack.empty() ? 2 : arena[stack.back()].level + 1;
+    const std::size_t index = arena.size();
+    arena.push_back({.start_byte = semantic.start_byte,
+                     .end_byte = semantic.end_byte,
+                     .depth = semantic.nesting_depth,
+                     .level = level,
+                     .children = {}});
+    if (stack.empty()) {
+      roots.push_back(index);
+    } else {
+      arena[stack.back()].children.push_back(index);
+    }
+    stack.push_back(index);
+  }
+  for (std::size_t index = arena.size(); index-- > 0;) {
+    for (std::size_t child : arena[index].children) {
+      arena[index].end_byte =
+          std::max(arena[index].end_byte, arena[child].end_byte);
     }
   }
 
-  std::function<Unit(std::size_t)> materialize;
-  materialize = [&](std::size_t index) -> Unit {
+  std::vector<Unit> materialized(arena.size());
+  for (std::size_t index = arena.size(); index-- > 0;) {
     const ArenaUnit& node = arena[index];
     std::vector<Unit> children;
     children.reserve(node.children.size());
     for (std::size_t child : node.children) {
-      children.push_back(materialize(child));
+      children.push_back(std::move(materialized[child]));
     }
-    return {.start_byte = semantic_units[node.first].start_byte,
-            .end_byte = semantic_units[node.end - 1].end_byte,
-            .level = node.level,
-            .branching = static_cast<std::uint64_t>(children.size()),
-            .children = std::move(children)};
-  };
+    materialized[index] = {
+        .start_byte = node.start_byte,
+        .end_byte = node.end_byte,
+        .level = node.level,
+        .branching = static_cast<std::uint64_t>(children.size()),
+        .children = std::move(children),
+    };
+  }
   std::vector<Unit> units;
   units.reserve(roots.size());
   for (std::size_t root : roots) {
-    units.push_back(materialize(root));
+    units.push_back(std::move(materialized[root]));
   }
   return units;
 }
 
+}  // namespace
+
 Analysis Analyze(std::span<const Token> tokens,
                  std::span<const StructuralEvent> structural_events,
                  std::span<const std::size_t> line_starts, TauRule tau_rule,
-                 double alpha) {
+                 double alpha, std::span<const SourceRange> meaningful_ranges,
+                 HierarchyMode hierarchy_mode) {
   if (!std::isfinite(alpha) || alpha < 0.0 || alpha > 1.0) {
     throw AnalysisError("alpha must be finite and between 0 and 1");
   }
   auto [tau, semantic_units] =
-      DetectSemanticUnits(tokens, structural_events, line_starts, tau_rule);
-  std::vector<Unit> units = BuildHierarchy(semantic_units);
+      DetectSemanticUnits(tokens, structural_events, line_starts, tau_rule,
+                          meaningful_ranges, hierarchy_mode);
+  std::vector<Unit> units = BuildHierarchyImpl(
+      semantic_units, hierarchy_mode == HierarchyMode::kStructural);
   auto [branches, levels] = Totals(units);
-  if (!units.empty()) {
+  const bool has_meaningful_source =
+      !meaningful_ranges.empty() || !tokens.empty();
+  if (has_meaningful_source) {
     branches += units.size();
     levels += 1;
   }
@@ -303,6 +385,7 @@ Analysis Analyze(std::span<const Token> tokens,
           .tau = tau,
           .metrics = metrics,
           .tau_rule = tau_rule,
+          .hierarchy_mode = hierarchy_mode,
           .units = std::move(units)};
 }
 

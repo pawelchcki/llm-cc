@@ -162,8 +162,9 @@ constexpr auto kCSharpAliases =
 
 constexpr auto kRustExtensions = std::to_array<std::string_view>({".rs"});
 constexpr auto kCExtensions = std::to_array<std::string_view>({".c", ".h"});
-constexpr auto kCppExtensions = std::to_array<std::string_view>(
-    {".cc", ".cpp", ".cxx", ".c++", ".hpp", ".hh", ".hxx", ".h++"});
+constexpr auto kCppExtensions =
+    std::to_array<std::string_view>({".cc", ".cpp", ".cxx", ".c++", ".cu",
+                                     ".hpp", ".hh", ".hxx", ".h++", ".cuh"});
 constexpr auto kJavaExtensions = std::to_array<std::string_view>({".java"});
 constexpr auto kPythonExtensions =
     std::to_array<std::string_view>({".py", ".pyw", ".pyi"});
@@ -358,6 +359,102 @@ void CollectCommentRanges(
   }
 }
 
+bool IsPythonLiteralString(TSNode node, std::string_view source) {
+  const std::string_view type = ts_node_type(node);
+  if (type == "parenthesized_expression") {
+    bool saw_string = false;
+    for (std::uint32_t i = 0; i < ts_node_named_child_count(node); ++i) {
+      const TSNode child = ts_node_named_child(node, i);
+      if (IsNodeType(child, "comment")) {
+        continue;
+      }
+      if (saw_string || !IsPythonLiteralString(child, source)) {
+        return false;
+      }
+      saw_string = true;
+    }
+    return saw_string;
+  }
+  if (type == "concatenated_string") {
+    bool saw_string = false;
+    for (std::uint32_t i = 0; i < ts_node_named_child_count(node); ++i) {
+      const TSNode child = ts_node_named_child(node, i);
+      if (IsNodeType(child, "comment")) {
+        continue;
+      }
+      if (!IsPythonLiteralString(child, source)) {
+        return false;
+      }
+      saw_string = true;
+    }
+    return saw_string;
+  }
+  if (type != "string") {
+    return false;
+  }
+  const std::size_t start = ts_node_start_byte(node);
+  const std::size_t end = ts_node_end_byte(node);
+  if (start >= end || end > source.size()) {
+    return false;
+  }
+  // Python docstrings are str constants.  Bytes and f-strings are expressions
+  // but are not docstrings; raw and unicode prefixes remain valid.
+  for (char byte : source.substr(start, end - start)) {
+    if (byte == '\'' || byte == '"') {
+      return true;
+    }
+    const char prefix =
+        static_cast<char>(std::tolower(static_cast<unsigned char>(byte)));
+    if (prefix == 'b' || prefix == 'f') {
+      return false;
+    }
+    if (prefix != 'r' && prefix != 'u' &&
+        !std::isspace(static_cast<unsigned char>(byte))) {
+      return false;
+    }
+  }
+  return false;
+}
+
+void CollectPythonSuiteDocstring(
+    TSNode suite, std::string_view source,
+    std::vector<std::pair<std::size_t, std::size_t>>& ranges) {
+  for (std::uint32_t i = 0; i < ts_node_named_child_count(suite); ++i) {
+    const TSNode statement = ts_node_named_child(suite, i);
+    if (IsNodeType(statement, "comment")) {
+      continue;
+    }
+    if (!IsNodeType(statement, "expression_statement") ||
+        ts_node_named_child_count(statement) != 1 ||
+        !IsPythonLiteralString(ts_node_named_child(statement, 0), source)) {
+      return;
+    }
+    ranges.emplace_back(ts_node_start_byte(statement),
+                        ts_node_end_byte(statement));
+    return;
+  }
+}
+
+void CollectPythonDocstrings(
+    TSNode node, std::string_view source,
+    std::vector<std::pair<std::size_t, std::size_t>>& ranges,
+    bool module = false) {
+  if (module) {
+    CollectPythonSuiteDocstring(node, source, ranges);
+  }
+  if (IsNodeType(node, "function_definition") ||
+      IsNodeType(node, "class_definition")) {
+    const TSNode body = ts_node_child_by_field_name(
+        node, "body", static_cast<std::uint32_t>(sizeof("body") - 1));
+    if (!ts_node_is_null(body)) {
+      CollectPythonSuiteDocstring(body, source, ranges);
+    }
+  }
+  for (std::uint32_t i = 0; i < ts_node_child_count(node); ++i) {
+    CollectPythonDocstrings(ts_node_child(node, i), source, ranges);
+  }
+}
+
 void CollectStructuralEvents(TSNode node, Language language,
                              std::size_t structural_depth,
                              std::span<const std::string_view> structural_kinds,
@@ -537,28 +634,22 @@ void AppendSource(std::string_view source, std::size_t start, std::size_t end,
   }
 }
 
-bool EndsWith(std::string_view value, std::string_view suffix) {
-  return value.size() >= suffix.size() &&
-         value.substr(value.size() - suffix.size()) == suffix;
+std::size_t RemapOffset(const OffsetMap& map, std::size_t original) {
+  return static_cast<std::size_t>(std::ranges::lower_bound(map, original) -
+                                  map.begin());
 }
 
-}  // namespace
-
-std::pair<std::string, OffsetMap> StripComments(std::string_view source,
-                                                Language language) {
-  Tree tree = Parse(source, language);
-  std::vector<std::pair<std::size_t, std::size_t>> ranges;
-  CollectCommentRanges(ts_tree_root_node(tree.get()),
-                       Metadata(language).comments, ranges);
+std::pair<std::string, OffsetMap> RemoveRanges(
+    std::string_view source,
+    std::vector<std::pair<std::size_t, std::size_t>> ranges) {
   std::ranges::sort(ranges);
-
   std::string output;
   output.reserve(source.size());
   OffsetMap map;
   map.reserve(source.size() + 1);
   std::size_t cursor = 0;
   for (const auto [start, end] : ranges) {
-    if (start < cursor) {
+    if (start < cursor || start > end || end > source.size()) {
       continue;
     }
     AppendSource(source, cursor, start, output, map);
@@ -582,6 +673,97 @@ std::pair<std::string, OffsetMap> StripComments(std::string_view source,
   AppendSource(source, cursor, source.size(), output, map);
   map.push_back(source.size());
   return {std::move(output), std::move(map)};
+}
+
+bool EndsWith(std::string_view value, std::string_view suffix) {
+  return value.size() >= suffix.size() &&
+         value.substr(value.size() - suffix.size()) == suffix;
+}
+
+}  // namespace
+
+std::pair<std::string, OffsetMap> StripComments(std::string_view source,
+                                                Language language) {
+  Tree tree = Parse(source, language);
+  std::vector<std::pair<std::size_t, std::size_t>> ranges;
+  CollectCommentRanges(ts_tree_root_node(tree.get()),
+                       Metadata(language).comments, ranges);
+  return RemoveRanges(source, std::move(ranges));
+}
+
+PreparedSource PrepareSource(std::string_view source, Language language) {
+  Tree tree = Parse(source, language);
+  const TSNode root = ts_tree_root_node(tree.get());
+
+  std::vector<std::pair<std::size_t, std::size_t>> removals;
+  CollectCommentRanges(root, Metadata(language).comments, removals);
+  if (language == Language::kPython) {
+    CollectPythonDocstrings(root, source, removals, true);
+  }
+
+  std::vector<StructuralEvent> original_events;
+  CollectStructuralEvents(root, language, 0, Metadata(language).structural,
+                          original_events);
+  std::vector<FunctionSpan> original_functions;
+  CollectFunctions(root, source, language, false, original_functions);
+
+  auto [cleaned, map] = RemoveRanges(source, std::move(removals));
+  PreparedSource prepared{.cleaned = std::move(cleaned),
+                          .original_offsets = std::move(map)};
+  prepared.line_starts = LineStarts(prepared.cleaned);
+
+  for (const StructuralEvent& event : original_events) {
+    const std::size_t start =
+        RemapOffset(prepared.original_offsets, event.scope_start);
+    const std::size_t end =
+        RemapOffset(prepared.original_offsets, event.byte_offset);
+    if (start < end) {
+      prepared.structural_events.push_back(
+          {.scope_start = start, .byte_offset = end, .depth = event.depth});
+    }
+  }
+  std::ranges::sort(
+      prepared.structural_events, {}, [](const StructuralEvent& event) {
+        return std::tuple(event.scope_start, event.byte_offset, event.depth);
+      });
+  prepared.structural_events.erase(
+      std::ranges::unique(prepared.structural_events).begin(),
+      prepared.structural_events.end());
+
+  for (FunctionSpan function : original_functions) {
+    function.start_byte =
+        RemapOffset(prepared.original_offsets, function.start_byte);
+    function.end_byte =
+        RemapOffset(prepared.original_offsets, function.end_byte);
+    if (function.start_byte < function.end_byte) {
+      prepared.functions.push_back(std::move(function));
+    }
+  }
+
+  std::size_t line_start = 0;
+  while (line_start < prepared.cleaned.size()) {
+    const std::size_t newline = prepared.cleaned.find('\n', line_start);
+    const std::size_t line_end =
+        newline == std::string::npos ? prepared.cleaned.size() : newline;
+    std::size_t first = line_start;
+    while (first < line_end &&
+           std::isspace(static_cast<unsigned char>(prepared.cleaned[first]))) {
+      ++first;
+    }
+    std::size_t end = line_end;
+    while (end > first && std::isspace(static_cast<unsigned char>(
+                              prepared.cleaned[end - 1]))) {
+      --end;
+    }
+    if (first < end) {
+      prepared.meaningful_ranges.push_back({first, end});
+    }
+    if (newline == std::string::npos) {
+      break;
+    }
+    line_start = newline + 1;
+  }
+  return prepared;
 }
 
 std::vector<std::size_t> LineStarts(std::string_view source) {
@@ -648,7 +830,7 @@ std::string_view LanguageName(Language language) {
 bool IsHeaderPath(std::string_view path) {
   return std::ranges::any_of(
       std::initializer_list<std::string_view>{".h", ".hpp", ".hh", ".hxx",
-                                              ".h++"},
+                                              ".h++", ".cuh"},
       [path](std::string_view suffix) { return EndsWith(path, suffix); });
 }
 

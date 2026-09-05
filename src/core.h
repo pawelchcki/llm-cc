@@ -25,6 +25,14 @@ struct StructuralEvent {
   bool operator==(const StructuralEvent&) const = default;
 };
 
+struct SourceRange {
+  std::size_t start_byte;
+  std::size_t end_byte;
+  bool operator==(const SourceRange&) const = default;
+};
+
+enum class HierarchyMode : std::uint8_t { kStructural, kReference };
+
 struct Unit {
   std::size_t start_byte;
   std::size_t end_byte;
@@ -60,6 +68,7 @@ struct Analysis {
   double tau;
   Metrics metrics;
   TauRule tau_rule;
+  HierarchyMode hierarchy_mode = HierarchyMode::kStructural;
   std::vector<Unit> units;
   bool operator==(const Analysis&) const = default;
 };
@@ -82,12 +91,16 @@ std::size_t TokenIndexAt(std::span<const Token> tokens, std::size_t byte);
 std::pair<double, std::vector<SemanticUnit>> DetectSemanticUnits(
     std::span<const Token> tokens,
     std::span<const StructuralEvent> structural_events,
-    std::span<const std::size_t> line_starts = {}, TauRule tau_rule = {});
+    std::span<const std::size_t> line_starts = {}, TauRule tau_rule = {},
+    std::span<const SourceRange> meaningful_ranges = {},
+    HierarchyMode hierarchy_mode = HierarchyMode::kStructural);
 std::vector<Unit> BuildHierarchy(std::span<const SemanticUnit> semantic_units);
 Analysis Analyze(std::span<const Token> tokens,
                  std::span<const StructuralEvent> structural_events,
                  std::span<const std::size_t> line_starts = {},
-                 TauRule tau_rule = {}, double alpha = 0.8);
+                 TauRule tau_rule = {}, double alpha = 0.8,
+                 std::span<const SourceRange> meaningful_ranges = {},
+                 HierarchyMode hierarchy_mode = HierarchyMode::kStructural);
 
 }  // namespace llmcc
 

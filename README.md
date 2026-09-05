@@ -133,27 +133,47 @@ Analysis options are:
 --no-ignore
 --no-cache
 --context N
+--batch-size N
+--entropy-reduction auto|host|device
+--hierarchy structural|reference
 --score lmcc|density|mean
 --tau N
 --tau-percentile N
 --hotspots N
 --format jsonl|text
+--progress auto|always|never
 --alpha N
 ```
 
 Automatic detection recognizes `.rs`; `.c`; C/C++ headers and `.cc`, `.cpp`,
-`.cxx`, `.c++`; `.java`; `.py`, `.pyw`, `.pyi`; `.go`; `.js`, `.mjs`, `.cjs`;
-and `.cs`, `.csx`. In addition to the canonical `--lang` names above, `c++`,
+`.cxx`, `.c++`; CUDA `.cu` sources and `.cuh` headers through the C++ grammar;
+`.java`; `.py`, `.pyw`, `.pyi`; `.go`; `.js`, `.mjs`, `.cjs`; and `.cs`,
+`.csx`. In addition to the canonical `--lang` names above, `c++`,
 `py`, `golang`, `js`, `node`, `nodejs`, `node.js`, `cs`, and `c#` are accepted
 as aliases. JavaScript support is for Node.js runtime files only; JSX and all
 TypeScript variants are intentionally excluded.
 
 The default headline score is `lmcc_per_token`, selected with `--score lmcc`.
-It normalizes LM-CC by the number of scored tokens, making it length-invariant
-and suitable for comparing files and functions. The raw `llm_cc` field remains
-available, but it is a length-dependent sum. `--score density` selects the
-fraction of tokens at or above tau, while `--score mean` selects mean token
-entropy. The other metrics remain present regardless of the headline mode.
+This is a per-token heuristic: it divides raw LM-CC by the number of scored
+tokens, but is neither length-invariant nor independently validated. The raw
+`llm_cc` field remains available and is length-dependent. `--score density`
+selects the fraction of tokens at or above tau, while `--score mean` selects
+mean token entropy. The other metrics remain present regardless of the
+headline mode.
+
+`--hierarchy structural` is the default. It combines entropy boundaries with
+AST scope terminations, uses the first meaningful source byte for scope
+membership, and excludes whitespace-only intervals. `--hierarchy reference`
+uses the entropy-led, logical-nonblank-line partitioning contract from the
+pinned authors' revision `c38a26afdfc29ee517d734c6b677a4d6c65ec59b` for
+Python. Other languages apply the same policy with their tree-sitter scopes as
+language extensions. Both file and function analysis use the selected mode,
+and functions continue to use their file's resolved tau.
+
+Comments and actual Python module, class, function, nested-function, and async
+function docstrings are removed before inference. Newlines and mappings to the
+original source are preserved. Assigned strings, non-docstring string
+expressions, bytes literals, and f-strings remain source content.
 
 Tau defaults to an absolute threshold of 0.67 nats. That value was calibrated
 by the paper on CodeLlama-7b and may require `--tau` tuning for other models.
@@ -175,25 +195,44 @@ Analysis output is compact JSONL and each line is flushed immediately. The
 event order is:
 
 1. `start`: `discovered` and the requested `model`.
-2. `configuration`: resolved language/discovery options, model, context, score
-   mode, tau rule, hotspot count, alpha, backend, inference ABI, and cache
-   identity.
+2. `configuration`: resolved language/discovery options, model, context, batch
+   size, hierarchy and entropy-reduction modes, score mode, tau rule, hotspot
+   count, alpha, backend, inference ABI, and cache identity.
 3. Zero or more `warning` events.
 4. A `file_start`, then either `file` or `error`, for each source.
 5. `totals` with additive project metrics, per-language totals, and `partial`.
 
+Consumers must wait for exit status zero and a terminal `totals` event with
+`partial == false`, then aggregate every `file` event. A `file_start`, a
+truncated stream, or an early file with no matching functions is not a complete
+project result. `--progress always` writes throttled model, file, cache, and
+token progress to stderr while leaving stdout JSONL unchanged; `auto` enables
+it only when stderr is a terminal.
+
 A `file` event retains `llm_cc`, `total_branch`, `total_comp_level`, `alpha`,
 `tau`, and the complete `units` hierarchy. It also contains normalized metrics,
 the selected headline `score`, per-function scores, entropy hotspots, the
-canonical `path`, resolved `language`, and `entropy_cache_hit`. An individual
+canonical `path`, resolved `language`, and `entropy_cache_hit`. Configuration,
+file, and totals events contain `analysis_version` and `hierarchy_mode`. An individual
 file failure does not stop later files. Exit status is 0 for complete success,
 1 for partial results, and 2 for configuration or model failures.
 
-The default maximum input context is 131,072 tokens. The runtime allocates the
-KV cache for the tokenized input rather than eagerly reserving the entire
-maximum, so short source files retain a small memory footprint. Use `--context`
-to select a different limit. Inference uses the CPU by default; request GPU
-offload with `--gpu-layers`.
+The default maximum input context is 131,072 tokens and the default batch size
+is 64. One inference context is reused across files, grows geometrically as
+needed, and has its model memory and positions cleared between inputs. Use
+`--context` and `--batch-size` to tune these limits. Inference uses the CPU by
+default; request GPU offload with `--gpu-layers`.
+
+`--entropy-reduction auto` performs entropy and observed-token log-probability
+reduction on the GPU when full offload (`--gpu-layers -1`) guarantees that the
+final logits execute there; partial offload conservatively reports a host
+fallback because output-layer placement is model-dependent. `host` retains the
+ordinary full-logits path. Explicit `device` likewise requires full offload.
+The device graph uses a
+max-shifted reduction and transfers two floats per scored row instead of a
+vocabulary-sized logits row. Host/device comparisons allow `1e-5` nats for
+entropy and `1e-5` absolute plus relative tolerance for log probability;
+classifications within that distance of tau can be floating-point sensitive.
 
 GPU-backed invocations are serialized per user and backend, so concurrent
 `llm-cc` processes wait instead of competing to load the same large model.
@@ -249,7 +288,8 @@ llm-cc score --model model.gguf --entropy --file source.cpp
 
 `score` accepts a local `--model` or a registered `--model-name`, plus
 `--prompt` or `--file`, `--bos auto|always|never`, `--context-size`, `--threads`,
-`--gpu-layers`, `--backend`, `--no-download`, `--override-memory-check`, and
+`--gpu-layers`, `--backend`, `--backend-dir`, `--batch-size`,
+`--entropy-reduction`, `--no-download`, `--override-memory-check`, and
 `--entropy`. It emits one JSONL object per observed token. It never samples or
 generates a continuation. Its default maximum input context is 131,072 tokens;
 use `--context-size` to override it. Mean negative log-likelihood and perplexity
@@ -259,10 +299,10 @@ go to stderr.
 {"position":0,"token_id":785,"piece":"The","bytes_hex":"546865","probability":null,"log_probability":null,"entropy":null}
 ```
 
-The analyzer calls the same scorer in-process; no subprocess or second runtime
-is involved. One model is loaded per analyzer invocation, on the first entropy
-cache miss. Each missed file receives a bounded inference context; an all-hit
-invocation never loads model weights.
+The analyzer calls the same scorer in-process and consumes typed records; no
+JSONL parse or subprocess is involved. One model is loaded per analyzer
+invocation, on the first entropy cache miss. Misses share a bounded reusable
+inference context; an all-hit invocation never loads model weights.
 
 ## Backends
 
@@ -310,25 +350,33 @@ exact pinned userspace and architecture-data closure is atomically materialized
 under a content-addressed, owner-only cache. CPU execution does not inspect or
 materialize either GPU payload.
 
-## Repository entropy cache
+## Repository-scoped entropy cache
 
-Within each containing Git repository, token bytes and entropy values are
-stored as versioned CBOR under:
+Token bytes and entropy values are stored as versioned CBOR in a per-worktree
+bucket outside the analyzed repository. The base directory follows this
+precedence:
 
 ```text
-.llm-cc-cache/llm-cc/v1/entropy/
+$LLM_CC_ENTROPY_CACHE_DIR
+$XDG_CACHE_HOME/llm-cc/entropy
+$HOME/.cache/llm-cc/entropy
 ```
 
+Each canonical worktree root hashes to an independent `HASH/v1/entropy/`
+bucket, including linked worktrees. Analysis never modifies `.gitignore`,
+`.git/info/exclude`, Git configuration, or the source tree.
+
 Non-Git inputs are analyzed without this cache and produce a warning. Cache
-keys cover the SHA-256 of comment-stripped source, canonical model path, model
+keys cover the SHA-256 of prepared source, canonical model path, model
 size and high-resolution modification time, inference ABI, requested runtime
-backend and GPU-layer policy, and context limit. Tau, alpha, and score mode are
+backend and GPU-layer policy, context limit, batch size, requested reduction
+policy, and effective reducer. Tau, alpha, hierarchy mode, and score mode are
 deliberately excluded, so changing them recomputes the inexpensive hierarchy
 from cached entropy.
 
 Reads validate that token bytes cover the complete preprocessed source.
 Corrupt entries become misses, writes use same-directory atomic replacement,
-and cache-directory symlinks are never followed. Hits update entry timestamps
+and owned cache-directory symlinks are never followed. Hits update entry timestamps
 for LRU accounting. Cleanup runs at most daily: entries unused for seven days
 are removed, then the oldest entries are evicted until the repository cache is
 at most 512 MiB.
@@ -340,9 +388,16 @@ default):
 llm-cc cache status [PATH] [--format text|json]
 llm-cc cache prune  [PATH] [--format text|json]
 llm-cc cache clear  [PATH] [--format text|json]
+llm-cc cache clear  [PATH] --legacy [--format text|json]
 ```
 
-`clear` removes only the `llm-cc` namespace below `.llm-cc-cache`.
+Status separates active and legacy entry counts and reports storage version,
+the current inference ABI, recorded ABI groups, unknown-provenance entries, and
+malformed entries. Cache storage format and inference ABI are independent:
+an ABI upgrade correctly misses incompatible entries. Exact current-key hits
+in the former repository-local `.llm-cc-cache/llm-cc/v1/entropy/` location are
+migrated without touching the legacy file. `clear` removes the external bucket;
+`clear --legacy` additionally removes only that legacy `llm-cc` namespace.
 
 ## Hermetic Linux build
 

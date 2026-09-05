@@ -112,6 +112,8 @@ int main() {  // NOLINT(bugprone-exception-escape)
   namespace fs = std::filesystem;
   const char* temporary = std::getenv("TEST_TMPDIR");
   llmcc::test::Expect(temporary != nullptr, "TEST_TMPDIR is set");
+  const fs::path entropy_root = fs::path(temporary) / "entropy-cache";
+  setenv("LLM_CC_ENTROPY_CACHE_DIR", entropy_root.c_str(), 1);
   const fs::path repository = fs::path(temporary) / "repo";
   const fs::path model = fs::path(temporary) / "model.gguf";
   fs::create_directories(repository);
@@ -173,6 +175,27 @@ int main() {  // NOLINT(bugprone-exception-escape)
       "cache hit remains available after initialization failure");
   llmcc::test::ExpectEq(failing_factories, 1,
                         "failed scorer initialization is not retried");
+
+  const llmcc::DiscoveredSource docstring_only{
+      .path = repository / "documentation.py",
+      .language = llmcc::Language::kPython,
+      .repository = std::nullopt};
+  int empty_factories = 0;
+  llmcc::ProjectAnalyzer empty_analyzer(
+      {.model = identity, .cache = false},
+      [&]() -> std::unique_ptr<llmcc::EntropyProvider> {
+        ++empty_factories;
+        throw std::runtime_error("empty source loaded scorer");
+      });
+  const auto empty_result = empty_analyzer.AnalyzeFile(
+      docstring_only, "(\"\"\"documentation only\"\"\")\n");
+  llmcc::test::ExpectEq(empty_factories, 0,
+                        "semantically empty source loads no scorer");
+  llmcc::test::Expect(!empty_analyzer.ScorerLoaded(),
+                      "semantically empty source leaves scorer unloaded");
+  llmcc::test::Expect(
+      empty_result.functions.empty() && empty_result.hotspots.empty(),
+      "semantically empty source has no derived findings");
 
   const llmcc::DiscoveredSource namespace_source{
       .path = repository / "namespace.cc",

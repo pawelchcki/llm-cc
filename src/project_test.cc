@@ -53,6 +53,8 @@ int main() {  // NOLINT(bugprone-exception-escape)
   Write(repository / "src/bin/server.rs", "fn main() {}\n");
   Write(repository / "src/b.c", "int b;\n");
   Write(repository / "src/z.h", "int z;\n");
+  Write(repository / "src/kernel.cu", "__global__ void kernel() {}\n");
+  Write(repository / "src/kernel.cuh", "void launch();\n");
   Write(repository / "src/Main.java", "class Main {}\n");
   Write(repository /
             "src/main/java/com/example/adapter/out/persistence/Repository.java",
@@ -96,7 +98,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
       "target/generated.rs");
 
   const auto normal = llmcc::DiscoverSources({repository});
-  llmcc::test::ExpectEq(normal.sources.size(), std::size_t{20},
+  llmcc::test::ExpectEq(normal.sources.size(), std::size_t{21},
                         "Git discovery filters headers and generated files");
   llmcc::test::Expect(
       std::ranges::any_of(normal.sources,
@@ -127,6 +129,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
           [](const auto& source) { return source.path.generic_string(); }),
       "sources are sorted");
   const std::map<std::string, llmcc::Language> expected_languages = {
+      {"b.c", llmcc::Language::kC},
       {"Main.java", llmcc::Language::kJava},
       {"tool.py", llmcc::Language::kPython},
       {"window.pyw", llmcc::Language::kPython},
@@ -137,6 +140,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
       {"common.cjs", llmcc::Language::kJavaScript},
       {"Main.cs", llmcc::Language::kCSharp},
       {"script.csx", llmcc::Language::kCSharp},
+      {"kernel.cu", llmcc::Language::kCpp},
   };
   for (const auto& [filename, language] : expected_languages) {
     const auto source = std::ranges::find_if(
@@ -149,12 +153,17 @@ int main() {  // NOLINT(bugprone-exception-escape)
 
   const auto headers = llmcc::DiscoverSources(
       {repository / "src", repository / "src/a.rs"}, {.include_headers = true});
-  llmcc::test::ExpectEq(headers.sources.size(), std::size_t{15},
+  llmcc::test::ExpectEq(headers.sources.size(), std::size_t{17},
                         "overlap is deduplicated and headers can be included");
 
   const auto explicit_header = llmcc::DiscoverSources({repository / "src/z.h"});
   llmcc::test::ExpectEq(explicit_header.sources.size(), std::size_t{1},
                         "explicit header accepted");
+  const auto explicit_cuda_header =
+      llmcc::DiscoverSources({repository / "src/kernel.cuh"});
+  llmcc::test::ExpectEq(explicit_cuda_header.sources[0].language,
+                        llmcc::Language::kCpp,
+                        "explicit CUDA header uses C++ grammar");
 
   const auto forced = llmcc::DiscoverSources(
       {repository / "src/a.rs"}, {.language = llmcc::Language::kCpp});
@@ -163,7 +172,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
 
   const auto all = llmcc::DiscoverSources(
       {repository}, {.include_headers = true, .no_ignore = true});
-  llmcc::test::ExpectEq(all.sources.size(), std::size_t{32},
+  llmcc::test::ExpectEq(all.sources.size(), std::size_t{34},
                         "no-ignore includes ignored and generated files");
   for (const auto& source : all.sources) {
     llmcc::test::Expect(

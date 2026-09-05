@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -23,6 +24,9 @@ struct ModelIdentity {
   std::string inference_abi;
   std::string backend;
   std::uint32_t context_limit;
+  std::uint32_t batch_size = 64;
+  std::string reduction_policy = "auto";
+  std::string effective_reducer = "host";
 };
 
 struct EntropyCacheLookup {
@@ -33,19 +37,31 @@ struct EntropyCacheLookup {
 struct RepositoryCacheStatus {
   std::filesystem::path repository;
   std::filesystem::path directory;
+  std::filesystem::path legacy_directory;
   std::uint64_t entries = 0;
   std::uint64_t bytes = 0;
+  std::uint64_t legacy_entries = 0;
+  std::uint64_t legacy_bytes = 0;
+  std::uint64_t unknown_provenance_entries = 0;
+  std::uint64_t malformed_entries = 0;
+  std::map<std::string, std::uint64_t> entries_by_inference_abi;
 };
 
 ModelIdentity InspectModel(const std::filesystem::path& model,
                            std::string_view inference_abi,
                            std::string_view backend,
-                           std::uint32_t context_limit);
+                           std::uint32_t context_limit,
+                           std::uint32_t batch_size = 64,
+                           std::string_view reduction_policy = "auto",
+                           std::string_view effective_reducer = "host");
 std::string Sha256Hex(std::string_view contents);
 std::string EntropyCacheKey(std::string_view preprocessed_source,
                             const ModelIdentity& model);
 std::filesystem::path RepositoryCacheDirectory(
     const std::filesystem::path& repository);
+std::filesystem::path LegacyRepositoryCacheDirectory(
+    const std::filesystem::path& repository);
+void CheckRepositoryCacheAvailability(const std::filesystem::path& repository);
 EntropyCacheLookup ReadEntropyCache(const std::filesystem::path& repository,
                                     std::string_view preprocessed_source,
                                     const ModelIdentity& model);
@@ -58,6 +74,7 @@ RepositoryCacheStatus GetRepositoryCacheStatus(
 void PruneRepositoryCache(const std::filesystem::path& repository,
                           bool force = true);
 void ClearRepositoryCache(const std::filesystem::path& repository);
+void ClearLegacyRepositoryCache(const std::filesystem::path& repository);
 
 }  // namespace llmcc
 

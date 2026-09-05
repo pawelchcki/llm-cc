@@ -31,6 +31,7 @@ struct ProjectAnalysisOptions {
   double alpha = 0.8;
   bool cache = true;
   std::size_t hotspots = 10;
+  HierarchyMode hierarchy_mode = HierarchyMode::kStructural;
 };
 
 struct FunctionScore {

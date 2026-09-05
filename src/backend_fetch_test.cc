@@ -144,6 +144,7 @@ void TestBaseUrls(const fs::path& root) {
   Expect(llmcc::BackendBundlePath(first_build) !=
              llmcc::BackendBundlePath(second_build),
          "unstamped builds have distinct cache paths");
+#if defined(__linux__) && defined(__x86_64__)
   for (const auto& [label, base] :
        std::vector<std::pair<std::string, std::string>>{
            {"release", "https://github.com/example/releases/download/v1.2.3"},
@@ -159,6 +160,7 @@ void TestBaseUrls(const fs::path& root) {
     Expect(!downloads.requests.empty() && downloads.requests.front().url == url,
            label + " base produces the bundle URL");
   }
+#endif
 
   auto options = Options(root / "empty-base");
   bool called = false;
@@ -201,6 +203,7 @@ void TestWholeFileMismatch(const fs::path& root) {
   downloads.files[url + ".sha256"] = std::string(64, '0') + "\n";
   auto options = Options(root);
   options.base_url = base;
+  options.explicit_url = url;
   const std::string message = ExceptionMessage([&] {
     static_cast<void>(
         llmcc::FetchBackendBundle(options, downloads.Downloader()));
@@ -220,6 +223,7 @@ void TestFooterMismatch(const fs::path& root) {
   downloads.files[url + ".sha256"] = llmcc::Sha256Hex(bundle) + "\n";
   auto options = Options(root);
   options.base_url = base;
+  options.explicit_url = url;
   const std::string message = ExceptionMessage([&] {
     static_cast<void>(
         llmcc::FetchBackendBundle(options, downloads.Downloader()));
@@ -240,6 +244,7 @@ void TestManifestMismatch(const fs::path& root) {
       R"({"name":"cuda","git_sha":"actual"})";
   auto options = Options(root);
   options.base_url = base;
+  options.explicit_url = url;
   options.git_sha = "expected";
   const std::string message = ExceptionMessage([&] {
     static_cast<void>(
@@ -327,6 +332,7 @@ void TestInvalidCacheRepair(const fs::path& root) {
 
   auto options = Options(root);
   options.base_url = base;
+  options.explicit_url = url;
   options.git_sha = "expected";
   const fs::path path = llmcc::BackendBundlePath(options);
   const std::string cached = Bundle("cuda");
@@ -364,6 +370,7 @@ void TestConcurrentFetch(const fs::path& root) {
   auto options = Options(root);
   options.git_sha = "expected";
   options.base_url = base;
+  options.explicit_url = bundle_url;
   std::exception_ptr first_error;
   std::exception_ptr second_error;
   std::thread first([&] {
@@ -402,6 +409,7 @@ void TestDownloadSemantics(const fs::path& root) {
   downloads.files[base + "/manifest.json"] = R"({"git_sha":"expected"})";
   auto options = Options(root);
   options.base_url = base;
+  options.explicit_url = url;
   options.git_sha = "expected";
 
   const fs::path bundle =
