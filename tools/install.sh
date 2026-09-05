@@ -70,24 +70,29 @@ install_root="$install_prefix/lib/llm-cc"
 
 # Serialize changes to the executable and its sibling backend root. flock is
 # preferred because the kernel releases it even after an uncatchable signal;
-# the mkdir fallback keeps source installs portable to systems without flock.
+# macOS shlock records the owner PID and reclaims abandoned lock files.
 lock_path="$install_prefix/.llm-cc-install.lock"
-lock_dir=""
 lock_owned=0
+release_lock() {
+  if ((lock_owned)); then
+    rm -f -- "$lock_path"
+    lock_owned=0
+  fi
+}
+trap release_lock EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 if command -v flock >/dev/null 2>&1; then
   exec 9>"$lock_path"
   flock 9
-else
-  lock_dir="$lock_path.d"
-  while ((lock_owned == 0)); do
-    trap '' INT TERM
-    if mkdir -- "$lock_dir" 2>/dev/null; then
-      lock_owned=1
-    fi
-    trap 'exit 130' INT
-    trap 'exit 143' TERM
-    ((lock_owned)) || sleep 0.1
+elif command -v shlock >/dev/null 2>&1; then
+  until shlock -f "$lock_path" -p "$$"; do
+    sleep 0.1
   done
+  lock_owned=1
+else
+  echo "error: installing requires flock or shlock for transaction locking" >&2
+  exit 1
 fi
 
 mkdir -p "$install_root"
@@ -151,13 +156,13 @@ on_exit() {
   if ((status != 0 && committed == 0)); then
     if ! rollback; then
       echo "error: installation rollback failed; recover from $work_dir or $old_bundle_dir" >&2
-      ((lock_owned == 0)) || rmdir -- "$lock_dir"
+      release_lock
       exit "$status"
     fi
   fi
   [[ -z "$stage_dir" ]] || rm -rf -- "$stage_dir"
   rm -rf -- "$work_dir"
-  ((lock_owned == 0)) || rmdir -- "$lock_dir"
+  release_lock
   exit "$status"
 }
 trap on_exit EXIT

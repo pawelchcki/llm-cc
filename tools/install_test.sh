@@ -138,6 +138,8 @@ serial_root="$TEST_TMPDIR/serial prefix"
 first_entered="$TEST_TMPDIR/first-entered"
 second_entered="$TEST_TMPDIR/second-entered"
 release_first="$TEST_TMPDIR/release-first"
+mkdir -p "$serial_root/bin"
+printf '999999999\n' > "$serial_root/.llm-cc-install.lock"
 BUILD_KEY=serial-build ENTERED_MARKER="$first_entered" \
   RELEASE_MARKER="$release_first" \
   bash "$script" "$source_binary" -- --prefix "$serial_root" &
