@@ -25,6 +25,11 @@ BackendKind SelectBackend(BackendKind requested, std::int32_t gpu_layers,
 bool DeviceOutputGuaranteed(BackendKind backend, std::int32_t gpu_layers,
                             bool metal_backend);
 
+// Source-built executables leave automatic network fetching off. Distribution
+// builds opt in with the Bazel //:auto_fetch_backends setting.
+bool AutomaticBackendFetchEnabled();
+bool AutomaticBackendFetchAllowed(bool requested);
+
 // Suppresses routine llama.cpp and ggml diagnostics while retaining errors for
 // actionable failure messages.
 class BackendLogCapture {
@@ -42,6 +47,7 @@ class BackendLogCapture {
 
 enum class BackendPluginSource : std::uint8_t {
   kBundle,
+  kInstalledBundle,
   kEmbedded,
   kSharedLibrary,
 };
@@ -54,7 +60,7 @@ struct ResolvedBackendPlugin {
 
 // Resolves a GPU plugin in production order. The callback keeps the embedded
 // payload probe at step 2 without making filesystem-only unit tests load it.
-// fetch_backend is the network-backed last resort at step 5.
+// fetch_backend is the network-backed last resort at step 6.
 ResolvedBackendPlugin ResolveBackendPlugin(
     BackendKind backend,
     const std::optional<std::filesystem::path>& backend_directory,
@@ -63,7 +69,9 @@ ResolvedBackendPlugin ResolveBackendPlugin(
     const std::function<std::filesystem::path()>& runtime_root,
     std::string_view version, std::string_view git_sha = {},
     const std::function<std::optional<ResolvedBackendPlugin>()>& fetch_backend =
-        {});
+        {},
+    const std::function<std::optional<std::filesystem::path>()>&
+        installed_root = {});
 
 // Loads exactly the backend plugins needed by this inference invocation. The
 // object must outlive all llama.cpp objects created by the caller.

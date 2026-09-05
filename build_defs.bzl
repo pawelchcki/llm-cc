@@ -13,6 +13,7 @@ BackendConfigurationInfo = provider(
         "backend": "Resolved backend family.",
         "dynamic": "Whether runtime GPU backend loading is enabled.",
         "linux_cpu": "Whether this is a Linux CPU configuration.",
+        "auto_fetch": "Whether runtime backend downloads are enabled.",
     },
 )
 
@@ -21,6 +22,7 @@ def _backend_configuration_probe_impl(ctx):
         backend = ctx.attr.backend,
         dynamic = ctx.attr.dynamic,
         linux_cpu = ctx.attr.linux_cpu,
+        auto_fetch = ctx.attr.auto_fetch,
     )]
 
 backend_configuration_probe = rule(
@@ -29,12 +31,14 @@ backend_configuration_probe = rule(
         "backend": attr.string(mandatory = True),
         "dynamic": attr.bool(mandatory = True),
         "linux_cpu": attr.bool(mandatory = True),
+        "auto_fetch": attr.bool(mandatory = True),
     },
 )
 
 def _backend_configuration_transition_impl(_settings, attr):
     return {
         "//:backend": attr.backend,
+        "//:auto_fetch_backends": attr.auto_fetch,
         "//command_line_option:platforms": [attr.platform],
     }
 
@@ -43,6 +47,7 @@ _backend_configuration_transition = transition(
     inputs = [],
     outputs = [
         "//:backend",
+        "//:auto_fetch_backends",
         "//command_line_option:platforms",
     ],
 )
@@ -53,8 +58,9 @@ def _backend_configuration_case_impl(ctx):
         backend = ctx.attr.expected_backend,
         dynamic = ctx.attr.expected_dynamic,
         linux_cpu = ctx.attr.expected_linux_cpu,
+        auto_fetch = ctx.attr.expected_auto_fetch,
     )
-    for field in ["backend", "dynamic", "linux_cpu"]:
+    for field in ["backend", "dynamic", "linux_cpu", "auto_fetch"]:
         actual_value = getattr(configuration, field)
         expected_value = getattr(expected, field)
         if actual_value != expected_value:
@@ -70,8 +76,10 @@ backend_configuration_case = rule(
     implementation = _backend_configuration_case_impl,
     attrs = {
         "backend": attr.string(mandatory = True),
+        "auto_fetch": attr.bool(default = False),
         "expected_backend": attr.string(mandatory = True),
         "expected_dynamic": attr.bool(default = False),
+        "expected_auto_fetch": attr.bool(default = False),
         "expected_linux_cpu": attr.bool(default = False),
         "platform": attr.label(mandatory = True),
         "probe": attr.label(
@@ -143,25 +151,44 @@ def curl_cmake_options(**tls):
 def _install_launcher_impl(ctx):
     launcher = ctx.actions.declare_file(ctx.label.name)
     workspace = ctx.workspace_name
+    bundle_arguments = ""
+    bundle_files = []
+    for target in ctx.attr.bundles:
+        outputs = target[OutputGroupInfo]
+        bundles = outputs.bundle.to_list()
+        checksums = outputs.checksum.to_list()
+        manifests = outputs.manifest.to_list()
+        if len(bundles) != 1 or len(checksums) != 1 or len(manifests) != 1:
+            fail("each install backend bundle must provide one bundle, checksum, and manifest")
+        for file in bundles + checksums + manifests:
+            bundle_files.append(file)
+        bundle_arguments += " \\\n  --bundle \"$runfiles_dir/{workspace}/{bundle}\" \\\n  --checksum \"$runfiles_dir/{workspace}/{checksum}\" \\\n  --manifest \"$runfiles_dir/{workspace}/{manifest}\"".format(
+            workspace = workspace,
+            bundle = bundles[0].short_path,
+            checksum = checksums[0].short_path,
+            manifest = manifests[0].short_path,
+        )
     ctx.actions.write(
         output = launcher,
         content = """#!/usr/bin/env bash
 set -euo pipefail
 runfiles_dir="${{RUNFILES_DIR:-$0.runfiles}}"
 exec "$runfiles_dir/{workspace}/{script}" \\
-  "$runfiles_dir/{workspace}/{binary}" \\
+  "$runfiles_dir/{workspace}/{binary}"{bundle_arguments} \\
+  -- \\
   "$@"
 """.format(
             workspace = workspace,
             script = ctx.file.script.short_path,
             binary = ctx.file.binary.short_path,
+            bundle_arguments = bundle_arguments,
         ),
         is_executable = True,
     )
     runfiles = ctx.runfiles(files = [
         ctx.file.binary,
         ctx.file.script,
-    ])
+    ] + bundle_files)
     return [DefaultInfo(
         executable = launcher,
         runfiles = runfiles,
@@ -172,6 +199,7 @@ install_launcher = rule(
     executable = True,
     attrs = {
         "binary": attr.label(allow_single_file = True, mandatory = True),
+        "bundles": attr.label_list(),
         "script": attr.label(allow_single_file = True, mandatory = True),
     },
 )

@@ -28,6 +28,11 @@ build:release --compilation_mode=opt
 build:release --strip=always
 build:release --stamp
 
+# Distribution artifacts may resolve a matching published GPU bundle at run
+# time. Source builds deliberately retain the default false setting.
+build:distribution --config=release
+build:distribution --//:auto_fetch_backends=true
+
 # `bazel run` is used for release executables such as //:install.
 run --compilation_mode=opt
 run --strip=always

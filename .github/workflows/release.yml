@@ -29,7 +29,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bazel build --config=release --config=portable //:cpu_static_archive
+          bazel build --config=distribution --config=portable //:cpu_static_archive
           tools/check_glibc_version.sh bazel-bin/llm-cc 2.28
           tools/check_static_link.sh bazel-bin/llm-cc
 
