@@ -233,6 +233,15 @@ void SaveAccounting(const CacheLocation& l, const Accounting& a) {
        a.dirty}}.dump();
   cache_io::AtomicWriteFile(p, str);
 }
+void InvalidateAccounting(const CacheLocation& l) {
+  const auto path = AccountingPath(l);
+  cache_io::CheckNotSymlink(path);
+  std::error_code error;
+  std::filesystem::remove(path, error);
+  if (error && error != std::errc::no_such_file_or_directory) {
+    throw std::system_error(error, "cannot invalidate entropy accounting");
+  }
+}
 bool RemoveEntry(const std::filesystem::path& p) {
   if (g_delete_failure.load()) return false;
   std::error_code e;
@@ -273,15 +282,20 @@ void CleanTemporaries(const CacheLocation& location) {
   }
 }
 
-void Sweep(const CacheLocation& location, Accounting& account) {
+void RecordSweep(const CacheLocation& location) {
+  const auto marker = location.directory.parent_path() / ".last-sweep";
+  cache_io::AtomicWriteFile(marker, std::to_string(Now()));
+  TouchEntry(marker);
+}
+
+void Sweep(const CacheLocation& location, Accounting& account,
+           bool record_sweep = true) {
   for (const auto& entry : Entries(location)) {
     if (Expired(entry.used)) RemoveEntry(entry.p);
   }
   CleanTemporaries(location);
   account = RebuildAccounting(location);
-  const auto marker = location.directory.parent_path() / ".last-sweep";
-  cache_io::AtomicWriteFile(marker, std::to_string(Now()));
-  TouchEntry(marker);
+  if (record_sweep) RecordSweep(location);
 }
 
 void MarkDirty(const CacheLocation& location, const Accounting& account) {
@@ -513,8 +527,8 @@ void PruneEntropyCache(bool force) {
   cache_io::FileLock z(l.directory.parent_path() / ".lock");
   if (!force && !SweepDue(l)) return;
   auto a = LoadAccounting(l);
-  SaveAccounting(l, {a.bytes, a.entries, a.next_expiry, true});
-  Sweep(l, a);
+  InvalidateAccounting(l);
+  Sweep(l, a, false);
   auto es = Entries(l);
   std::ranges::sort(es, {}, &EntryInfo::used);
   for (auto& e : es) {
@@ -524,7 +538,12 @@ void PruneEntropyCache(bool force) {
       --a.entries;
     }
   }
-  SaveAccounting(l, RebuildAccounting(l));
+  try {
+    RecordSweep(l);
+    SaveAccounting(l, RebuildAccounting(l));
+  } catch (const std::exception&) {
+    // Reclamation succeeded and the absent record forces a future rebuild.
+  }
 }
 void ClearEntropyCache() {
   auto l = GlobalLocation();
@@ -534,13 +553,7 @@ void ClearEntropyCache() {
   // particular, clearing must remain possible when the filesystem is full.
   // If the process stops partway through, the next access rebuilds it from
   // the entries that remain.
-  const auto accounting = AccountingPath(l);
-  cache_io::CheckNotSymlink(accounting);
-  std::error_code error;
-  std::filesystem::remove(accounting, error);
-  if (error && error != std::errc::no_such_file_or_directory) {
-    throw std::system_error(error, "cannot invalidate entropy accounting");
-  }
+  InvalidateAccounting(l);
   for (auto& e : Entries(l))
     if (!RemoveEntry(e.p))
       throw std::runtime_error("cannot clear entropy cache");

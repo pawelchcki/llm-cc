@@ -11,6 +11,13 @@ import subprocess
 import threading
 import time
 
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
 def gpu_memory(stop, samples):
     while not stop.is_set():
         result = subprocess.run(
@@ -115,6 +122,11 @@ def main():
     for model in models:
         if args.model and model["name"] not in args.model:
             continue
+        model_path = root / "models" / model["file"]
+        if not model_path.is_file() or model_path.stat().st_size != model["bytes"]:
+            raise RuntimeError(f"Model size mismatch: {model_path}")
+        if sha256_file(model_path) != model["sha256"]:
+            raise RuntimeError(f"Model checksum mismatch: {model_path}")
         # First pass fills an isolated entropy cache; timing must be entirely misses.
         run(root, binary, model, "default-r1", ["--tau", "0.67"], False)
         for repeat in range(2, args.repetitions + 1):
