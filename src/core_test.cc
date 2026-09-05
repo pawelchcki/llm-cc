@@ -171,6 +171,18 @@ int main() {  // NOLINT(bugprone-exception-escape)
   ExpectEq(first_line_units.front().start_byte, std::size_t{0},
            "first-line reference block starts at the source boundary");
 
+  const auto scored_first_token = ByteTokens({2.0, 0.0, 0.0});
+  const auto [scored_first_tau, scored_first_units] =
+      llmcc::DetectSemanticUnits(
+          scored_first_token, {}, first_line,
+          {.kind = llmcc::TauRule::Kind::kAbsolute, .value = 1.0}, {},
+          llmcc::HierarchyMode::kReference);
+  ExpectEq(scored_first_tau, 1.0, "scored first-token reference marker tau");
+  ExpectEq(scored_first_units.size(), std::size_t{1},
+           "scored first token creates a reference block");
+  ExpectEq(scored_first_units.front().start_byte, std::size_t{0},
+           "scored first-token block starts at the source boundary");
+
   const auto whitespace_tokens = ByteTokens({std::nullopt, 0.0, 0.0, 0.0, 0.0});
   const llmcc::Analysis with_trailing_whitespace =
       llmcc::Analyze(whitespace_tokens, {}, {},
