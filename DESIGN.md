@@ -108,6 +108,15 @@ and reject the bundle unless the manifest's `git_sha` equals the binary's Git
 SHA, enforcing a same-commit contract. Cache reuse also repeats the bundle
 footer verification.
 
+Source installs stage the selected standalone bundle, checksum, and manifest
+under the build-key directory reported by the staged executable's `backends
+path` command, then atomically swap that complete directory with rollback. The
+resolver checks this installed directory relative to the canonical executable
+before development runfiles and the user cache. Automatic network fetching is a
+generated build setting: it defaults off for source and release builds, and
+`--config=distribution` enables it for published CPU artifacts. Explicit
+`backends fetch` is unaffected.
+
 The default Linux toolchain is pinned Clang with a glibc 2.24 sysroot; the
 `portable` profile is an alias for the same hermetic configuration. CI enforces
 the public glibc 2.28 ceiling and rejects project or GPU userspace dynamic

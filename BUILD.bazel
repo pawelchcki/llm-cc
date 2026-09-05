@@ -5,7 +5,7 @@ load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
 load("@bazel_skylib//lib:selects.bzl", "selects")
-load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make_variant")
 load(
     "//:build_defs.bzl",
@@ -73,6 +73,20 @@ EOF
 """,
 )
 
+genrule(
+    name = "build_config_header",
+    outs = ["generated/build_config.h"],
+    cmd = select({
+        ":auto_fetch_backends_enabled": "printf '%s\\n' '#ifndef LLM_CC_GENERATED_BUILD_CONFIG_H_' '#define LLM_CC_GENERATED_BUILD_CONFIG_H_' '#define LLM_CC_AUTO_FETCH_BACKENDS 1' '#endif' > $@",
+        "//conditions:default": "printf '%s\\n' '#ifndef LLM_CC_GENERATED_BUILD_CONFIG_H_' '#define LLM_CC_GENERATED_BUILD_CONFIG_H_' '#define LLM_CC_AUTO_FETCH_BACKENDS 0' '#endif' > $@",
+    }),
+)
+
+cc_library(
+    name = "build_config",
+    hdrs = [":build_config_header"],
+)
+
 cc_library(
     name = "version",
     hdrs = [":version_header"],
@@ -89,6 +103,18 @@ string_flag(
         "rocm",
         "universal",
     ],
+)
+
+# Source builds must be self-contained.  Published binaries opt in through
+# --config=distribution, while `backends fetch` remains an explicit command.
+bool_flag(
+    name = "auto_fetch_backends",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "auto_fetch_backends_enabled",
+    flag_values = {":auto_fetch_backends": "true"},
 )
 
 config_setting(
@@ -471,6 +497,7 @@ cc_library(
     deps = [
         ":backend_fetch",
         ":backend_policy",
+        ":build_config",
         ":llama",
         ":payload",
         ":rocm_topology",
@@ -829,6 +856,7 @@ build_test(
         ":backend_config_linux_auto_test",
         ":backend_config_linux_cpu_test",
         ":backend_config_linux_cuda_test",
+        ":backend_config_distribution_fetch_test",
         ":backend_config_linux_rocm_test",
         ":backend_config_linux_universal_test",
         ":backend_config_macos_auto_test",
@@ -877,6 +905,10 @@ backend_configuration_probe(
         ":backend_cpu_linux": True,
         "//conditions:default": False,
     }),
+    auto_fetch = select({
+        ":auto_fetch_backends_enabled": True,
+        "//conditions:default": False,
+    }),
 )
 
 backend_configuration_case(
@@ -892,6 +924,18 @@ backend_configuration_case(
 backend_configuration_case(
     name = "backend_config_linux_cpu_test",
     backend = "cpu",
+    expected_backend = "cpu",
+    expected_dynamic = True,
+    expected_linux_cpu = True,
+    platform = ":test_linux_x86_64_platform",
+    probe = ":backend_configuration_probe",
+)
+
+backend_configuration_case(
+    name = "backend_config_distribution_fetch_test",
+    backend = "cpu",
+    auto_fetch = True,
+    expected_auto_fetch = True,
     expected_backend = "cpu",
     expected_dynamic = True,
     expected_linux_cpu = True,
@@ -956,8 +1000,19 @@ install_launcher(
         ":backend_universal": "//dist:linux_x86_64_executable",
         "//conditions:default": ":llm-cc",
     }),
+    bundles = select({
+        ":backend_cuda": ["//dist:backend_cuda"],
+        ":backend_rocm": ["//dist:backend_rocm"],
+        "//conditions:default": [],
+    }),
     script = "//tools:install.sh",
     tags = ["manual"],
+)
+
+sh_test(
+    name = "install_test",
+    srcs = ["//tools:install_test.sh"],
+    data = ["//tools:install.sh"],
 )
 
 alias(
@@ -1213,6 +1268,7 @@ test_suite(
     tags = ["manual"],
     tests = [
         ":cli_test",
+        ":install_test",
         ":payload_integration_test",
     ],
 )

@@ -45,6 +45,7 @@ exports_files([
     "hip_library.bzl",
     "hermetic_clang_wrapper.sh",
     "install.sh",
+    "install_test.sh",
     "materialize_tree.cc",
     "model_smoke_test.sh",
     "package_payload.sh",
