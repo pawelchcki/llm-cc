@@ -388,8 +388,8 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(only_docstring.meaningful_ranges.empty(),
                       "docstring-only module has no semantic content");
   const auto parenthesized_docstrings = llmcc::PrepareSource(
-      "(\"\"\"module documentation\"\"\"  # explanation\n"
-      ")\n"
+      "(\"module \"  # explanation\n"
+      " \"documentation\")\n"
       "def documented():\n"
       "    (\"function documentation\"  # explanation\n"
       "    )\n"

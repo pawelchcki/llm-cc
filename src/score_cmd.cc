@@ -743,6 +743,17 @@ class HostReductionPool {
   std::vector<std::jthread> workers_;
 };
 
+void CheckBatchSize(std::uint32_t batch_size) {
+  if (batch_size == 0) {
+    throw std::invalid_argument("batch size must be positive");
+  }
+}
+
+std::size_t HostReductionWorkerCount(std::uint32_t batch_size,
+                                     std::int32_t threads) {
+  return std::min<std::size_t>(batch_size, std::max<std::int32_t>(1, threads));
+}
+
 void WriteSummary(std::ostream* diagnostics, std::size_t tokens,
                   std::size_t scored, double negative_log_likelihood,
                   bool device_reduction) {
@@ -766,7 +777,12 @@ void ScoreInput(llama_model* model, llmcc::BackendLogCapture& backend_log,
                 std::vector<llmcc::EntropyRecord>* records,
                 std::ostream* diagnostics, Context& context,
                 std::uint32_t& context_capacity, Sampler& sampler,
-                DeviceEntropyState& device_state) {
+                DeviceEntropyState& device_state,
+                HostReductionPool* host_reduction) {
+  CheckBatchSize(options.batch_size);
+  if (!options.device_reduction && host_reduction == nullptr) {
+    throw std::logic_error("host reduction requires a worker pool");
+  }
   const llama_vocab* vocabulary = llama_model_get_vocab(model);
   const bool prepend_bos =
       options.bos == BosMode::kAlways ||
@@ -863,11 +879,6 @@ void ScoreInput(llama_model* model, llmcc::BackendLogCapture& backend_log,
   llama_seq_id sequence = 0;
   std::vector<llama_seq_id*> sequences(batch_size, &sequence);
   std::vector<std::int8_t> output_logits(batch_size, 1);
-  std::optional<HostReductionPool> host_reduction;
-  if (!options.device_reduction) {
-    host_reduction.emplace(std::min<std::size_t>(
-        batch_size, std::max<std::int32_t>(1, options.threads)));
-  }
   for (std::size_t source = 0; source + 1 < tokens.size();
        source += batch_size) {
     const std::size_t count = std::min(batch_size, tokens.size() - 1 - source);
@@ -1006,6 +1017,11 @@ int Run(const Arguments& arguments, std::ostream& output,
   Sampler sampler(nullptr, llama_sampler_free);
   Context context(nullptr, llama_free);
   std::uint32_t context_capacity = 0;
+  std::optional<HostReductionPool> host_reduction;
+  if (!device_reduction) {
+    host_reduction.emplace(
+        HostReductionWorkerCount(arguments.batch_size, arguments.threads));
+  }
   ScoreInput(model.get(), backend_log, input,
              {.bos = arguments.bos,
               .context_size = arguments.context_size,
@@ -1016,7 +1032,8 @@ int Run(const Arguments& arguments, std::ostream& output,
               .context_option = "--context-size",
               .progress = nullptr},
              &output, nullptr, &diagnostics, context, context_capacity, sampler,
-             device_state);
+             device_state,
+             host_reduction.has_value() ? &*host_reduction : nullptr);
   return 0;
 }
 
@@ -1077,6 +1094,9 @@ class EntropyScorer::Impl {
           "could not load model: " + model_path.string() +
           (detail.empty() ? std::string() : ": " + detail));
     }
+    if (!device_reduction_) {
+      host_reduction_.emplace(HostReductionWorkerCount(batch_size_, threads_));
+    }
   }
 
   std::string Score(std::string_view input) {
@@ -1092,7 +1112,8 @@ class EntropyScorer::Impl {
                   .context_option = "--context",
                   .progress = &progress_},
                  &output, nullptr, nullptr, context_, context_capacity_,
-                 sampler_, device_state_);
+                 sampler_, device_state_,
+                 host_reduction_.has_value() ? &*host_reduction_ : nullptr);
     } catch (...) {
       context_.reset();
       sampler_.reset();
@@ -1115,7 +1136,8 @@ class EntropyScorer::Impl {
                   .context_option = "--context",
                   .progress = &progress_},
                  nullptr, &records, nullptr, context_, context_capacity_,
-                 sampler_, device_state_);
+                 sampler_, device_state_,
+                 host_reduction_.has_value() ? &*host_reduction_ : nullptr);
     } catch (...) {
       context_.reset();
       sampler_.reset();
@@ -1133,6 +1155,7 @@ class EntropyScorer::Impl {
   DeviceEntropyState device_state_;
   Sampler sampler_{nullptr, llama_sampler_free};
   Context context_;
+  std::optional<HostReductionPool> host_reduction_;
   std::uint32_t context_limit_;
   std::uint32_t batch_size_;
   std::function<void(std::size_t, std::size_t)> progress_;
@@ -1142,8 +1165,10 @@ class EntropyScorer::Impl {
 };
 
 EntropyScorer::EntropyScorer(const std::filesystem::path& model,
-                             const InferenceOptions& options)
-    : implementation_(std::make_unique<Impl>(model, options)) {}
+                             const InferenceOptions& options) {
+  CheckBatchSize(options.batch_size);
+  implementation_ = std::make_unique<Impl>(model, options);
+}
 
 EntropyScorer::~EntropyScorer() = default;
 EntropyScorer::EntropyScorer(EntropyScorer&&) noexcept = default;

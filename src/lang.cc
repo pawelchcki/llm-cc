@@ -379,6 +379,9 @@ bool IsPythonLiteralString(TSNode node, std::string_view source) {
     bool saw_string = false;
     for (std::uint32_t i = 0; i < ts_node_named_child_count(node); ++i) {
       const TSNode child = ts_node_named_child(node, i);
+      if (IsNodeType(child, "comment")) {
+        continue;
+      }
       if (!IsPythonLiteralString(child, source)) {
         return false;
       }
