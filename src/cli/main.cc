@@ -1138,17 +1138,18 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
   const bool fetch_backend =
       ShouldFetchBackend(arguments.backend, arguments.gpu_layers);
   progress.Phase("selecting inference backend");
+  const llmcc::ModelSpec& model_spec =
+      arguments.model_name.has_value()
+          ? *llmcc::FindModel(*arguments.model_name)
+          : llmcc::DefaultModel();
   const llmcc::BackendKind resolved_backend = [&]() {
-    // An explicit backend already supplies an exact cache identity. Preserve
-    // PR #16's cache-only path; a cache miss initializes and checks the GPU.
-    const auto& spec = arguments.model_name
-                           ? *llmcc::FindModel(*arguments.model_name)
-                           : llmcc::DefaultModel();
+    // An explicit backend supplies an exact cache identity, so existing models
+    // need a device check only on a cache miss.
     if (arguments.backend != llmcc::BackendKind::kAuto &&
         (arguments.model.has_value() ||
-         std::filesystem::exists(llmcc::CacheDir() / spec.file) ||
+         std::filesystem::exists(llmcc::CacheDir() / model_spec.file) ||
          std::filesystem::exists(std::filesystem::current_path() / "models" /
-                                 spec.file))) {
+                                 model_spec.file))) {
       progress.Phase("configured backend=" +
                      std::string(llmcc::BackendName(arguments.backend)) +
                      " gpu_layers=" + std::to_string(arguments.gpu_layers) +
@@ -1175,10 +1176,6 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
   }();
   const std::filesystem::path model_cache = llmcc::CacheDir();
   progress.Phase("resolving model");
-  const llmcc::ModelSpec& model_spec =
-      arguments.model_name.has_value()
-          ? *llmcc::FindModel(*arguments.model_name)
-          : llmcc::DefaultModel();
   const auto resolved_model = llmcc::ResolveModel(
       arguments.model, model_spec, arguments.no_download,
       std::filesystem::current_path(), model_cache, llmcc::DownloadModel);

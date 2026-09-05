@@ -1269,8 +1269,10 @@ std::string ScoreEntropyJsonl(const std::filesystem::path& model,
 }
 
 int RunScoreCommand(int argc, char** argv) {
+  bool gpu_requested = false;
   try {
     Arguments arguments = ParseArguments(argc, argv);
+    gpu_requested = arguments.gpu_layers != 0;
     ProgressReporter progress(arguments.progress);
     CliSession session(progress, arguments.assume_yes, arguments.no_download);
     progress.Phase("resolving inference backend");
@@ -1297,9 +1299,11 @@ int RunScoreCommand(int argc, char** argv) {
     progress.Phase("reading scoring input");
     return Run(arguments, std::cout, std::cerr);
   } catch (const std::exception& error) {
-    std::cerr << "error: " << error.what() << '\n'
-              << CpuRecoveryCommand(argc, argv, true) << '\n'
-              << SmallerModelGuidance() << '\n';
+    std::cerr << "error: " << error.what() << '\n';
+    if (gpu_requested) {
+      std::cerr << CpuRecoveryCommand(argc, argv, true) << '\n'
+                << SmallerModelGuidance() << '\n';
+    }
     return 1;
   }
 }

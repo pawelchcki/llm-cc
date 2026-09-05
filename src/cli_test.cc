@@ -132,6 +132,27 @@ int main() {  // NOLINT(bugprone-exception-escape)
       Read(backend_error).find("contradictory CPU") != std::string::npos,
       "CPU backend rejection is explained");
 
+  const fs::path missing_score_model =
+      fs::path(test_tmpdir) / "missing-score-model.gguf";
+  for (const std::string cpu_option :
+       {"--force-cpu", "--backend cpu", "--gpu-layers 0"}) {
+    Expect(Run(Quote(binary) + " score --model " + Quote(missing_score_model) +
+               " --prompt x --progress never " + cpu_option + " >/dev/null 2>" +
+               Quote(backend_error)) != 0,
+           "CPU scoring reports a missing model");
+    Expect(Read(backend_error).find("CPU rerun:") == std::string::npos,
+           "CPU scoring failures do not suggest another CPU rerun");
+  }
+  Expect(Run(Quote(binary) + " score --model " + Quote(missing_score_model) +
+             " --prompt --backend --backend cuda --no-download --progress "
+             "never >/dev/null 2>" +
+             Quote(backend_error)) != 0,
+         "GPU scoring fails when its model is missing");
+  Expect(
+      Read(backend_error).find("'--prompt' '--backend'") != std::string::npos &&
+          Read(backend_error).find("CPU rerun:") != std::string::npos,
+      "GPU recovery keeps flag-like scoring input intact");
+
   const fs::path empty_repository = fs::path(test_tmpdir) / "empty-repository";
   fs::create_directories(empty_repository);
   llmcc::test::ExpectEq(Run("git -C " + Quote(empty_repository) + " init -q"),

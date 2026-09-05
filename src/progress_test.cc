@@ -8,6 +8,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <thread>
+#include <vector>
 
 #include "src/backend.h"
 #include "src/cache.h"
@@ -71,6 +72,30 @@ int main() {
   Expect(llmcc::SmallerModelGuidance(2'000'000'000).find("1.5B may fit") !=
              std::string::npos,
          "memory-based suggestion");
+
+  const auto recovery = [](std::vector<std::string> arguments,
+                           bool score = false) {
+    std::vector<char*> argv;
+    for (auto& argument : arguments) argv.push_back(argument.data());
+    return llmcc::CpuRecoveryCommand(static_cast<int>(argv.size()), argv.data(),
+                                     score);
+  };
+  llmcc::test::ExpectEq(
+      recovery({"score", "--backend", "cuda", "--model", "model.gguf",
+                "--prompt", "--backend", "--gpu-layers", "-1",
+                "--entropy-reduction", "device", "--entropy", "--no-download"},
+               true),
+      std::string("CPU rerun: llm-cc score '--model' 'model.gguf' '--prompt' "
+                  "'--backend' '--entropy' '--no-download' --force-cpu"),
+      "CPU recovery preserves flag-like prompt text and scoring switches");
+  llmcc::test::ExpectEq(
+      recovery({"llm-cc", "--force-cpu", "--no-cache", "--include-headers",
+                "--model", "--force-cpu", "source's file.cc", "-y",
+                "--backend-dir", "backends"}),
+      std::string(
+          "CPU rerun: llm-cc '--no-cache' '--include-headers' '--model' "
+          "'--force-cpu' 'source'\\''s file.cc' '-y' --force-cpu"),
+      "CPU recovery preserves model paths, source quoting and analysis flags");
 
   std::ostringstream consent;
   for (auto answer : {"y\n", "Y\n", "yes\n"}) {

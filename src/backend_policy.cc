@@ -31,14 +31,7 @@ ExecutionOptions ResolveExecutionOptions(BackendKind backend,
 std::string CpuRecoveryCommand(int argc, char** argv, bool score) {
   std::string result = "CPU rerun: llm-cc";
   if (score) result += " score";
-  for (int i = 1; i < argc; ++i) {
-    const std::string_view arg = argv[i];
-    if (arg == "--backend" || arg == "--gpu-layers" || arg == "--backend-dir" ||
-        arg == "--entropy-reduction") {
-      ++i;
-      continue;
-    }
-    if (arg == "--force-cpu") continue;
+  const auto append_argument = [&](std::string_view arg) {
     result += " '";
     for (char ch : arg) {
       if (ch == '\'')
@@ -49,6 +42,25 @@ std::string CpuRecoveryCommand(int argc, char** argv, bool score) {
         result += ch;
     }
     result += "'";
+  };
+  for (int i = 1; i < argc; ++i) {
+    const std::string_view arg = argv[i];
+    if (arg == "--backend" || arg == "--gpu-layers" || arg == "--backend-dir" ||
+        arg == "--entropy-reduction") {
+      ++i;
+      continue;
+    }
+    if (arg == "--force-cpu") continue;
+    append_argument(arg);
+    const bool flag = arg == "--assume-yes" || arg == "-y" ||
+                      arg == "--no-download" || arg == "--include-headers" ||
+                      arg == "--no-ignore" || arg == "--no-cache" ||
+                      arg == "--entropy" || arg == "--override-memory-check";
+    // Option values are data even when they spell an execution option, e.g.
+    // score --prompt --backend or analyze --model --force-cpu.
+    if (arg.starts_with('-') && !flag && i + 1 < argc) {
+      append_argument(argv[++i]);
+    }
   }
   return result + " --force-cpu";
 }
