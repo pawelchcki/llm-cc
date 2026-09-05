@@ -1,7 +1,7 @@
 api_version: ci-toolkit/v1alpha1
 
 pull_requests:
-  commit_messages:
+  title:
     format: conventional-commits
 
 releases:
