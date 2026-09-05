@@ -72,7 +72,26 @@ the accelerator.
 safe removal of bare file names. `src/download.cc` owns HTTPS downloads through
 static libcurl/OpenSSL. Downloads write `MODEL.partial`, request a byte range
 when that file exists, validate the HTTP response, and rename only after a
-complete transfer.
+complete transfer. Model acquisition is serialized by target across processes;
+manifest updates use a separate short-lived lock and atomic replacement, so
+different targets can download concurrently without losing manifest records.
+
+Entropy entries are a separate owner-only, user-scoped `v2/entropy` store. A
+prepared-source SHA-256, model-content SHA-256, and inference settings form the
+key, allowing reuse across repositories and non-Git copies while preserving
+inference separation. The store retains up to 1 GiB of committed entries and
+expires entries after 20 days without use. Publication, deletion, and byte
+accounting share a cross-process lock; scoring, model hashing, and downloads do
+not hold it. Old repository-scoped v1 caches remain inspectable and explicitly
+clearable, but are deliberately cold because their model provenance lacks a
+content digest.
+
+The permanent `v2/.lock` survives clearing. Atomically replaced accounting is
+marked dirty before changing committed entries and rebuilt after interrupted
+operations. A conservative next-expiry timestamp avoids scanning on ordinary
+insertions. Digest memos in `model-digests/` use streaming SHA-256 and a file
+signature checked before and after hashing, retrying once if the file changes.
+Validated hits survive timestamp or maintenance failures.
 
 ## Build boundaries
 

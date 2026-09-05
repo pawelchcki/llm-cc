@@ -1,0 +1,55 @@
+llm-cc: discovering sources
+llm-cc: resolving model
+llm-cc: selecting inference backend
+llm-cc: [1/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/after/libdd_go_hook/test/test_go_ctx.c
+llm-cc: [1/26] complete cache=hit elapsed_ms=11
+llm-cc: [2/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/after/libdd_go_hook/test/test_go_hook_engine.c
+llm-cc: [2/26] complete cache=hit elapsed_ms=3
+llm-cc: [3/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/after/libdd_go_hook/test/test_go_pclntab.c
+llm-cc: [3/26] complete cache=hit elapsed_ms=14
+llm-cc: [4/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/after/libdd_go_hook/test/test_go_read.c
+llm-cc: [4/26] complete cache=hit elapsed_ms=8
+llm-cc: [5/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/before/libdd_go_hook/test/test_go_ctx.c
+llm-cc: [5/26] complete cache=hit elapsed_ms=12
+llm-cc: [6/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/before/libdd_go_hook/test/test_go_hook_engine.c
+llm-cc: [6/26] complete cache=hit elapsed_ms=3
+llm-cc: [7/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/before/libdd_go_hook/test/test_go_pclntab.c
+llm-cc: [7/26] complete cache=hit elapsed_ms=8
+llm-cc: [8/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/before/libdd_go_hook/test/test_go_read.c
+llm-cc: [8/26] complete cache=hit elapsed_ms=9
+llm-cc: [9/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/bench/bench_python_format.c
+llm-cc: [9/26] complete cache=hit elapsed_ms=22
+llm-cc: [10/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/bench/bench_python_stack_capture.py
+llm-cc: [10/26] complete cache=hit elapsed_ms=55
+llm-cc: [11/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/src/go_abi.c
+llm-cc: [11/26] complete cache=hit elapsed_ms=17
+llm-cc: [12/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/src/go_ctx.c
+llm-cc: [12/26] complete cache=hit elapsed_ms=14
+llm-cc: [13/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/src/go_pclntab.c
+llm-cc: [13/26] complete cache=hit elapsed_ms=34
+llm-cc: [14/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/src/go_read.c
+llm-cc: [14/26] complete cache=hit elapsed_ms=4
+llm-cc: [15/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/src/go_type.c
+llm-cc: [15/26] complete cache=hit elapsed_ms=86
+llm-cc: [16/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/src/go_x86_decode.c
+llm-cc: [16/26] complete cache=hit elapsed_ms=18
+llm-cc: [17/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/test/fixtures/hello_http.go
+llm-cc: [17/26] complete cache=hit elapsed_ms=2
+llm-cc: [18/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/test/fixtures/hello_parent_child.go
+llm-cc: [18/26] complete cache=hit elapsed_ms=6
+llm-cc: [19/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/test/test_go_abi.c
+llm-cc: [19/26] complete cache=hit elapsed_ms=11
+llm-cc: [20/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/test/test_go_arm64_decode.c
+llm-cc: [20/26] complete cache=hit elapsed_ms=32
+llm-cc: [21/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/test/test_go_type.c
+llm-cc: [21/26] complete cache=hit elapsed_ms=28
+llm-cc: [22/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/test/test_go_x86_decode.c
+llm-cc: [22/26] complete cache=hit elapsed_ms=17
+llm-cc: [23/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_nccl_profiler/test/analyze_spans.py
+llm-cc: [23/26] complete cache=hit elapsed_ms=19
+llm-cc: [24/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_nccl_profiler/test/nccl_allreduce_workload.py
+llm-cc: [24/26] complete cache=hit elapsed_ms=3
+llm-cc: [25/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_nccl_profiler/test/test_inspector_dd_span_accessor.cc
+llm-cc: [25/26] complete cache=hit elapsed_ms=12
+llm-cc: [26/26] analyzing /home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_nccl_profiler/test/test_inspector_event_pool.cc
+llm-cc: [26/26] complete cache=hit elapsed_ms=16

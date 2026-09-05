@@ -220,7 +220,8 @@ int main() {  // NOLINT(bugprone-exception-escape)
   const std::string available = Read(available_output);
   for (std::string_view name :
        {"deepseek-coder-v2-lite-base-q6_k", "deepseek-coder-6.7b-base-q6_k",
-        "qwen2.5-coder-1.5b-q6_k", "qwen2.5-coder-0.5b-q4_k_m"}) {
+        "qwen2.5-coder-1.5b-q6_k", "qwen2.5-coder-3b-q6_k",
+        "qwen2.5-coder-0.5b-q4_k_m"}) {
     const std::size_t position = available.find(name);
     llmcc::test::Expect(
         position != std::string::npos &&
@@ -438,7 +439,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
   const std::size_t first_newline = preprocessed.find('\n');
   const std::size_t second_newline = preprocessed.find('\n', first_newline + 1);
   llmcc::WriteEntropyCache(
-      repository, preprocessed, identity,
+      preprocessed, identity,
       std::vector<llmcc::EntropyRecord>{
           {.position = 0,
            .bytes = preprocessed.substr(0, 1),
@@ -539,7 +540,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
         llmcc::StripComments(contents, language);
     static_cast<void>(prepared_offsets);
     llmcc::WriteEntropyCache(
-        repository, prepared, identity,
+        prepared, identity,
         std::vector<llmcc::EntropyRecord>{
             {.position = 0,
              .bytes = prepared.substr(0, 1),
@@ -617,7 +618,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
       llmcc::StripComments(unscored_contents, llmcc::Language::kRust);
   static_cast<void>(unscored_offsets);
   llmcc::WriteEntropyCache(
-      repository, unscored_preprocessed, identity,
+      unscored_preprocessed, identity,
       std::vector<llmcc::EntropyRecord>{{.position = 0,
                                          .bytes = unscored_preprocessed,
                                          .entropy = std::nullopt}});
@@ -680,7 +681,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
   const auto [conversion_preprocessed, conversion_offsets] =
       llmcc::StripComments(conversion_contents, llmcc::Language::kCpp);
   static_cast<void>(conversion_offsets);
-  llmcc::WriteEntropyCache(repository, conversion_preprocessed, identity,
+  llmcc::WriteEntropyCache(conversion_preprocessed, identity,
                            std::vector<llmcc::EntropyRecord>{
                                {.position = 0,
                                 .bytes = conversion_preprocessed.substr(0, 1),
@@ -729,20 +730,58 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::ExpectEq(status["entries"].get<std::uint64_t>(),
                         std::uint64_t{8}, "cache status counts entries");
   llmcc::test::Expect(
-      status["storage_version"] == 1 &&
+      status["scope"] == "user" && status["storage_version"] == 2 &&
           status["inference_abi"].get<std::string>().ends_with("/entropy-v2") &&
-          status.contains("legacy_entries") &&
+          status["limit_bytes"] == llmcc::kEntropyCacheLimit &&
+          status["retention_seconds"] == llmcc::kEntropyCacheMaxAgeSeconds &&
           status.contains("entries_by_inference_abi") &&
           !status["directory"].get<std::string>().starts_with(
               repository.string()),
-      "cache status explains compatibility and external storage");
+      "cache status reports shared v2 storage");
+
+  const fs::path outside_git = fs::path(test_tmpdir) / "outside-git";
+  fs::create_directories(outside_git);
+  const fs::path outside_status = fs::path(test_tmpdir) / "outside-status.json";
+  llmcc::test::ExpectEq(
+      Run("cd " + Quote(outside_git) + " && " + Quote(binary) +
+          " cache status --format json >" + Quote(outside_status)),
+      0, "global cache status works outside a Git worktree");
+  llmcc::test::Expect(
+      nlohmann::json::parse(Read(outside_status))["scope"] == "user",
+      "outside-Git cache status remains user scoped");
+
+  // Entropy cleanup must leave unrelated files in the same cache root alone.
+  const fs::path retained_weight = entropy_root / "retained.gguf";
+  const fs::path retained_partial = entropy_root / "retained.gguf.partial";
+  Write(retained_weight, "weights");
+  Write(retained_partial, "partial");
+  const fs::path clear_all_output = fs::path(test_tmpdir) / "clear-all.json";
+  llmcc::test::ExpectEq(
+      Run(Quote(binary) + " cache clear --all --format json >" +
+          Quote(clear_all_output)),
+      0, "global cache clear succeeds");
+  const nlohmann::json clear_all =
+      nlohmann::json::parse(Read(clear_all_output));
+  llmcc::test::Expect(
+      clear_all["cleared"] == "shared v2 entropy cache" &&
+          clear_all["entries"] == 0 && fs::exists(retained_weight) &&
+          fs::exists(retained_partial),
+      "global clear reports its scope and preserves weights and partials");
+  const fs::path prune_output = fs::path(test_tmpdir) / "prune.json";
+  llmcc::test::ExpectEq(
+      Run(Quote(binary) + " cache prune " + Quote(repository) +
+          " --format json >" + Quote(prune_output)),
+      0, "global cache prune accepts an optional v1 report path");
+  llmcc::test::Expect(
+      nlohmann::json::parse(Read(prune_output))["scope"] == "user",
+      "cache prune remains user scoped when given a repository path");
 
   const auto deferred_backend_identity = llmcc::InspectModel(
       fake_model,
       "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v2",
       "cuda/gpu-layers=-1", 128U * 1024U, 64, "auto", "device");
   llmcc::WriteEntropyCache(
-      repository, preprocessed, deferred_backend_identity,
+      preprocessed, deferred_backend_identity,
       std::vector<llmcc::EntropyRecord>{
           {.position = 0,
            .bytes = preprocessed.substr(0, 1),
@@ -757,6 +796,18 @@ int main() {  // NOLINT(bugprone-exception-escape)
           {.position = 3,
            .bytes = preprocessed.substr(second_newline + 1),
            .entropy = 0.4}});
+  const fs::path scoped_clear_output =
+      fs::path(test_tmpdir) / "scoped-clear.json";
+  llmcc::test::ExpectEq(
+      Run(Quote(binary) + " cache clear " + Quote(repository) +
+          " --format json >" + Quote(scoped_clear_output)),
+      0, "repository v1 cache clear succeeds");
+  const nlohmann::json scoped_clear =
+      nlohmann::json::parse(Read(scoped_clear_output));
+  llmcc::test::Expect(
+      scoped_clear["cleared"] == "repository v1 entropy cache" &&
+          scoped_clear["entries"] == 1,
+      "repository v1 clear preserves the shared v2 cache");
   const fs::path deferred_backend_output =
       fs::path(test_tmpdir) / "deferred-backend.jsonl";
   llmcc::test::ExpectEq(

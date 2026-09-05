@@ -1,0 +1,38 @@
+{
+  "scoring_revision": "8f84f59f44e60d3433f3f342b86a8a177c80a17f",
+  "remote_build_directory": "/home/bits/llm-cc-install-backends",
+  "note": "Reused a universal Linux binary built from 8f84f59 plus source-built-backend installation work. Source hashes for the scoring engine, hierarchy, preprocessing, CLI, and dependency pins matched this checkout; packaging/backend-loading changes were present. Binary digest is in environment.json. The installed macOS binary was older and was not used.",
+  "matching_source_sha256": {
+    "src/core.cc": "cdb80e1405093dc464e401237abfb525ac74cfad6e1e3837d8e23e9a7c6e839d",
+    "src/core.h": "fe4283c46b3f3a8af193354c78b7b8c2f303d993068b316c8f637813845eaadd",
+    "src/score_cmd.cc": "8ddb6e299df0f3b298dd001b95ec622651f06c2f365ae82276bf3b0c228f446f",
+    "src/score_cmd.h": "984416d224a211794b899fa5e692af5aa95317601a24fdb8b7113093b19cc126",
+    "src/analyze.cc": "56923fdbec7da4e66b969d475e2c22e03a14071111eedbd471625f7803c5a6e5",
+    "src/analyze.h": "38abe55df45368393731e0c9bfa05c34df85bf6531961c03c486a850154f14e8",
+    "src/lang.cc": "6cc5d7de9ca9426f8a798424f245ec17bb50583d8522db64a7b6e73216682a2c",
+    "src/lang.h": "03b189de553f865c42e61db004968022321d639dc8232e972fe56c0d245f3697",
+    "src/jsonl.cc": "7fe2dae5e6278e881d582493f1ea2717ab98f7a9ac49f68624956750d3bd8167",
+    "src/jsonl.h": "b2c78c2fc812eb5573f3ea766126a9e483daef217dda243ad3c4171e55cac4e5",
+    "src/cli/main.cc": "8b0b34c2916a4d94cb8465c9cee387fb46ab7b9f694ef1164e819d2e9b6f50c3",
+    "MODULE.bazel": "56d625c11358e0000d70d74becf8b94fb3156a1c257857299331cc0ec2ae5817"
+  },
+  "historical_session": "01a0623a-f847-7651-84f4-c91e21683977",
+  "historical_reported_lmcc_per_token": {
+    "test_go_pclntab.c": [
+      0.121,
+      0.066
+    ],
+    "test_go_hook_engine.c": [
+      0.138,
+      0.103
+    ],
+    "test_go_ctx.c": [
+      0.07,
+      0.068
+    ],
+    "test_go_read.c": [
+      0.099,
+      0.088
+    ]
+  }
+}

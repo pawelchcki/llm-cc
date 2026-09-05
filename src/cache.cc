@@ -11,6 +11,8 @@
 #include <system_error>
 #include <tuple>
 
+#include "src/cache_io.h"
+
 namespace llmcc {
 namespace {
 
@@ -58,6 +60,12 @@ std::filesystem::path ManifestPath(const std::filesystem::path& cache_dir) {
   return cache_dir / kManifestFile;
 }
 
+std::filesystem::path ModelLockPath(const std::filesystem::path& target) {
+  auto lock = target;
+  lock += std::filesystem::path(".lock");
+  return lock;
+}
+
 void WriteManifest(const std::filesystem::path& cache_dir,
                    const ModelManifest& manifest) {
   try {
@@ -73,8 +81,7 @@ void WriteManifest(const std::filesystem::path& cache_dir,
       }
       contents[file_name] = std::move(value);
     }
-    std::ofstream output(ManifestPath(cache_dir), std::ios::binary);
-    output << contents.dump(2);
+    cache_io::AtomicWriteFile(ManifestPath(cache_dir), contents.dump(2));
   } catch (const std::exception& error) {
     // Cache metadata is advisory; model use must not fail because of it.
     static_cast<void>(error);
@@ -218,9 +225,14 @@ void MarkModelDownloaded(const std::filesystem::path& model) {
   if (!model.has_parent_path() || model.filename().empty()) {
     return;
   }
-  ModelManifest manifest = ReadManifest(model.parent_path());
-  manifest[PathUtf8(model.filename())].downloaded_at = EpochSeconds();
-  WriteManifest(model.parent_path(), manifest);
+  try {
+    cache_io::FileLock lock(model.parent_path() / ".models.json.lock");
+    ModelManifest manifest = ReadManifest(model.parent_path());
+    manifest[PathUtf8(model.filename())].downloaded_at = EpochSeconds();
+    WriteManifest(model.parent_path(), manifest);
+  } catch (const std::exception&) {
+    // Metadata is advisory.
+  }
 }
 
 void MarkCachedModelUsed(const std::filesystem::path& cache_dir,
@@ -241,9 +253,14 @@ void MarkCachedModelUsed(const std::filesystem::path& cache_dir,
   if (!cached) {
     return;
   }
-  ModelManifest manifest = ReadManifest(cache_dir);
-  manifest[PathUtf8(model.filename())].last_used_at = EpochSeconds();
-  WriteManifest(cache_dir, manifest);
+  try {
+    cache_io::FileLock lock(cache_dir / ".models.json.lock");
+    ModelManifest manifest = ReadManifest(cache_dir);
+    manifest[PathUtf8(model.filename())].last_used_at = EpochSeconds();
+    WriteManifest(cache_dir, manifest);
+  } catch (const std::exception&) {
+    // Metadata is advisory.
+  }
 }
 
 std::string FormatTimestamp(std::optional<std::uint64_t> timestamp) {
@@ -302,19 +319,41 @@ void RemoveModel(const std::filesystem::path& cache_dir,
   }
   const std::filesystem::path target =
       cache_dir / std::filesystem::u8path(file_name);
+  cache_io::FileLock target_lock(ModelLockPath(target));
   RemoveIfPresent(target);
   RemoveIfPresent(PartialPath(target));
-  ModelManifest manifest = ReadManifest(cache_dir);
-  manifest.erase(std::string(file_name));
-  WriteManifest(cache_dir, manifest);
+  {
+    cache_io::FileLock manifest_lock(cache_dir / ".models.json.lock");
+    ModelManifest manifest = ReadManifest(cache_dir);
+    manifest.erase(std::string(file_name));
+    WriteManifest(cache_dir, manifest);
+  }
 }
 
-std::filesystem::path ResolveModel(
-    std::optional<std::filesystem::path> model, const ModelSpec& spec,
-    bool no_download, const std::filesystem::path& current_dir,
-    const std::filesystem::path& cache_dir,
-    const std::function<void(std::string_view, const std::filesystem::path&)>&
-        downloader) {
+std::filesystem::path AcquireModel(std::string_view url,
+                                   const std::filesystem::path& target,
+                                   const ModelDownloader& downloader) {
+  cache_io::FileLock lock(ModelLockPath(target));
+  std::error_code error;
+  if (std::filesystem::is_regular_file(target, error) && !error) return target;
+  if (error && error != std::errc::no_such_file_or_directory) {
+    throw std::runtime_error("cannot inspect model target " + target.string() +
+                             ": " + error.message());
+  }
+  downloader(url, target);
+  error.clear();
+  if (!std::filesystem::is_regular_file(target, error) || error) {
+    throw std::runtime_error("model download did not create " +
+                             target.string());
+  }
+  return target;
+}
+
+std::filesystem::path ResolveModel(std::optional<std::filesystem::path> model,
+                                   const ModelSpec& spec, bool no_download,
+                                   const std::filesystem::path& current_dir,
+                                   const std::filesystem::path& cache_dir,
+                                   const ModelDownloader& downloader) {
   if (model.has_value()) {
     return *model;
   }
@@ -330,7 +369,7 @@ std::filesystem::path ResolveModel(
                                "; remove --no-download to fetch it "
                                "automatically");
     }
-    downloader(spec.url, cached);
+    AcquireModel(spec.url, cached, downloader);
   }
   return cached;
 }

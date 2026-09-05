@@ -40,8 +40,8 @@ FileAnalysisResult ProjectAnalyzer::AnalyzeFile(const DiscoveredSource& source,
   }
   const auto& events = prepared.structural_events;
   EntropyCacheLookup cached;
-  if (options_.cache && source.repository.has_value()) {
-    cached = ReadEntropyCache(*source.repository, preprocessed, options_.model);
+  if (options_.cache) {
+    cached = ReadEntropyCache(preprocessed, options_.model);
   }
   std::vector<EntropyRecord> records;
   if (cached.hit) {
@@ -63,12 +63,11 @@ FileAnalysisResult ProjectAnalyzer::AnalyzeFile(const DiscoveredSource& source,
       }
     }
     records = provider_->Score(preprocessed);
-    if (options_.cache && source.repository.has_value()) {
+    if (options_.cache) {
       try {
-        WriteEntropyCache(*source.repository, preprocessed, options_.model,
-                          records);
+        WriteEntropyCache(preprocessed, options_.model, records);
       } catch (const std::exception& error) {
-        // Repository-local caching is advisory and must not lose an analysis.
+        // Entropy caching is advisory and must not lose an analysis.
         static_cast<void>(error);
       }
     }
