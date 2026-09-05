@@ -194,6 +194,14 @@ int main() {  // NOLINT(bugprone-exception-escape)
                       "accounting maintenance failure preserves a valid hit");
   fs::remove(accounting);
 
+  llmcc::SetEntropyCacheTestLimit(1);
+  fs::create_directory(accounting);
+  llmcc::PruneEntropyCache();
+  llmcc::test::ExpectEq(
+      llmcc::GetEntropyCacheStatus().entries, uint64_t{0},
+      "pruning entries does not require a preliminary metadata write");
+  llmcc::SetEntropyCacheTestLimit(0);
+
   llmcc::WriteEntropyCache("clearable", model, Records("clearable"));
   fs::remove(accounting);
   fs::create_directory(accounting);

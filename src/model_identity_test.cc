@@ -75,6 +75,25 @@ int main() {  // NOLINT(bugprone-exception-escape)
                         llmcc::EntropyCacheKey("source", first),
                         "identical copy has same cache key");
 
+  const fs::path shard1 = root / "split-00001-of-00002.gguf";
+  const fs::path shard2 = root / "split-00002-of-00002.gguf";
+  Write(shard1, "first shard bytes");
+  const std::string second_shard_bytes = "second shard bytes";
+  Write(shard2, second_shard_bytes);
+  const auto split = llmcc::InspectModel(shard1, "abi", "cpu", 32);
+  llmcc::test::ExpectEq(split.size,
+                        fs::file_size(shard1) + fs::file_size(shard2),
+                        "split model identity includes every shard size");
+  const auto split_from_second = llmcc::InspectModel(shard2, "abi", "cpu", 32);
+  llmcc::test::ExpectEq(split_from_second.content_digest, split.content_digest,
+                        "every split entry point has the same identity");
+  const auto shard2_mtime = fs::last_write_time(shard2);
+  Write(shard2, std::string(second_shard_bytes.size(), 'x'));
+  fs::last_write_time(shard2, shard2_mtime);
+  const auto changed_split = llmcc::InspectModel(shard1, "abi", "cpu", 32);
+  llmcc::test::Expect(changed_split.content_digest != split.content_digest,
+                      "changing a companion shard invalidates model identity");
+
   const auto preserved_mtime = fs::last_write_time(model);
   Write(model, "second modelbytes");  // Same size as the original contents.
   fs::last_write_time(model, preserved_mtime);

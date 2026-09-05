@@ -4,7 +4,7 @@
     {
       "model": "qwen-1.5b-q6",
       "label": "uncached",
-      "wall_seconds": 20.498063535022084,
+      "wall_seconds": 20.468955700984225,
       "files": 26,
       "hits": 0,
       "command": [
@@ -136,7 +136,7 @@
     {
       "model": "qwen-1.5b-q6",
       "label": "populate",
-      "wall_seconds": 28.70991131197661,
+      "wall_seconds": 28.611149222007953,
       "files": 26,
       "hits": 0,
       "command": [
@@ -267,7 +267,7 @@
     {
       "model": "qwen-1.5b-q6",
       "label": "warm-1",
-      "wall_seconds": 0.28758773498702794,
+      "wall_seconds": 0.28811388596659526,
       "files": 26,
       "hits": 26,
       "command": [
@@ -398,7 +398,7 @@
     {
       "model": "qwen-1.5b-q6",
       "label": "warm-2",
-      "wall_seconds": 0.2855478040291928,
+      "wall_seconds": 0.28694194997660816,
       "files": 26,
       "hits": 26,
       "command": [
@@ -529,7 +529,7 @@
     {
       "model": "qwen-1.5b-q6",
       "label": "worktree",
-      "wall_seconds": 0.29500095901312307,
+      "wall_seconds": 0.2878539100056514,
       "files": 26,
       "hits": 26,
       "command": [
@@ -660,7 +660,7 @@
     {
       "model": "qwen-1.5b-q6",
       "label": "cross-repository",
-      "wall_seconds": 0.282871988019906,
+      "wall_seconds": 0.2872617380344309,
       "files": 26,
       "hits": 26,
       "command": [
@@ -791,7 +791,7 @@
     {
       "model": "qwen-1.5b-q6",
       "label": "nongit",
-      "wall_seconds": 0.2750362070510164,
+      "wall_seconds": 0.2660740209976211,
       "files": 26,
       "hits": 26,
       "command": [
@@ -922,7 +922,7 @@
     {
       "model": "qwen-1.5b-q6",
       "label": "first-hash-existing-entropy",
-      "wall_seconds": 8.083344722981565,
+      "wall_seconds": 8.102384559984785,
       "files": 26,
       "hits": 26,
       "command": [
@@ -1053,7 +1053,7 @@
     {
       "model": "qwen-1.5b-q6",
       "label": "threshold-alpha-hierarchy",
-      "wall_seconds": 0.2770703459973447,
+      "wall_seconds": 0.27303145598853007,
       "files": 26,
       "hits": 26,
       "command": [
@@ -1190,7 +1190,7 @@
     {
       "model": "qwen-1.5b-q6",
       "label": "copied-model",
-      "wall_seconds": 8.259458750020713,
+      "wall_seconds": 8.318099141004495,
       "files": 26,
       "hits": 26,
       "command": [
@@ -1321,7 +1321,7 @@
     {
       "model": "qwen-3b-q6",
       "label": "uncached",
-      "wall_seconds": 22.87716748501407,
+      "wall_seconds": 23.042634265962988,
       "files": 26,
       "hits": 0,
       "command": [
@@ -1453,7 +1453,7 @@
     {
       "model": "qwen-3b-q6",
       "label": "populate",
-      "wall_seconds": 39.23537618602859,
+      "wall_seconds": 40.25720409298083,
       "files": 26,
       "hits": 0,
       "command": [
@@ -1584,7 +1584,7 @@
     {
       "model": "qwen-3b-q6",
       "label": "warm-1",
-      "wall_seconds": 0.2707456590142101,
+      "wall_seconds": 0.2882997500128113,
       "files": 26,
       "hits": 26,
       "command": [
@@ -1715,7 +1715,7 @@
     {
       "model": "qwen-3b-q6",
       "label": "warm-2",
-      "wall_seconds": 0.28583767102099955,
+      "wall_seconds": 0.2856403059558943,
       "files": 26,
       "hits": 26,
       "command": [
@@ -1846,7 +1846,7 @@
     {
       "model": "qwen-3b-q6",
       "label": "worktree",
-      "wall_seconds": 0.2962267170078121,
+      "wall_seconds": 0.2926464279880747,
       "files": 26,
       "hits": 26,
       "command": [
@@ -1977,7 +1977,7 @@
     {
       "model": "qwen-3b-q6",
       "label": "cross-repository",
-      "wall_seconds": 0.2859933149884455,
+      "wall_seconds": 0.2823311679530889,
       "files": 26,
       "hits": 26,
       "command": [
@@ -2108,7 +2108,7 @@
     {
       "model": "qwen-3b-q6",
       "label": "nongit",
-      "wall_seconds": 0.27443064498947933,
+      "wall_seconds": 0.27372974500758573,
       "files": 26,
       "hits": 26,
       "command": [
@@ -2239,7 +2239,7 @@
     {
       "model": "qwen-3b-q6",
       "label": "first-hash-existing-entropy",
-      "wall_seconds": 18.430874191981275,
+      "wall_seconds": 15.83934035297716,
       "files": 26,
       "hits": 26,
       "command": [
@@ -2370,7 +2370,7 @@
     {
       "model": "qwen-3b-q6",
       "label": "threshold-alpha-hierarchy",
-      "wall_seconds": 0.2750071990303695,
+      "wall_seconds": 0.2606592299998738,
       "files": 26,
       "hits": 26,
       "command": [
@@ -2507,7 +2507,7 @@
     {
       "model": "qwen-3b-q6",
       "label": "copied-model",
-      "wall_seconds": 15.942835935973562,
+      "wall_seconds": 16.36301072599599,
       "files": 26,
       "hits": 26,
       "command": [
@@ -2650,17 +2650,5 @@
     "scope": "user",
     "storage_version": 2
   },
-  "valid": true,
-  "validation": {
-    "exact_score_equality": true,
-    "model_digests_match_retained_sha256": true,
-    "local_checks": "bazel test //:unit //:cli_test: 20 passed",
-    "linux_checks": [
-      "cache_test",
-      "model_identity_test",
-      "entropy_cache_test",
-      "cache_concurrency_test"
-    ],
-    "source_matches_local_working_tree": true
-  }
+  "valid": true
 }

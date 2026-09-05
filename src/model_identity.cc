@@ -2,10 +2,14 @@
 
 #include <array>
 #include <fstream>
+#include <iomanip>
 #include <limits>
 #include <nlohmann/json.hpp>
 #include <optional>
+#include <regex>
+#include <sstream>
 #include <stdexcept>
+#include <vector>
 
 #include "src/cache_io.h"
 #include "src/progress.h"
@@ -191,6 +195,99 @@ void WriteMemo(const std::filesystem::path& path,
   cache_io::AtomicWriteFile(path, value.dump());
 }
 
+struct HashedFile {
+  std::filesystem::path path;
+  FileSignature signature;
+  std::string digest;
+};
+
+HashedFile InspectFile(const std::filesystem::path& path) {
+  FileSignature stable = Signature(path);
+  std::optional<std::filesystem::path> memo;
+  try {
+    memo = MemoPath(path);
+    if (const auto cached = ReadMemo(*memo, stable);
+        cached.has_value() && Same(stable, Signature(path))) {
+      return {path, stable, *cached};
+    }
+  } catch (const std::exception&) {
+    memo.reset();  // Digest storage is advisory.
+  }
+  FileSignature current = stable;
+  for (int attempt = 0; attempt != 2; ++attempt) {
+    auto digest = HashFile(path);
+    const FileSignature after = Signature(path);
+    if (Same(current, after)) {
+      if (memo.has_value()) {
+        try {
+          WriteMemo(*memo, after, digest);
+        } catch (const std::exception&) {
+          // Validated model content is usable even if memo storage fails.
+        }
+      }
+      return {path, after, std::move(digest)};
+    }
+    if (attempt == 1)
+      throw std::runtime_error("model changed while hashing: " + path.string());
+    current = after;
+  }
+  throw std::runtime_error("cannot hash model " + path.string());
+}
+
+std::vector<std::filesystem::path> ModelFiles(
+    const std::filesystem::path& canonical) {
+  const auto utf8_name = canonical.filename().u8string();
+  const std::string name(reinterpret_cast<const char*>(utf8_name.data()),
+                         utf8_name.size());
+  static const std::regex split_pattern(
+      R"((.*)-([0-9]{5})-of-([0-9]{5})\.gguf)");
+  std::smatch match;
+  if (!std::regex_match(name, match, split_pattern)) return {canonical};
+  const auto index = std::stoul(match[2].str());
+  const auto count = std::stoul(match[3].str());
+  if (count <= 1 || index == 0 || index > count) return {canonical};
+
+  std::vector<std::filesystem::path> files;
+  files.reserve(count);
+  for (std::size_t shard = 1; shard <= count; ++shard) {
+    std::ostringstream filename;
+    filename << match[1].str() << '-' << std::setfill('0') << std::setw(5)
+             << shard << "-of-" << std::setw(5) << count << ".gguf";
+    const std::string bytes = filename.str();
+    const std::u8string value(bytes.begin(), bytes.end());
+    std::error_code error;
+    auto path = std::filesystem::canonical(
+        canonical.parent_path() / std::filesystem::path(value), error);
+    if (error) {
+      throw std::runtime_error("cannot resolve model shard " + bytes + ": " +
+                               error.message());
+    }
+    files.push_back(std::move(path));
+  }
+  return files;
+}
+
+std::string ModelDigest(const std::vector<HashedFile>& files) {
+  if (files.size() == 1) return files.front().digest;
+  Sha256 hash;
+  static constexpr std::string_view domain = "llm-cc-split-model-v1";
+  hash.Update({domain.data(), domain.size()});
+  for (const auto& file : files) {
+    static constexpr char separator = '\0';
+    hash.Update({&separator, 1});
+    hash.Update({file.digest.data(), file.digest.size()});
+  }
+  const auto digest = hash.Finish();
+  static constexpr char digits[] = "0123456789abcdef";
+  std::string result;
+  result.reserve(digest.size() * 2);
+  for (const auto byte : digest) {
+    result.push_back(digits[byte >> 4]);
+    result.push_back(digits[byte & 15]);
+  }
+  return result;
+}
+
 }  // namespace
 
 ModelIdentity InspectModel(
@@ -205,42 +302,42 @@ ModelIdentity InspectModel(
                              error.message());
   FileSignature stable = Signature(canonical);
   std::string digest;
-  std::optional<std::filesystem::path> memo;
+  std::uint64_t total_size = stable.size;
   if (cache_enabled) {
-    try {
-      memo = MemoPath(canonical);
-      if (const auto cached = ReadMemo(*memo, stable);
-          cached.has_value() && Same(stable, Signature(canonical))) {
-        digest = *cached;
-      }
-    } catch (const std::exception&) {
-      memo.reset();  // Digest storage is advisory.
-    }
-  }
-  if (cache_enabled && digest.empty()) {
-    FileSignature current = stable;
+    const auto paths = ModelFiles(canonical);
     for (int attempt = 0; attempt != 2; ++attempt) {
-      digest = HashFile(canonical);
-      const FileSignature after = Signature(canonical);
-      if (Same(current, after)) {
-        stable = after;
-        if (memo.has_value()) {
-          try {
-            WriteMemo(*memo, after, digest);
-          } catch (const std::exception&) {
-            // Validated model content is usable even if memo storage fails.
-          }
+      std::vector<HashedFile> files;
+      files.reserve(paths.size());
+      for (const auto& path : paths) files.push_back(InspectFile(path));
+      bool unchanged = true;
+      for (const auto& file : files) {
+        if (!Same(file.signature, Signature(file.path))) {
+          unchanged = false;
+          break;
         }
+      }
+      if (unchanged) {
+        total_size = 0;
+        stable.modification_time = std::numeric_limits<std::int64_t>::min();
+        for (const auto& file : files) {
+          if (file.signature.size >
+              std::numeric_limits<std::uint64_t>::max() - total_size) {
+            throw std::runtime_error("model size overflow");
+          }
+          total_size += file.signature.size;
+          stable.modification_time = std::max(stable.modification_time,
+                                              file.signature.modification_time);
+        }
+        digest = ModelDigest(files);
         break;
       }
       if (attempt == 1)
-        throw std::runtime_error("model changed while hashing: " +
+        throw std::runtime_error("model shards changed while hashing: " +
                                  canonical.string());
-      current = after;
     }
   }
   return {.canonical_path = canonical,
-          .size = stable.size,
+          .size = total_size,
           .modification_time = stable.modification_time,
           .inference_abi = std::string(inference_abi),
           .backend = std::string(backend),
