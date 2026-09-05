@@ -1,9 +1,10 @@
 {
+  "commit": "e870ad31930254ca9ad5e943adde3e55ad7a6cd1",
   "source_sha256": {
     "src/analyze.cc": "8b7bfa6f2d89b20218207caac35ee38105be2b26ece7da29d56f0177054bcfad",
     "src/analyze.h": "38abe55df45368393731e0c9bfa05c34df85bf6531961c03c486a850154f14e8",
-    "src/backend.cc": "4f160f2fefd58472cb2cf68b255df73390d81e07801a83f47eea53c2b5f47306",
-    "src/backend.h": "e983a2d2a8f1e2b91155e5d8e63ef8581bdbeea51140e4f5e2733d4e41959336",
+    "src/backend.cc": "238951dfec6bb185a1757b27f5263bed0015709ed3faaf3c439e405b25be94d4",
+    "src/backend.h": "f8547d2af30ae33984ff0212a17fc91f6ef53aeb6120ab97ac8d87ea49e477b0",
     "src/backend_fetch.cc": "bdb1af2f9897b85cdb917a894d1dacd75750137ce89d2cc049fd74ecc24e7421",
     "src/backend_fetch.h": "c34669a5c81eb98bb53ddfbdf878d5fcae0267613121176fc7a2f150e27f9420",
     "src/backend_policy.cc": "5b12ffe580eb340fc8b0bdb228cc851c01fadc600b4443b563fed11c2de6d59b",
@@ -15,7 +16,7 @@
     "src/core.h": "fe4283c46b3f3a8af193354c78b7b8c2f303d993068b316c8f637813845eaadd",
     "src/download.cc": "c67c4a694a889e7dcb7a10f913ab328024b4656137be5a3150c7fb50b8e10527",
     "src/download.h": "d37c86c5bbfa11dd8fa28b9dd340aa4dfce0a22c218e0d7df39fc5b0bc2031f5",
-    "src/entropy_cache.cc": "22066ca5cf03a082058b06b9c1d1bbf9678959d262750661c72dcb1a0aa76f61",
+    "src/entropy_cache.cc": "c78c7c67bb5d69fab1246c83b5c6283da1214effc8ae08b50d3f14b381ab044d",
     "src/entropy_cache.h": "8261dae685f2d6bff02d80577675073e754ccde252c98872526f4429e3fbfe01",
     "src/inference_guard.cc": "1b412b2b3b283b0e80edcfc8aa0570b93c49e0828fab386dc1b757e262f810c5",
     "src/inference_guard.h": "3c2454cb47f5279d682d8cc96ca9584f0c7ea60e288e5e783c1c1d800b573e5f",
@@ -24,7 +25,7 @@
     "src/lang.cc": "6cc5d7de9ca9426f8a798424f245ec17bb50583d8522db64a7b6e73216682a2c",
     "src/lang.h": "03b189de553f865c42e61db004968022321d639dc8232e972fe56c0d245f3697",
     "src/linux_compat.cc": "d533b27bab763dce51a580c23daa1339f2de63c039beeb7585ced020add0ec2a",
-    "src/model_identity.cc": "ae6173e9f4c108c914cda1d536f80a1d3510abc60c9057a986a63bcf7eb8ccbc",
+    "src/model_identity.cc": "401b46b99e2667e9dd5f9a444a6e9fd043426517df4934586e77b6ffafa50635",
     "src/model_identity.h": "cca92a589a9d08e6e0fdd7215241a5a39e116723b7b6c9373ffb446d95542542",
     "src/models.cc": "a968d3c453f815e3cc413cc05ed2650b5543a4cbbd89e170993e59d2507864c0",
     "src/models.h": "407582056e85a2b08f255af290729b03aea283a94f9fed48bab73a9fcc3429a1",
@@ -42,7 +43,7 @@
     "src/sha256.h": "71af64ef450d4a93957ad8fc6e20bfaa14243903192e480eb653542c36de0d6e",
     "src/test_util.h": "543e0dd3a5d387d8ebf2b8eeb05391f53ed527cb1b68f79d5b65bda77c9c28c8"
   },
-  "binary_sha256": "96f4a944ee16faa5b8c9238173ea54d695b1bcb865cb05730f47042f439a9886",
+  "binary_sha256": "e3df7d4fa6a129b51377fbdd70d21e6083c833340544ab5a25e09e0ca5158358",
   "gpu": "NVIDIA A10G, 580.178.04",
   "build": "All first-party C++ sources recompiled with pinned Clang 22, O2, libc++; existing pinned llama.cpp/CUDA and tree-sitter dependency objects reused. Isolated binary, no modifications to retained study.",
   "compiler": "clang version 22.1.7 (https://github.com/llvm/llvm-project a255c1ed36a1d06f79bd2633ba9f8d900153007c)"

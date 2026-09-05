@@ -2,7 +2,7 @@
 
 Validated on 2026-09-05 using the retained 26-file model-selection corpus and
 both registered smaller alternatives. The original experiment and its weights
-were only read. All changes remain uncommitted.
+were only read. The validated implementation is commit `e870ad31930254ca9ad5e943adde3e55ad7a6cd1`.
 
 For both models, every file result with unchanged inference/scoring settings
 matched the uncached result exactly, excluding the path and cache-hit flag.
@@ -13,8 +13,8 @@ and hierarchy together reused all 26 entries while recomputing scores.
 
 | Model (Q6) | Uncached | Populate cache | Warm hits, two runs | Hits requiring first digest |
 | --- | ---: | ---: | ---: | ---: |
-| Qwen2.5-Coder 1.5B | 20.498 s | 28.710 s | 0.288 / 0.286 s | 8.083 s |
-| Qwen2.5-Coder 3B | 22.877 s | 39.235 s | 0.271 / 0.286 s | 18.431 s |
+| Qwen2.5-Coder 1.5B | 20.469 s | 28.611 s | 0.288 / 0.287 s | 8.102 s |
+| Qwen2.5-Coder 3B | 23.043 s | 40.257 s | 0.288 / 0.286 s | 15.839 s |
 
 These are whole-process times for all 26 files on one NVIDIA A10G, including
 preprocessing and output. The first-digest measurement deletes only the isolated
@@ -29,7 +29,8 @@ the model-selection manifest.
 
 ## Checks
 
-- Local macOS: `bzl test //:unit //:cli_test --test_output=errors`, 20 targets pass.
+- Local macOS: `bazelisk test //:unit //:integration`, 21 runnable targets pass
+  and the opt-in payload integration target is skipped by its size policy.
 - Packaging SHA integration: `bzl build //tools:embed_payloads` passes.
 - Independent Linux: `cache_test`, `model_identity_test`, `entropy_cache_test`,
   and `cache_concurrency_test` pass against the reviewed implementation.
@@ -42,9 +43,10 @@ the model-selection manifest.
   removal waiting for acquisition, and concurrent manifest updates retaining
   every new and unrelated record. Remaining entries decode as valid CBOR and
   accounting matches their actual sizes. The lock inode survives clearing.
-- Identity tests include identical copies, same-size changes with restored
-  modification time, inode replacement, malformed/unavailable memos, symlink
-  refusal, private permissions, and continuously changing weights being rejected.
+- Identity tests include identical copies, split-model companion changes,
+  same-size changes with restored modification time, inode replacement,
+  malformed/unavailable memos, symlink refusal, private permissions, and
+  continuously changing weights being rejected.
 
 Windows branches were updated but were not executed in this validation.
 
