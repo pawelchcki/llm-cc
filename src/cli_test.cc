@@ -160,6 +160,19 @@ int main() {  // NOLINT(bugprone-exception-escape)
                           empty_events[3]["hierarchy_mode"] == "structural" &&
                           empty_events[3]["analysis_version"] == 2,
                       "default analysis metadata is additive and versioned");
+  const fs::path empty_device_output =
+      fs::path(test_tmpdir) / "empty-device.jsonl";
+  llmcc::test::ExpectEq(
+      Run(Quote(binary) + " " + Quote(empty_repository) +
+          " --no-download --entropy-reduction device --gpu-layers -1 >" +
+          Quote(empty_device_output)),
+      0, "empty discovery accepts device reduction with full GPU offload");
+  const auto empty_device_events = ReadEvents(empty_device_output);
+  llmcc::test::Expect(
+      empty_device_events.size() == 4 &&
+          empty_device_events[1]["type"] == "configuration" &&
+          empty_device_events[1]["effective_entropy_reducer"] == "device",
+      "empty discovery reports the explicitly requested device reducer");
   const fs::path invalid_options_error =
       fs::path(test_tmpdir) / "invalid-options.txt";
   llmcc::test::Expect(Run(Quote(binary) + " " + Quote(empty_repository) +

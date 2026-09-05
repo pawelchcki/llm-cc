@@ -855,6 +855,9 @@ nlohmann::json ConfigurationJson(
     const AnalyzeArguments& arguments, std::string_view requested_model,
     const llmcc::ModelIdentity* identity = nullptr) {
   const bool percentile = arguments.tau_percentile.has_value();
+  const char* effective_reducer =
+      arguments.entropy_reduction == llmcc::EntropyReduction::kDevice ? "device"
+                                                                      : "host";
   nlohmann::json configured_tau = nullptr;
   if (!percentile) {
     configured_tau = arguments.tau.value_or(0.67);
@@ -880,7 +883,7 @@ nlohmann::json ConfigurationJson(
       {"batch_size", arguments.batch_size},
       {"entropy_reduction",
        llmcc::EntropyReductionName(arguments.entropy_reduction)},
-      {"effective_entropy_reducer", "host"},
+      {"effective_entropy_reducer", effective_reducer},
       {"score_mode", arguments.score_mode},
       {"tau_rule", percentile ? "percentile" : "absolute"},
       {"tau", std::move(configured_tau)},
