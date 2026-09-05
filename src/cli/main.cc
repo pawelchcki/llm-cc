@@ -41,6 +41,7 @@
 #include "src/jsonl.h"
 #include "src/lang.h"
 #include "src/models.h"
+#include "src/progress.h"
 #include "src/project.h"
 #include "src/score_cmd.h"
 
@@ -77,6 +78,9 @@ struct AnalyzeArguments {
   bool no_ignore = false;
   bool no_cache = false;
   std::int32_t gpu_layers = 0;
+  std::optional<std::int32_t> requested_gpu_layers;
+  bool force_cpu = false;
+  bool assume_yes = false;
   llmcc::BackendKind backend = llmcc::BackendKind::kAuto;
   std::optional<std::filesystem::path> backend_directory;
   std::uint32_t context = llmcc::kDefaultContextSize;
@@ -100,6 +104,8 @@ constexpr std::string_view kUsageBeforeContext =
     "[--prompt TEXT | --file PATH] [OPTIONS]\n"
     "  llm-cc models list [--available]|remove FILE|path\n"
     "  llm-cc backends list|fetch|path|remove\n"
+    "  llm-cc backends fetch cuda|rocm [--url URL] [--assume-yes|-y]\n"
+    "      [--no-download] [--progress auto|always|never]\n"
     "  llm-cc cache status|prune [PATH] [--format text|json]\n"
     "  llm-cc cache clear [PATH] [--legacy|--all] [--format text|json]\n\n"
     "Analysis options:\n"
@@ -118,7 +124,10 @@ constexpr std::string_view kUsageBeforeContext =
     "structural)\n"
     "  --tau N               absolute entropy threshold in nats (default: "
     "0.67)\n"
-    "  --gpu-layers N        transformer layers to offload (-1 means all)\n"
+    "  --gpu-layers N        layers to offload (default: -1, all; 0 opts into "
+    "CPU)\n"
+    "  --force-cpu           explicitly use CPU with zero offload\n"
+    "  -y, --assume-yes      accept missing model/backend downloads\n"
     "  --backend NAME        auto, cpu, cuda, or rocm (default: auto)\n"
     "  --batch-size N        decode rows per batch (default: 64)\n"
     "  --entropy-reduction M auto, host, or device (default: auto)\n"
@@ -213,6 +222,7 @@ void SetAnalyzeOption(AnalyzeArguments& arguments, std::string_view option,
     arguments.model_name = value;
   } else if (option == "--gpu-layers") {
     arguments.gpu_layers = ParseNumber<std::int32_t>(option, value);
+    arguments.requested_gpu_layers = arguments.gpu_layers;
     if (arguments.gpu_layers < -1) {
       Usage("--gpu-layers must be -1 or greater");
     }
@@ -293,6 +303,14 @@ AnalyzeArguments ParseAnalyzeArguments(int argc, char** argv) {
       std::cout << "llm-cc " << LLM_CC_VERSION << '\n';
       std::exit(0);
     }
+    if (option == "--force-cpu") {
+      arguments.force_cpu = true;
+      continue;
+    }
+    if (option == "--assume-yes" || option == "-y") {
+      arguments.assume_yes = true;
+      continue;
+    }
     if (option == "--no-download") {
       arguments.no_download = true;
       continue;
@@ -328,6 +346,14 @@ AnalyzeArguments ParseAnalyzeArguments(int argc, char** argv) {
   }
   if (arguments.sources.empty()) {
     Usage("at least one source path is required unless a subcommand is used");
+  }
+  try {
+    const auto execution = llmcc::ResolveExecutionOptions(
+        arguments.backend, arguments.requested_gpu_layers, arguments.force_cpu);
+    arguments.backend = execution.backend;
+    arguments.gpu_layers = execution.gpu_layers;
+  } catch (const std::invalid_argument& error) {
+    Usage(error.what());
   }
   ApplyBackendDirectoryEnvironment(arguments.backend_directory,
                                    arguments.backend, arguments.gpu_layers);
@@ -399,77 +425,9 @@ void Emit(const nlohmann::json& event) {
   }
 }
 
-std::string TerminalSafe(std::string_view text);
+using llmcc::TerminalSafe;
 
-class ProgressReporter {
- public:
-  explicit ProgressReporter(std::string_view mode)
-      : enabled_(mode == "always" ||
-                 (mode == "auto" && isatty(STDERR_FILENO) != 0)) {}
-
-  void Phase(std::string_view message) const {
-    if (enabled_) {
-      std::cerr << "llm-cc: " << message << '\n' << std::flush;
-    }
-  }
-
-  void StartFile(std::size_t index, std::size_t total,
-                 const std::filesystem::path& path) {
-    if (!enabled_) {
-      return;
-    }
-    file_index_ = index;
-    file_total_ = total;
-    started_ = std::chrono::steady_clock::now();
-    last_update_ = {};
-    std::cerr << "llm-cc: [" << index << '/' << total << "] analyzing "
-              << TerminalSafe(PathUtf8(path)) << '\n'
-              << std::flush;
-  }
-
-  void Tokens(std::size_t completed, std::size_t total) {
-    if (!enabled_) {
-      return;
-    }
-    const auto now = std::chrono::steady_clock::now();
-    if (completed != 0 && completed != total && last_update_ != TimePoint{} &&
-        now - last_update_ < std::chrono::seconds(1)) {
-      return;
-    }
-    last_update_ = now;
-    std::cerr << "llm-cc: [" << file_index_ << '/' << file_total_ << "] "
-              << completed << '/' << total << " tokens\n"
-              << std::flush;
-  }
-
-  void FinishFile(bool cache_hit) const {
-    if (!enabled_) {
-      return;
-    }
-    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - started_);
-    std::cerr << "llm-cc: [" << file_index_ << '/' << file_total_
-              << "] complete cache=" << (cache_hit ? "hit" : "miss")
-              << " elapsed_ms=" << elapsed.count() << '\n'
-              << std::flush;
-  }
-
-  void FailFile() const {
-    if (enabled_) {
-      std::cerr << "llm-cc: [" << file_index_ << '/' << file_total_
-                << "] failed\n"
-                << std::flush;
-    }
-  }
-
- private:
-  using TimePoint = std::chrono::steady_clock::time_point;
-  bool enabled_;
-  std::size_t file_index_ = 0;
-  std::size_t file_total_ = 0;
-  TimePoint started_{};
-  TimePoint last_update_{};
-};
+using llmcc::ProgressReporter;
 
 int RunModels(int argc, char** argv) {
   if (argc < 3) {
@@ -544,7 +502,9 @@ int RunBackends(int argc, char** argv) {
                                  PathUtf8(path) + ": " + error.message());
       }
       if (!cached) {
-        std::cout << name << "\tnot cached\n";
+        std::cout << name << "\tbundle-cache=not cached\tlocal-source="
+                  << llmcc::DiscoverBackendSource(llmcc::ParseBackend(name))
+                  << '\n';
         continue;
       }
       const std::uintmax_t size = std::filesystem::file_size(path, error);
@@ -552,8 +512,16 @@ int RunBackends(int argc, char** argv) {
         throw std::runtime_error("could not measure backend bundle " +
                                  PathUtf8(path) + ": " + error.message());
       }
-      std::cout << name << "\tcached\t" << PathUtf8(path) << '\t' << size
-                << " bytes\n";
+      std::string status = "verified";
+      try {
+        llmcc::VerifyBackendBundle(BackendOptions(name));
+      } catch (const std::exception&) {
+        status = "invalid";
+      }
+      std::cout << name << "\tbundle-cache=" << status << "\t" << PathUtf8(path)
+                << '\t' << size << " bytes\tlocal-source="
+                << llmcc::DiscoverBackendSource(llmcc::ParseBackend(name))
+                << '\n';
     }
     return 0;
   }
@@ -561,10 +529,17 @@ int RunBackends(int argc, char** argv) {
     const std::string_view name = BackendBundleName(argv[3]);
     std::optional<std::string> explicit_url;
     bool no_download = false;
+    bool assume_yes = false;
+    std::string progress_mode = "auto";
     for (int index = 4; index < argc; ++index) {
       const std::string_view option = argv[index];
       if (option == "--no-download") {
         no_download = true;
+      } else if (option == "--assume-yes" || option == "-y") {
+        assume_yes = true;
+      } else if (option == "--progress") {
+        if (++index >= argc) Usage("--progress requires a value");
+        progress_mode = argv[index];
       } else if (option == "--url") {
         if (explicit_url.has_value()) {
           Usage("--url may only be specified once");
@@ -577,9 +552,9 @@ int RunBackends(int argc, char** argv) {
         Usage("invalid backends fetch option: " + std::string(option));
       }
     }
-    if (no_download) {
-      Usage("backends fetch cannot be used with --no-download");
-    }
+    ProgressReporter progress(progress_mode);
+    llmcc::CliSession session(progress, assume_yes, no_download);
+    progress.Phase("resolving backend bundle");
     std::cout << PathUtf8(llmcc::FetchBackendBundle(
                      BackendOptions(name, explicit_url)))
               << '\n';
@@ -1056,87 +1031,6 @@ std::string_view SourceLine(std::string_view contents,
   return contents.substr(start, end - start);
 }
 
-std::string TerminalSafe(std::string_view text) {
-  constexpr std::string_view kHex = "0123456789ABCDEF";
-  std::string safe;
-  safe.reserve(text.size());
-  const auto append_byte = [&](unsigned char byte) {
-    safe.append("\\x");
-    safe.push_back(kHex[byte >> 4]);
-    safe.push_back(kHex[byte & 0x0f]);
-  };
-  const auto append_code_point = [&](std::uint32_t code_point) {
-    safe.append("\\u");
-    for (int shift = 12; shift >= 0; shift -= 4) {
-      safe.push_back(kHex[(code_point >> shift) & 0x0f]);
-    }
-  };
-  for (std::size_t index = 0; index < text.size();) {
-    const auto byte = static_cast<unsigned char>(text[index]);
-    if (byte < 0x20 || byte == 0x7f) {
-      append_byte(byte);
-      ++index;
-      continue;
-    }
-    if (byte < 0x80) {
-      safe.push_back(static_cast<char>(byte));
-      ++index;
-      continue;
-    }
-    std::size_t length = 0;
-    if (byte >= 0xc2 && byte <= 0xdf) {
-      length = 2;
-    } else if (byte >= 0xe0 && byte <= 0xef) {
-      length = 3;
-    } else if (byte >= 0xf0 && byte <= 0xf4) {
-      length = 4;
-    }
-    bool valid = length != 0 && index + length <= text.size();
-    for (std::size_t offset = 1; valid && offset < length; ++offset) {
-      const auto continuation =
-          static_cast<unsigned char>(text[index + offset]);
-      valid = (continuation & 0xc0) == 0x80;
-    }
-    if (valid && length == 3) {
-      const auto second = static_cast<unsigned char>(text[index + 1]);
-      valid =
-          (byte != 0xe0 || second >= 0xa0) && (byte != 0xed || second < 0xa0);
-    } else if (valid && length == 4) {
-      const auto second = static_cast<unsigned char>(text[index + 1]);
-      valid =
-          (byte != 0xf0 || second >= 0x90) && (byte != 0xf4 || second <= 0x8f);
-    }
-    if (!valid) {
-      append_byte(byte);
-      ++index;
-      continue;
-    }
-    std::uint32_t leading_mask = 0x07;
-    if (length == 2) {
-      leading_mask = 0x1f;
-    } else if (length == 3) {
-      leading_mask = 0x0f;
-    }
-    std::uint32_t code_point = byte & leading_mask;
-    for (std::size_t offset = 1; offset < length; ++offset) {
-      code_point = (code_point << 6) |
-                   (static_cast<unsigned char>(text[index + offset]) & 0x3f);
-    }
-    const bool bidi_control = code_point == 0x061c || code_point == 0x200e ||
-                              code_point == 0x200f ||
-                              (code_point >= 0x202a && code_point <= 0x202e) ||
-                              (code_point >= 0x2066 && code_point <= 0x206f);
-    if ((code_point >= 0x80 && code_point <= 0x9f) || bidi_control) {
-      append_code_point(code_point);
-      index += length;
-      continue;
-    }
-    safe.append(text.substr(index, length));
-    index += length;
-  }
-  return safe;
-}
-
 void PrintFileText(const llmcc::DiscoveredSource& source,
                    std::string_view contents,
                    const llmcc::FileAnalysisResult& result,
@@ -1201,6 +1095,8 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
   }
   const bool text = arguments.format == "text";
   ProgressReporter progress(arguments.progress);
+  llmcc::CliSession session(progress, arguments.assume_yes,
+                            arguments.no_download);
   progress.Phase("discovering sources");
   const auto warning = [&](std::string_view message) {
     if (text) {
@@ -1239,20 +1135,24 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
     return 0;
   }
 
-  const std::filesystem::path model_cache = llmcc::CacheDir();
-  progress.Phase("resolving model");
-  const llmcc::ModelSpec& model_spec =
-      arguments.model_name.has_value()
-          ? *llmcc::FindModel(*arguments.model_name)
-          : llmcc::DefaultModel();
-  const auto resolved_model = llmcc::ResolveModel(
-      arguments.model, model_spec, arguments.no_download,
-      std::filesystem::current_path(), model_cache, llmcc::DownloadModel);
   const bool fetch_backend =
       ShouldFetchBackend(arguments.backend, arguments.gpu_layers);
   progress.Phase("selecting inference backend");
   const llmcc::BackendKind resolved_backend = [&]() {
-    if (arguments.backend != llmcc::BackendKind::kAuto) {
+    // An explicit backend already supplies an exact cache identity. Preserve
+    // PR #16's cache-only path; a cache miss initializes and checks the GPU.
+    const auto& spec = arguments.model_name
+                           ? *llmcc::FindModel(*arguments.model_name)
+                           : llmcc::DefaultModel();
+    if (arguments.backend != llmcc::BackendKind::kAuto &&
+        (arguments.model.has_value() ||
+         std::filesystem::exists(llmcc::CacheDir() / spec.file) ||
+         std::filesystem::exists(std::filesystem::current_path() / "models" /
+                                 spec.file))) {
+      progress.Phase("configured backend=" +
+                     std::string(llmcc::BackendName(arguments.backend)) +
+                     " gpu_layers=" + std::to_string(arguments.gpu_layers) +
+                     " (device checked on cache miss)");
       return arguments.backend;
     }
     if (arguments.gpu_layers == 0) {
@@ -1273,6 +1173,15 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
           (detail.empty() ? std::string() : ": " + detail));
     }
   }();
+  const std::filesystem::path model_cache = llmcc::CacheDir();
+  progress.Phase("resolving model");
+  const llmcc::ModelSpec& model_spec =
+      arguments.model_name.has_value()
+          ? *llmcc::FindModel(*arguments.model_name)
+          : llmcc::DefaultModel();
+  const auto resolved_model = llmcc::ResolveModel(
+      arguments.model, model_spec, arguments.no_download,
+      std::filesystem::current_path(), model_cache, llmcc::DownloadModel);
   const bool device_available =
       llmcc::DeviceOutputGuaranteed(resolved_backend, arguments.gpu_layers,
                                     llmcc::CompiledBackend() == "metal");
@@ -1289,6 +1198,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       BackendCacheIdentity(resolved_backend, arguments.gpu_layers);
   const bool entropy_cache =
       !arguments.no_cache && !arguments.backend_directory.has_value();
+  progress.Phase("hashing model and resolving cache identity");
   const auto identity = llmcc::InspectModel(
       resolved_model, llmcc::InferenceAbi(), backend_identity,
       arguments.context, arguments.batch_size,
@@ -1448,7 +1358,21 @@ int Main(int argc, char** argv) {
     } else if (argc > 1 && std::string_view(argv[1]) == "cache") {
       result = RunCache(argc, argv);
     } else {
-      result = RunAnalyze(ParseAnalyzeArguments(argc, argv));
+      const auto arguments = ParseAnalyzeArguments(argc, argv);
+      try {
+        result = RunAnalyze(arguments);
+      } catch (const std::exception& error) {
+        if (arguments.gpu_layers != 0) {
+          throw std::runtime_error(std::string(error.what()) + "\n" +
+                                   llmcc::CpuRecoveryCommand(argc, argv) +
+                                   "\n" + llmcc::SmallerModelGuidance());
+        }
+        throw;
+      }
+      if (result != 0 && arguments.gpu_layers != 0) {
+        std::cerr << llmcc::CpuRecoveryCommand(argc, argv) << '\n'
+                  << llmcc::SmallerModelGuidance() << '\n';
+      }
     }
     std::cout.flush();
     if (!std::cout) {

@@ -18,6 +18,19 @@ struct BackendDevice {
   std::uint64_t free_memory;
 };
 
+struct ExecutionOptions {
+  BackendKind backend = BackendKind::kAuto;
+  std::int32_t gpu_layers = -1;
+};
+ExecutionOptions ResolveExecutionOptions(BackendKind backend,
+                                         std::optional<std::int32_t> gpu_layers,
+                                         bool force_cpu);
+std::string CpuRecoveryCommand(int argc, char** argv, bool score = false);
+std::string SmallerModelGuidance(
+    std::optional<std::uint64_t> available = std::nullopt);
+
+std::string DiscoverBackendSource(BackendKind backend);
+
 BackendKind ParseBackend(std::string_view value);
 std::string_view BackendName(BackendKind backend);
 BackendKind SelectBackend(BackendKind requested, std::int32_t gpu_layers,

@@ -11,6 +11,8 @@
 #include <string_view>
 #include <system_error>
 
+#include "src/progress.h"
+
 #if defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -72,6 +74,7 @@ inline std::string UniqueSuffix() {
 class FileLock {
  public:
   explicit FileLock(const std::filesystem::path& path) {
+    ReportPhase("waiting for cache lock " + path.string());
     if (!path.parent_path().empty()) {
       std::filesystem::create_directories(path.parent_path());
     }

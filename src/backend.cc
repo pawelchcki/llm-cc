@@ -18,6 +18,7 @@
 #include "generated/build_config.h"
 #include "src/backend_fetch.h"
 #include "src/payload.h"
+#include "src/progress.h"
 #include "src/rocm_topology.h"
 
 #ifdef __linux__
@@ -148,6 +149,7 @@ struct LoadedPlugin {
   ggml_backend_reg_t registry;
   int backing_fd = -1;
   void* driver_handle = nullptr;
+  bool hardware_detected = false;
   bool missing_with_download_disabled = false;
   std::exception_ptr failure;
 };
@@ -201,9 +203,30 @@ LoadedPlugin LoadPlugin(
     }
   }
 #endif
+#ifdef __linux__
+  if (backend == BackendKind::kCuda && driver_handle != nullptr) {
+    using Init = int (*)(unsigned int);
+    using Count = int (*)(int*);
+    auto init = reinterpret_cast<Init>(dlsym(driver_handle, "cuInit"));
+    auto count =
+        reinterpret_cast<Count>(dlsym(driver_handle, "cuDeviceGetCount"));
+    int devices = 0;
+    if (!init || !count || init(0) != 0 || count(&devices) != 0 ||
+        devices == 0) {
+      close_driver();
+      const std::string message = "no CUDA device found by driver probe";
+      if (required) throw std::runtime_error(message + "; " + GpuOffloadHelp());
+      return {.backend = backend,
+              .registry = nullptr,
+              .failure = std::make_exception_ptr(std::runtime_error(message))};
+    }
+  }
+#endif
   std::optional<RocmTopology> rocm_topology;
   if (backend == BackendKind::kRocm) {
     rocm_topology = ConfigureRocmVisibility();
+    // Without a successful hardware probe, only local plugins may be tried.
+    if (!rocm_topology.has_value()) fetch_backend = false;
     if (rocm_topology.has_value() && !rocm_topology->has_supported_device) {
       if (required && rocm_topology->has_unsupported_device) {
         throw std::runtime_error(RocmUnsupportedSystemMessage(*rocm_topology) +
@@ -212,6 +235,7 @@ LoadedPlugin LoadPlugin(
       return {
           .backend = backend,
           .registry = nullptr,
+          .hardware_detected = rocm_topology->has_unsupported_device,
           .failure = rocm_topology->has_unsupported_device
                          ? std::make_exception_ptr(std::runtime_error(
                                RocmUnsupportedSystemMessage(*rocm_topology)))
@@ -260,6 +284,7 @@ LoadedPlugin LoadPlugin(
     }
     return {.backend = backend,
             .registry = nullptr,
+            .hardware_detected = true,
             .missing_with_download_disabled = no_download || !fetch_backend,
             .failure = (no_download || !fetch_backend) ? nullptr : failure};
   } catch (...) {
@@ -268,7 +293,10 @@ LoadedPlugin LoadPlugin(
     if (required) {
       throw;
     }
-    return {.backend = backend, .registry = nullptr, .failure = failure};
+    return {.backend = backend,
+            .registry = nullptr,
+            .hardware_detected = true,
+            .failure = failure};
   }
   const std::filesystem::path plugin_path =
       prepared.has_value() ? prepared->path : resolved.path;
@@ -299,6 +327,7 @@ LoadedPlugin LoadPlugin(
   return {
       .backend = backend,
       .registry = nullptr,
+      .hardware_detected = true,
       .failure = std::make_exception_ptr(std::runtime_error(failure_message))};
 }
 
@@ -518,10 +547,36 @@ ResolvedBackendPlugin ResolveBackendPlugin(
   throw MissingBackendPluginError(message);
 }
 
+std::string DiscoverBackendSource(BackendKind backend) {
+#ifdef LLM_CC_DYNAMIC_BACKENDS
+  std::optional<std::filesystem::path> directory;
+  if (const char* env = std::getenv("LLM_CC_BACKEND_DIR"); env && *env)
+    directory = env;
+  try {
+    const auto resolved = ResolveBackendPlugin(
+        backend, directory, PluginCandidates(backend),
+        [backend] { return HasEmbeddedPayload(BackendName(backend)); },
+        [] { return RuntimeRoot(); }, LLM_CC_VERSION, LLM_CC_GIT_SHA, {},
+        [] { return InstalledBackendRoot(); });
+    if (resolved.source == BackendPluginSource::kEmbedded)
+      return "embedded (device untested)";
+    return resolved.path.string() + " (device untested)";
+  } catch (const MissingBackendPluginError&) {
+    return "none (device untested)";
+  } catch (const std::exception& error) {
+    return "invalid: " + std::string(error.what()) + " (device untested)";
+  }
+#else
+  static_cast<void>(backend);
+  return "none (device untested)";
+#endif
+}
+
 BackendRuntime::BackendRuntime(
     BackendKind requested, std::int32_t gpu_layers, std::string_view version,
     const std::optional<std::filesystem::path>& backend_directory,
     bool no_download, bool fetch_backend) {
+  ReportPhase("resolving backend and probing GPU hardware");
   if (gpu_layers < -1) {
     throw std::invalid_argument("--gpu-layers must be -1 or greater");
   }
@@ -535,19 +590,19 @@ BackendRuntime::BackendRuntime(
   if (load_gpu && backend_directory.has_value()) {
     ValidateBackendDirectory(*backend_directory);
   }
-  if (requested == BackendKind::kCuda ||
-      (gpu_layers != 0 && requested == BackendKind::kAuto)) {
-    gpu_plugins[gpu_count++] =
-        LoadPlugin(BackendKind::kCuda, requested == BackendKind::kCuda,
-                   backend_directory, version, no_download, fetch_backend);
-  }
-  if (requested == BackendKind::kRocm ||
-      (gpu_layers != 0 && requested == BackendKind::kAuto)) {
-    gpu_plugins[gpu_count++] =
-        LoadPlugin(BackendKind::kRocm, requested == BackendKind::kRocm,
-                   backend_directory, version, no_download, fetch_backend);
-  }
   try {
+    if (requested == BackendKind::kCuda ||
+        (gpu_layers != 0 && requested == BackendKind::kAuto)) {
+      gpu_plugins[gpu_count++] =
+          LoadPlugin(BackendKind::kCuda, requested == BackendKind::kCuda,
+                     backend_directory, version, no_download, fetch_backend);
+    }
+    if (requested == BackendKind::kRocm ||
+        (gpu_layers != 0 && requested == BackendKind::kAuto)) {
+      gpu_plugins[gpu_count++] =
+          LoadPlugin(BackendKind::kRocm, requested == BackendKind::kRocm,
+                     backend_directory, version, no_download, fetch_backend);
+    }
     const std::vector<BackendDevice> devices =
         Inventory(std::span<const LoadedPlugin>(gpu_plugins.data(), gpu_count));
     if (devices.empty()) {
@@ -562,9 +617,18 @@ BackendRuntime::BackendRuntime(
       if (missing != gpu_plugins.begin() + gpu_count) {
         throw std::runtime_error(MissingGpuBackendMessage(missing->backend));
       }
-      const auto failed = std::find_if(
+      auto failed = std::find_if(
           gpu_plugins.begin(), gpu_plugins.begin() + gpu_count,
-          [](const LoadedPlugin& plugin) { return plugin.failure != nullptr; });
+          [](const LoadedPlugin& plugin) {
+            return plugin.hardware_detected && plugin.failure != nullptr;
+          });
+      if (failed == gpu_plugins.begin() + gpu_count) {
+        failed =
+            std::find_if(gpu_plugins.begin(), gpu_plugins.begin() + gpu_count,
+                         [](const LoadedPlugin& plugin) {
+                           return plugin.failure != nullptr;
+                         });
+      }
       if (failed != gpu_plugins.begin() + gpu_count) {
         try {
           std::rethrow_exception(failed->failure);
@@ -626,6 +690,36 @@ BackendRuntime::BackendRuntime(
 #endif
 #endif
   llama_backend_init();
+  std::string description;
+  for (std::size_t index = 0; index < ggml_backend_dev_count(); ++index) {
+    auto device = ggml_backend_dev_get(index);
+    const auto type = ggml_backend_dev_type(device);
+    if (gpu_layers != 0 && (type == GGML_BACKEND_DEVICE_TYPE_GPU ||
+                            type == GGML_BACKEND_DEVICE_TYPE_IGPU)) {
+      if (!description.empty()) description += ", ";
+      description += ggml_backend_dev_description(device);
+    }
+  }
+  if (CliSessionActive() && gpu_layers != 0 && description.empty()) {
+    llama_backend_free();
+#ifdef LLM_CC_DYNAMIC_BACKENDS
+    LoadedPlugin plugin{
+        .backend = selected_,
+        .registry = static_cast<ggml_backend_reg_t>(plugin_registry_),
+        .backing_fd = plugin_backing_fd_,
+        .driver_handle = driver_handle_};
+    UnloadPlugin(plugin);
+#endif
+    throw std::runtime_error(
+        "no supported GPU device is available; use --force-cpu to opt into CPU "
+        "execution");
+  }
+  ReportPhase("resolved backend=" +
+              std::string(selected_ == BackendKind::kAuto
+                              ? "metal"
+                              : BackendName(selected_)) +
+              " device=" + (description.empty() ? "CPU" : description) +
+              " gpu_layers=" + std::to_string(gpu_layers));
 }
 
 BackendRuntime::~BackendRuntime() {

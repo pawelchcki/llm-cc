@@ -64,6 +64,7 @@ const nlohmann::json& FileEvent(const std::vector<nlohmann::json>& events) {
 }  // namespace
 
 int main() {  // NOLINT(bugprone-exception-escape)
+  using llmcc::test::Expect;
   namespace fs = std::filesystem;
   const char* test_srcdir = std::getenv("TEST_SRCDIR");
   const char* test_workspace = std::getenv("TEST_WORKSPACE");
@@ -128,7 +129,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(Run(cpu_gpu_command) != 0,
                       "CPU backend rejects GPU offload");
   llmcc::test::Expect(
-      Read(backend_error).find("--backend cpu") != std::string::npos,
+      Read(backend_error).find("contradictory CPU") != std::string::npos,
       "CPU backend rejection is explained");
 
   const fs::path empty_repository = fs::path(test_tmpdir) / "empty-repository";
@@ -191,8 +192,32 @@ int main() {  // NOLINT(bugprone-exception-escape)
                       "invalid hierarchy mode is rejected");
   llmcc::test::Expect(
       Run(Quote(binary) + " " + Quote(empty_repository) +
-          " --entropy-reduction device >/dev/null 2>&1") != 0,
+          " --force-cpu --entropy-reduction device >/dev/null 2>&1") != 0,
       "empty discovery rejects device reduction without full GPU offload");
+
+  for (const std::string options :
+       {"--force-cpu --backend cuda", "--backend cuda --force-cpu",
+        "--force-cpu --gpu-layers -1", "--gpu-layers -1 --force-cpu",
+        "--backend cpu --gpu-layers 2", "--gpu-layers 2 --backend cpu",
+        "--backend rocm --gpu-layers 0", "--gpu-layers 0 --backend rocm"}) {
+    for (const std::string prefix :
+         {" " + Quote(empty_repository),
+          std::string(" score --model missing.gguf --prompt x")}) {
+      Expect(Run(Quote(binary) + prefix + " " + options + " >/dev/null 2>" +
+                 Quote(invalid_options_error)) != 0,
+             "contradictory execution options fail in either order");
+      Expect(Read(invalid_options_error).find("contradictory CPU") !=
+                 std::string::npos,
+             "contradiction diagnosed before hardware or downloads");
+    }
+  }
+  for (const std::string options : {"", "--backend cuda", "--backend rocm"}) {
+    Expect(Run(Quote(binary) + " " + Quote(empty_repository) + " " + options +
+               " --no-download >" + Quote(empty_output) + " 2>/dev/null") == 0,
+           "GPU defaults resolve without work for empty discovery");
+    Expect(ReadEvents(empty_output)[1]["gpu_layers"] == -1,
+           "omitted GPU layers mean full offload");
+  }
 
   const fs::path removed_option_error =
       fs::path(test_tmpdir) / "removed-option-error.txt";
@@ -251,11 +276,25 @@ int main() {  // NOLINT(bugprone-exception-escape)
       Read(model_option_error).find("valid model names") != std::string::npos,
       "unknown registered model lists valid names");
 
-  const int uncached_model =
-      Run("LLM_CC_CACHE_DIR=" + Quote(available_cache) + " " + Quote(binary) +
-          " " + Quote(fixtures / "sample.rs") +
-          " --model-name qwen2.5-coder-0.5b-q4_k_m --no-download 2>" +
-          Quote(model_option_error) + " >/dev/null");
+  const fs::path pipe_output = fs::path(test_tmpdir) / "pipe-score.jsonl";
+  const fs::path pipe_error = fs::path(test_tmpdir) / "pipe-score.err";
+  const std::string piped =
+      "printf 'y\\nscoring text' | setsid env LLM_CC_CACHE_DIR=" +
+      Quote(available_cache) + " " + Quote(binary) +
+      " score --force-cpu --model-name qwen2.5-coder-0.5b-q4_k_m >" +
+      Quote(pipe_output) + " 2>" + Quote(pipe_error);
+#ifdef __linux__
+  Expect(Run(piped) != 0, "redirected scoring does not consent using input");
+  Expect(Read(pipe_error).find("--assume-yes") != std::string::npos &&
+             Read(pipe_output).empty(),
+         "missing terminal exits with instructions and no scoring output");
+#endif
+
+  const int uncached_model = Run(
+      "LLM_CC_CACHE_DIR=" + Quote(available_cache) + " " + Quote(binary) + " " +
+      Quote(fixtures / "sample.rs") +
+      " --force-cpu --model-name qwen2.5-coder-0.5b-q4_k_m --no-download 2>" +
+      Quote(model_option_error) + " >/dev/null");
   llmcc::test::Expect(
       WIFEXITED(uncached_model) && WEXITSTATUS(uncached_model) == 2,
       "uncached registered model fails without downloading");
@@ -335,8 +374,9 @@ int main() {  // NOLINT(bugprone-exception-escape)
                         0, "empty backend list succeeds");
   const std::string backend_list = Read(backend_list_output);
   llmcc::test::Expect(
-      backend_list.find("cuda\tnot cached") != std::string::npos &&
-          backend_list.find("rocm\tnot cached") != std::string::npos,
+      backend_list.find("cuda\tbundle-cache=not cached") != std::string::npos &&
+          backend_list.find("rocm\tbundle-cache=not cached") !=
+              std::string::npos,
       "empty backend list reports both bundles as not cached");
 
   const fs::path backend_error_output =
@@ -348,7 +388,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
                           WEXITSTATUS(disabled_backend_fetch) == 2,
                       "backend fetch with --no-download exits 2");
   llmcc::test::Expect(
-      Read(backend_error_output).find("cannot be used with --no-download") !=
+      Read(backend_error_output).find("--no-download forbids") !=
           std::string::npos,
       "contradictory backend fetch options are explained");
 
@@ -429,7 +469,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
   const auto [preprocessed, offsets] =
       llmcc::StripComments(Read(source), llmcc::Language::kRust);
   static_cast<void>(offsets);
-  // The cache-only command below keeps the default --gpu-layers 0, which
+  // The cache-only command below explicitly requests CPU, which
   // RunAnalyze resolves to kCpu in every backend configuration.
   constexpr std::string_view backend = "cpu";
   const auto identity = llmcc::InspectModel(
@@ -455,9 +495,9 @@ int main() {  // NOLINT(bugprone-exception-escape)
            .bytes = preprocessed.substr(second_newline + 1),
            .entropy = 0.4}});
   const fs::path analysis_output = fs::path(test_tmpdir) / "analysis.jsonl";
-  const std::string analysis_command = Quote(binary) + " " + Quote(source) +
-                                       " --model " + Quote(fake_model) + " >" +
-                                       Quote(analysis_output);
+  const std::string analysis_command =
+      Quote(binary) + " --force-cpu " + Quote(source) + " --model " +
+      Quote(fake_model) + " >" + Quote(analysis_output);
   llmcc::test::ExpectEq(Run(analysis_command), 0,
                         "cache-only analysis succeeds without model load");
   const std::vector<nlohmann::json> events = ReadEvents(analysis_output);
@@ -492,7 +532,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
 
   const fs::path progress_output = fs::path(test_tmpdir) / "progress.txt";
   llmcc::test::ExpectEq(
-      Run(Quote(binary) + " " + Quote(source) + " --model " +
+      Run(Quote(binary) + " --force-cpu " + Quote(source) + " --model " +
           Quote(fake_model) + " --progress always >/dev/null 2>" +
           Quote(progress_output)),
       0, "explicit progress succeeds on a cache-only run");
@@ -503,10 +543,11 @@ int main() {  // NOLINT(bugprone-exception-escape)
 
   const fs::path reference_output =
       fs::path(test_tmpdir) / "analysis-reference.jsonl";
-  llmcc::test::ExpectEq(Run(Quote(binary) + " " + Quote(source) + " --model " +
-                            Quote(fake_model) + " --hierarchy reference >" +
-                            Quote(reference_output)),
-                        0, "reference hierarchy reuses cached entropy");
+  llmcc::test::ExpectEq(
+      Run(Quote(binary) + " --force-cpu " + Quote(source) + " --model " +
+          Quote(fake_model) + " --hierarchy reference >" +
+          Quote(reference_output)),
+      0, "reference hierarchy reuses cached entropy");
   const auto reference_events = ReadEvents(reference_output);
   const auto& reference_file = FileEvent(reference_events);
   llmcc::test::Expect(reference_file["hierarchy_mode"] == "reference" &&
@@ -531,7 +572,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
            {llmcc::Language::kCSharp,
             "class Main { int CSharpMethod() { return 1; } }\n"}},
       };
-  std::string multi_command = Quote(binary);
+  std::string multi_command = Quote(binary) + " --force-cpu";
   for (const auto& [filename, specification] : additional_sources) {
     const auto& [language, contents] = specification;
     const fs::path path = repository / filename;
@@ -578,8 +619,9 @@ int main() {  // NOLINT(bugprone-exception-escape)
   const fs::path alias_output = fs::path(test_tmpdir) / "language-alias.jsonl";
   const fs::path javascript_source = repository / "module.mjs";
   llmcc::test::ExpectEq(
-      Run(Quote(binary) + " " + Quote(javascript_source) + " --lang node.js" +
-          " --model " + Quote(fake_model) + " >" + Quote(alias_output)),
+      Run(Quote(binary) + " --force-cpu " + Quote(javascript_source) +
+          " --lang node.js" + " --model " + Quote(fake_model) + " >" +
+          Quote(alias_output)),
       0, "language alias can force CLI selection");
   const auto alias_events = ReadEvents(alias_output);
   llmcc::test::Expect(alias_events[1]["language"] == "javascript" &&
@@ -623,10 +665,10 @@ int main() {  // NOLINT(bugprone-exception-escape)
                                          .bytes = unscored_preprocessed,
                                          .entropy = std::nullopt}});
   const fs::path mixed_output = fs::path(test_tmpdir) / "mixed.jsonl";
-  llmcc::test::ExpectEq(
-      Run(Quote(binary) + " " + Quote(source) + " " + Quote(unscored_source) +
-          " --model " + Quote(fake_model) + " >" + Quote(mixed_output)),
-      0, "mixed scored and unscored analysis succeeds");
+  llmcc::test::ExpectEq(Run(Quote(binary) + " --force-cpu " + Quote(source) +
+                            " " + Quote(unscored_source) + " --model " +
+                            Quote(fake_model) + " >" + Quote(mixed_output)),
+                        0, "mixed scored and unscored analysis succeeds");
   const std::vector<nlohmann::json> mixed_events = ReadEvents(mixed_output);
   const nlohmann::json& mixed_totals = mixed_events.back();
   llmcc::test::Expect(
@@ -660,10 +702,10 @@ int main() {  // NOLINT(bugprone-exception-escape)
   const fs::path unsafe_source = repository / std::string("unsafe\x1b[31m.rs");
   Write(unsafe_source, "fn unsafe_source() {}\n");
   const fs::path unsafe_error = fs::path(test_tmpdir) / "unsafe-error.txt";
-  const std::string unsafe_command = Quote(binary) + " " + Quote(source) + " " +
-                                     Quote(unsafe_source) + " --model " +
-                                     Quote(fake_model) + " --format text 2>" +
-                                     Quote(unsafe_error) + " >/dev/null";
+  const std::string unsafe_command =
+      Quote(binary) + " --force-cpu " + Quote(source) + " " +
+      Quote(unsafe_source) + " --model " + Quote(fake_model) +
+      " --format text 2>" + Quote(unsafe_error) + " >/dev/null";
   llmcc::test::Expect(Run(unsafe_command) != 0,
                       "uncached source reports a text-mode error");
   const std::string unsafe_diagnostic = Read(unsafe_error);
@@ -692,7 +734,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
   const fs::path conversion_output =
       fs::path(test_tmpdir) / "conversion-output.txt";
   const std::string conversion_command =
-      Quote(binary) + " " + Quote(conversion_source) + " --model " +
+      Quote(binary) + " --force-cpu " + Quote(conversion_source) + " --model " +
       Quote(fake_model) + " --format text >" + Quote(conversion_output);
   llmcc::test::ExpectEq(Run(conversion_command), 0,
                         "multiline conversion operator analysis succeeds");
@@ -715,7 +757,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
   const fs::path conflicting_tau_error =
       fs::path(test_tmpdir) / "conflicting-tau.txt";
   const int conflicting_tau =
-      Run(Quote(binary) + " " + Quote(source) +
+      Run(Quote(binary) + " --force-cpu " + Quote(source) +
           " --tau 0.5 --tau-percentile 90 2>" + Quote(conflicting_tau_error));
   llmcc::test::Expect(
       WIFEXITED(conflicting_tau) && WEXITSTATUS(conflicting_tau) == 2,

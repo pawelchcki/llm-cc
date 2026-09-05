@@ -50,6 +50,7 @@
 #include "src/download.h"
 #include "src/inference_guard.h"
 #include "src/models.h"
+#include "src/progress.h"
 #include "src/scoring.h"
 
 namespace {
@@ -73,6 +74,9 @@ struct Arguments {
   std::uint32_t context_size = llmcc::kDefaultContextSize;
   std::int32_t threads = 0;
   std::int32_t gpu_layers = 0;
+  std::optional<std::int32_t> requested_gpu_layers;
+  bool force_cpu = false;
+  bool assume_yes = false;
   llmcc::BackendKind backend = llmcc::BackendKind::kAuto;
   std::uint32_t batch_size = llmcc::kDefaultBatchSize;
   llmcc::EntropyReduction entropy_reduction = llmcc::EntropyReduction::kAuto;
@@ -80,6 +84,7 @@ struct Arguments {
   bool entropy = false;
   bool no_download = false;
   bool override_memory_check = false;
+  std::string progress = "auto";
 };
 
 constexpr std::string_view kUsageBeforeContext =
@@ -101,12 +106,16 @@ constexpr std::string_view kUsageBeforeContext =
 constexpr std::string_view kUsageAfterContext =
     ")\n"
     "  --threads N            inference threads (default: hardware count)\n"
-    "  --gpu-layers N         layers to offload; -1 means all (default: 0)\n"
+    "  --gpu-layers N         layers to offload; -1 means all (default: -1; 0 "
+    "opts into CPU)\n"
+    "  --force-cpu           explicitly use CPU with zero offload\n"
+    "  -y, --assume-yes      accept missing model/backend downloads\n"
     "  --backend NAME         auto, cpu, cuda, or rocm (default: auto)\n"
     "  --batch-size N         decode rows per batch (default: 64)\n"
     "  --entropy-reduction M  auto, host, or device (default: auto)\n"
     "  --backend-dir DIR      GPU backend bundle/shared-library directory\n"
     "  --override-memory-check  bypass the preflight memory check\n"
+    "  --progress M           auto, always, or never on stderr\n"
     "  --entropy              emit full-vocabulary next-token entropy\n"
     "  -V, --version          show the program version\n"
     "  -h, --help             show this help\n";
@@ -213,6 +222,7 @@ void SetOption(Arguments& arguments, std::string_view option,
     }
   } else if (option == "--gpu-layers") {
     arguments.gpu_layers = ParseInteger<std::int32_t>(option, value);
+    arguments.requested_gpu_layers = arguments.gpu_layers;
     if (arguments.gpu_layers < -1) {
       Usage("--gpu-layers must be -1 or greater");
     }
@@ -222,6 +232,10 @@ void SetOption(Arguments& arguments, std::string_view option,
     } catch (const std::invalid_argument& error) {
       Usage(error.what());
     }
+  } else if (option == "--progress") {
+    if (value != "auto" && value != "always" && value != "never")
+      Usage("--progress expects auto, always, or never");
+    arguments.progress = value;
   } else if (option == "--backend-dir") {
     arguments.backend_directory = std::filesystem::u8path(value);
   } else {
@@ -242,6 +256,14 @@ Arguments ParseArguments(int argc, char** argv) {
     }
     if (option == "--entropy") {
       arguments.entropy = true;
+      continue;
+    }
+    if (option == "--force-cpu") {
+      arguments.force_cpu = true;
+      continue;
+    }
+    if (option == "--assume-yes" || option == "-y") {
+      arguments.assume_yes = true;
       continue;
     }
     if (option == "--no-download") {
@@ -267,6 +289,19 @@ Arguments ParseArguments(int argc, char** argv) {
   }
   if (arguments.model.empty() && !arguments.model_name.has_value()) {
     Usage("--model or --model-name is required");
+  }
+  try {
+    const auto execution = llmcc::ResolveExecutionOptions(
+        arguments.backend, arguments.requested_gpu_layers, arguments.force_cpu);
+    arguments.backend = execution.backend;
+    arguments.gpu_layers = execution.gpu_layers;
+  } catch (const std::invalid_argument& error) {
+    Usage(error.what());
+  }
+  if (arguments.entropy_reduction == llmcc::EntropyReduction::kDevice &&
+      arguments.gpu_layers != -1) {
+    Usage(
+        "device entropy reduction requires full GPU offload (--gpu-layers -1)");
   }
   ApplyBackendDirectoryEnvironment(arguments);
   if (arguments.backend_directory.has_value()) {
@@ -482,14 +517,19 @@ void CheckAvailableMemory(const Arguments& arguments, bool use_gpu,
   if (const auto warning = llmcc::CodexSandboxGpuWarning(
           gpu_available, std::getenv("CODEX_SANDBOX"));
       warning.has_value()) {
-    std::cerr << "warning: " << *warning << '\n';
+    llmcc::ReportWarning(*warning);
+  }
+  if (!use_gpu && llmcc::CliSessionActive()) {
+    llmcc::ReportWarning("CPU inference can be slow. " +
+                         llmcc::SmallerModelGuidance(HostAvailableMemory()));
   }
   if (arguments.override_memory_check) {
     return;
   }
   if (arguments.gpu_layers > 0) {
-    std::cerr << "warning: partial GPU offload memory use depends on model "
-                 "architecture; skipping memory check\n";
+    llmcc::ReportWarning(
+        "partial GPU offload memory use depends on model architecture; "
+        "skipping memory check");
     return;
   }
 
@@ -499,17 +539,21 @@ void CheckAvailableMemory(const Arguments& arguments, bool use_gpu,
     if (use_gpu && !gpu_available.has_value()) {
       const llmcc::MemoryCheckResult result =
           llmcc::CheckMemory(model_bytes, 0, gpu_available, true, false);
-      throw std::runtime_error(result.error);
+      throw std::runtime_error(result.error + "\n" +
+                               llmcc::SmallerModelGuidance(
+                                   use_gpu ? gpu_available : host_available));
     }
-    std::cerr << "warning: could not determine available host memory; "
-                 "skipping memory check\n";
+    llmcc::ReportWarning(
+        "could not determine available host memory; skipping memory check");
     return;
   }
 
   const llmcc::MemoryCheckResult result = llmcc::CheckMemory(
       model_bytes, *host_available, gpu_available, use_gpu, false);
   if (!result.ok) {
-    throw std::runtime_error(result.error);
+    throw std::runtime_error(
+        result.error + "\n" +
+        llmcc::SmallerModelGuidance(use_gpu ? gpu_available : host_available));
   }
 }
 
@@ -787,6 +831,7 @@ void ScoreInput(llama_model* model, llmcc::BackendLogCapture& backend_log,
   const bool prepend_bos =
       options.bos == BosMode::kAlways ||
       (options.bos == BosMode::kAuto && llama_vocab_get_add_bos(vocabulary));
+  llmcc::ReportPhase("tokenizing input");
   std::vector<llama_token> tokens = Tokenize(vocabulary, std::string(input));
   if (prepend_bos) {
     const llama_token bos_token = llama_vocab_bos(vocabulary);
@@ -823,6 +868,8 @@ void ScoreInput(llama_model* model, llmcc::BackendLogCapture& backend_log,
   }
 
   const std::size_t total_scored_tokens = tokens.size() - 1;
+  llmcc::ReportPhase("inference");
+  llmcc::ReportCounter(0, total_scored_tokens, "tokens");
   if (options.progress != nullptr && *options.progress) {
     (*options.progress)(0, total_scored_tokens);
   }
@@ -967,6 +1014,7 @@ void ScoreInput(llama_model* model, llmcc::BackendLogCapture& backend_log,
       negative_log_likelihood -= score.log_probability;
       ++scored;
     }
+    llmcc::ReportCounter(scored, total_scored_tokens, "tokens");
     if (options.progress != nullptr && *options.progress) {
       (*options.progress)(scored, total_scored_tokens);
     }
@@ -1005,6 +1053,7 @@ int Run(const Arguments& arguments, std::ostream& output,
   llama_model_params model_parameters = llama_model_default_params();
   model_parameters.n_gpu_layers = arguments.gpu_layers;
   const std::string model_path = Utf8Path(arguments.model);
+  llmcc::ReportPhase("loading model");
   Model model(llama_model_load_from_file(model_path.c_str(), model_parameters),
               llama_model_free);
   if (!model) {
@@ -1086,6 +1135,7 @@ class EntropyScorer::Impl {
     llama_model_params parameters = llama_model_default_params();
     parameters.n_gpu_layers = inference_options.gpu_layers;
     const std::string utf8_model_path = Utf8Path(model_path);
+    ReportPhase("loading model");
     model_.reset(
         llama_model_load_from_file(utf8_model_path.c_str(), parameters));
     if (!model_) {
@@ -1221,15 +1271,35 @@ std::string ScoreEntropyJsonl(const std::filesystem::path& model,
 int RunScoreCommand(int argc, char** argv) {
   try {
     Arguments arguments = ParseArguments(argc, argv);
+    ProgressReporter progress(arguments.progress);
+    CliSession session(progress, arguments.assume_yes, arguments.no_download);
+    progress.Phase("resolving inference backend");
+    if (arguments.gpu_layers != 0) {
+      BackendLogCapture capture;
+      try {
+        BackendRuntime backend(arguments.backend, arguments.gpu_layers,
+                               LLM_CC_VERSION, arguments.backend_directory,
+                               arguments.no_download, true);
+        arguments.backend = backend.selected();
+      } catch (const std::exception& error) {
+        const auto detail = capture.Error();
+        throw std::runtime_error(std::string(error.what()) +
+                                 (detail.empty() ? "" : ": " + detail));
+      }
+    }
+    progress.Phase("resolving model");
     if (arguments.model_name.has_value()) {
       arguments.model =
           ResolveModel(std::nullopt, *FindModel(*arguments.model_name),
                        arguments.no_download, std::filesystem::current_path(),
                        CacheDir(), DownloadModel);
     }
+    progress.Phase("reading scoring input");
     return Run(arguments, std::cout, std::cerr);
   } catch (const std::exception& error) {
-    std::cerr << "error: " << error.what() << '\n';
+    std::cerr << "error: " << error.what() << '\n'
+              << CpuRecoveryCommand(argc, argv, true) << '\n'
+              << SmallerModelGuidance() << '\n';
     return 1;
   }
 }

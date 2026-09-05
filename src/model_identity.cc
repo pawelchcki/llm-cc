@@ -8,6 +8,7 @@
 #include <stdexcept>
 
 #include "src/cache_io.h"
+#include "src/progress.h"
 #include "src/sha256.h"
 
 #if !defined(_WIN32)
@@ -153,12 +154,17 @@ std::optional<std::string> ReadMemo(const std::filesystem::path& path,
 }
 
 std::string HashFile(const std::filesystem::path& path) {
+  ReportPhase("hashing model " + path.string());
   std::ifstream input(path, std::ios::binary);
   if (!input) throw std::runtime_error("cannot open model " + path.string());
   Sha256 hash;
   // Keep hashing bounded in memory, including on platforms with small stacks.
   std::array<char, 64 * 1024> buffer{};
+  std::uint64_t completed = 0;
+  const auto total = std::filesystem::file_size(path);
   while (input.read(buffer.data(), buffer.size()) || input.gcount() != 0) {
+    completed += static_cast<std::uint64_t>(input.gcount());
+    ReportCounter(completed, total, "bytes");
     hash.Update(std::span<const char>(
         buffer.data(), static_cast<std::size_t>(input.gcount())));
   }

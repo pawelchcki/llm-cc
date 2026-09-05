@@ -17,6 +17,8 @@
 #include <utility>
 #include <vector>
 
+#include "src/progress.h"
+
 #if defined(__linux__) || defined(__APPLE__)
 #include <fcntl.h>
 #include <sys/file.h>
@@ -564,12 +566,14 @@ bool CacheIsValid(const BackendFetchOptions& options) {
 std::optional<fs::path> DownloadManifest(const BundleDownloader& download,
                                          std::string_view base,
                                          std::string_view artifact,
-                                         const fs::path& destination) {
+                                         const fs::path& destination,
+                                         bool required) {
   if (base.empty()) {
     return std::nullopt;
   }
   const std::array files = {std::string(artifact) + ".manifest.json",
                             std::string("manifest.json")};
+  std::string failures;
   for (std::size_t index = 0; index < files.size(); ++index) {
     RemoveFile(destination);
     RemoveFile(PartialPath(destination));
@@ -579,11 +583,14 @@ std::optional<fs::path> DownloadManifest(const BundleDownloader& download,
                 .show_progress = index != 0,
                 .record_in_model_manifest = false});
       return destination;
-    } catch (const std::exception&) {
+    } catch (const std::exception& error) {
+      failures += std::string(error.what()) + "; ";
       RemoveFile(destination);
       RemoveFile(PartialPath(destination));
     }
   }
+  if (required)
+    throw std::runtime_error("backend manifest download failed: " + failures);
   return std::nullopt;
 }
 
@@ -634,6 +641,7 @@ fs::path BackendBundlePath(const BackendFetchOptions& options) {
 }
 
 void VerifyBackendBundle(const BackendFetchOptions& options) {
+  ReportPhase("verifying backend checksum and build commit");
   const fs::path bundle = BackendBundlePath(options);
   const fs::path checksum = ChecksumPath(bundle);
   const fs::path manifest =
@@ -674,6 +682,7 @@ fs::path FetchBackendBundle(const BackendFetchOptions& options,
     return bundle;
   }
 
+  CheckDownloadAllowed();
   const bool has_explicit_url =
       options.explicit_url.has_value() && !options.explicit_url->empty();
   if (!has_explicit_url && options.base_url.empty()) {
@@ -696,16 +705,20 @@ fs::path FetchBackendBundle(const BackendFetchOptions& options,
     CheckNotSymlink(path);
     CheckNotSymlink(PartialPath(path));
   }
+  ReportPhase("waiting for backend cache lock");
   BackendCacheLock cache_lock(bundle.parent_path() /
                               ("." + std::string(options.name) + ".lock"));
   if (CacheIsValid(options)) {
     return bundle;
   }
-  RemoveFile(bundle);
-
   const std::string bundle_url =
       has_explicit_url ? *options.explicit_url
                        : JoinUrl(options.base_url, artifact + ".bundle");
+  ConfirmDownload(bundle_url, bundle,
+                  "backend bundle (includes checksum " + bundle_url +
+                      ".sha256 and manifest from " + UrlParent(bundle_url) +
+                      ")");
+  RemoveFile(bundle);
   const std::string checksum_url = bundle_url + ".sha256";
   const std::string manifest_base =
       has_explicit_url ? UrlParent(bundle_url) : std::string(options.base_url);
@@ -719,8 +732,8 @@ fs::path FetchBackendBundle(const BackendFetchOptions& options,
   try {
     download(bundle_url, bundle, download_options);
     download(checksum_url, checksum, download_options);
-    const std::optional<fs::path> downloaded_manifest =
-        DownloadManifest(download, manifest_base, artifact, manifest);
+    const std::optional<fs::path> downloaded_manifest = DownloadManifest(
+        download, manifest_base, artifact, manifest, !options.git_sha.empty());
     if (!options.git_sha.empty()) {
       if (!downloaded_manifest.has_value()) {
         throw std::runtime_error(
@@ -728,9 +741,16 @@ fs::path FetchBackendBundle(const BackendFetchOptions& options,
       }
     }
     VerifyBackendBundle(options);
-  } catch (...) {
+  } catch (const std::exception& error) {
     RemoveFile(bundle);
-    throw;
+    throw std::runtime_error(std::string(error.what()) + "; backend artifact " +
+                             artifact + " for build commit " +
+                             std::string(options.git_sha) +
+                             "; publication may be unavailable. Recover with "
+                             "'llm-cc backends fetch " +
+                             std::string(options.name) +
+                             " --url URL --assume-yes', --backend-dir DIR (or "
+                             "LLM_CC_BACKEND_DIR), or --force-cpu");
   }
   return bundle;
 }

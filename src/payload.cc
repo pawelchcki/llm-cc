@@ -4,6 +4,8 @@
 #include <optional>
 #include <stdexcept>
 
+#include "src/progress.h"
+
 namespace llmcc {
 
 namespace {
@@ -542,12 +544,14 @@ PreparedPayload PrepareRocm(int executable_fd, const PayloadLocation& location,
     throw std::runtime_error("cannot open ROCm runtime cache lock: " +
                              std::string(std::strerror(errno)));
   }
+  ReportPhase("waiting for backend extraction lock");
   while (flock(lock_fd.get(), LOCK_EX) != 0) {
     if (errno != EINTR) {
       throw std::runtime_error("cannot lock ROCm runtime cache: " +
                                std::string(std::strerror(errno)));
     }
   }
+  ReportPhase("verifying and extracting ROCm backend");
   const fs::path final = root / hash;
   if (!CacheIsValid(final, entries, hash)) {
     if (fs::exists(final)) {
@@ -609,6 +613,12 @@ PreparedPayload PreparePayload(int fd, const PayloadLocation& location,
 
 }  // namespace
 
+bool HasEmbeddedPayload(std::string_view name) {
+  FileDescriptor executable(open("/proc/self/exe", O_RDONLY | O_CLOEXEC));
+  return executable.get() >= 0 &&
+         FindPayload(executable.get(), name).has_value();
+}
+
 std::optional<PreparedPayload> PrepareEmbeddedPayloadFromExecutable(
     const fs::path& executable_path, std::string_view name) {
   FileDescriptor executable(
@@ -626,6 +636,7 @@ std::optional<PreparedPayload> PrepareEmbeddedPayloadFromExecutable(
 
 std::optional<PreparedPayload> PrepareEmbeddedPayloadFromFile(
     const fs::path& bundle, std::string_view name, bool already_verified) {
+  ReportPhase("verifying and extracting backend payload");
   FileDescriptor input(open(bundle.c_str(), O_RDONLY | O_CLOEXEC));
   if (input.get() < 0) {
     if (errno == ENOENT) {
@@ -656,6 +667,8 @@ std::optional<PreparedPayload> PrepareEmbeddedPayload(std::string_view name) {
 #else
 
 namespace llmcc {
+
+bool HasEmbeddedPayload(std::string_view) { return false; }
 
 std::optional<PreparedPayload> PrepareEmbeddedPayload(std::string_view) {
   return std::nullopt;

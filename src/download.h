@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <istream>
 #include <optional>
+#include <string>
 #include <string_view>
 
 #include "src/models.h"
@@ -18,6 +19,11 @@ struct DownloadOptions {
   bool show_progress = true;
   bool record_in_model_manifest = false;
 };
+
+inline constexpr long kConnectTimeoutSeconds = 15;
+inline constexpr long kStalledTransferTimeoutSeconds = 60;
+std::string DownloadFailureMessage(std::string_view url, long status,
+                                   std::string_view detail, bool timed_out);
 
 void StreamDownload(std::istream& input, const std::filesystem::path& target,
                     std::uint64_t resume_offset,

@@ -7,6 +7,8 @@
 
 namespace llmcc {
 
+bool HasEmbeddedPayload(std::string_view name);
+
 struct PreparedPayload {
   std::filesystem::path path;
   int backing_fd = -1;

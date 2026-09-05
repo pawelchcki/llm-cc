@@ -12,6 +12,7 @@
 #include <tuple>
 
 #include "src/cache_io.h"
+#include "src/progress.h"
 
 namespace llmcc {
 namespace {
@@ -340,6 +341,7 @@ std::filesystem::path AcquireModel(std::string_view url,
     throw std::runtime_error("cannot inspect model target " + target.string() +
                              ": " + error.message());
   }
+  ReportPhase("acquiring model");
   downloader(url, target);
   error.clear();
   if (!std::filesystem::is_regular_file(target, error) || error) {
