@@ -5,191 +5,217 @@
 #include <filesystem>
 #include <fstream>
 #include <nlohmann/json.hpp>
-#include <string>
-#include <vector>
 
+#include "src/sha256.h"
 #include "src/test_util.h"
 
 namespace {
+namespace fs = std::filesystem;
 
-void Write(const std::filesystem::path& path, std::string_view value) {
-  std::filesystem::create_directories(path.parent_path());
+void Write(const fs::path& path, std::string_view value) {
+  fs::create_directories(path.parent_path());
   std::ofstream(path, std::ios::binary) << value;
 }
 
+void WriteCbor(const fs::path& path, const nlohmann::json& value) {
+  const auto bytes = nlohmann::json::to_cbor(value);
+  Write(path, {reinterpret_cast<const char*>(bytes.data()), bytes.size()});
+}
+
+llmcc::ModelIdentity Model() {
+  return {.canonical_path = "unused.gguf",
+          .size = 1,
+          .modification_time = 1,
+          .inference_abi = "test-abi",
+          .backend = "cpu",
+          .context_limit = 4096,
+          .content_digest = "model-content-digest"};
+}
+
+std::vector<llmcc::EntropyRecord> Records(std::string_view source) {
+  return {
+      {.position = 0, .bytes = std::string(source), .entropy = std::nullopt}};
+}
+
+fs::path Entry(std::string_view source, const llmcc::ModelIdentity& model) {
+  return llmcc::GlobalEntropyCacheDirectory() /
+         (llmcc::EntropyCacheKey(source, model) + ".cbor");
+}
+
+std::uint64_t Size(std::string_view source, const llmcc::ModelIdentity& model) {
+  return fs::file_size(Entry(source, model));
+}
+
+void ClearAndReset() {
+  llmcc::SetEntropyCacheTestDeleteFailure(false);
+  llmcc::SetEntropyCacheTestLimit(0);
+  llmcc::ClearEntropyCache();
+}
 }  // namespace
 
 int main() {  // NOLINT(bugprone-exception-escape)
-  namespace fs = std::filesystem;
-  const char* temporary = std::getenv("TEST_TMPDIR");
-  llmcc::test::Expect(temporary != nullptr, "TEST_TMPDIR is set");
-  const fs::path entropy_root = fs::path(temporary) / "entropy-cache";
-  setenv("LLM_CC_ENTROPY_CACHE_DIR", entropy_root.c_str(), 1);
-  const fs::path repository = fs::path(temporary) / "repository";
-  const fs::path model = fs::path(temporary) / "model.gguf";
-  fs::create_directories(repository);
-  Write(model, "model");
-  const auto identity = llmcc::InspectModel(model, "test-abi", "cpu", 4096);
-  const std::vector<llmcc::EntropyRecord> records = {
-      {.position = 0, .bytes = "a", .entropy = std::nullopt},
-      {.position = 1, .bytes = "b", .entropy = 0.5}};
-  llmcc::WriteEntropyCache(repository, "ab", identity, records);
-  auto lookup = llmcc::ReadEntropyCache(repository, "ab", identity);
-  llmcc::test::Expect(lookup.hit, "CBOR cache round trip hits");
-  llmcc::test::ExpectEq(lookup.records[1].entropy, std::optional<double>{0.5},
-                        "entropy round trips");
+  const fs::path root = fs::path(std::getenv("TEST_TMPDIR")) / "entropy-cache";
+  setenv("LLM_CC_ENTROPY_CACHE_DIR", root.c_str(), 1);
+  const auto model = Model();
+  llmcc::SetEntropyCacheTestNow(10'000'000);
 
-  const auto initial_status = llmcc::GetRepositoryCacheStatus(repository);
-  llmcc::test::ExpectEq(initial_status.entries, std::uint64_t{1},
-                        "one cache entry exists");
+  const auto records = Records("a");
+  llmcc::WriteEntropyCache("a", model, records);
+  llmcc::test::Expect(llmcc::ReadEntropyCache("a", model).hit,
+                      "global v2 entry round trips");
+  const auto status = llmcc::GetEntropyCacheStatus();
+  llmcc::test::ExpectEq(status.entries, uint64_t{1}, "one global entry exists");
+  llmcc::test::Expect(status.directory == root / "v2/entropy",
+                      "global directory uses the v2 namespace");
+  llmcc::test::ExpectEq(status.entries_by_inference_abi.at("test-abi"),
+                        uint64_t{1}, "status reports inference provenance");
+
+  auto changed = model;
+  changed.content_digest = "replacement-content-digest";
+  llmcc::test::Expect(!llmcc::ReadEntropyCache("a", changed).hit,
+                      "model content invalidates entries");
+  for (auto mutation : {0, 1, 2, 3, 4}) {
+    auto different = model;
+    if (mutation == 0) ++different.context_limit;
+    if (mutation == 1) different.inference_abi = "other-abi";
+    if (mutation == 2) different.backend = "metal";
+    if (mutation == 3) ++different.batch_size;
+    if (mutation == 4) different.reduction_policy = "host";
+    llmcc::test::Expect(!llmcc::ReadEntropyCache("a", different).hit,
+                        "every inference setting separates entries");
+  }
+
+  const auto entry = Entry("a", model);
+  Write(entry, "corrupt");
+  llmcc::test::Expect(!llmcc::ReadEntropyCache("a", model).hit,
+                      "malformed CBOR is a miss");
+  llmcc::WriteEntropyCache("a", model, records);
+  WriteCbor(entry, {{"version", 2},
+                    {"source_size", 1},
+                    {"provenance", nlohmann::json::object()},
+                    {"records", nlohmann::json::array()}});
+  llmcc::test::Expect(!llmcc::ReadEntropyCache("a", model).hit,
+                      "mismatched provenance is a miss");
+  llmcc::WriteEntropyCache("a", model, records);
+  WriteCbor(entry, {{"version", 2},
+                    {"source_size", 1},
+                    {"provenance",
+                     {{"source_sha256", llmcc::Sha256Hex("a")},
+                      {"model_sha256", model.content_digest},
+                      {"inference_abi", model.inference_abi},
+                      {"backend", model.backend},
+                      {"context_limit", model.context_limit},
+                      {"batch_size", model.batch_size},
+                      {"reduction_policy", model.reduction_policy},
+                      {"effective_reducer", model.effective_reducer}}},
+                    {"records", nlohmann::json::array()}});
+  llmcc::test::Expect(!llmcc::ReadEntropyCache("a", model).hit,
+                      "incomplete token coverage is a miss");
+
+  ClearAndReset();
+  llmcc::SetEntropyCacheTestNow(20'000'000);
+  llmcc::WriteEntropyCache("a", model, records);
+  llmcc::SetEntropyCacheTestNow(20'000'000 + llmcc::kEntropyCacheMaxAgeSeconds);
+  llmcc::test::Expect(!llmcc::ReadEntropyCache("a", model).hit,
+                      "entry expires at exactly twenty days before touch");
+
+  ClearAndReset();
+  llmcc::SetEntropyCacheTestNow(30'000'000);
+  llmcc::WriteEntropyCache("a", model, records);
+  const auto single_size = Size("a", model);
+  llmcc::SetEntropyCacheTestNow(30'000'010);
+  llmcc::WriteEntropyCache("b", model, Records("b"));
+  llmcc::SetEntropyCacheTestNow(30'000'020);
+  llmcc::test::Expect(llmcc::ReadEntropyCache("a", model).hit,
+                      "reading an unexpired entry refreshes recency");
+  llmcc::SetEntropyCacheTestLimit(single_size * 2);
+  llmcc::SetEntropyCacheTestNow(30'000'030);
+  llmcc::WriteEntropyCache("c", model, Records("c"));
+  llmcc::test::Expect(llmcc::ReadEntropyCache("a", model).hit,
+                      "recently refreshed entry survives LRU eviction");
+  llmcc::test::Expect(!llmcc::ReadEntropyCache("b", model).hit,
+                      "least recently used entry is evicted first");
+
+  ClearAndReset();
+  llmcc::SetEntropyCacheTestLimit(1);
+  llmcc::WriteEntropyCache("a", model, records);
+  llmcc::test::ExpectEq(llmcc::GetEntropyCacheStatus().entries, uint64_t{0},
+                        "oversized entry is not committed");
+
+  llmcc::SetEntropyCacheTestLimit(0);
+  llmcc::WriteEntropyCache("a", model, records);
+  const auto one_size = Size("a", model);
+  llmcc::WriteEntropyCache("b", model, Records("b"));
+  llmcc::SetEntropyCacheTestLimit(one_size * 2);
+  llmcc::SetEntropyCacheTestDeleteFailure(true);
+  llmcc::WriteEntropyCache("c", model, Records("c"));
+  llmcc::test::Expect(!llmcc::ReadEntropyCache("c", model).hit,
+                      "failed eviction skips publication");
+  llmcc::SetEntropyCacheTestDeleteFailure(false);
+
+  Write(root / "v2/accounting.json", "interrupted accounting");
+  llmcc::WriteEntropyCache("d", model, Records("d"));
+  llmcc::test::Expect(llmcc::ReadEntropyCache("d", model).hit,
+                      "malformed accounting is rebuilt");
+  // Simulate death after marking accounting dirty but before recording the
+  // committed files. A new write must reconstruct sizes rather than trust 0.
+  Write(root / "v2/accounting.json",
+        R"({"bytes":0,"entries":0,"next_expiry":0,"dirty":true})");
+  llmcc::WriteEntropyCache("e", model, Records("e"));
+  const auto recovered = llmcc::GetEntropyCacheStatus();
+  llmcc::test::Expect(recovered.bytes <= one_size * 2 && recovered.entries == 2,
+                      "dirty accounting rebuild preserves the byte budget");
+  const auto temporary =
+      llmcc::GlobalEntropyCacheDirectory() / "abandoned.cbor.tmp.test";
+  const auto metadata_temporary = root / "v2/accounting.json.tmp.abandoned";
+  Write(temporary, "temporary");
+  Write(metadata_temporary, "metadata temporary");
+  llmcc::PruneEntropyCache();
   llmcc::test::Expect(
-      !fs::exists(repository / ".llm-cc-cache") &&
-          initial_status.directory.string().starts_with(entropy_root.string()),
-      "entropy cache does not mutate analyzed repository");
-  llmcc::test::ExpectEq(initial_status.entries_by_inference_abi.at("test-abi"),
-                        std::uint64_t{1},
-                        "status groups entries by inference ABI");
-  const fs::path other_worktree = fs::path(temporary) / "other-worktree";
-  fs::create_directories(other_worktree);
-  llmcc::test::Expect(llmcc::RepositoryCacheDirectory(other_worktree) !=
-                          initial_status.directory,
-                      "canonical worktree roots use independent cache buckets");
-  const fs::path entry = *fs::directory_iterator(initial_status.directory);
+      !fs::exists(temporary) && !fs::exists(metadata_temporary),
+      "pruning removes abandoned entropy and metadata temporaries");
+
+  llmcc::SetEntropyCacheTestLimit(0);
+  llmcc::WriteEntropyCache("d", model, Records("d"));
+
+  const auto accounting = root / "v2/accounting.json";
+  fs::remove(accounting);
+
+  const auto permanent_lock = root / "v2/.lock";
+  fs::remove(permanent_lock);
+  fs::create_directory(permanent_lock);
+  llmcc::test::Expect(
+      llmcc::ReadEntropyCache("d", model).hit,
+      "validated hit survives lock and timestamp refresh failure");
+  fs::remove(permanent_lock);
+  fs::create_directory(accounting);
+  llmcc::SetEntropyCacheTestNow(30'000'030 + 86400);
+  llmcc::test::Expect(llmcc::ReadEntropyCache("d", model).hit,
+                      "accounting maintenance failure preserves a valid hit");
+  fs::remove(accounting);
+
+  const auto old_entry = llmcc::RepositoryCacheDirectory(root / "old") /
+                         (llmcc::EntropyCacheKey("legacy", model) + ".cbor");
+  Write(old_entry, "old-v1-entry");
+  llmcc::test::Expect(!llmcc::ReadEntropyCache("legacy", model).hit,
+                      "v1 repository cache is not promoted to v2");
+
 #if !defined(_WIN32)
   const auto public_permissions = fs::perms::group_all | fs::perms::others_all;
-  const fs::path bucket = initial_status.directory.parent_path().parent_path();
-  llmcc::test::Expect((fs::status(bucket).permissions() & public_permissions) ==
-                          fs::perms::none,
-                      "repository cache bucket is private");
-  llmcc::test::Expect((fs::status(initial_status.directory).permissions() &
+  llmcc::test::Expect((fs::status(root / "v2").permissions() &
                        public_permissions) == fs::perms::none,
-                      "entropy cache directory is private");
-  llmcc::test::Expect(
-      (fs::status(entry).permissions() & public_permissions) == fs::perms::none,
-      "entropy cache entry is private");
-#endif
-  fs::last_write_time(
-      entry, fs::file_time_type::clock::now() - std::chrono::hours(48));
-  static_cast<void>(llmcc::ReadEntropyCache(repository, "ab", identity));
-  llmcc::test::Expect(
-      fs::last_write_time(entry) >
-          fs::file_time_type::clock::now() - std::chrono::hours(1),
-      "cache hit touches entry for LRU");
-
-  Write(entry, "corrupt");
-  llmcc::test::Expect(!llmcc::ReadEntropyCache(repository, "ab", identity).hit,
-                      "corruption is treated as a miss");
-  llmcc::WriteEntropyCache(repository, "ab", identity, records);
-
-  nlohmann::json invalid_entropy = {
-      {"version", 1},
-      {"source_size", 2},
-      {"records",
-       nlohmann::json::array(
-           {nlohmann::json::array(
-                {nlohmann::json::binary(std::vector<std::uint8_t>{'a'}),
-                 nullptr}),
-            nlohmann::json::array(
-                {nlohmann::json::binary(std::vector<std::uint8_t>{'b'}),
-                 nullptr})})}};
-  const auto invalid_cbor = nlohmann::json::to_cbor(invalid_entropy);
-  Write(entry, std::string(reinterpret_cast<const char*>(invalid_cbor.data()),
-                           invalid_cbor.size()));
-  llmcc::test::Expect(
-      !llmcc::ReadEntropyCache(repository, "ab", identity).hit,
-      "null entropy after the first token is treated as corruption");
-  llmcc::WriteEntropyCache(repository, "ab", identity, records);
-
-  auto changed_context = identity;
-  changed_context.context_limit++;
-  llmcc::test::Expect(
-      !llmcc::ReadEntropyCache(repository, "ab", changed_context).hit,
-      "context limit invalidates key");
-  auto changed_abi = identity;
-  changed_abi.inference_abi = "next-abi";
-  llmcc::test::Expect(
-      !llmcc::ReadEntropyCache(repository, "ab", changed_abi).hit,
-      "inference ABI invalidates key");
-  auto changed_backend = identity;
-  changed_backend.backend = "metal";
-  llmcc::test::Expect(
-      !llmcc::ReadEntropyCache(repository, "ab", changed_backend).hit,
-      "backend invalidates key");
-  auto changed_batch = identity;
-  changed_batch.batch_size++;
-  llmcc::test::Expect(
-      !llmcc::ReadEntropyCache(repository, "ab", changed_batch).hit,
-      "batch size invalidates key");
-  auto changed_reducer = identity;
-  changed_reducer.reduction_policy = "host";
-  llmcc::test::Expect(
-      !llmcc::ReadEntropyCache(repository, "ab", changed_reducer).hit,
-      "reduction policy invalidates key");
-  llmcc::test::Expect(llmcc::EntropyCacheKey("ab", identity) !=
-                          llmcc::EntropyCacheKey("ac", identity),
-                      "source digest invalidates key");
-  llmcc::test::ExpectEq(
-      llmcc::Sha256Hex("abc"),
-      std::string(
-          "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"),
-      "SHA-256 implementation");
-
-  fs::last_write_time(
-      entry, fs::file_time_type::clock::now() - std::chrono::hours(24 * 8));
-  llmcc::PruneRepositoryCache(repository);
-  llmcc::test::ExpectEq(llmcc::GetRepositoryCacheStatus(repository).entries,
-                        std::uint64_t{0}, "seven-day expiry is pruned");
-
-  llmcc::WriteEntropyCache(repository, "ab", identity, records);
-  Write(repository / ".llm-cc-cache/other/keep", "keep");
-  llmcc::ClearRepositoryCache(repository);
-  llmcc::test::Expect(fs::exists(repository / ".llm-cc-cache/other/keep"),
-                      "clear preserves other cache namespaces");
-  llmcc::test::ExpectEq(llmcc::GetRepositoryCacheStatus(repository).entries,
-                        std::uint64_t{0}, "clear removes llm-cc entries");
-
-  llmcc::WriteEntropyCache(repository, "ab", identity, records);
-  const fs::path active_directory = llmcc::RepositoryCacheDirectory(repository);
-  const fs::path active_entry = *fs::directory_iterator(active_directory);
-  const fs::path legacy_directory =
-      llmcc::LegacyRepositoryCacheDirectory(repository);
-  fs::create_directories(legacy_directory);
-  const fs::path legacy_entry = legacy_directory / active_entry.filename();
-  fs::rename(active_entry, legacy_entry);
-  const auto legacy_time = fs::last_write_time(legacy_entry);
-  const auto migrated = llmcc::ReadEntropyCache(repository, "ab", identity);
-  llmcc::test::Expect(migrated.hit && fs::exists(active_entry) &&
-                          fs::last_write_time(legacy_entry) == legacy_time,
-                      "exact legacy hit migrates without touching legacy data");
-  const auto migrated_status = llmcc::GetRepositoryCacheStatus(repository);
-  llmcc::test::ExpectEq(migrated_status.legacy_entries, std::uint64_t{1},
-                        "status reports legacy entries separately");
-  fs::remove(active_entry);
-  fs::create_directory(active_entry);
-  const auto migration_failure =
-      llmcc::ReadEntropyCache(repository, "ab", identity);
-  llmcc::test::Expect(migration_failure.hit,
-                      "legacy hit survives advisory migration failure");
-  fs::remove_all(active_entry);
-  llmcc::ClearLegacyRepositoryCache(repository);
-  llmcc::test::Expect(!fs::exists(legacy_entry) &&
-                          fs::exists(repository / ".llm-cc-cache/other/keep"),
-                      "legacy clear preserves unrelated repository cache data");
-
-  const fs::path unsafe = fs::path(temporary) / "unsafe";
+                      "v2 namespace is private");
+  const fs::path unsafe = root / "unsafe";
   fs::create_directories(unsafe);
-  const fs::path unsafe_directory = llmcc::RepositoryCacheDirectory(unsafe);
-  fs::create_directories(
-      unsafe_directory.parent_path().parent_path().parent_path());
-  fs::create_directory_symlink(fs::path(temporary) / "elsewhere",
-                               unsafe_directory.parent_path().parent_path());
+  fs::create_directory_symlink(root / "elsewhere", unsafe / "v2");
+  setenv("LLM_CC_ENTROPY_CACHE_DIR", unsafe.c_str(), 1);
   bool refused = false;
   try {
-    llmcc::CheckRepositoryCacheAvailability(unsafe);
-  } catch (const std::runtime_error&) {
+    llmcc::CheckEntropyCacheAvailability();
+  } catch (const std::exception&) {
     refused = true;
   }
-  llmcc::test::Expect(refused,
-                      "lightweight cache probe refuses external symlinks");
+  llmcc::test::Expect(refused, "cache availability refuses directory symlinks");
+#endif
   return 0;
 }

@@ -1,748 +1,598 @@
 #include "src/entropy_cache.h"
 
 #include <algorithm>
-#include <array>
 #include <atomic>
-#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <limits>
 #include <nlohmann/json.hpp>
-#include <optional>
 #include <stdexcept>
 #include <system_error>
-#include <thread>
 
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#else
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <unistd.h>
-#endif
+#include "src/cache_io.h"
+#include "src/sha256.h"
+
 namespace llmcc {
 namespace {
-
-std::string PathUtf8(const std::filesystem::path& path) {
-#if defined(_WIN32)
-  const std::u8string value = path.u8string();
-  return std::string(reinterpret_cast<const char*>(value.data()), value.size());
-#else
-  return path.generic_string();
-#endif
-}
-
-std::optional<std::filesystem::path> EnvironmentPath(const char* narrow_name,
-                                                     const wchar_t* wide_name) {
-#if defined(_WIN32)
-  static_cast<void>(narrow_name);
-  const wchar_t* value = _wgetenv(wide_name);
-  return value != nullptr && *value != L'\0'
-             ? std::optional<std::filesystem::path>(value)
-             : std::nullopt;
-#else
-  static_cast<void>(wide_name);
-  const char* value = std::getenv(narrow_name);
-  return value != nullptr && *value != '\0'
-             ? std::optional<std::filesystem::path>(value)
-             : std::nullopt;
-#endif
-}
-
-using Clock = std::chrono::system_clock;
-constexpr std::string_view kLegacyNamespace = ".llm-cc-cache/llm-cc";
-
+std::atomic<uint64_t> g_now{0}, g_limit{0};
+std::atomic<bool> g_delete_failure{false};
 struct CacheLocation {
-  std::filesystem::path base;
-  std::filesystem::path directory;
+  std::filesystem::path base, directory;
 };
-
-constexpr std::array<std::uint32_t, 64> kShaConstants = {
-    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1,
-    0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
-    0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786,
-    0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147,
-    0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
-    0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
-    0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a,
-    0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
-    0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2};
-
-std::uint32_t RotateRight(std::uint32_t value, unsigned int bits) {
-  return (value >> bits) | (value << (32 - bits));
+uint64_t Now() {
+  if (auto n = g_now.load()) return n;
+  return std::chrono::duration_cast<std::chrono::seconds>(
+             std::chrono::system_clock::now().time_since_epoch())
+      .count();
 }
-
-std::uint64_t EpochSeconds() {
-  const auto duration = Clock::now().time_since_epoch();
-  return duration < Clock::duration::zero()
-             ? 0
-             : static_cast<std::uint64_t>(
-                   std::chrono::duration_cast<std::chrono::seconds>(duration)
-                       .count());
+uint64_t Limit() {
+  const auto limit = g_limit.load();
+  return limit != 0 ? limit : kEntropyCacheLimit;
 }
-
-std::filesystem::path EntropyCacheBaseDirectory() {
-  if (const auto override = EnvironmentPath("LLM_CC_ENTROPY_CACHE_DIR",
-                                            L"LLM_CC_ENTROPY_CACHE_DIR")) {
-    return *override;
-  }
-  if (const auto xdg = EnvironmentPath("XDG_CACHE_HOME", L"XDG_CACHE_HOME")) {
-    return *xdg / "llm-cc/entropy";
-  }
-  if (const auto home = EnvironmentPath("HOME", L"HOME")) {
-    return *home / ".cache/llm-cc/entropy";
-  }
+CacheLocation GlobalLocation() {
+  auto b = EntropyCacheBaseDirectory();
+  return {b, b / "v2" / "entropy"};
+}
+CacheLocation RepositoryLocation(const std::filesystem::path& r) {
+  std::error_code e;
+  auto p = std::filesystem::weakly_canonical(r, e);
+  if (e) p = r.lexically_normal();
+  auto b = EntropyCacheBaseDirectory();
+  const auto utf8 = p.generic_u8string();
+  const auto key = Sha256Hex(std::string_view(
+      reinterpret_cast<const char*>(utf8.data()), utf8.size()));
+  return {b, b / key / "v1" / "entropy"};
+}
+CacheLocation LegacyLocation(const std::filesystem::path& r) {
+  return {r, r / ".llm-cc-cache/llm-cc/v1/entropy"};
+}
+void CheckCachePath(const CacheLocation& l) {
+  auto rel = l.directory.lexically_relative(l.base);
+  if (rel.empty() || rel.is_absolute() || *rel.begin() == "..")
+    throw std::runtime_error("invalid entropy cache path");
+  auto p = l.base;
+  cache_io::CheckNotSymlink(p);
+  for (auto c : rel) {
+    p /= c;
+    std::error_code e;
+    auto s = std::filesystem::symlink_status(p, e);
+    if (e && e != std::errc::no_such_file_or_directory)
+      throw std::runtime_error("cannot inspect cache: " + e.message());
+    if (!e && std::filesystem::is_symlink(s))
+      throw std::runtime_error("refusing cache symlink " + p.string());
 #if defined(_WIN32)
-  if (const auto local_app_data =
-          EnvironmentPath("LOCALAPPDATA", L"LOCALAPPDATA")) {
-    return *local_app_data / "llm-cc/entropy";
-  }
-  if (const auto user_profile =
-          EnvironmentPath("USERPROFILE", L"USERPROFILE")) {
-    return *user_profile / "AppData/Local/llm-cc/entropy";
-  }
-#endif
-  throw std::runtime_error(
-      "cannot determine entropy cache directory; set "
-      "LLM_CC_ENTROPY_CACHE_DIR");
-}
-
-CacheLocation ActiveLocation(const std::filesystem::path& repository) {
-  const auto base = EntropyCacheBaseDirectory();
-  std::error_code error;
-  auto canonical = std::filesystem::weakly_canonical(repository, error);
-  if (error) {
-    canonical = repository.lexically_normal();
-  }
-  return {.base = base,
-          .directory = base / Sha256Hex(PathUtf8(canonical)) / "v1/entropy"};
-}
-
-CacheLocation LegacyLocation(const std::filesystem::path& repository) {
-  return {.base = repository,
-          .directory = repository / kLegacyNamespace / "v1/entropy"};
-}
-
-void CheckCachePath(const CacheLocation& location) {
-  const auto relative = location.directory.lexically_relative(location.base);
-  if (relative.empty() || relative.is_absolute() ||
-      (!relative.empty() && *relative.begin() == "..")) {
-    throw std::runtime_error("invalid entropy cache path " +
-                             location.directory.string());
-  }
-  std::filesystem::path path = location.base;
-  for (const auto& component : relative) {
-    path /= component;
-    std::error_code error;
-    const auto status = std::filesystem::symlink_status(path, error);
-    if (error && error != std::errc::no_such_file_or_directory) {
-      throw std::runtime_error("cannot inspect cache path " + path.string() +
-                               ": " + error.message());
-    }
-    if (!error && std::filesystem::is_symlink(status)) {
-      throw std::runtime_error("refusing to follow cache-directory symlink " +
-                               path.string());
-    }
-#if defined(_WIN32)
-    if (!error) {
-      const DWORD attributes = GetFileAttributesW(path.c_str());
+    if (!e) {
+      const DWORD attributes = GetFileAttributesW(p.c_str());
       if (attributes != INVALID_FILE_ATTRIBUTES &&
           (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
-        throw std::runtime_error(
-            "refusing to follow cache-directory reparse point " +
-            PathUtf8(path));
+        throw std::runtime_error("refusing cache reparse point " + p.string());
       }
     }
 #endif
   }
 }
-
 void EnsureCacheDirectory(const CacheLocation& location) {
   CheckCachePath(location);
-  std::error_code error;
-  std::filesystem::create_directories(location.directory, error);
-  if (error) {
-    throw std::runtime_error("cannot create entropy cache " +
-                             location.directory.string() + ": " +
-                             error.message());
-  }
-#if !defined(_WIN32)
-  const auto bucket = location.directory.parent_path().parent_path();
-  const auto restrict = [&](const std::filesystem::path& path) {
-    std::filesystem::permissions(path, std::filesystem::perms::owner_all,
-                                 std::filesystem::perm_options::replace, error);
-    if (error) {
-      throw std::runtime_error("cannot restrict entropy cache " +
-                               path.string() + ": " + error.message());
-    }
-  };
-  auto path = bucket;
-  restrict(path);
-  for (const auto& component : location.directory.lexically_relative(bucket)) {
+  cache_io::EnsurePrivateDirectory(location.base);
+  auto path = location.base;
+  for (const auto& component :
+       location.directory.lexically_relative(location.base)) {
     path /= component;
-    restrict(path);
+    cache_io::EnsurePrivateDirectory(path);
   }
-#endif
   CheckCachePath(location);
 }
-
-void WritePrivateFile(const std::filesystem::path& path,
-                      std::span<const std::uint8_t> bytes) {
-#if defined(_WIN32)
-  std::ofstream output(path, std::ios::binary | std::ios::trunc);
-  output.write(reinterpret_cast<const char*>(bytes.data()),
-               static_cast<std::streamsize>(bytes.size()));
-  output.close();
-  if (!output) {
-    throw std::runtime_error("failed to write entropy cache entry");
-  }
-#else
-  int descriptor =
-      open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
-           S_IRUSR | S_IWUSR);
-  if (descriptor < 0) {
-    throw std::system_error(errno, std::generic_category(),
-                            "failed to create entropy cache entry");
-  }
-  try {
-    std::size_t offset = 0;
-    while (offset < bytes.size()) {
-      const std::size_t count = std::min<std::size_t>(
-          bytes.size() - offset,
-          static_cast<std::size_t>(std::numeric_limits<ssize_t>::max()));
-      const ssize_t written = write(descriptor, bytes.data() + offset, count);
-      if (written < 0 && errno == EINTR) {
-        continue;
-      }
-      if (written < 0) {
-        throw std::system_error(errno, std::generic_category(),
-                                "failed to write entropy cache entry");
-      }
-      if (written == 0) {
-        throw std::runtime_error("failed to write entropy cache entry");
-      }
-      offset += static_cast<std::size_t>(written);
-    }
-    if (close(descriptor) != 0) {
-      descriptor = -1;
-      throw std::system_error(errno, std::generic_category(),
-                              "failed to close entropy cache entry");
-    }
-    descriptor = -1;
-  } catch (...) {
-    if (descriptor >= 0) {
-      close(descriptor);
-    }
-    throw;
-  }
-#endif
-}
-
-std::filesystem::path EntryPath(const CacheLocation& location,
-                                std::string_view key) {
-  return location.directory / (std::string(key) + ".cbor");
-}
-
-void Touch(const std::filesystem::path& path) {
-  std::error_code error;
-  std::filesystem::last_write_time(
-      path, std::filesystem::file_time_type::clock::now(), error);
-}
-
 struct EntryInfo {
-  std::filesystem::path path;
-  std::uint64_t size;
-  std::filesystem::file_time_type used;
+  std::filesystem::path p;
+  uint64_t bytes;
+  std::optional<uint64_t> used;
 };
-
-std::vector<EntryInfo> Entries(const CacheLocation& location) {
-  CheckCachePath(location);
-  std::error_code error;
-  if (!std::filesystem::exists(location.directory, error)) {
-    if (error) {
-      throw std::runtime_error("cannot inspect entropy cache: " +
-                               error.message());
-    }
-    return {};
-  }
-  std::vector<EntryInfo> result;
-  for (const auto& entry :
-       std::filesystem::directory_iterator(location.directory)) {
-    const auto status = entry.symlink_status(error);
-    if (error || std::filesystem::is_symlink(status) ||
-        !std::filesystem::is_regular_file(status) ||
-        entry.path().extension() != ".cbor") {
-      error.clear();
-      continue;
-    }
-    const auto size = entry.file_size(error);
-    if (error || size > std::numeric_limits<std::uint64_t>::max()) {
-      error.clear();
-      continue;
-    }
-    const auto used = entry.last_write_time(error);
-    if (error) {
-      error.clear();
-      continue;
-    }
-    result.push_back({.path = entry.path(),
-                      .size = static_cast<std::uint64_t>(size),
-                      .used = used});
-  }
-  return result;
+std::optional<uint64_t> LastUsed(const std::filesystem::path& p) {
+  std::error_code e;
+  auto t = std::filesystem::last_write_time(p, e);
+  if (e) return std::nullopt;
+  return std::chrono::duration_cast<std::chrono::seconds>(
+             std::chrono::file_clock::to_sys(t).time_since_epoch())
+      .count();
 }
-
-bool IsComplete(std::string_view source,
-                const std::vector<EntropyRecord>& records) {
-  try {
-    static_cast<void>(AlignTokens(source, records));
-    for (std::size_t position = 0; position < records.size(); ++position) {
-      const auto entropy = records[position].entropy;
-      if ((!entropy.has_value() && position != 0) ||
-          (entropy.has_value() &&
-           (!std::isfinite(*entropy) || *entropy < 0.0))) {
-        return false;
-      }
+std::vector<EntryInfo> Entries(const CacheLocation& l) {
+  CheckCachePath(l);
+  std::vector<EntryInfo> v;
+  std::error_code e;
+  if (!std::filesystem::exists(l.directory, e)) {
+    if (e) throw std::system_error(e, "cannot inspect entropy directory");
+    return v;
+  }
+  for (auto& i : std::filesystem::directory_iterator(l.directory)) {
+    auto s = i.symlink_status(e);
+    if (!e && !std::filesystem::is_symlink(s) &&
+        std::filesystem::is_regular_file(s) &&
+        i.path().extension() == ".cbor") {
+      auto b = i.file_size(e);
+      if (e) throw std::system_error(e, "cannot measure entropy entry");
+      v.push_back({i.path(), b, LastUsed(i.path())});
     }
+    if (e) throw std::system_error(e, "cannot inspect entropy entry");
+  }
+  return v;
+}
+bool IsComplete(std::string_view s, const std::vector<EntropyRecord>& r) {
+  try {
+    static_cast<void>(AlignTokens(s, r));
+    for (size_t i = 0; i < r.size(); ++i)
+      if ((!r[i].entropy && i) ||
+          (r[i].entropy &&
+           (!std::isfinite(*r[i].entropy) || *r[i].entropy < 0)))
+        return false;
     return true;
-  } catch (const std::exception&) {
+  } catch (...) {
     return false;
   }
 }
-
-std::vector<EntropyRecord> Decode(const nlohmann::json& value,
-                                  std::string_view source) {
-  if (!value.is_object() || value.value("version", 0) != 1 ||
-      !value.contains("records") || !value["records"].is_array() ||
-      value.value("source_size", std::uint64_t{0}) != source.size()) {
-    throw std::invalid_argument("invalid entropy cache entry");
-  }
-  std::vector<EntropyRecord> records;
-  for (const auto& record : value["records"]) {
-    if (!record.is_array() || record.size() != 2 || !record[0].is_binary()) {
-      throw std::invalid_argument("invalid entropy cache record");
+nlohmann::json Provenance(std::string_view s, const ModelIdentity& m) {
+  return {{"source_sha256", Sha256Hex(s)},
+          {"model_sha256", m.content_digest},
+          {"inference_abi", m.inference_abi},
+          {"backend", m.backend},
+          {"context_limit", m.context_limit},
+          {"batch_size", m.batch_size},
+          {"reduction_policy", m.reduction_policy},
+          {"effective_reducer", m.effective_reducer}};
+}
+std::filesystem::path EntryPath(const CacheLocation& l, std::string_view k) {
+  return l.directory / (std::string(k) + ".cbor");
+}
+std::optional<std::vector<EntropyRecord>> ReadEntry(const CacheLocation& l,
+                                                    std::string_view k,
+                                                    std::string_view s,
+                                                    const ModelIdentity& m) {
+  CheckCachePath(l);
+  auto p = EntryPath(l, k);
+  cache_io::CheckNotSymlink(p);
+  std::error_code e;
+  auto st = std::filesystem::symlink_status(p, e);
+  if (!e && std::filesystem::is_symlink(st))
+    throw std::runtime_error("refusing entropy entry symlink");
+  if (e || !std::filesystem::is_regular_file(st)) return {};
+  std::ifstream in(p, std::ios::binary);
+  std::vector<uint8_t> b{std::istreambuf_iterator<char>(in), {}};
+  auto j = nlohmann::json::from_cbor(b);
+  if (!j.is_object() || j.value("version", 0) != 2 ||
+      j.value("source_size", uint64_t{}) != s.size() ||
+      !j.contains("provenance") || j["provenance"] != Provenance(s, m) ||
+      !j.contains("records") || !j["records"].is_array())
+    throw std::invalid_argument("invalid entropy entry");
+  std::vector<EntropyRecord> r;
+  for (auto& x : j["records"]) {
+    if (!x.is_array() || x.size() != 2 || !x[0].is_binary())
+      throw std::invalid_argument("invalid entropy record");
+    std::optional<double> q;
+    if (!x[1].is_null()) {
+      if (!x[1].is_number()) throw std::invalid_argument("invalid entropy");
+      q = x[1].get<double>();
     }
-    const auto& binary = record[0].get_binary();
-    std::optional<double> entropy;
-    if (record[1].is_null()) {
-      if (!records.empty()) {
-        throw std::invalid_argument(
-            "only the first cached token may have null entropy");
-      }
-    } else {
-      if (!record[1].is_number()) {
-        throw std::invalid_argument("invalid cached entropy");
-      }
-      entropy = record[1].get<double>();
-      if (!std::isfinite(*entropy) || *entropy < 0.0) {
-        throw std::invalid_argument(
-            "cached entropy must be finite and non-negative");
-      }
+    auto& z = x[0].get_binary();
+    r.push_back({r.size(), std::string(z.begin(), z.end()), q});
+  }
+  if (!IsComplete(s, r))
+    throw std::invalid_argument("incomplete entropy entry");
+  return r;
+}
+struct Accounting {
+  uint64_t bytes = 0, entries = 0, next_expiry = 0;
+  bool dirty = true;
+};
+std::filesystem::path AccountingPath(const CacheLocation& l) {
+  return l.directory.parent_path() / "accounting.json";
+}
+Accounting RebuildAccounting(const CacheLocation& l) {
+  Accounting a{.dirty = false};
+  for (auto& e : Entries(l)) {
+    a.bytes += e.bytes;
+    ++a.entries;
+    auto x = e.used.value_or(0) + kEntropyCacheMaxAgeSeconds;
+    if (!a.next_expiry || x < a.next_expiry) a.next_expiry = x;
+  }
+  return a;
+}
+Accounting LoadAccounting(const CacheLocation& l) {
+  try {
+    cache_io::CheckNotSymlink(AccountingPath(l));
+    std::ifstream in(AccountingPath(l));
+    nlohmann::json j;
+    in >> j;
+    if (!j.is_object() || !j.contains("bytes") || !j.contains("entries") ||
+        !j.contains("next_expiry") || !j["bytes"].is_number_unsigned() ||
+        !j["entries"].is_number_unsigned() ||
+        !j["next_expiry"].is_number_unsigned() ||
+        (j.contains("dirty") && !j["dirty"].is_boolean())) {
+      return RebuildAccounting(l);
     }
-    records.push_back({.position = records.size(),
-                       .bytes = std::string(binary.begin(), binary.end()),
-                       .entropy = entropy});
+    Accounting a{j.at("bytes"), j.at("entries"),
+                 j.value("next_expiry", uint64_t{}), j.value("dirty", true)};
+    if ((a.entries == 0 && (a.bytes != 0 || a.next_expiry != 0)) ||
+        (a.entries != 0 && (a.bytes == 0 || a.next_expiry == 0))) {
+      return RebuildAccounting(l);
+    }
+    return a.dirty ? RebuildAccounting(l) : a;
+  } catch (...) {
+    return RebuildAccounting(l);
   }
-  if (!IsComplete(source, records)) {
-    throw std::invalid_argument("incomplete entropy cache entry");
-  }
-  return records;
 }
-
-std::optional<std::vector<EntropyRecord>> ReadEntry(
-    const CacheLocation& location, std::string_view key,
-    std::string_view source, bool touch) {
-  CheckCachePath(location);
-  const auto path = EntryPath(location, key);
+void SaveAccounting(const CacheLocation& l, const Accounting& a) {
+  auto p = AccountingPath(l);
+  auto str = nlohmann::json{
+      {"bytes", a.bytes},
+      {"entries", a.entries},
+      {"next_expiry", a.next_expiry},
+      {"dirty",
+       a.dirty}}.dump();
+  cache_io::AtomicWriteFile(p, str);
+}
+bool RemoveEntry(const std::filesystem::path& p) {
+  if (g_delete_failure.load()) return false;
+  std::error_code e;
+  return std::filesystem::remove(p, e) && !e;
+}
+void TouchEntry(const std::filesystem::path& path) {
   std::error_code error;
-  const auto status = std::filesystem::symlink_status(path, error);
-  if (!error && std::filesystem::is_symlink(status)) {
-    throw std::runtime_error("refusing to follow entropy-cache entry symlink " +
-                             path.string());
-  }
-  if (error && error != std::errc::no_such_file_or_directory) {
-    throw std::runtime_error("cannot inspect entropy cache entry " +
-                             path.string() + ": " + error.message());
-  }
-  if (!error && !std::filesystem::is_regular_file(status)) {
-    return std::nullopt;
-  }
-  std::ifstream input(path, std::ios::binary);
-  if (!input) {
-    return std::nullopt;
-  }
-  const std::vector<std::uint8_t> bytes{std::istreambuf_iterator<char>(input),
-                                        std::istreambuf_iterator<char>()};
-  auto records = Decode(nlohmann::json::from_cbor(bytes), source);
-  if (touch) {
-    Touch(path);
-  }
-  return records;
+  std::filesystem::last_write_time(
+      path,
+      std::chrono::file_clock::from_sys(
+          std::chrono::system_clock::from_time_t(Now())),
+      error);
 }
 
-void MaybePrune(const std::filesystem::path& repository) {
-  const auto location = ActiveLocation(repository);
-  const auto marker = location.directory.parent_path() / ".last-prune";
-  std::error_code error;
-  const auto modified = std::filesystem::last_write_time(marker, error);
-  if (!error && std::filesystem::file_time_type::clock::now() - modified <
-                    std::chrono::hours(24)) {
-    return;
-  }
-  PruneRepositoryCache(repository, true);
-  EnsureCacheDirectory(location);
-  std::ofstream output(marker, std::ios::binary | std::ios::trunc);
-  output << EpochSeconds();
+bool Expired(std::optional<uint64_t> used) {
+  return used.has_value() && Now() >= *used &&
+         Now() - *used >= kEntropyCacheMaxAgeSeconds;
 }
 
+bool SweepDue(const CacheLocation& location) {
+  const auto last = LastUsed(location.directory.parent_path() / ".last-sweep");
+  return !last.has_value() || (Now() >= *last && Now() - *last >= 86400);
+}
+
+void CleanTemporaries(const CacheLocation& location) {
+  // All entropy and metadata temporary writes hold the permanent lock, so any
+  // matching temporary found while holding it belongs to an abandoned write.
+  for (const auto& directory :
+       {location.directory, location.directory.parent_path()}) {
+    for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+      const auto name = entry.path().filename().string();
+      const bool temporary = directory == location.directory
+                                 ? name.find(".cbor.tmp.") != std::string::npos
+                                 : name.starts_with("accounting.json.tmp.") ||
+                                       name.starts_with(".last-sweep.tmp.");
+      if (temporary && !entry.is_directory()) RemoveEntry(entry.path());
+    }
+  }
+}
+
+void Sweep(const CacheLocation& location, Accounting& account) {
+  for (const auto& entry : Entries(location)) {
+    if (Expired(entry.used)) RemoveEntry(entry.p);
+  }
+  CleanTemporaries(location);
+  account = RebuildAccounting(location);
+  const auto marker = location.directory.parent_path() / ".last-sweep";
+  cache_io::AtomicWriteFile(marker, std::to_string(Now()));
+  TouchEntry(marker);
+}
+
+void MarkDirty(const CacheLocation& location, const Accounting& account) {
+  auto dirty = account;
+  dirty.dirty = true;
+  SaveAccounting(location, dirty);
+}
+
+void MaybeMaintain(const CacheLocation& location) {
+  try {
+    if (!SweepDue(location)) return;
+    EnsureCacheDirectory(location);
+    cache_io::FileLock lock(location.directory.parent_path() / ".lock");
+    if (!SweepDue(location)) return;
+    auto account = LoadAccounting(location);
+    MarkDirty(location, account);
+    Sweep(location, account);
+    SaveAccounting(location, account);
+  } catch (const std::exception&) {
+    // Housekeeping is advisory, including for a validated cache hit.
+  }
+}
 }  // namespace
 
-std::string Sha256Hex(std::string_view contents) {
-  std::vector<std::uint8_t> message(contents.begin(), contents.end());
-  const std::uint64_t bit_length =
-      static_cast<std::uint64_t>(contents.size()) * 8;
-  message.push_back(0x80);
-  while (message.size() % 64 != 56) {
-    message.push_back(0);
-  }
-  for (int shift = 56; shift >= 0; shift -= 8) {
-    message.push_back(static_cast<std::uint8_t>(bit_length >> shift));
-  }
-  std::array<std::uint32_t, 8> hash = {0x6a09e667, 0xbb67ae85, 0x3c6ef372,
-                                       0xa54ff53a, 0x510e527f, 0x9b05688c,
-                                       0x1f83d9ab, 0x5be0cd19};
-  for (std::size_t block = 0; block < message.size(); block += 64) {
-    std::array<std::uint32_t, 64> words{};
-    for (std::size_t index = 0; index < 16; ++index) {
-      const std::size_t offset = block + (index * 4);
-      words[index] = (static_cast<std::uint32_t>(message[offset]) << 24) |
-                     (static_cast<std::uint32_t>(message[offset + 1]) << 16) |
-                     (static_cast<std::uint32_t>(message[offset + 2]) << 8) |
-                     message[offset + 3];
-    }
-    for (std::size_t index = 16; index < 64; ++index) {
-      const std::uint32_t s0 = RotateRight(words[index - 15], 7) ^
-                               RotateRight(words[index - 15], 18) ^
-                               (words[index - 15] >> 3);
-      const std::uint32_t s1 = RotateRight(words[index - 2], 17) ^
-                               RotateRight(words[index - 2], 19) ^
-                               (words[index - 2] >> 10);
-      words[index] = words[index - 16] + s0 + words[index - 7] + s1;
-    }
-    auto [a, b, c, d, e, f, g, h] = hash;
-    for (std::size_t index = 0; index < 64; ++index) {
-      const std::uint32_t sum1 =
-          RotateRight(e, 6) ^ RotateRight(e, 11) ^ RotateRight(e, 25);
-      const std::uint32_t choose = (e & f) ^ ((~e) & g);
-      const std::uint32_t temporary1 =
-          h + sum1 + choose + kShaConstants[index] + words[index];
-      const std::uint32_t sum0 =
-          RotateRight(a, 2) ^ RotateRight(a, 13) ^ RotateRight(a, 22);
-      const std::uint32_t majority = (a & b) ^ (a & c) ^ (b & c);
-      const std::uint32_t temporary2 = sum0 + majority;
-      h = g;
-      g = f;
-      f = e;
-      e = d + temporary1;
-      d = c;
-      c = b;
-      b = a;
-      a = temporary1 + temporary2;
-    }
-    hash[0] += a;
-    hash[1] += b;
-    hash[2] += c;
-    hash[3] += d;
-    hash[4] += e;
-    hash[5] += f;
-    hash[6] += g;
-    hash[7] += h;
-  }
-  static constexpr std::string_view digits = "0123456789abcdef";
-  std::string result;
-  result.reserve(64);
-  for (std::uint32_t word : hash) {
-    for (int shift = 28; shift >= 0; shift -= 4) {
-      result.push_back(digits[(word >> shift) & 0xf]);
-    }
-  }
-  return result;
-}
-
-ModelIdentity InspectModel(const std::filesystem::path& model,
-                           std::string_view inference_abi,
-                           std::string_view backend,
-                           std::uint32_t context_limit,
-                           std::uint32_t batch_size,
-                           std::string_view reduction_policy,
-                           std::string_view effective_reducer) {
-  std::error_code error;
-  const auto canonical = std::filesystem::canonical(model, error);
-  if (error) {
-    throw std::runtime_error("cannot resolve model " + model.string() + ": " +
-                             error.message());
-  }
-  const auto size = std::filesystem::file_size(canonical, error);
-  if (error || size > std::numeric_limits<std::uint64_t>::max()) {
-    throw std::runtime_error("cannot inspect model " + canonical.string() +
-                             (error ? ": " + error.message() : ""));
-  }
-  const auto modified = std::filesystem::last_write_time(canonical, error);
-  if (error) {
-    throw std::runtime_error("cannot inspect model modification time: " +
-                             error.message());
-  }
-  return {
-      .canonical_path = canonical,
-      .size = static_cast<std::uint64_t>(size),
-      .modification_time =
-          static_cast<std::int64_t>(modified.time_since_epoch().count()),
-      .inference_abi = std::string(inference_abi),
-      .backend = std::string(backend),
-      .context_limit = context_limit,
-      .batch_size = batch_size,
-      .reduction_policy = std::string(reduction_policy),
-      .effective_reducer = std::string(effective_reducer),
+std::filesystem::path EntropyCacheBaseDirectory() {
+#if defined(_WIN32)
+  const auto environment_path = [](const wchar_t* name) {
+    const wchar_t* value = _wgetenv(name);
+    return value != nullptr && *value != L'\0'
+               ? std::optional<std::filesystem::path>(value)
+               : std::nullopt;
   };
+  if (const auto value = environment_path(L"LLM_CC_ENTROPY_CACHE_DIR"))
+    return *value;
+  if (const auto value = environment_path(L"XDG_CACHE_HOME"))
+    return *value / "llm-cc/entropy";
+  if (const auto value = environment_path(L"HOME"))
+    return *value / ".cache/llm-cc/entropy";
+  if (const auto value = environment_path(L"LOCALAPPDATA"))
+    return *value / "llm-cc/entropy";
+  if (const auto value = environment_path(L"USERPROFILE"))
+    return *value / "AppData/Local/llm-cc/entropy";
+#else
+  if (auto x = std::getenv("LLM_CC_ENTROPY_CACHE_DIR"); x && *x) return x;
+  if (auto x = std::getenv("XDG_CACHE_HOME"); x && *x)
+    return std::filesystem::path(x) / "llm-cc/entropy";
+  if (auto x = std::getenv("HOME"); x && *x)
+    return std::filesystem::path(x) / ".cache/llm-cc/entropy";
+#endif
+  throw std::runtime_error(
+      "cannot determine entropy cache directory; set LLM_CC_ENTROPY_CACHE_DIR");
 }
-
-std::string EntropyCacheKey(std::string_view source,
-                            const ModelIdentity& model) {
-  std::string identity = "llm-cc-entropy-v1";
-  identity += '\0';
-  identity += Sha256Hex(source);
-  identity += '\0';
-  identity += PathUtf8(model.canonical_path);
-  identity += '\0' + std::to_string(model.size) + '\0' +
-              std::to_string(model.modification_time) + '\0' +
-              model.inference_abi + '\0' + model.backend + '\0' +
-              std::to_string(model.context_limit) + '\0' +
-              std::to_string(model.batch_size) + '\0' + model.reduction_policy +
-              '\0' + model.effective_reducer;
-  return Sha256Hex(identity);
+std::filesystem::path GlobalEntropyCacheDirectory() {
+  return GlobalLocation().directory;
 }
-
-std::filesystem::path RepositoryCacheDirectory(
-    const std::filesystem::path& repository) {
-  return ActiveLocation(repository).directory;
+std::string EntropyCacheKey(std::string_view s, const ModelIdentity& m) {
+  std::string x = "llm-cc-entropy-v2";
+  x += '\0';
+  x += Sha256Hex(s);
+  x += '\0';
+  x += m.content_digest;
+  x += '\0';
+  x += m.inference_abi;
+  x += '\0';
+  x += m.backend;
+  x += '\0';
+  x += std::to_string(m.context_limit);
+  x += '\0';
+  x += std::to_string(m.batch_size);
+  x += '\0';
+  x += m.reduction_policy;
+  x += '\0';
+  x += m.effective_reducer;
+  return Sha256Hex(x);
 }
-
-std::filesystem::path LegacyRepositoryCacheDirectory(
-    const std::filesystem::path& repository) {
-  return LegacyLocation(repository).directory;
-}
-
-void CheckRepositoryCacheAvailability(const std::filesystem::path& repository) {
-  const auto location = ActiveLocation(repository);
-  CheckCachePath(location);
-  std::error_code error;
-  const auto status =
-      std::filesystem::symlink_status(location.directory, error);
-  if (error == std::errc::no_such_file_or_directory) {
-    return;
-  }
-  if (error) {
-    throw std::runtime_error("cannot inspect entropy cache: " +
-                             error.message());
-  }
-  if (!std::filesystem::is_directory(status)) {
+void CheckEntropyCacheAvailability() {
+  auto l = GlobalLocation();
+  CheckCachePath(l);
+  std::error_code e;
+  auto s = std::filesystem::symlink_status(l.directory, e);
+  if (!e && !std::filesystem::is_directory(s))
     throw std::runtime_error("entropy cache path is not a directory");
-  }
 }
-
-EntropyCacheLookup ReadEntropyCache(const std::filesystem::path& repository,
-                                    std::string_view source,
+EntropyCacheLookup ReadEntropyCache(std::string_view source,
                                     const ModelIdentity& model) {
   try {
-    const std::string key = EntropyCacheKey(source, model);
-    if (auto records =
-            ReadEntry(ActiveLocation(repository), key, source, true)) {
-      MaybePrune(repository);
-      return {.hit = true, .records = std::move(*records)};
+    const auto location = GlobalLocation();
+    const auto key = EntropyCacheKey(source, model);
+    auto records = ReadEntry(location, key, source, model);
+    if (!records.has_value()) {
+      MaybeMaintain(location);
+      return {};
     }
-    auto legacy = ReadEntry(LegacyLocation(repository), key, source, false);
-    if (!legacy.has_value()) {
+    const auto path = EntryPath(location, key);
+    // Unknown timestamps cannot invalidate already validated entropy. Known
+    // expired entries are misses and are never made fresh by a lookup.
+    if (Expired(LastUsed(path))) {
+      MaybeMaintain(location);
       return {};
     }
     try {
-      WriteEntropyCache(repository, source, model, *legacy);
+      cache_io::FileLock lock(location.directory.parent_path() / ".lock");
+      CheckCachePath(location);
+      cache_io::CheckNotSymlink(path);
+      if (!Expired(LastUsed(path))) TouchEntry(path);
     } catch (const std::exception&) {
-      // Migration is advisory; the validated legacy data remains usable.
+      // Refresh failure cannot lose records already validated above.
     }
-    return {.hit = true, .records = std::move(*legacy)};
+    MaybeMaintain(location);
+    return {.hit = true, .records = std::move(*records)};
   } catch (const std::exception&) {
     return {};
   }
 }
 
-void WriteEntropyCache(const std::filesystem::path& repository,
-                       std::string_view source, const ModelIdentity& model,
+void WriteEntropyCache(std::string_view source, const ModelIdentity& model,
                        std::span<const EntropyRecord> records) {
-  if (!IsComplete(source,
-                  std::vector<EntropyRecord>(records.begin(), records.end()))) {
-    throw std::invalid_argument("refusing to cache incomplete entropy records");
+  const std::vector<EntropyRecord> copy(records.begin(), records.end());
+  if (!IsComplete(source, copy)) {
+    throw std::invalid_argument("refusing incomplete entropy records");
   }
-  const auto location = ActiveLocation(repository);
-  EnsureCacheDirectory(location);
-  nlohmann::json encoded = {{"version", 1},
+  nlohmann::json encoded = {{"version", 2},
                             {"source_size", source.size()},
-                            {"provenance",
-                             {{"inference_abi", model.inference_abi},
-                              {"backend", model.backend},
-                              {"context_limit", model.context_limit},
-                              {"batch_size", model.batch_size},
-                              {"reduction_policy", model.reduction_policy},
-                              {"effective_reducer", model.effective_reducer}}},
+                            {"provenance", Provenance(source, model)},
                             {"records", nlohmann::json::array()}};
   for (const auto& record : records) {
-    const std::vector<std::uint8_t> bytes(record.bytes.begin(),
-                                          record.bytes.end());
-    encoded["records"].push_back(nlohmann::json::array(
-        {nlohmann::json::binary(bytes), record.entropy.has_value()
-                                            ? nlohmann::json(*record.entropy)
-                                            : nlohmann::json(nullptr)}));
+    encoded["records"].push_back(
+        nlohmann::json::array({nlohmann::json::binary(std::vector<uint8_t>(
+                                   record.bytes.begin(), record.bytes.end())),
+                               record.entropy ? nlohmann::json(*record.entropy)
+                                              : nlohmann::json(nullptr)}));
   }
+  const auto bytes = nlohmann::json::to_cbor(encoded);
+  if (bytes.size() > Limit()) return;
+  const auto location = GlobalLocation();
   const auto target = EntryPath(location, EntropyCacheKey(source, model));
-  static std::atomic<std::uint64_t> temporary_sequence = 0;
-  const auto suffix =
-      std::to_string(
-          std::chrono::steady_clock::now().time_since_epoch().count()) +
-      "." + std::to_string(temporary_sequence.fetch_add(1)) + "." +
-      std::to_string(std::hash<std::thread::id>{}(std::this_thread::get_id()));
-  auto temporary = target;
-  temporary += std::filesystem::path(".tmp." + suffix);
-  try {
-    const auto bytes = nlohmann::json::to_cbor(encoded);
-    WritePrivateFile(temporary, bytes);
-#ifdef _WIN32
-    if (!MoveFileExW(std::filesystem::path(temporary).c_str(), target.c_str(),
-                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-      throw std::system_error(static_cast<int>(GetLastError()),
-                              std::system_category(),
-                              "failed to install entropy cache entry");
-    }
-#else
-    std::error_code error;
-    std::filesystem::rename(temporary, target, error);
-    if (error) {
-      throw std::runtime_error("failed to install entropy cache entry: " +
-                               error.message());
-    }
-#endif
-  } catch (...) {
-    std::error_code ignored;
-    std::filesystem::remove(temporary, ignored);
-    throw;
+  EnsureCacheDirectory(location);
+  cache_io::FileLock lock(location.directory.parent_path() / ".lock");
+  CheckCachePath(location);
+  cache_io::CheckNotSymlink(target);
+  std::error_code error;
+  const auto status = std::filesystem::symlink_status(target, error);
+  if (error && error != std::errc::no_such_file_or_directory) {
+    throw std::system_error(error, "cannot inspect entropy target");
   }
-  MaybePrune(repository);
+  if (!error && std::filesystem::exists(status) &&
+      !std::filesystem::is_regular_file(status)) {
+    throw std::runtime_error("entropy target is not a regular file");
+  }
+  auto account = LoadAccounting(location);
+  MarkDirty(location, account);
+  // next_expiry is conservative after touches: it can cause an early scan but
+  // cannot hide an expired entry. Inserts normally only read the small record.
+  if (SweepDue(location) ||
+      (account.next_expiry != 0 && account.next_expiry <= Now())) {
+    Sweep(location, account);
+  }
+  const auto previous_size = std::filesystem::file_size(target, error);
+  if (!error) {
+    if (account.entries == 0 || previous_size > account.bytes) {
+      account = RebuildAccounting(location);
+    }
+    account.bytes -= previous_size;
+    --account.entries;
+  } else if (error != std::errc::no_such_file_or_directory) {
+    throw std::system_error(error, "cannot measure entropy target");
+  }
+  if (account.bytes > Limit() - bytes.size()) {
+    auto entries = Entries(location);
+    std::ranges::sort(entries, {}, &EntryInfo::used);
+    for (const auto& entry : entries) {
+      if (account.bytes <= Limit() - bytes.size()) break;
+      if (entry.p != target && RemoveEntry(entry.p)) {
+        account.bytes -= entry.bytes;
+        --account.entries;
+      }
+    }
+  }
+  if (account.bytes > Limit() - bytes.size()) {
+    // A failed eviction may leave entries behind. RebuildAccounting also
+    // includes any original target that was subtracted for replacement but
+    // remains on disk.
+    SaveAccounting(location, RebuildAccounting(location));
+    return;
+  }
+  cache_io::AtomicWriteFile(
+      target, std::string_view(reinterpret_cast<const char*>(bytes.data()),
+                               bytes.size()));
+  TouchEntry(target);
+  ++account.entries;
+  account.bytes += bytes.size();
+  const auto expires =
+      LastUsed(target).value_or(0) + kEntropyCacheMaxAgeSeconds;
+  if (account.next_expiry == 0 || expires < account.next_expiry) {
+    account.next_expiry = expires;
+  }
+  account.dirty = false;
+  SaveAccounting(location, account);
 }
-
-RepositoryCacheStatus GetRepositoryCacheStatus(
-    const std::filesystem::path& repository) {
-  const auto active = ActiveLocation(repository);
-  const auto legacy = LegacyLocation(repository);
-  RepositoryCacheStatus status{
-      .repository = repository,
-      .directory = active.directory,
-      .legacy_directory = legacy.directory,
-  };
-  const auto inspect = [&](const CacheLocation& location, bool is_legacy) {
-    for (const auto& entry : Entries(location)) {
-      if (is_legacy) {
-        ++status.legacy_entries;
-        status.legacy_bytes += entry.size;
+EntropyCacheStatus GetEntropyCacheStatus(bool inspect_provenance) {
+  auto l = GlobalLocation();
+  EnsureCacheDirectory(l);
+  cache_io::FileLock lock(l.directory.parent_path() / ".lock");
+  EntropyCacheStatus s{.directory = l.directory, .limit = Limit()};
+  if (!inspect_provenance) {
+    const auto accounting = LoadAccounting(l);
+    s.entries = accounting.entries;
+    s.bytes = accounting.bytes;
+    return s;
+  }
+  for (auto& e : Entries(l)) {
+    ++s.entries;
+    s.bytes += e.bytes;
+    try {
+      std::ifstream in(e.p, std::ios::binary);
+      std::vector<uint8_t> b{std::istreambuf_iterator<char>(in), {}};
+      auto j = nlohmann::json::from_cbor(b);
+      ++s.entries_by_inference_abi
+            [j.at("provenance").at("inference_abi").get<std::string>()];
+    } catch (...) {
+      ++s.malformed_entries;
+    }
+  }
+  return s;
+}
+void PruneEntropyCache(bool force) {
+  auto l = GlobalLocation();
+  EnsureCacheDirectory(l);
+  cache_io::FileLock z(l.directory.parent_path() / ".lock");
+  if (!force && !SweepDue(l)) return;
+  auto a = LoadAccounting(l);
+  SaveAccounting(l, {a.bytes, a.entries, a.next_expiry, true});
+  Sweep(l, a);
+  auto es = Entries(l);
+  std::ranges::sort(es, {}, &EntryInfo::used);
+  for (auto& e : es) {
+    if (a.bytes <= Limit()) break;
+    if (RemoveEntry(e.p)) {
+      a.bytes -= std::min(a.bytes, e.bytes);
+      --a.entries;
+    }
+  }
+  SaveAccounting(l, RebuildAccounting(l));
+}
+void ClearEntropyCache() {
+  auto l = GlobalLocation();
+  EnsureCacheDirectory(l);
+  cache_io::FileLock z(l.directory.parent_path() / ".lock");
+  const auto a = LoadAccounting(l);
+  SaveAccounting(l, {a.bytes, a.entries, a.next_expiry, true});
+  for (auto& e : Entries(l))
+    if (!RemoveEntry(e.p))
+      throw std::runtime_error("cannot clear entropy cache");
+  CleanTemporaries(l);
+  SaveAccounting(l, Accounting{.dirty = false});
+}
+std::filesystem::path RepositoryCacheDirectory(const std::filesystem::path& r) {
+  return RepositoryLocation(r).directory;
+}
+std::filesystem::path LegacyRepositoryCacheDirectory(
+    const std::filesystem::path& r) {
+  return LegacyLocation(r).directory;
+}
+RepositoryCacheStatus GetRepositoryCacheStatus(const std::filesystem::path& r) {
+  auto a = RepositoryLocation(r), b = LegacyLocation(r);
+  RepositoryCacheStatus s{.repository = r,
+                          .directory = a.directory,
+                          .legacy_directory = b.directory};
+  const auto inspect = [&](const EntryInfo& entry) {
+    try {
+      std::ifstream input(entry.p, std::ios::binary);
+      const std::vector<uint8_t> bytes{std::istreambuf_iterator<char>(input),
+                                       {}};
+      const auto value = nlohmann::json::from_cbor(bytes);
+      if (!value.contains("provenance") || !value["provenance"].is_object() ||
+          !value["provenance"].contains("inference_abi") ||
+          !value["provenance"]["inference_abi"].is_string()) {
+        ++s.unknown_provenance_entries;
       } else {
-        ++status.entries;
-        status.bytes += entry.size;
+        ++s.entries_by_inference_abi[value["provenance"]["inference_abi"]
+                                         .get<std::string>()];
       }
-      try {
-        std::ifstream input(entry.path, std::ios::binary);
-        const std::vector<std::uint8_t> bytes{
-            std::istreambuf_iterator<char>(input),
-            std::istreambuf_iterator<char>()};
-        const auto value = nlohmann::json::from_cbor(bytes);
-        if (!value.is_object() || !value.contains("provenance") ||
-            !value["provenance"].is_object() ||
-            !value["provenance"].contains("inference_abi") ||
-            !value["provenance"]["inference_abi"].is_string()) {
-          ++status.unknown_provenance_entries;
-          continue;
-        }
-        ++status.entries_by_inference_abi[value["provenance"]["inference_abi"]
-                                              .get<std::string>()];
-      } catch (const std::exception&) {
-        ++status.malformed_entries;
-      }
+    } catch (const std::exception&) {
+      ++s.malformed_entries;
     }
   };
-  inspect(active, false);
-  inspect(legacy, true);
-  return status;
+  for (auto& e : Entries(a)) {
+    ++s.entries;
+    s.bytes += e.bytes;
+    inspect(e);
+  }
+  for (auto& e : Entries(b)) {
+    ++s.legacy_entries;
+    s.legacy_bytes += e.bytes;
+    inspect(e);
+  }
+  return s;
 }
-
-void PruneRepositoryCache(const std::filesystem::path& repository, bool force) {
-  static_cast<void>(force);
-  const auto location = ActiveLocation(repository);
-  auto entries = Entries(location);
-  const auto now = std::filesystem::file_time_type::clock::now();
-  std::uint64_t total = 0;
-  for (const auto& entry : entries) {
-    total += entry.size;
-    if (now - entry.used > std::chrono::seconds(kEntropyCacheMaxAgeSeconds)) {
-      std::error_code error;
-      std::filesystem::remove(entry.path, error);
-      if (!error) {
-        total -= entry.size;
-      }
-    }
-  }
-  entries = Entries(location);
-  total = 0;
-  for (const auto& entry : entries) {
-    total += entry.size;
-  }
-  std::ranges::sort(entries, {}, &EntryInfo::used);
-  for (const auto& entry : entries) {
-    if (total <= kEntropyCacheLimit) {
-      break;
-    }
-    std::error_code error;
-    std::filesystem::remove(entry.path, error);
-    if (!error) {
-      total -= entry.size;
-    }
-  }
+void ClearRepositoryCache(const std::filesystem::path& r) {
+  auto l = RepositoryLocation(r);
+  CheckCachePath(l);
+  std::error_code e;
+  std::filesystem::remove_all(l.directory.parent_path().parent_path(), e);
+  if (e) throw std::runtime_error("cannot clear old cache");
 }
-
-void ClearRepositoryCache(const std::filesystem::path& repository) {
-  const auto location = ActiveLocation(repository);
-  CheckCachePath(location);
-  const auto directory = location.directory.parent_path().parent_path();
-  std::error_code error;
-  std::filesystem::remove_all(directory, error);
-  if (error) {
-    throw std::runtime_error("cannot clear llm-cc cache namespace: " +
-                             error.message());
-  }
+void ClearLegacyRepositoryCache(const std::filesystem::path& r) {
+  auto l = LegacyLocation(r);
+  CheckCachePath(l);
+  std::error_code e;
+  std::filesystem::remove_all(r / ".llm-cc-cache/llm-cc", e);
+  if (e) throw std::runtime_error("cannot clear legacy cache");
 }
-
-void ClearLegacyRepositoryCache(const std::filesystem::path& repository) {
-  const auto location = LegacyLocation(repository);
-  CheckCachePath(location);
-  const auto directory = repository / kLegacyNamespace;
-  std::error_code error;
-  std::filesystem::remove_all(directory, error);
-  if (error) {
-    throw std::runtime_error("cannot clear legacy llm-cc cache namespace: " +
-                             error.message());
-  }
-}
-
+void SetEntropyCacheTestNow(uint64_t x) { g_now = x; }
+void SetEntropyCacheTestLimit(uint64_t x) { g_limit = x; }
+void SetEntropyCacheTestDeleteFailure(bool x) { g_delete_failure = x; }
 }  // namespace llmcc

@@ -1,0 +1,432 @@
+[
+  {
+    "model": "qwen-0.5b-q4",
+    "bytes": 397808128,
+    "wall_seconds": [
+      20.060047815029975,
+      20.256620239990298,
+      20.298875548003707
+    ],
+    "median_seconds": 20.256620239990298,
+    "peak_gpu_mib": 1113,
+    "token_count": 30457,
+    "heldout": {
+      "lmcc_per_token": {
+        "n": 18,
+        "spearman": 0.847265221878225,
+        "bootstrap_95": [
+          0.525987525987526,
+          0.9746835443037974
+        ],
+        "partial_spearman_bytes": 0.849340165374392,
+        "top5_overlap": 4,
+        "median_relative_difference": 0.6681680567082192
+      },
+      "llm_cc": {
+        "n": 18,
+        "spearman": 0.9876160990712074,
+        "bootstrap_95": [
+          0.935349322210636,
+          0.9979231568016614
+        ],
+        "partial_spearman_bytes": 0.9102602637311904,
+        "top5_overlap": 5,
+        "median_relative_difference": 0.25474618016957645
+      },
+      "mean_entropy": {
+        "n": 18,
+        "spearman": 0.9442724458204335,
+        "bootstrap_95": [
+          0.8037578288100209,
+          0.979253112033195
+        ],
+        "partial_spearman_bytes": 0.9414918658865444,
+        "top5_overlap": 5,
+        "median_relative_difference": 0.7171595993118979
+      },
+      "density": {
+        "n": 18,
+        "spearman": 0.9545923632610939,
+        "bootstrap_95": [
+          0.8350730688935282,
+          0.9854014598540146
+        ],
+        "partial_spearman_bytes": 0.9486365906068697,
+        "top5_overlap": 4,
+        "median_relative_difference": 0.6634172082498955
+      }
+    },
+    "max_repeat_score_difference": 0.0,
+    "functions_at_least_100_tokens": {
+      "n": 46,
+      "spearman": 0.8579093432007401
+    },
+    "mean_top5_hotspot_overlap": 0.5888888888888889,
+    "sensitivity": {
+      "tau-0.4": {
+        "vs_same_setting_baseline": 0.7853457172342622,
+        "vs_own_default": 0.9566563467492261
+      },
+      "tau-1.0": {
+        "vs_same_setting_baseline": 0.9236326109391125,
+        "vs_own_default": 0.9318885448916409
+      },
+      "percentile-80": {
+        "vs_same_setting_baseline": 0.9834881320949432,
+        "vs_own_default": 0.9339525283797729
+      },
+      "structural-only": {
+        "vs_same_setting_baseline": 0.9958720330237358,
+        "vs_own_default": 0.7708978328173375
+      },
+      "reference": {
+        "vs_same_setting_baseline": 0.8575851393188855,
+        "vs_own_default": 0.9814241486068112
+      }
+    }
+  },
+  {
+    "model": "qwen-0.5b-q6",
+    "bytes": 505736704,
+    "wall_seconds": [
+      20.35525200999109,
+      19.99091930902796,
+      19.946970360993873
+    ],
+    "median_seconds": 19.99091930902796,
+    "peak_gpu_mib": 1217,
+    "token_count": 30457,
+    "heldout": {
+      "lmcc_per_token": {
+        "n": 18,
+        "spearman": 0.8637770897832817,
+        "bootstrap_95": [
+          0.5778474399164054,
+          0.9747368421052631
+        ],
+        "partial_spearman_bytes": 0.8641312356038017,
+        "top5_overlap": 4,
+        "median_relative_difference": 0.6381610705694212
+      },
+      "llm_cc": {
+        "n": 18,
+        "spearman": 0.9896800825593395,
+        "bootstrap_95": [
+          0.941544885177453,
+          1.0
+        ],
+        "partial_spearman_bytes": 0.9289205240022665,
+        "top5_overlap": 5,
+        "median_relative_difference": 0.24203480263371283
+      },
+      "mean_entropy": {
+        "n": 18,
+        "spearman": 0.9442724458204335,
+        "bootstrap_95": [
+          0.8037578288100209,
+          0.979253112033195
+        ],
+        "partial_spearman_bytes": 0.9414918658865444,
+        "top5_overlap": 5,
+        "median_relative_difference": 0.6882684773048815
+      },
+      "density": {
+        "n": 18,
+        "spearman": 0.9525283797729618,
+        "bootstrap_95": [
+          0.8265412748171369,
+          0.9849624060150376
+        ],
+        "partial_spearman_bytes": 0.9462384103871243,
+        "top5_overlap": 4,
+        "median_relative_difference": 0.633086726091396
+      }
+    },
+    "max_repeat_score_difference": 0.0,
+    "functions_at_least_100_tokens": {
+      "n": 46,
+      "spearman": 0.8600326872015863
+    },
+    "mean_top5_hotspot_overlap": 0.6111111111111112,
+    "sensitivity": {
+      "tau-0.4": {
+        "vs_same_setting_baseline": 0.7791537667698658,
+        "vs_own_default": 0.9380804953560371
+      },
+      "tau-1.0": {
+        "vs_same_setting_baseline": 0.9566563467492261,
+        "vs_own_default": 0.9463364293085655
+      },
+      "percentile-80": {
+        "vs_same_setting_baseline": 0.9938080495356038,
+        "vs_own_default": 0.8782249742002064
+      },
+      "structural-only": {
+        "vs_same_setting_baseline": 0.9958720330237358,
+        "vs_own_default": 0.760577915376677
+      },
+      "reference": {
+        "vs_same_setting_baseline": 0.8637770897832817,
+        "vs_own_default": 0.9896800825593395
+      }
+    }
+  },
+  {
+    "model": "qwen-1.5b-q6",
+    "bytes": 1272739680,
+    "wall_seconds": [
+      22.028401479008608,
+      22.00166646501748,
+      21.956375931971706
+    ],
+    "median_seconds": 22.00166646501748,
+    "peak_gpu_mib": 2111,
+    "token_count": 30457,
+    "heldout": {
+      "lmcc_per_token": {
+        "n": 18,
+        "spearman": 0.9009287925696594,
+        "bootstrap_95": [
+          0.6576763485477178,
+          0.9916926272066459
+        ],
+        "partial_spearman_bytes": 0.9067952083656967,
+        "top5_overlap": 4,
+        "median_relative_difference": 0.5904157853151373
+      },
+      "llm_cc": {
+        "n": 18,
+        "spearman": 0.9896800825593395,
+        "bootstrap_95": [
+          0.9414225941422594,
+          1.0
+        ],
+        "partial_spearman_bytes": 0.9270197645253665,
+        "top5_overlap": 5,
+        "median_relative_difference": 0.19127783757763778
+      },
+      "mean_entropy": {
+        "n": 18,
+        "spearman": 0.9793601651186791,
+        "bootstrap_95": [
+          0.9036649214659686,
+          0.9979057591623036
+        ],
+        "partial_spearman_bytes": 0.9767926555547893,
+        "top5_overlap": 5,
+        "median_relative_difference": 0.4965663771629376
+      },
+      "density": {
+        "n": 18,
+        "spearman": 0.9690402476780186,
+        "bootstrap_95": [
+          0.8396624472573839,
+          0.9979188345473465
+        ],
+        "partial_spearman_bytes": 0.9664751819545981,
+        "top5_overlap": 4,
+        "median_relative_difference": 0.48424093460779855
+      }
+    },
+    "max_repeat_score_difference": 0.0,
+    "functions_at_least_100_tokens": {
+      "n": 46,
+      "spearman": 0.8957755164970707
+    },
+    "mean_top5_hotspot_overlap": 0.6888888888888889,
+    "sensitivity": {
+      "tau-0.4": {
+        "vs_same_setting_baseline": 0.7481940144478845,
+        "vs_own_default": 0.8823529411764706
+      },
+      "tau-1.0": {
+        "vs_same_setting_baseline": 0.9380804953560371,
+        "vs_own_default": 0.9566563467492261
+      },
+      "percentile-80": {
+        "vs_same_setting_baseline": 0.9793601651186791,
+        "vs_own_default": 0.8699690402476781
+      },
+      "structural-only": {
+        "vs_same_setting_baseline": 0.9958720330237358,
+        "vs_own_default": 0.7543859649122807
+      },
+      "reference": {
+        "vs_same_setting_baseline": 0.8947368421052632,
+        "vs_own_default": 0.9628482972136223
+      }
+    }
+  },
+  {
+    "model": "qwen-3b-q6",
+    "bytes": 2538159200,
+    "wall_seconds": [
+      24.779761752986815,
+      24.4767148779938,
+      24.577890427957755
+    ],
+    "median_seconds": 24.577890427957755,
+    "peak_gpu_mib": 3403,
+    "token_count": 30457,
+    "heldout": {
+      "lmcc_per_token": {
+        "n": 18,
+        "spearman": 0.9298245614035088,
+        "bootstrap_95": [
+          0.7211238293444329,
+          0.9936908517350158
+        ],
+        "partial_spearman_bytes": 0.9345992456752467,
+        "top5_overlap": 5,
+        "median_relative_difference": 0.5527118763517647
+      },
+      "llm_cc": {
+        "n": 18,
+        "spearman": 0.9917440660474717,
+        "bootstrap_95": [
+          0.9434554973821989,
+          1.0
+        ],
+        "partial_spearman_bytes": 0.9422146135394202,
+        "top5_overlap": 5,
+        "median_relative_difference": 0.1688599451118009
+      },
+      "mean_entropy": {
+        "n": 18,
+        "spearman": 0.9752321981424149,
+        "bootstrap_95": [
+          0.8931937172774869,
+          0.9958419958419958
+        ],
+        "partial_spearman_bytes": 0.9707880167658248,
+        "top5_overlap": 4,
+        "median_relative_difference": 0.3859486240610223
+      },
+      "density": {
+        "n": 18,
+        "spearman": 0.9649122807017544,
+        "bootstrap_95": [
+          0.8301886792452831,
+          0.9979188345473465
+        ],
+        "partial_spearman_bytes": 0.9629588382116441,
+        "top5_overlap": 4,
+        "median_relative_difference": 0.3689076825522449
+      }
+    },
+    "max_repeat_score_difference": 0.0,
+    "functions_at_least_100_tokens": {
+      "n": 46,
+      "spearman": 0.9211840888066605
+    },
+    "mean_top5_hotspot_overlap": 0.6555555555555556,
+    "sensitivity": {
+      "tau-0.4": {
+        "vs_same_setting_baseline": 0.8224974200206399,
+        "vs_own_default": 0.9029927760577915
+      },
+      "tau-1.0": {
+        "vs_same_setting_baseline": 0.9607843137254902,
+        "vs_own_default": 0.9711042311661506
+      },
+      "percentile-80": {
+        "vs_same_setting_baseline": 0.9958720330237358,
+        "vs_own_default": 0.8782249742002064
+      },
+      "structural-only": {
+        "vs_same_setting_baseline": 0.9958720330237358,
+        "vs_own_default": 0.760577915376677
+      },
+      "reference": {
+        "vs_same_setting_baseline": 0.9298245614035088,
+        "vs_own_default": 0.9711042311661506
+      }
+    }
+  },
+  {
+    "model": "deepseek-v2-lite-q6",
+    "bytes": 14066972416,
+    "wall_seconds": [
+      42.81985031202203,
+      42.8667666669935,
+      43.40421382698696
+    ],
+    "median_seconds": 42.8667666669935,
+    "peak_gpu_mib": 17973,
+    "token_count": 40100,
+    "heldout": {
+      "lmcc_per_token": {
+        "n": 18,
+        "spearman": 1.0,
+        "bootstrap_95": [
+          1.0,
+          1.0
+        ],
+        "partial_spearman_bytes": 1.0,
+        "top5_overlap": 5,
+        "median_relative_difference": 0.0
+      },
+      "llm_cc": {
+        "n": 18,
+        "spearman": 1.0,
+        "bootstrap_95": [
+          1.0,
+          1.0
+        ],
+        "partial_spearman_bytes": 1.0,
+        "top5_overlap": 5,
+        "median_relative_difference": 0.0
+      },
+      "mean_entropy": {
+        "n": 18,
+        "spearman": 1.0,
+        "bootstrap_95": [
+          1.0,
+          1.0
+        ],
+        "partial_spearman_bytes": 1.0,
+        "top5_overlap": 5,
+        "median_relative_difference": 0.0
+      },
+      "density": {
+        "n": 18,
+        "spearman": 1.0,
+        "bootstrap_95": [
+          1.0,
+          1.0
+        ],
+        "partial_spearman_bytes": 1.0,
+        "top5_overlap": 5,
+        "median_relative_difference": 0.0
+      }
+    },
+    "max_repeat_score_difference": 0.0,
+    "functions_at_least_100_tokens": {
+      "n": 54,
+      "spearman": 1.0
+    },
+    "mean_top5_hotspot_overlap": 1.0,
+    "sensitivity": {
+      "tau-0.4": {
+        "vs_same_setting_baseline": 1.0,
+        "vs_own_default": 0.9649122807017544
+      },
+      "tau-1.0": {
+        "vs_same_setting_baseline": 1.0,
+        "vs_own_default": 0.9834881320949432
+      },
+      "percentile-80": {
+        "vs_same_setting_baseline": 1.0,
+        "vs_own_default": 0.9050567595459237
+      },
+      "structural-only": {
+        "vs_same_setting_baseline": 1.0,
+        "vs_own_default": 0.5830753353973168
+      },
+      "reference": {
+        "vs_same_setting_baseline": 1.0,
+        "vs_own_default": 0.9917440660474717
+      }
+    }
+  }
+]

@@ -548,10 +548,21 @@ cc_library(
 )
 
 cc_library(
+    name = "cache_io",
+    hdrs = ["src/cache_io.h"],
+)
+
+cc_library(
+    name = "sha256",
+    hdrs = ["src/sha256.h"],
+)
+
+cc_library(
     name = "cache",
     srcs = ["src/cache.cc"],
     hdrs = ["src/cache.h"],
     deps = [
+        ":cache_io",
         ":models",
         "@nlohmann_json//:json",
     ],
@@ -590,10 +601,18 @@ cc_library(
 
 cc_library(
     name = "entropy_cache",
-    srcs = ["src/entropy_cache.cc"],
-    hdrs = ["src/entropy_cache.h"],
+    srcs = [
+        "src/entropy_cache.cc",
+        "src/model_identity.cc",
+    ],
+    hdrs = [
+        "src/entropy_cache.h",
+        "src/model_identity.h",
+    ],
     deps = [
+        ":cache_io",
         ":jsonl",
+        ":sha256",
         "@nlohmann_json//:json",
     ],
 )
@@ -1049,8 +1068,8 @@ cc_test(
     }),
     deps = [
         ":backend_runtime",
-        ":entropy_cache",
         ":payload",
+        ":sha256",
         ":test_util",
     ],
 )
@@ -1064,7 +1083,7 @@ cc_test(
     }),
     deps = [
         ":backend_fetch",
-        ":entropy_cache",
+        ":sha256",
         ":test_util",
     ],
 )
@@ -1079,6 +1098,36 @@ cc_test(
     deps = [
         ":cache",
         ":test_util",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_test(
+    name = "model_identity_test",
+    srcs = ["src/model_identity_test.cc"],
+    target_compatible_with = select({
+        ":host_windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":entropy_cache",
+        ":sha256",
+        ":test_util",
+    ],
+)
+
+cc_test(
+    name = "cache_concurrency_test",
+    srcs = ["src/cache_concurrency_test.cc"],
+    target_compatible_with = select({
+        ":host_windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":entropy_cache",
+        ":sha256",
+        ":test_util",
+        "@nlohmann_json//:json",
     ],
 )
 
@@ -1246,6 +1295,7 @@ test_suite(
         ":analyze_test",
         ":backend_fetch_test",
         ":backend_test",
+        ":cache_concurrency_test",
         ":cache_test",
         ":core_test",
         ":download_test",
@@ -1253,6 +1303,7 @@ test_suite(
         ":format_test",
         ":jsonl_test",
         ":lang_test",
+        ":model_identity_test",
         ":models_test",
         ":project_test",
         ":rocm_topology_test",

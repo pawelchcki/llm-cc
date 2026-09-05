@@ -15,8 +15,8 @@
 
 #include "generated/build_config.h"
 #include "src/backend_fetch.h"
-#include "src/entropy_cache.h"
 #include "src/payload.h"
+#include "src/sha256.h"
 #include "src/test_util.h"
 
 #if defined(LLMCC_TEST_LINUX_CPU) && !defined(LLM_CC_DYNAMIC_BACKENDS)

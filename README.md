@@ -257,7 +257,8 @@ to access the accelerator directly.
 
 Without `--model`, `llm-cc` uses the first entry in its built-in registry,
 `deepseek-coder-v2-lite-base-q6_k`. The registry also contains
-`deepseek-coder-6.7b-base-q6_k`, `qwen2.5-coder-1.5b-q6_k`, and
+`deepseek-coder-6.7b-base-q6_k`, `qwen2.5-coder-1.5b-q6_k`,
+`qwen2.5-coder-3b-q6_k`, and
 `qwen2.5-coder-0.5b-q4_k_m`. Select one with `--model-name NAME`;
 `--model-name` and `--model` are mutually exclusive. The tool first checks
 `models/<registered file>`, then its model cache. If the model is absent it
@@ -288,6 +289,24 @@ The default model is
 [DeepSeek-Coder-V2-Lite-Base Q6_K](https://huggingface.co/bartowski/DeepSeek-Coder-V2-Lite-Base-GGUF).
 Base code models are preferable to chat-tuned models because LM-CC measures the
 raw next-token uncertainty distribution.
+
+Two smaller alternatives are available:
+
+| Model name | Approximate download | Guidance |
+| --- | ---: | --- |
+| `qwen2.5-coder-1.5b-q6_k` | 1.3 GB | Lower memory use; rank correlation 0.90 with the default in our sample. |
+| `qwen2.5-coder-3b-q6_k` | 2.5 GB | Closer rankings; correlation 0.93 and the same top five files in our sample. |
+
+```sh
+llm-cc src --model-name qwen2.5-coder-1.5b-q6_k --context 32768
+llm-cc src --model-name qwen2.5-coder-3b-q6_k --context 32768
+```
+
+Both have a native 32,768-token context. Changing models requires a fresh
+score baseline. The [model-selection experiment](experiments/model-selection/README.md)
+contains reproducible timings, memory measurements, and scoring comparisons
+on pinned `dd-trace-c` history; it measures agreement with the default, not
+downstream coding quality.
 
 ## Raw scoring
 
@@ -371,11 +390,11 @@ exact pinned userspace and architecture-data closure is atomically materialized
 under a content-addressed, owner-only cache. CPU execution does not inspect or
 materialize either GPU payload.
 
-## Repository-scoped entropy cache
+## Shared entropy cache
 
-Token bytes and entropy values are stored as versioned CBOR in a per-worktree
-bucket outside the analyzed repository. The base directory follows this
-precedence:
+Token bytes and entropy values are stored as versioned CBOR in one private,
+user-scoped cache that is shared by repositories, linked worktrees, and files
+outside Git. The base directory follows this precedence:
 
 ```text
 $LLM_CC_ENTROPY_CACHE_DIR
@@ -383,42 +402,47 @@ $XDG_CACHE_HOME/llm-cc/entropy
 $HOME/.cache/llm-cc/entropy
 ```
 
-Each canonical worktree root hashes to an independent `HASH/v1/entropy/`
-bucket, including linked worktrees. Analysis never modifies `.gitignore`,
-`.git/info/exclude`, Git configuration, or the source tree.
+Entries live in the `v2/entropy/` namespace. Analysis never modifies
+`.gitignore`, `.git/info/exclude`, Git configuration, or the source tree.
 
-Non-Git inputs are analyzed without this cache and produce a warning. Cache
-keys cover the SHA-256 of prepared source, canonical model path, model
-size and high-resolution modification time, inference ABI, requested runtime
-backend and GPU-layer policy, context limit, batch size, requested reduction
-policy, and effective reducer. Tau, alpha, hierarchy mode, and score mode are
+Cache keys cover the SHA-256 of prepared source and model contents, inference
+ABI, requested runtime backend and GPU-layer policy, context limit, batch size,
+requested reduction policy, and effective reducer. Tau, alpha, hierarchy mode, and score mode are
 deliberately excluded, so changing them recomputes the inexpensive hierarchy
-from cached entropy.
+from cached entropy. Model digests are memoized separately using file identity,
+size, and high-resolution modification/change timestamps. Unchanged weights
+avoid another full read; moving or copying identical weights retains the same
+entropy key after verification. `--no-cache` skips model hashing.
 
 Reads validate that token bytes cover the complete preprocessed source.
 Corrupt entries become misses, writes use same-directory atomic replacement,
-and owned cache-directory symlinks are never followed. Hits update entry timestamps
-for LRU accounting. Cleanup runs at most daily: entries unused for seven days
-are removed, then the oldest entries are evicted until the repository cache is
-at most 512 MiB.
+and owned cache-directory symlinks are never followed. Hits refresh recency
+after checking expiry. Housekeeping runs at most daily during use and on explicit
+pruning. Before publication, expired entries are removed and the least recently
+used entries are evicted as needed to keep committed entropy files within 1 GiB.
+Entries expire after 20 days without use; oversized entries and entries that
+cannot fit after eviction are not cached. Filesystem allocation overhead,
+temporary writes, and small metadata files are additional. Completed model
+weights, resumable downloads, digest memos, and backend bundles remain separate.
 
-Inspect or clean the repository containing `PATH` (the current directory by
-default):
+Inspect or prune the shared cache. An optional `PATH` adds a report for the
+older repository-scoped v1 stores only:
 
 ```sh
 llm-cc cache status [PATH] [--format text|json]
 llm-cc cache prune  [PATH] [--format text|json]
+llm-cc cache clear --all [--format text|json]
 llm-cc cache clear  [PATH] [--format text|json]
 llm-cc cache clear  [PATH] --legacy [--format text|json]
 ```
 
-Status separates active and legacy entry counts and reports storage version,
-the current inference ABI, recorded ABI groups, unknown-provenance entries, and
-malformed entries. Cache storage format and inference ABI are independent:
-an ABI upgrade correctly misses incompatible entries. Exact current-key hits
-in the former repository-local `.llm-cc-cache/llm-cc/v1/entropy/` location are
-migrated without touching the legacy file. `clear` removes the external bucket;
-`clear --legacy` additionally removes only that legacy `llm-cc` namespace.
+Status reports the user scope, v2 storage version, limit, retention, entry
+count, bytes, and malformed entries. The former v1 stores are cold and are
+never promoted because they do not contain content-based model provenance.
+`cache clear --all` clears the shared v2 cache. A path-scoped `clear` removes
+only its old v1 bucket; `--legacy` additionally clears its former local
+`.llm-cc-cache/llm-cc/v1/entropy/` namespace.
+Without `PATH`, the scoped clear uses the current repository.
 
 ## Hermetic Linux build
 

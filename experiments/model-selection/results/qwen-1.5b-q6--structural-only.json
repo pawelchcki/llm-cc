@@ -1,0 +1,3371 @@
+{
+  "model": "qwen-1.5b-q6",
+  "label": "structural-only",
+  "command": [
+    "/home/bits/llmcc-model-study-20260905/llm-cc",
+    "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/test/test_go_abi.c",
+    "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/test/test_go_arm64_decode.c",
+    "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/test/test_go_type.c",
+    "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/test/test_go_x86_decode.c",
+    "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/src/go_abi.c",
+    "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/src/go_ctx.c",
+    "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/src/go_read.c",
+    "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/src/go_type.c",
+    "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/src/go_x86_decode.c",
+    "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/src/go_pclntab.c",
+    "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/test/fixtures/hello_http.go",
+    "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/test/fixtures/hello_parent_child.go",
+    "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_nccl_profiler/test/test_inspector_event_pool.cc",
+    "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_nccl_profiler/test/test_inspector_dd_span_accessor.cc",
+    "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_nccl_profiler/test/nccl_allreduce_workload.py",
+    "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_nccl_profiler/test/analyze_spans.py",
+    "/home/bits/llmcc-model-study-20260905/corpus/heldout/bench/bench_python_format.c",
+    "/home/bits/llmcc-model-study-20260905/corpus/heldout/bench/bench_python_stack_capture.py",
+    "/home/bits/llmcc-model-study-20260905/corpus/before/libdd_go_hook/test/test_go_pclntab.c",
+    "/home/bits/llmcc-model-study-20260905/corpus/after/libdd_go_hook/test/test_go_pclntab.c",
+    "/home/bits/llmcc-model-study-20260905/corpus/before/libdd_go_hook/test/test_go_hook_engine.c",
+    "/home/bits/llmcc-model-study-20260905/corpus/after/libdd_go_hook/test/test_go_hook_engine.c",
+    "/home/bits/llmcc-model-study-20260905/corpus/before/libdd_go_hook/test/test_go_ctx.c",
+    "/home/bits/llmcc-model-study-20260905/corpus/after/libdd_go_hook/test/test_go_ctx.c",
+    "/home/bits/llmcc-model-study-20260905/corpus/before/libdd_go_hook/test/test_go_read.c",
+    "/home/bits/llmcc-model-study-20260905/corpus/after/libdd_go_hook/test/test_go_read.c",
+    "--model",
+    "/home/bits/llmcc-model-study-20260905/models/Qwen2.5-Coder-1.5B.Q6_K.gguf",
+    "--no-download",
+    "--gpu-layers",
+    "-1",
+    "--backend",
+    "cuda",
+    "--context",
+    "32768",
+    "--batch-size",
+    "256",
+    "--entropy-reduction",
+    "device",
+    "--hotspots",
+    "10",
+    "--format",
+    "jsonl",
+    "--progress",
+    "always",
+    "--tau",
+    "100"
+  ],
+  "exit_code": 0,
+  "valid": true,
+  "wall_seconds": 0.6045354700181633,
+  "files": [
+    {
+      "alpha": 0.8,
+      "analysis_version": 2,
+      "density": 0.0,
+      "entropy_cache_hit": true,
+      "functions": [
+        {
+          "density": 0.0,
+          "end_line": 16,
+          "lmcc": 0.19999999999999996,
+          "lmcc_per_token": 0.0039215686274509795,
+          "mean_entropy": 1.241085412209299,
+          "name": "go_ctx",
+          "score": 0.0039215686274509795,
+          "start_line": 12,
+          "token_count": 51
+        },
+        {
+          "density": 0.0,
+          "end_line": 21,
+          "lmcc": 0.19999999999999996,
+          "lmcc_per_token": 0.007142857142857141,
+          "mean_entropy": 0.5617154694357721,
+          "name": "go_ctx",
+          "score": 0.007142857142857141,
+          "start_line": 18,
+          "token_count": 28
+        }
+      ],
+      "hierarchy_mode": "structural",
+      "high_entropy_tokens": 0,
+      "hotspots": [
+        {
+          "high_tokens": 0,
+          "line": 5,
+          "max_entropy": 6.022502899169922,
+          "mean_entropy": 2.5912716488043466
+        },
+        {
+          "high_tokens": 0,
+          "line": 1,
+          "max_entropy": 5.918766021728516,
+          "mean_entropy": 3.110183244943619
+        },
+        {
+          "high_tokens": 0,
+          "line": 8,
+          "max_entropy": 5.444910049438477,
+          "mean_entropy": 3.9136186242103577
+        },
+        {
+          "high_tokens": 0,
+          "line": 23,
+          "max_entropy": 5.440151691436768,
+          "mean_entropy": 2.6291514486074448
+        },
+        {
+          "high_tokens": 0,
+          "line": 50,
+          "max_entropy": 5.267338752746582,
+          "mean_entropy": 1.8618322478432674
+        },
+        {
+          "high_tokens": 0,
+          "line": 19,
+          "max_entropy": 4.79527473449707,
+          "mean_entropy": 1.0362480992916971
+        },
+        {
+          "high_tokens": 0,
+          "line": 13,
+          "max_entropy": 4.648769378662109,
+          "mean_entropy": 1.2563955415894987
+        },
+        {
+          "high_tokens": 0,
+          "line": 69,
+          "max_entropy": 4.4699602127075195,
+          "mean_entropy": 1.1532224825668065
+        },
+        {
+          "high_tokens": 0,
+          "line": 9,
+          "max_entropy": 4.159236907958984,
+          "mean_entropy": 3.0754265189170837
+        },
+        {
+          "high_tokens": 0,
+          "line": 32,
+          "max_entropy": 4.060875415802002,
+          "mean_entropy": 0.9869472712955691
+        }
+      ],
+      "language": "c",
+      "llm_cc": 9.8,
+      "lmcc_per_token": 0.014961832061068703,
+      "mean_entropy": 0.7387183933325986,
+      "path": "/home/bits/llmcc-model-study-20260905/corpus/after/libdd_go_hook/test/test_go_ctx.c",
+      "score": 0.014961832061068703,
+      "score_mode": "lmcc",
+      "tau": 100.0,
+      "tau_rule": "absolute",
+      "token_count": 655,
+      "total_branch": 8,
+      "total_comp_level": 17,
+      "type": "file",
+      "id": "after/libdd_go_hook/test/test_go_ctx.c",
+      "wall_seconds": 0.011485736991744488
+    },
+    {
+      "alpha": 0.8,
+      "analysis_version": 2,
+      "density": 0.0,
+      "entropy_cache_hit": true,
+      "functions": [],
+      "hierarchy_mode": "structural",
+      "high_entropy_tokens": 0,
+      "hotspots": [
+        {
+          "high_tokens": 0,
+          "line": 8,
+          "max_entropy": 6.246065139770508,
+          "mean_entropy": 2.193000157674154
+        },
+        {
+          "high_tokens": 0,
+          "line": 5,
+          "max_entropy": 6.234734535217285,
+          "mean_entropy": 2.787522554397583
+        },
+        {
+          "high_tokens": 0,
+          "line": 1,
+          "max_entropy": 5.918766021728516,
+          "mean_entropy": 3.1387478758891425
+        },
+        {
+          "high_tokens": 0,
+          "line": 15,
+          "max_entropy": 5.678725719451904,
+          "mean_entropy": 1.9805953577160835
+        },
+        {
+          "high_tokens": 0,
+          "line": 16,
+          "max_entropy": 5.326161861419678,
+          "mean_entropy": 1.3487222485451236
+        },
+        {
+          "high_tokens": 0,
+          "line": 21,
+          "max_entropy": 4.161046981811523,
+          "mean_entropy": 1.0120541779945293
+        },
+        {
+          "high_tokens": 0,
+          "line": 9,
+          "max_entropy": 4.018036842346191,
+          "mean_entropy": 1.725547406822443
+        },
+        {
+          "high_tokens": 0,
+          "line": 4,
+          "max_entropy": 3.7865591049194336,
+          "mean_entropy": 0.7063460126001802
+        },
+        {
+          "high_tokens": 0,
+          "line": 10,
+          "max_entropy": 3.624976873397827,
+          "mean_entropy": 1.7783001839347623
+        },
+        {
+          "high_tokens": 0,
+          "line": 11,
+          "max_entropy": 3.032179117202759,
+          "mean_entropy": 1.1901298193261027
+        }
+      ],
+      "language": "c",
+      "llm_cc": 2.5999999999999996,
+      "lmcc_per_token": 0.014525139664804468,
+      "mean_entropy": 1.2980878259050113,
+      "path": "/home/bits/llmcc-model-study-20260905/corpus/after/libdd_go_hook/test/test_go_hook_engine.c",
+      "score": 0.014525139664804468,
+      "score_mode": "lmcc",
+      "tau": 100.0,
+      "tau_rule": "absolute",
+      "token_count": 179,
+      "total_branch": 2,
+      "total_comp_level": 5,
+      "type": "file",
+      "id": "after/libdd_go_hook/test/test_go_hook_engine.c",
+      "wall_seconds": 0.0033709299750626087
+    },
+    {
+      "alpha": 0.8,
+      "analysis_version": 2,
+      "density": 0.0,
+      "entropy_cache_hit": true,
+      "functions": [
+        {
+          "density": 0.0,
+          "end_line": 27,
+          "lmcc": 0.19999999999999996,
+          "lmcc_per_token": 0.0033898305084745753,
+          "mean_entropy": 0.8530943208397267,
+          "name": "function_table",
+          "score": 0.0033898305084745753,
+          "start_line": 20,
+          "token_count": 59
+        }
+      ],
+      "hierarchy_mode": "structural",
+      "high_entropy_tokens": 0,
+      "hotspots": [
+        {
+          "high_tokens": 0,
+          "line": 3,
+          "max_entropy": 7.745131492614746,
+          "mean_entropy": 4.11248845524258
+        },
+        {
+          "high_tokens": 0,
+          "line": 13,
+          "max_entropy": 6.55794620513916,
+          "mean_entropy": 2.481912575839531
+        },
+        {
+          "high_tokens": 0,
+          "line": 7,
+          "max_entropy": 5.589505195617676,
+          "mean_entropy": 2.7748390436172485
+        },
+        {
+          "high_tokens": 0,
+          "line": 29,
+          "max_entropy": 5.576034069061279,
+          "mean_entropy": 1.9787386101396645
+        },
+        {
+          "high_tokens": 0,
+          "line": 80,
+          "max_entropy": 5.52017879486084,
+          "mean_entropy": 1.3214568872004748
+        },
+        {
+          "high_tokens": 0,
+          "line": 25,
+          "max_entropy": 5.4984965324401855,
+          "mean_entropy": 1.336466573489209
+        },
+        {
+          "high_tokens": 0,
+          "line": 34,
+          "max_entropy": 5.1330790519714355,
+          "mean_entropy": 1.7081193630583584
+        },
+        {
+          "high_tokens": 0,
+          "line": 65,
+          "max_entropy": 4.837935924530029,
+          "mean_entropy": 0.8550714083986046
+        },
+        {
+          "high_tokens": 0,
+          "line": 12,
+          "max_entropy": 4.772877216339111,
+          "mean_entropy": 2.2314039043461285
+        },
+        {
+          "high_tokens": 0,
+          "line": 88,
+          "max_entropy": 4.748639106750488,
+          "mean_entropy": 1.157547781112953
+        }
+      ],
+      "language": "c",
+      "llm_cc": 11.0,
+      "lmcc_per_token": 0.01166489925768823,
+      "mean_entropy": 0.6454055161288161,
+      "path": "/home/bits/llmcc-model-study-20260905/corpus/after/libdd_go_hook/test/test_go_pclntab.c",
+      "score": 0.01166489925768823,
+      "score_mode": "lmcc",
+      "tau": 100.0,
+      "tau_rule": "absolute",
+      "token_count": 943,
+      "total_branch": 9,
+      "total_comp_level": 19,
+      "type": "file",
+      "id": "after/libdd_go_hook/test/test_go_pclntab.c",
+      "wall_seconds": 0.01445118896663189
+    },
+    {
+      "alpha": 0.8,
+      "analysis_version": 2,
+      "density": 0.0,
+      "entropy_cache_hit": true,
+      "functions": [],
+      "hierarchy_mode": "structural",
+      "high_entropy_tokens": 0,
+      "hotspots": [
+        {
+          "high_tokens": 0,
+          "line": 5,
+          "max_entropy": 6.19951057434082,
+          "mean_entropy": 2.5409089823563895
+        },
+        {
+          "high_tokens": 0,
+          "line": 1,
+          "max_entropy": 5.918766021728516,
+          "mean_entropy": 3.6032746374607085
+        },
+        {
+          "high_tokens": 0,
+          "line": 10,
+          "max_entropy": 5.425467491149902,
+          "mean_entropy": 2.5700722535451255
+        },
+        {
+          "high_tokens": 0,
+          "line": 30,
+          "max_entropy": 5.314865589141846,
+          "mean_entropy": 1.028445117162644
+        },
+        {
+          "high_tokens": 0,
+          "line": 19,
+          "max_entropy": 5.152986526489258,
+          "mean_entropy": 1.0175423620438033
+        },
+        {
+          "high_tokens": 0,
+          "line": 40,
+          "max_entropy": 5.064320087432861,
+          "mean_entropy": 1.00704153298866
+        },
+        {
+          "high_tokens": 0,
+          "line": 8,
+          "max_entropy": 4.207742691040039,
+          "mean_entropy": 2.0599570274353027
+        },
+        {
+          "high_tokens": 0,
+          "line": 20,
+          "max_entropy": 3.8705337047576904,
+          "mean_entropy": 2.130222693318501
+        },
+        {
+          "high_tokens": 0,
+          "line": 46,
+          "max_entropy": 3.7466132640838623,
+          "mean_entropy": 1.1555385283686013
+        },
+        {
+          "high_tokens": 0,
+          "line": 4,
+          "max_entropy": 3.7246267795562744,
+          "mean_entropy": 0.7014013451731039
+        }
+      ],
+      "language": "c",
+      "llm_cc": 7.4,
+      "lmcc_per_token": 0.014741035856573706,
+      "mean_entropy": 0.8064283062585637,
+      "path": "/home/bits/llmcc-model-study-20260905/corpus/after/libdd_go_hook/test/test_go_read.c",
+      "score": 0.014741035856573706,
+      "score_mode": "lmcc",
+      "tau": 100.0,
+      "tau_rule": "absolute",
+      "token_count": 502,
+      "total_branch": 6,
+      "total_comp_level": 13,
+      "type": "file",
+      "id": "after/libdd_go_hook/test/test_go_read.c",
+      "wall_seconds": 0.008731860027182847
+    },
+    {
+      "alpha": 0.8,
+      "analysis_version": 2,
+      "density": 0.0,
+      "entropy_cache_hit": true,
+      "functions": [],
+      "hierarchy_mode": "structural",
+      "high_entropy_tokens": 0,
+      "hotspots": [
+        {
+          "high_tokens": 0,
+          "line": 12,
+          "max_entropy": 7.464425086975098,
+          "mean_entropy": 3.369168827931086
+        },
+        {
+          "high_tokens": 0,
+          "line": 9,
+          "max_entropy": 7.153148651123047,
+          "mean_entropy": 2.8834094603856406
+        },
+        {
+          "high_tokens": 0,
+          "line": 54,
+          "max_entropy": 5.028012275695801,
+          "mean_entropy": 1.9252711857923053
+        },
+        {
+          "high_tokens": 0,
+          "line": 17,
+          "max_entropy": 4.927708625793457,
+          "mean_entropy": 2.7390471398830414
+        },
+        {
+          "high_tokens": 0,
+          "line": 79,
+          "max_entropy": 4.559301376342773,
+          "mean_entropy": 1.336880891676992
+        },
+        {
+          "high_tokens": 0,
+          "line": 32,
+          "max_entropy": 4.057573318481445,
+          "mean_entropy": 1.0148689645638629
+        },
+        {
+          "high_tokens": 0,
+          "line": 8,
+          "max_entropy": 3.9178199768066406,
+          "mean_entropy": 0.7352864431320794
+        },
+        {
+          "high_tokens": 0,
+          "line": 40,
+          "max_entropy": 3.9115030765533447,
+          "mean_entropy": 1.0794765864528018
+        },
+        {
+          "high_tokens": 0,
+          "line": 15,
+          "max_entropy": 3.9049034118652344,
+          "mean_entropy": 3.1514972845713296
+        },
+        {
+          "high_tokens": 0,
+          "line": 62,
+          "max_entropy": 3.8374524116516113,
+          "mean_entropy": 1.2882609451189637
+        }
+      ],
+      "language": "c",
+      "llm_cc": 7.4,
+      "lmcc_per_token": 0.01002710027100271,
+      "mean_entropy": 0.5928789720922946,
+      "path": "/home/bits/llmcc-model-study-20260905/corpus/before/libdd_go_hook/test/test_go_ctx.c",
+      "score": 0.01002710027100271,
+      "score_mode": "lmcc",
+      "tau": 100.0,
+      "tau_rule": "absolute",
+      "token_count": 738,
+      "total_branch": 6,
+      "total_comp_level": 13,
+      "type": "file",
+      "id": "before/libdd_go_hook/test/test_go_ctx.c",
+      "wall_seconds": 0.012259253999218345
+    },
+    {
+      "alpha": 0.8,
+      "analysis_version": 2,
+      "density": 0.0,
+      "entropy_cache_hit": true,
+      "functions": [],
+      "hierarchy_mode": "structural",
+      "high_entropy_tokens": 0,
+      "hotspots": [
+        {
+          "high_tokens": 0,
+          "line": 13,
+          "max_entropy": 7.482484340667725,
+          "mean_entropy": 3.285321090902601
+        },
+        {
+          "high_tokens": 0,
+          "line": 10,
+          "max_entropy": 7.125175476074219,
+          "mean_entropy": 2.8455819288889566
+        },
+        {
+          "high_tokens": 0,
+          "line": 15,
+          "max_entropy": 6.299890518188477,
+          "mean_entropy": 2.381480230225457
+        },
+        {
+          "high_tokens": 0,
+          "line": 23,
+          "max_entropy": 5.757292747497559,
+          "mean_entropy": 2.12914784794504
+        },
+        {
+          "high_tokens": 0,
+          "line": 29,
+          "max_entropy": 4.828311920166016,
+          "mean_entropy": 1.0958461179689039
+        },
+        {
+          "high_tokens": 0,
+          "line": 16,
+          "max_entropy": 4.0965118408203125,
+          "mean_entropy": 1.7578824125230312
+        },
+        {
+          "high_tokens": 0,
+          "line": 9,
+          "max_entropy": 3.8297314643859863,
+          "mean_entropy": 0.7231563594606187
+        },
+        {
+          "high_tokens": 0,
+          "line": 17,
+          "max_entropy": 3.5491442680358887,
+          "mean_entropy": 1.8361721564741695
+        },
+        {
+          "high_tokens": 0,
+          "line": 20,
+          "max_entropy": 3.3491344451904297,
+          "mean_entropy": 1.6455617887633187
+        },
+        {
+          "high_tokens": 0,
+          "line": 8,
+          "max_entropy": 3.266388177871704,
+          "mean_entropy": 1.3947702586650848
+        }
+      ],
+      "language": "c",
+      "llm_cc": 2.5999999999999996,
+      "lmcc_per_token": 0.0143646408839779,
+      "mean_entropy": 1.2988151370178527,
+      "path": "/home/bits/llmcc-model-study-20260905/corpus/before/libdd_go_hook/test/test_go_hook_engine.c",
+      "score": 0.0143646408839779,
+      "score_mode": "lmcc",
+      "tau": 100.0,
+      "tau_rule": "absolute",
+      "token_count": 181,
+      "total_branch": 2,
+      "total_comp_level": 5,
+      "type": "file",
+      "id": "before/libdd_go_hook/test/test_go_hook_engine.c",
+      "wall_seconds": 0.0035196130047552288
+    },
+    {
+      "alpha": 0.8,
+      "analysis_version": 2,
+      "density": 0.0,
+      "entropy_cache_hit": true,
+      "functions": [],
+      "hierarchy_mode": "structural",
+      "high_entropy_tokens": 0,
+      "hotspots": [
+        {
+          "high_tokens": 0,
+          "line": 9,
+          "max_entropy": 7.699324607849121,
+          "mean_entropy": 4.4217954476674395
+        },
+        {
+          "high_tokens": 0,
+          "line": 21,
+          "max_entropy": 6.14373779296875,
+          "mean_entropy": 2.4333993720356375
+        },
+        {
+          "high_tokens": 0,
+          "line": 13,
+          "max_entropy": 5.695511817932129,
+          "mean_entropy": 2.814450373252233
+        },
+        {
+          "high_tokens": 0,
+          "line": 45,
+          "max_entropy": 5.650075912475586,
+          "mean_entropy": 2.190091264833297
+        },
+        {
+          "high_tokens": 0,
+          "line": 26,
+          "max_entropy": 5.602618217468262,
+          "mean_entropy": 2.0352209150791167
+        },
+        {
+          "high_tokens": 0,
+          "line": 55,
+          "max_entropy": 5.597507476806641,
+          "mean_entropy": 0.7046273471429371
+        },
+        {
+          "high_tokens": 0,
+          "line": 32,
+          "max_entropy": 4.76694393157959,
+          "mean_entropy": 1.3496428445990507
+        },
+        {
+          "high_tokens": 0,
+          "line": 16,
+          "max_entropy": 4.706464767456055,
+          "mean_entropy": 2.221827042102814
+        },
+        {
+          "high_tokens": 0,
+          "line": 39,
+          "max_entropy": 4.671350955963135,
+          "mean_entropy": 1.0988797241540549
+        },
+        {
+          "high_tokens": 0,
+          "line": 33,
+          "max_entropy": 4.62814474105835,
+          "mean_entropy": 0.9926783459261059
+        }
+      ],
+      "language": "c",
+      "llm_cc": 2.5999999999999996,
+      "lmcc_per_token": 0.004710144927536231,
+      "mean_entropy": 0.9304594333387589,
+      "path": "/home/bits/llmcc-model-study-20260905/corpus/before/libdd_go_hook/test/test_go_pclntab.c",
+      "score": 0.004710144927536231,
+      "score_mode": "lmcc",
+      "tau": 100.0,
+      "tau_rule": "absolute",
+      "token_count": 552,
+      "total_branch": 2,
+      "total_comp_level": 5,
+      "type": "file",
+      "id": "before/libdd_go_hook/test/test_go_pclntab.c",
+      "wall_seconds": 0.008727370004635304
+    },
+    {
+      "alpha": 0.8,
+      "analysis_version": 2,
+      "density": 0.0,
+      "entropy_cache_hit": true,
+      "functions": [],
+      "hierarchy_mode": "structural",
+      "high_entropy_tokens": 0,
+      "hotspots": [
+        {
+          "high_tokens": 0,
+          "line": 13,
+          "max_entropy": 7.482484340667725,
+          "mean_entropy": 3.746566265821457
+        },
+        {
+          "high_tokens": 0,
+          "line": 10,
+          "max_entropy": 7.125175476074219,
+          "mean_entropy": 2.8455819288889566
+        },
+        {
+          "high_tokens": 0,
+          "line": 17,
+          "max_entropy": 5.620279312133789,
+          "mean_entropy": 2.6690804759661355
+        },
+        {
+          "high_tokens": 0,
+          "line": 42,
+          "max_entropy": 5.347158432006836,
+          "mean_entropy": 1.0356164843413151
+        },
+        {
+          "high_tokens": 0,
+          "line": 53,
+          "max_entropy": 5.055047035217285,
+          "mean_entropy": 0.9889977932150942
+        },
+        {
+          "high_tokens": 0,
+          "line": 29,
+          "max_entropy": 4.991599082946777,
+          "mean_entropy": 0.9795832849975507
+        },
+        {
+          "high_tokens": 0,
+          "line": 18,
+          "max_entropy": 4.438169479370117,
+          "mean_entropy": 2.2361215233802794
+        },
+        {
+          "high_tokens": 0,
+          "line": 15,
+          "max_entropy": 4.174961566925049,
+          "mean_entropy": 2.0107800722122193
+        },
+        {
+          "high_tokens": 0,
+          "line": 9,
+          "max_entropy": 3.8297314643859863,
+          "mean_entropy": 0.7231563594606187
+        },
+        {
+          "high_tokens": 0,
+          "line": 59,
+          "max_entropy": 3.8099610805511475,
+          "mean_entropy": 1.0934526779844116
+        }
+      ],
+      "language": "c",
+      "llm_cc": 7.4,
+      "lmcc_per_token": 0.013333333333333334,
+      "mean_entropy": 0.7653430336061131,
+      "path": "/home/bits/llmcc-model-study-20260905/corpus/before/libdd_go_hook/test/test_go_read.c",
+      "score": 0.013333333333333334,
+      "score_mode": "lmcc",
+      "tau": 100.0,
+      "tau_rule": "absolute",
+      "token_count": 555,
+      "total_branch": 6,
+      "total_comp_level": 13,
+      "type": "file",
+      "id": "before/libdd_go_hook/test/test_go_read.c",
+      "wall_seconds": 0.009549327020067722
+    },
+    {
+      "alpha": 0.8,
+      "analysis_version": 2,
+      "density": 0.0,
+      "entropy_cache_hit": true,
+      "functions": [
+        {
+          "density": 0.0,
+          "end_line": 48,
+          "lmcc": 2.8,
+          "lmcc_per_token": 0.030769230769230767,
+          "mean_entropy": 0.46700117455507245,
+          "name": "dd_monotonic_ns",
+          "score": 0.030769230769230767,
+          "start_line": 41,
+          "token_count": 91
+        },
+        {
+          "density": 0.0,
+          "end_line": 59,
+          "lmcc": 0.19999999999999996,
+          "lmcc_per_token": 0.0021505376344086017,
+          "mean_entropy": 1.5016792271654271,
+          "name": "dd_reset_stack",
+          "score": 0.0021505376344086017,
+          "start_line": 50,
+          "token_count": 93
+        },
+        {
+          "density": 0.0,
+          "end_line": 75,
+          "lmcc": 2.8,
+          "lmcc_per_token": 0.020289855072463767,
+          "mean_entropy": 0.8753720673659068,
+          "name": "dd_make_frame",
+          "score": 0.020289855072463767,
+          "start_line": 61,
+          "token_count": 138
+        },
+        {
+          "density": 0.0,
+          "end_line": 90,
+          "lmcc": 2.8,
+          "lmcc_per_token": 0.016666666666666666,
+          "mean_entropy": 0.8272796949971247,
+          "name": "dd_run_case",
+          "score": 0.016666666666666666,
+          "start_line": 77,
+          "token_count": 168
+        },
+        {
+          "density": 0.0,
+          "end_line": 99,
+          "lmcc": 4.2,
+          "lmcc_per_token": 0.04565217391304348,
+          "mean_entropy": 0.25867723918022617,
+          "name": "dd_find_case",
+          "score": 0.04565217391304348,
+          "start_line": 92,
+          "token_count": 92
+        },
+        {
+          "density": 0.0,
+          "end_line": 110,
+          "lmcc": 2.8,
+          "lmcc_per_token": 0.029473684210526315,
+          "mean_entropy": 0.610921313129151,
+          "name": "dd_parse_iterations",
+          "score": 0.029473684210526315,
+          "start_line": 101,
+          "token_count": 95
+        },
+        {
+          "density": 0.0,
+          "end_line": 114,
+          "lmcc": 0.19999999999999996,
+          "lmcc_per_token": 0.006451612903225805,
+          "mean_entropy": 1.2258259870352284,
+          "name": "dd_print_usage",
+          "score": 0.006451612903225805,
+          "start_line": 112,
+          "token_count": 31
+        },
+        {
+          "density": 0.0,
+          "end_line": 161,
+          "lmcc": 8.4,
+          "lmcc_per_token": 0.018340611353711792,
+          "mean_entropy": 0.5324380545269172,
+          "name": "main",
+          "score": 0.018340611353711792,
+          "start_line": 116,
+          "token_count": 458
+        }
+      ],
+      "hierarchy_mode": "structural",
+      "high_entropy_tokens": 0,
+      "hotspots": [
+        {
+          "high_tokens": 0,
+          "line": 11,
+          "max_entropy": 7.088891983032227,
+          "mean_entropy": 3.0755267441272736
+        },
+        {
+          "high_tokens": 0,
+          "line": 20,
+          "max_entropy": 6.828636169433594,
+          "mean_entropy": 4.334217444062233
+        },
+        {
+          "high_tokens": 0,
+          "line": 9,
+          "max_entropy": 6.772425174713135,
+          "mean_entropy": 1.5280391090549528
+        },
+        {
+          "high_tokens": 0,
+          "line": 27,
+          "max_entropy": 6.4353532791137695,
+          "mean_entropy": 2.5315149664878844
+        },
+        {
+          "high_tokens": 0,
+          "line": 28,
+          "max_entropy": 5.9783101081848145,
+          "mean_entropy": 3.5102339647710323
+        },
+        {
+          "high_tokens": 0,
+          "line": 58,
+          "max_entropy": 5.951061725616455,
+          "mean_entropy": 1.768091763369739
+        },
+        {
+          "high_tokens": 0,
+          "line": 29,
+          "max_entropy": 5.915877342224121,
+          "mean_entropy": 3.0230978252366185
+        },
+        {
+          "high_tokens": 0,
+          "line": 54,
+          "max_entropy": 5.781831741333008,
+          "mean_entropy": 1.5741841041266784
+        },
+        {
+          "high_tokens": 0,
+          "line": 53,
+          "max_entropy": 5.61800479888916,
+          "mean_entropy": 0.9112902318593115
+        },
+        {
+          "high_tokens": 0,
+          "line": 57,
+          "max_entropy": 5.370250225067139,
+          "mean_entropy": 1.7948243377031758
+        }
+      ],
+      "language": "c",
+      "llm_cc": 25.2,
+      "lmcc_per_token": 0.017236662106703146,
+      "mean_entropy": 0.8416188082064577,
+      "path": "/home/bits/llmcc-model-study-20260905/corpus/heldout/bench/bench_python_format.c",
+      "score": 0.017236662106703146,
+      "score_mode": "lmcc",
+      "tau": 100.0,
+      "tau_rule": "absolute",
+      "token_count": 1462,
+      "total_branch": 19,
+      "total_comp_level": 50,
+      "type": "file",
+      "id": "heldout/bench/bench_python_format.c",
+      "wall_seconds": 0.022287670988589525
+    },
+    {
+      "alpha": 0.8,
+      "analysis_version": 2,
+      "density": 0.0,
+      "entropy_cache_hit": true,
+      "functions": [
+        {
+          "density": 0.0,
+          "end_line": 64,
+          "lmcc": 0.19999999999999996,
+          "lmcc_per_token": 0.0009661835748792268,
+          "mean_entropy": 0.6240610688420428,
+          "name": "configure_library",
+          "score": 0.0009661835748792268,
+          "start_line": 49,
+          "token_count": 207
+        },
+        {
+          "density": 0.0,
+          "end_line": 77,
+          "lmcc": 5.6,
+          "lmcc_per_token": 0.049999999999999996,
+          "mean_entropy": 0.999752570812039,
+          "name": "capture_batch",
+          "score": 0.049999999999999996,
+          "start_line": 67,
+          "token_count": 112
+        },
+        {
+          "density": 0.0,
+          "end_line": 89,
+          "lmcc": 4.2,
+          "lmcc_per_token": 0.049411764705882356,
+          "mean_entropy": 0.4474888297405628,
+          "name": "capture_metrics",
+          "score": 0.049411764705882356,
+          "start_line": 80,
+          "token_count": 85
+        },
+        {
+          "density": 0.0,
+          "end_line": 127,
+          "lmcc": 2.8,
+          "lmcc_per_token": 0.008022922636103151,
+          "mean_entropy": 0.38533671082604526,
+          "name": "measure",
+          "score": 0.008022922636103151,
+          "start_line": 92,
+          "token_count": 349
+        },
+        {
+          "density": 0.0,
+          "end_line": 134,
+          "lmcc": 2.8,
+          "lmcc_per_token": 0.07179487179487179,
+          "mean_entropy": 0.6118730237833986,
+          "name": "positive_integer",
+          "score": 0.07179487179487179,
+          "start_line": 130,
+          "token_count": 39
+        },
+        {
+          "density": 0.0,
+          "end_line": 160,
+          "lmcc": 6.999999999999999,
+          "lmcc_per_token": 0.021875,
+          "mean_entropy": 0.8227966650035341,
+          "name": "parse_args",
+          "score": 0.021875,
+          "start_line": 137,
+          "token_count": 320
+        },
+        {
+          "density": 0.0,
+          "end_line": 165,
+          "lmcc": 0.19999999999999996,
+          "lmcc_per_token": 0.006060606060606059,
+          "mean_entropy": 0.6628586353035644,
+          "name": "pin_cpu",
+          "score": 0.006060606060606059,
+          "start_line": 163,
+          "token_count": 33
+        },
+        {
+          "density": 0.0,
+          "end_line": 171,
+          "lmcc": 2.8,
+          "lmcc_per_token": 0.055999999999999994,
+          "mean_entropy": 0.686137570667779,
+          "name": "resident_bytes",
+          "score": 0.055999999999999994,
+          "start_line": 168,
+          "token_count": 50
+        },
+        {
+          "density": 0.0,
+          "end_line": 238,
+          "lmcc": 20.4,
+          "lmcc_per_token": 0.04104627766599597,
+          "mean_entropy": 0.6270760608290191,
+          "name": "measure_rss_child",
+          "score": 0.04104627766599597,
+          "start_line": 174,
+          "token_count": 497
+        },
+        {
+          "density": 0.0,
+          "end_line": 254,
+          "lmcc": 6.999999999999999,
+          "lmcc_per_token": 0.047619047619047616,
+          "mean_entropy": 0.45745477041522725,
+          "name": "parse_rss_measurement",
+          "score": 0.047619047619047616,
+          "start_line": 241,
+          "token_count": 147
+        },
+        {
+          "density": 0.0,
+          "end_line": 278,
+          "lmcc": 5.8,
+          "lmcc_per_token": 0.033720930232558136,
+          "mean_entropy": 0.630301770701355,
+          "name": "measure_isolated_rss",
+          "score": 0.033720930232558136,
+          "start_line": 257,
+          "token_count": 172
+        },
+        {
+          "density": 0.0,
+          "end_line": 323,
+          "lmcc": 9.0,
+          "lmcc_per_token": 0.020089285714285716,
+          "mean_entropy": 0.5550970129535406,
+          "name": "write_metrics",
+          "score": 0.020089285714285716,
+          "start_line": 281,
+          "token_count": 448
+        },
+        {
+          "density": 0.0,
+          "end_line": 369,
+          "lmcc": 12.799999999999999,
+          "lmcc_per_token": 0.03307493540051679,
+          "mean_entropy": 0.36879663009320457,
+          "name": "main",
+          "score": 0.03307493540051679,
+          "start_line": 326,
+          "token_count": 387
+        }
+      ],
+      "hierarchy_mode": "structural",
+      "high_entropy_tokens": 0,
+      "hotspots": [
+        {
+          "high_tokens": 0,
+          "line": 17,
+          "max_entropy": 7.069726467132568,
+          "mean_entropy": 2.439319966630137
+        },
+        {
+          "high_tokens": 0,
+          "line": 19,
+          "max_entropy": 6.047065734863281,
+          "mean_entropy": 1.343880412931321
+        },
+        {
+          "high_tokens": 0,
+          "line": 27,
+          "max_entropy": 5.920783042907715,
+          "mean_entropy": 2.5266618771711364
+        },
+        {
+          "high_tokens": 0,
+          "line": 30,
+          "max_entropy": 5.883968830108643,
+          "mean_entropy": 1.8425468849018216
+        },
+        {
+          "high_tokens": 0,
+          "line": 50,
+          "max_entropy": 5.811691761016846,
+          "mean_entropy": 1.6721429665135061
+        },
+        {
+          "high_tokens": 0,
+          "line": 40,
+          "max_entropy": 5.679767608642578,
+          "mean_entropy": 2.908229232393205
+        },
+        {
+          "high_tokens": 0,
+          "line": 151,
+          "max_entropy": 5.592043876647949,
+          "mean_entropy": 0.7914337244755271
+        },
+        {
+          "high_tokens": 0,
+          "line": 150,
+          "max_entropy": 5.575160503387451,
+          "mean_entropy": 1.354720105160959
+        },
+        {
+          "high_tokens": 0,
+          "line": 29,
+          "max_entropy": 5.498897552490234,
+          "mean_entropy": 1.3508901119232177
+        },
+        {
+          "high_tokens": 0,
+          "line": 145,
+          "max_entropy": 5.456184387207031,
+          "mean_entropy": 0.9276407859454464
+        }
+      ],
+      "language": "python",
+      "llm_cc": 85.39999999999999,
+      "lmcc_per_token": 0.027718273287893537,
+      "mean_entropy": 0.6092937156502634,
+      "path": "/home/bits/llmcc-model-study-20260905/corpus/heldout/bench/bench_python_stack_capture.py",
+      "score": 0.027718273287893537,
+      "score_mode": "lmcc",
+      "tau": 100.0,
+      "tau_rule": "absolute",
+      "token_count": 3081,
+      "total_branch": 60,
+      "total_comp_level": 187,
+      "type": "file",
+      "id": "heldout/bench/bench_python_stack_capture.py",
+      "wall_seconds": 0.05566296196775511
+    },
+    {
+      "alpha": 0.8,
+      "analysis_version": 2,
+      "density": 0.0,
+      "entropy_cache_hit": true,
+      "functions": [
+        {
+          "density": 0.0,
+          "end_line": 200,
+          "lmcc": 5.8,
+          "lmcc_per_token": 0.061052631578947365,
+          "mean_entropy": 0.5413434241374488,
+          "name": "go_abi_select",
+          "score": 0.061052631578947365,
+          "start_line": 188,
+          "token_count": 95
+        },
+        {
+          "density": 0.0,
+          "end_line": 210,
+          "lmcc": 2.8,
+          "lmcc_per_token": 0.05185185185185185,
+          "mean_entropy": 0.826193049998471,
+          "name": "go_abi_kind_name",
+          "score": 0.05185185185185185,
+          "start_line": 202,
+          "token_count": 54
+        }
+      ],
+      "hierarchy_mode": "structural",
+      "high_entropy_tokens": 0,
+      "hotspots": [
+        {
+          "high_tokens": 0,
+          "line": 13,
+          "max_entropy": 7.35718297958374,
+          "mean_entropy": 3.923123291560582
+        },
+        {
+          "high_tokens": 0,
+          "line": 42,
+          "max_entropy": 5.985106468200684,
+          "mean_entropy": 2.558660551905632
+        },
+        {
+          "high_tokens": 0,
+          "line": 64,
+          "max_entropy": 5.882256984710693,
+          "mean_entropy": 1.9427359402179718
+        },
+        {
+          "high_tokens": 0,
+          "line": 40,
+          "max_entropy": 5.605052947998047,
+          "mean_entropy": 2.80675021186471
+        },
+        {
+          "high_tokens": 0,
+          "line": 33,
+          "max_entropy": 5.509594917297363,
+          "mean_entropy": 2.9615791263905438
+        },
+        {
+          "high_tokens": 0,
+          "line": 58,
+          "max_entropy": 5.325984477996826,
+          "mean_entropy": 0.9330290818276504
+        },
+        {
+          "high_tokens": 0,
+          "line": 47,
+          "max_entropy": 5.2999067306518555,
+          "mean_entropy": 1.1707629997150175
+        },
+        {
+          "high_tokens": 0,
+          "line": 54,
+          "max_entropy": 5.288628578186035,
+          "mean_entropy": 1.6489350222624266
+        },
+        {
+          "high_tokens": 0,
+          "line": 52,
+          "max_entropy": 5.114702224731445,
+          "mean_entropy": 1.6479152217507362
+        },
+        {
+          "high_tokens": 0,
+          "line": 45,
+          "max_entropy": 5.069866180419922,
+          "mean_entropy": 0.9498414742675695
+        }
+      ],
+      "language": "c",
+      "llm_cc": 8.4,
+      "lmcc_per_token": 0.006344410876132931,
+      "mean_entropy": 0.4885011873558084,
+      "path": "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/src/go_abi.c",
+      "score": 0.006344410876132931,
+      "score_mode": "lmcc",
+      "tau": 100.0,
+      "tau_rule": "absolute",
+      "token_count": 1324,
+      "total_branch": 6,
+      "total_comp_level": 18,
+      "type": "file",
+      "id": "heldout/libdd_go_hook/src/go_abi.c",
+      "wall_seconds": 0.017682315956335515
+    },
+    {
+      "alpha": 0.8,
+      "analysis_version": 2,
+      "density": 0.0,
+      "entropy_cache_hit": true,
+      "functions": [
+        {
+          "density": 0.0,
+          "end_line": 19,
+          "lmcc": 0.19999999999999996,
+          "lmcc_per_token": 0.001709401709401709,
+          "mean_entropy": 0.32136922559817305,
+          "name": "splitmix64",
+          "score": 0.001709401709401709,
+          "start_line": 14,
+          "token_count": 117
+        },
+        {
+          "density": 0.0,
+          "end_line": 23,
+          "lmcc": 0.19999999999999996,
+          "lmcc_per_token": 0.008333333333333331,
+          "mean_entropy": 1.3115088590614807,
+          "name": "go_ctx_init",
+          "score": 0.008333333333333331,
+          "start_line": 21,
+          "token_count": 24
+        },
+        {
+          "density": 0.0,
+          "end_line": 53,
+          "lmcc": 8.8,
+          "lmcc_per_token": 0.03176895306859206,
+          "mean_entropy": 0.6487119186830723,
+          "name": "go_ctx_get_or_create",
+          "score": 0.03176895306859206,
+          "start_line": 25,
+          "token_count": 277
+        },
+        {
+          "density": 0.0,
+          "end_line": 71,
+          "lmcc": 5.6,
+          "lmcc_per_token": 0.03236994219653179,
+          "mean_entropy": 0.1333096912211464,
+          "name": "go_ctx_get",
+          "score": 0.03236994219653179,
+          "start_line": 55,
+          "token_count": 173
+        },
+        {
+          "density": 0.0,
+          "end_line": 79,
+          "lmcc": 2.8,
+          "lmcc_per_token": 0.04666666666666666,
+          "mean_entropy": 0.8749374083126895,
+          "name": "go_ctx_push_span",
+          "score": 0.04666666666666666,
+          "start_line": 73,
+          "token_count": 60
+        },
+        {
+          "density": 0.0,
+          "end_line": 86,
+          "lmcc": 2.8,
+          "lmcc_per_token": 0.05957446808510638,
+          "mean_entropy": 0.2014317300140937,
+          "name": "go_ctx_pop_span",
+          "score": 0.05957446808510638,
+          "start_line": 81,
+          "token_count": 47
+        },
+        {
+          "density": 0.0,
+          "end_line": 93,
+          "lmcc": 2.8,
+          "lmcc_per_token": 0.055999999999999994,
+          "mean_entropy": 0.2686161616444588,
+          "name": "go_ctx_current_span",
+          "score": 0.055999999999999994,
+          "start_line": 88,
+          "token_count": 50
+        },
+        {
+          "density": 0.0,
+          "end_line": 113,
+          "lmcc": 7.199999999999999,
+          "lmcc_per_token": 0.03711340206185566,
+          "mean_entropy": 0.41050231984015983,
+          "name": "go_ctx_gc",
+          "score": 0.03711340206185566,
+          "start_line": 95,
+          "token_count": 194
+        }
+      ],
+      "hierarchy_mode": "structural",
+      "high_entropy_tokens": 0,
+      "hotspots": [
+        {
+          "high_tokens": 0,
+          "line": 9,
+          "max_entropy": 7.699324607849121,
+          "mean_entropy": 4.0534184376398725
+        },
+        {
+          "high_tokens": 0,
+          "line": 14,
+          "max_entropy": 6.247638702392578,
+          "mean_entropy": 1.7777727385109756
+        },
+        {
+          "high_tokens": 0,
+          "line": 32,
+          "max_entropy": 4.783141136169434,
+          "mean_entropy": 1.044148139979197
+        },
+        {
+          "high_tokens": 0,
+          "line": 11,
+          "max_entropy": 4.675318717956543,
+          "mean_entropy": 2.087338018417358
+        },
+        {
+          "high_tokens": 0,
+          "line": 73,
+          "max_entropy": 4.351911544799805,
+          "mean_entropy": 1.108607104768799
+        },
+        {
+          "high_tokens": 0,
+          "line": 29,
+          "max_entropy": 4.2808146476745605,
+          "mean_entropy": 0.5705741358412654
+        },
+        {
+          "high_tokens": 0,
+          "line": 95,
+          "max_entropy": 4.001289367675781,
+          "mean_entropy": 1.0994312879818608
+        },
+        {
+          "high_tokens": 0,
+          "line": 25,
+          "max_entropy": 3.8574631214141846,
+          "mean_entropy": 1.3431572948374433
+        },
+        {
+          "high_tokens": 0,
+          "line": 21,
+          "max_entropy": 3.8489251136779785,
+          "mean_entropy": 2.0315650875369706
+        },
+        {
+          "high_tokens": 0,
+          "line": 41,
+          "max_entropy": 3.7507874965667725,
+          "mean_entropy": 0.5355112883090011
+        }
+      ],
+      "language": "c",
+      "llm_cc": 31.4,
+      "lmcc_per_token": 0.032948583420776494,
+      "mean_entropy": 0.4843873921589663,
+      "path": "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/src/go_ctx.c",
+      "score": 0.032948583420776494,
+      "score_mode": "lmcc",
+      "tau": 100.0,
+      "tau_rule": "absolute",
+      "token_count": 953,
+      "total_branch": 23,
+      "total_comp_level": 65,
+      "type": "file",
+      "id": "heldout/libdd_go_hook/src/go_ctx.c",
+      "wall_seconds": 0.014271424966864288
+    },
+    {
+      "alpha": 0.8,
+      "analysis_version": 2,
+      "density": 0.0,
+      "entropy_cache_hit": true,
+      "functions": [
+        {
+          "density": 0.0,
+          "end_line": 125,
+          "lmcc": 4.2,
+          "lmcc_per_token": 0.02709677419354839,
+          "mean_entropy": 0.6172505343377481,
+          "name": "pclntab_append",
+          "score": 0.02709677419354839,
+          "start_line": 111,
+          "token_count": 155
+        },
+        {
+          "density": 0.0,
+          "end_line": 139,
+          "lmcc": 4.2,
+          "lmcc_per_token": 0.11351351351351352,
+          "mean_entropy": 0.6781716785941122,
+          "name": "contains_dot",
+          "score": 0.11351351351351352,
+          "start_line": 133,
+          "token_count": 37
+        },
+        {
+          "density": 0.0,
+          "end_line": 169,
+          "lmcc": 11.399999999999999,
+          "lmcc_per_token": 0.09913043478260869,
+          "mean_entropy": 0.5532859558118103,
+          "name": "glob_match",
+          "score": 0.09913043478260869,
+          "start_line": 147,
+          "token_count": 115
+        },
+        {
+          "density": 0.0,
+          "end_line": 176,
+          "lmcc": 0.19999999999999996,
+          "lmcc_per_token": 0.005405405405405404,
+          "mean_entropy": 1.2644476171526302,
+          "name": "safe_offset",
+          "score": 0.005405405405405404,
+          "start_line": 174,
+          "token_count": 37
+        },
+        {
+          "density": 0.0,
+          "end_line": 230,
+          "lmcc": 13.799999999999999,
+          "lmcc_per_token": 0.041194029850746265,
+          "mean_entropy": 0.7092415062883746,
+          "name": "find_pclntab_magic",
+          "score": 0.041194029850746265,
+          "start_line": 187,
+          "token_count": 335
+        },
+        {
+          "density": 0.0,
+          "end_line": 348,
+          "lmcc": 39.599999999999994,
+          "lmcc_per_token": 0.03764258555133079,
+          "mean_entropy": 0.3263715590852447,
+          "name": "go_pclntab_parse",
+          "score": 0.03764258555133079,
+          "start_line": 236,
+          "token_count": 1052
+        },
+        {
+          "density": 0.0,
+          "end_line": 366,
+          "lmcc": 5.8,
+          "lmcc_per_token": 0.043283582089552235,
+          "mean_entropy": 0.3903401850127839,
+          "name": "go_pclntab_find",
+          "score": 0.043283582089552235,
+          "start_line": 350,
+          "token_count": 134
+        },
+        {
+          "density": 0.0,
+          "end_line": 375,
+          "lmcc": 2.8,
+          "lmcc_per_token": 0.050909090909090904,
+          "mean_entropy": 0.2116832890291169,
+          "name": "go_pclntab_destroy",
+          "score": 0.050909090909090904,
+          "start_line": 368,
+          "token_count": 55
+        }
+      ],
+      "hierarchy_mode": "structural",
+      "high_entropy_tokens": 0,
+      "hotspots": [
+        {
+          "high_tokens": 0,
+          "line": 16,
+          "max_entropy": 7.6442413330078125,
+          "mean_entropy": 4.543988002671136
+        },
+        {
+          "high_tokens": 0,
+          "line": 30,
+          "max_entropy": 6.373439311981201,
+          "mean_entropy": 2.3516050331527367
+        },
+        {
+          "high_tokens": 0,
+          "line": 104,
+          "max_entropy": 5.6112284660339355,
+          "mean_entropy": 2.430976152420044
+        },
+        {
+          "high_tokens": 0,
+          "line": 111,
+          "max_entropy": 5.403929710388184,
+          "mean_entropy": 1.8773029102385044
+        },
+        {
+          "high_tokens": 0,
+          "line": 147,
+          "max_entropy": 5.331010818481445,
+          "mean_entropy": 1.34907818933328
+        },
+        {
+          "high_tokens": 0,
+          "line": 196,
+          "max_entropy": 4.891448974609375,
+          "mean_entropy": 1.6916435271225594
+        },
+        {
+          "high_tokens": 0,
+          "line": 9,
+          "max_entropy": 4.843808174133301,
+          "mean_entropy": 4.843808174133301
+        },
+        {
+          "high_tokens": 0,
+          "line": 174,
+          "max_entropy": 4.749774932861328,
+          "mean_entropy": 1.6350456870885948
+        },
+        {
+          "high_tokens": 0,
+          "line": 328,
+          "max_entropy": 4.557351112365723,
+          "mean_entropy": 0.5081196170978491
+        },
+        {
+          "high_tokens": 0,
+          "line": 18,
+          "max_entropy": 4.467789649963379,
+          "mean_entropy": 1.8571217350661755
+        }
+      ],
+      "language": "c",
+      "llm_cc": 81.8,
+      "lmcc_per_token": 0.03432647922786403,
+      "mean_entropy": 0.4779266104894823,
+      "path": "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/src/go_pclntab.c",
+      "score": 0.03432647922786403,
+      "score_mode": "lmcc",
+      "tau": 100.0,
+      "tau_rule": "absolute",
+      "token_count": 2383,
+      "total_branch": 56,
+      "total_comp_level": 185,
+      "type": "file",
+      "id": "heldout/libdd_go_hook/src/go_pclntab.c",
+      "wall_seconds": 0.03520905796904117
+    },
+    {
+      "alpha": 0.8,
+      "analysis_version": 2,
+      "density": 0.0,
+      "entropy_cache_hit": true,
+      "functions": [
+        {
+          "density": 0.0,
+          "end_line": 33,
+          "lmcc": 5.6,
+          "lmcc_per_token": 0.03636363636363636,
+          "mean_entropy": 0.8477289479833653,
+          "name": "go_read_string",
+          "score": 0.03636363636363636,
+          "start_line": 13,
+          "token_count": 154
+        },
+        {
+          "density": 0.0,
+          "end_line": 41,
+          "lmcc": 2.8,
+          "lmcc_per_token": 0.055999999999999994,
+          "mean_entropy": 0.7187090061977506,
+          "name": "go_read_string_header",
+          "score": 0.055999999999999994,
+          "start_line": 35,
+          "token_count": 50
+        },
+        {
+          "density": 0.0,
+          "end_line": 49,
+          "lmcc": 2.8,
+          "lmcc_per_token": 0.054901960784313725,
+          "mean_entropy": 0.36947271505977924,
+          "name": "go_read_slice_header",
+          "score": 0.054901960784313725,
+          "start_line": 43,
+          "token_count": 51
+        }
+      ],
+      "hierarchy_mode": "structural",
+      "high_entropy_tokens": 0,
+      "hotspots": [
+        {
+          "high_tokens": 0,
+          "line": 9,
+          "max_entropy": 7.699324607849121,
+          "mean_entropy": 4.41666563351949
+        },
+        {
+          "high_tokens": 0,
+          "line": 35,
+          "max_entropy": 5.3483476638793945,
+          "mean_entropy": 1.4066398912354519
+        },
+        {
+          "high_tokens": 0,
+          "line": 13,
+          "max_entropy": 5.20794153213501,
+          "mean_entropy": 2.0718919845253585
+        },
+        {
+          "high_tokens": 0,
+          "line": 11,
+          "max_entropy": 4.233574390411377,
+          "mean_entropy": 2.1228639125823974
+        },
+        {
+          "high_tokens": 0,
+          "line": 26,
+          "max_entropy": 3.9110593795776367,
+          "mean_entropy": 1.177803116456534
+        },
+        {
+          "high_tokens": 0,
+          "line": 43,
+          "max_entropy": 3.3707752227783203,
+          "mean_entropy": 0.7640100271490059
+        },
+        {
+          "high_tokens": 0,
+          "line": 17,
+          "max_entropy": 3.0361359119415283,
+          "mean_entropy": 1.670510017623504
+        },
+        {
+          "high_tokens": 0,
+          "line": 21,
+          "max_entropy": 2.7169747352600098,
+          "mean_entropy": 1.2884455983127867
+        },
+        {
+          "high_tokens": 0,
+          "line": 22,
+          "max_entropy": 2.6298890113830566,
+          "mean_entropy": 0.49429245562189156
+        },
+        {
+          "high_tokens": 0,
+          "line": 14,
+          "max_entropy": 2.5587711334228516,
+          "mean_entropy": 0.7686438180680852
+        }
+      ],
+      "language": "c",
+      "llm_cc": 10.799999999999999,
+      "lmcc_per_token": 0.04060150375939849,
+      "mean_entropy": 0.8362523689150506,
+      "path": "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/src/go_read.c",
+      "score": 0.04060150375939849,
+      "score_mode": "lmcc",
+      "tau": 100.0,
+      "tau_rule": "absolute",
+      "token_count": 266,
+      "total_branch": 8,
+      "total_comp_level": 22,
+      "type": "file",
+      "id": "heldout/libdd_go_hook/src/go_read.c",
+      "wall_seconds": 0.005094504973385483
+    },
+    {
+      "alpha": 0.8,
+      "analysis_version": 2,
+      "density": 0.0,
+      "entropy_cache_hit": true,
+      "functions": [
+        {
+          "density": 0.0,
+          "end_line": 129,
+          "lmcc": 0.19999999999999996,
+          "lmcc_per_token": 0.00588235294117647,
+          "mean_entropy": 1.3422683199199075,
+          "name": "safe_range",
+          "score": 0.00588235294117647,
+          "start_line": 127,
+          "token_count": 34
+        },
+        {
+          "density": 0.0,
+          "end_line": 163,
+          "lmcc": 7.3999999999999995,
+          "lmcc_per_token": 0.038947368421052626,
+          "mean_entropy": 0.917932384899943,
+          "name": "decode_go_name",
+          "score": 0.038947368421052626,
+          "start_line": 139,
+          "token_count": 190
+        },
+        {
+          "density": 0.0,
+          "end_line": 341,
+          "lmcc": 51.39999999999999,
+          "lmcc_per_token": 0.03157248157248157,
+          "mean_entropy": 0.39494725460159175,
+          "name": "find_go_sections",
+          "score": 0.03157248157248157,
+          "start_line": 191,
+          "token_count": 1628
+        },
+        {
+          "density": 0.0,
+          "end_line": 373,
+          "lmcc": 5.8,
+          "lmcc_per_token": 0.029441624365482234,
+          "mean_entropy": 0.6234911241140045,
+          "name": "read_type_name",
+          "score": 0.029441624365482234,
+          "start_line": 351,
+          "token_count": 197
+        },
+        {
+          "density": 0.0,
+          "end_line": 464,
+          "lmcc": 14.799999999999999,
+          "lmcc_per_token": 0.02232277526395173,
+          "mean_entropy": 0.4470805808694636,
+          "name": "parse_struct_fields",
+          "score": 0.02232277526395173,
+          "start_line": 388,
+          "token_count": 663
+        },
+        {
+          "density": 0.0,
+          "end_line": 486,
+          "lmcc": 2.8,
+          "lmcc_per_token": 0.018918918918918916,
+          "mean_entropy": 0.599354062421667,
+          "name": "on_g_field",
+          "score": 0.018918918918918916,
+          "start_line": 474,
+          "token_count": 148
+        },
+        {
+          "density": 0.0,
+          "end_line": 499,
+          "lmcc": 2.8,
+          "lmcc_per_token": 0.03783783783783783,
+          "mean_entropy": 0.2316303472758296,
+          "name": "on_gobuf_field",
+          "score": 0.03783783783783783,
+          "start_line": 492,
+          "token_count": 74
+        },
+        {
+          "density": 0.0,
+          "end_line": 510,
+          "lmcc": 2.8,
+          "lmcc_per_token": 0.02372881355932203,
+          "mean_entropy": 0.36624871479136223,
+          "name": "on_m_field",
+          "score": 0.02372881355932203,
+          "start_line": 501,
+          "token_count": 118
+        },
+        {
+          "density": 0.0,
+          "end_line": 521,
+          "lmcc": 2.8,
+          "lmcc_per_token": 0.024778761061946902,
+          "mean_entropy": 0.3526010050892158,
+          "name": "on_request_field",
+          "score": 0.024778761061946902,
+          "start_line": 512,
+          "token_count": 113
+        },
+        {
+          "density": 0.0,
+          "end_line": 532,
+          "lmcc": 2.8,
+          "lmcc_per_token": 0.02434782608695652,
+          "mean_entropy": 0.21237745443030018,
+          "name": "on_url_field",
+          "score": 0.02434782608695652,
+          "start_line": 523,
+          "token_count": 115
+        },
+        {
+          "density": 0.0,
+          "end_line": 543,
+          "lmcc": 2.8,
+          "lmcc_per_token": 0.02393162393162393,
+          "mean_entropy": 0.2518112272808714,
+          "name": "on_hmap_field",
+          "score": 0.02393162393162393,
+          "start_line": 534,
+          "token_count": 117
+        },
+        {
+          "density": 0.0,
+          "end_line": 595,
+          "lmcc": 13.0,
+          "lmcc_per_token": 0.04436860068259386,
+          "mean_entropy": 0.2602132059405216,
+          "name": "vaddr_to_file_phdr",
+          "score": 0.04436860068259386,
+          "start_line": 575,
+          "token_count": 293
+        },
+        {
+          "density": 0.0,
+          "end_line": 638,
+          "lmcc": 11.6,
+          "lmcc_per_token": 0.025950782997762864,
+          "mean_entropy": 0.4597310900700184,
+          "name": "validate_maptype_at",
+          "score": 0.025950782997762864,
+          "start_line": 603,
+          "token_count": 447
+        },
+        {
+          "density": 0.0,
+          "end_line": 772,
+          "lmcc": 25.799999999999997,
+          "lmcc_per_token": 0.025343811394891943,
+          "mean_entropy": 0.6250832196505777,
+          "name": "go_type_detect_offsets",
+          "score": 0.025343811394891943,
+          "start_line": 642,
+          "token_count": 1018
+        }
+      ],
+      "hierarchy_mode": "structural",
+      "high_entropy_tokens": 0,
+      "hotspots": [
+        {
+          "high_tokens": 0,
+          "line": 23,
+          "max_entropy": 7.475592136383057,
+          "mean_entropy": 4.491608361403148
+        },
+        {
+          "high_tokens": 0,
+          "line": 17,
+          "max_entropy": 6.201767444610596,
+          "mean_entropy": 6.201767444610596
+        },
+        {
+          "high_tokens": 0,
+          "line": 471,
+          "max_entropy": 6.139470100402832,
+          "mean_entropy": 3.0907640015292497
+        },
+        {
+          "high_tokens": 0,
+          "line": 24,
+          "max_entropy": 6.117527961730957,
+          "mean_entropy": 2.440471072991689
+        },
+        {
+          "high_tokens": 0,
+          "line": 78,
+          "max_entropy": 5.985994338989258,
+          "mean_entropy": 3.3067961590630666
+        },
+        {
+          "high_tokens": 0,
+          "line": 515,
+          "max_entropy": 5.86720085144043,
+          "mean_entropy": 0.6383427177161838
+        },
+        {
+          "high_tokens": 0,
+          "line": 101,
+          "max_entropy": 5.739772796630859,
+          "mean_entropy": 3.0612188279628754
+        },
+        {
+          "high_tokens": 0,
+          "line": 32,
+          "max_entropy": 5.707846641540527,
+          "mean_entropy": 2.3251490918919444
+        },
+        {
+          "high_tokens": 0,
+          "line": 63,
+          "max_entropy": 5.62405252456665,
+          "mean_entropy": 2.1985195775826774
+        },
+        {
+          "high_tokens": 0,
+          "line": 89,
+          "max_entropy": 5.609079837799072,
+          "mean_entropy": 1.1049102504991672
+        }
+      ],
+      "language": "c",
+      "llm_cc": 145.39999999999998,
+      "lmcc_per_token": 0.02423333333333333,
+      "mean_entropy": 0.5613118074989687,
+      "path": "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/src/go_type.c",
+      "score": 0.02423333333333333,
+      "score_mode": "lmcc",
+      "tau": 100.0,
+      "tau_rule": "absolute",
+      "token_count": 6000,
+      "total_branch": 95,
+      "total_comp_level": 347,
+      "type": "file",
+      "id": "heldout/libdd_go_hook/src/go_type.c",
+      "wall_seconds": 0.08719023497542366
+    },
+    {
+      "alpha": 0.8,
+      "analysis_version": 2,
+      "density": 0.0,
+      "entropy_cache_hit": true,
+      "functions": [
+        {
+          "density": 0.0,
+          "end_line": 47,
+          "lmcc": 9.8,
+          "lmcc_per_token": 0.049,
+          "mean_entropy": 0.9634452735510421,
+          "name": "modrm_extra",
+          "score": 0.049,
+          "start_line": 19,
+          "token_count": 200
+        },
+        {
+          "density": 0.0,
+          "end_line": 166,
+          "lmcc": 38.8,
+          "lmcc_per_token": 0.04993564993564993,
+          "mean_entropy": 0.5317179565632939,
+          "name": "go_x86_insn_len",
+          "score": 0.04993564993564993,
+          "start_line": 49,
+          "token_count": 777
+        },
+        {
+          "density": 0.0,
+          "end_line": 177,
+          "lmcc": 4.2,
+          "lmcc_per_token": 0.053164556962025315,
+          "mean_entropy": 0.6372201650048299,
+          "name": "go_x86_insn_block_len",
+          "score": 0.053164556962025315,
+          "start_line": 168,
+          "token_count": 79
+        },
+        {
+          "density": 0.0,
+          "end_line": 199,
+          "lmcc": 10.8,
+          "lmcc_per_token": 0.053731343283582096,
+          "mean_entropy": 0.4025523019653388,
+          "name": "go_x86_insn_is_pc_relative",
+          "score": 0.053731343283582096,
+          "start_line": 182,
+          "token_count": 201
+        }
+      ],
+      "hierarchy_mode": "structural",
+      "high_entropy_tokens": 0,
+      "hotspots": [
+        {
+          "high_tokens": 0,
+          "line": 7,
+          "max_entropy": 7.621213912963867,
+          "mean_entropy": 3.360685038566589
+        },
+        {
+          "high_tokens": 0,
+          "line": 19,
+          "max_entropy": 5.355414390563965,
+          "mean_entropy": 2.376225543943675
+        },
+        {
+          "high_tokens": 0,
+          "line": 182,
+          "max_entropy": 5.127742767333984,
+          "mean_entropy": 1.4581910397665685
+        },
+        {
+          "high_tokens": 0,
+          "line": 20,
+          "max_entropy": 4.780104637145996,
+          "mean_entropy": 1.117666588226954
+        },
+        {
+          "high_tokens": 0,
+          "line": 51,
+          "max_entropy": 4.365707874298096,
+          "mean_entropy": 1.7050715651777055
+        },
+        {
+          "high_tokens": 0,
+          "line": 50,
+          "max_entropy": 4.259213924407959,
+          "mean_entropy": 1.1752056051045656
+        },
+        {
+          "high_tokens": 0,
+          "line": 168,
+          "max_entropy": 4.059311866760254,
+          "mean_entropy": 1.079119147370379
+        },
+        {
+          "high_tokens": 0,
+          "line": 49,
+          "max_entropy": 3.941866397857666,
+          "mean_entropy": 1.4948201883671572
+        },
+        {
+          "high_tokens": 0,
+          "line": 52,
+          "max_entropy": 3.7937417030334473,
+          "mean_entropy": 1.379075126722455
+        },
+        {
+          "high_tokens": 0,
+          "line": 27,
+          "max_entropy": 3.7933340072631836,
+          "mean_entropy": 1.1323063540357081
+        }
+      ],
+      "language": "c",
+      "llm_cc": 63.0,
+      "lmcc_per_token": 0.049723756906077346,
+      "mean_entropy": 0.6082826859320982,
+      "path": "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/src/go_x86_decode.c",
+      "score": 0.049723756906077346,
+      "score_mode": "lmcc",
+      "tau": 100.0,
+      "tau_rule": "absolute",
+      "token_count": 1267,
+      "total_branch": 41,
+      "total_comp_level": 151,
+      "type": "file",
+      "id": "heldout/libdd_go_hook/src/go_x86_decode.c",
+      "wall_seconds": 0.019046124012675136
+    },
+    {
+      "alpha": 0.8,
+      "analysis_version": 2,
+      "density": 0.0,
+      "entropy_cache_hit": true,
+      "functions": [
+        {
+          "density": 0.0,
+          "end_line": 11,
+          "lmcc": 0.19999999999999996,
+          "lmcc_per_token": 0.006249999999999999,
+          "mean_entropy": 1.161108931977651,
+          "name": "handler",
+          "score": 0.006249999999999999,
+          "start_line": 9,
+          "token_count": 32
+        },
+        {
+          "density": 0.0,
+          "end_line": 21,
+          "lmcc": 2.8,
+          "lmcc_per_token": 0.04590163934426229,
+          "mean_entropy": 0.5242767695902435,
+          "name": "main",
+          "score": 0.04590163934426229,
+          "start_line": 13,
+          "token_count": 61
+        }
+      ],
+      "hierarchy_mode": "structural",
+      "high_entropy_tokens": 0,
+      "hotspots": [
+        {
+          "high_tokens": 0,
+          "line": 10,
+          "max_entropy": 4.526791095733643,
+          "mean_entropy": 1.5835796806373095
+        },
+        {
+          "high_tokens": 0,
+          "line": 1,
+          "max_entropy": 3.8345065116882324,
+          "mean_entropy": 2.4139397144317627
+        },
+        {
+          "high_tokens": 0,
+          "line": 16,
+          "max_entropy": 2.4161882400512695,
+          "mean_entropy": 0.48091626015957445
+        },
+        {
+          "high_tokens": 0,
+          "line": 14,
+          "max_entropy": 2.41355299949646,
+          "mean_entropy": 0.7785504989326
+        },
+        {
+          "high_tokens": 0,
+          "line": 5,
+          "max_entropy": 2.3912720680236816,
+          "mean_entropy": 1.2628062069416046
+        },
+        {
+          "high_tokens": 0,
+          "line": 6,
+          "max_entropy": 2.3208465576171875,
+          "mean_entropy": 1.4100720087687175
+        },
+        {
+          "high_tokens": 0,
+          "line": 19,
+          "max_entropy": 2.1655540466308594,
+          "mean_entropy": 0.5597439868996541
+        },
+        {
+          "high_tokens": 0,
+          "line": 13,
+          "max_entropy": 2.1626570224761963,
+          "mean_entropy": 0.824371405877173
+        },
+        {
+          "high_tokens": 0,
+          "line": 15,
+          "max_entropy": 2.1416773796081543,
+          "mean_entropy": 0.7347859339788556
+        },
+        {
+          "high_tokens": 0,
+          "line": 4,
+          "max_entropy": 1.62821626663208,
+          "mean_entropy": 0.831499328215917
+        }
+      ],
+      "language": "go",
+      "llm_cc": 4.0,
+      "lmcc_per_token": 0.037037037037037035,
+      "mean_entropy": 0.8144164740935795,
+      "path": "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/test/fixtures/hello_http.go",
+      "score": 0.037037037037037035,
+      "score_mode": "lmcc",
+      "tau": 100.0,
+      "tau_rule": "absolute",
+      "token_count": 108,
+      "total_branch": 3,
+      "total_comp_level": 8,
+      "type": "file",
+      "id": "heldout/libdd_go_hook/test/fixtures/hello_http.go",
+      "wall_seconds": 0.0028607489657588303
+    },
+    {
+      "alpha": 0.8,
+      "analysis_version": 2,
+      "density": 0.0,
+      "entropy_cache_hit": true,
+      "functions": [
+        {
+          "density": 0.0,
+          "end_line": 14,
+          "lmcc": 0.19999999999999996,
+          "lmcc_per_token": 0.005263157894736841,
+          "mean_entropy": 0.9994279648557207,
+          "name": "backendHandler",
+          "score": 0.005263157894736841,
+          "start_line": 11,
+          "token_count": 38
+        },
+        {
+          "density": 0.0,
+          "end_line": 45,
+          "lmcc": 5.8,
+          "lmcc_per_token": 0.03580246913580247,
+          "mean_entropy": 0.6029351726199506,
+          "name": "frontendHandler",
+          "score": 0.03580246913580247,
+          "start_line": 20,
+          "token_count": 162
+        },
+        {
+          "density": 0.0,
+          "end_line": 61,
+          "lmcc": 4.2,
+          "lmcc_per_token": 0.03853211009174312,
+          "mean_entropy": 0.5337341964545093,
+          "name": "main",
+          "score": 0.03853211009174312,
+          "start_line": 47,
+          "token_count": 109
+        }
+      ],
+      "hierarchy_mode": "structural",
+      "high_entropy_tokens": 0,
+      "hotspots": [
+        {
+          "high_tokens": 0,
+          "line": 24,
+          "max_entropy": 5.318882942199707,
+          "mean_entropy": 1.324596556411548
+        },
+        {
+          "high_tokens": 0,
+          "line": 13,
+          "max_entropy": 5.154404640197754,
+          "mean_entropy": 1.5012919473811053
+        },
+        {
+          "high_tokens": 0,
+          "line": 59,
+          "max_entropy": 4.7644758224487305,
+          "mean_entropy": 1.1630019413100348
+        },
+        {
+          "high_tokens": 0,
+          "line": 34,
+          "max_entropy": 4.1692023277282715,
+          "mean_entropy": 0.42493033964031685
+        },
+        {
+          "high_tokens": 0,
+          "line": 11,
+          "max_entropy": 4.050136566162109,
+          "mean_entropy": 0.8174889742826613
+        },
+        {
+          "high_tokens": 0,
+          "line": 1,
+          "max_entropy": 3.8424439430236816,
+          "mean_entropy": 2.4213292002677917
+        },
+        {
+          "high_tokens": 0,
+          "line": 20,
+          "max_entropy": 3.744849443435669,
+          "mean_entropy": 0.5822615530162764
+        },
+        {
+          "high_tokens": 0,
+          "line": 21,
+          "max_entropy": 3.442261219024658,
+          "mean_entropy": 1.2867616614870105
+        },
+        {
+          "high_tokens": 0,
+          "line": 23,
+          "max_entropy": 3.3453497886657715,
+          "mean_entropy": 3.3453497886657715
+        },
+        {
+          "high_tokens": 0,
+          "line": 12,
+          "max_entropy": 3.1802239418029785,
+          "mean_entropy": 0.7150497355808815
+        }
+      ],
+      "language": "go",
+      "llm_cc": 11.0,
+      "lmcc_per_token": 0.03333333333333333,
+      "mean_entropy": 0.6568817662811798,
+      "path": "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/test/fixtures/hello_parent_child.go",
+      "score": 0.03333333333333333,
+      "score_mode": "lmcc",
+      "tau": 100.0,
+      "tau_rule": "absolute",
+      "token_count": 330,
+      "total_branch": 8,
+      "total_comp_level": 23,
+      "type": "file",
+      "id": "heldout/libdd_go_hook/test/fixtures/hello_parent_child.go",
+      "wall_seconds": 0.006583256006706506
+    },
+    {
+      "alpha": 0.8,
+      "analysis_version": 2,
+      "density": 0.0,
+      "entropy_cache_hit": true,
+      "functions": [],
+      "hierarchy_mode": "structural",
+      "high_entropy_tokens": 0,
+      "hotspots": [
+        {
+          "high_tokens": 0,
+          "line": 7,
+          "max_entropy": 7.101093292236328,
+          "mean_entropy": 2.8577360659837723
+        },
+        {
+          "high_tokens": 0,
+          "line": 3,
+          "max_entropy": 6.879555702209473,
+          "mean_entropy": 2.5421124448378882
+        },
+        {
+          "high_tokens": 0,
+          "line": 9,
+          "max_entropy": 6.413527488708496,
+          "mean_entropy": 3.1987281908591587
+        },
+        {
+          "high_tokens": 0,
+          "line": 15,
+          "max_entropy": 6.056874752044678,
+          "mean_entropy": 1.2132871284498834
+        },
+        {
+          "high_tokens": 0,
+          "line": 13,
+          "max_entropy": 5.652344703674316,
+          "mean_entropy": 2.127979189157486
+        },
+        {
+          "high_tokens": 0,
+          "line": 16,
+          "max_entropy": 5.431863307952881,
+          "mean_entropy": 0.9889307848578837
+        },
+        {
+          "high_tokens": 0,
+          "line": 6,
+          "max_entropy": 5.254084587097168,
+          "mean_entropy": 2.13473265171051
+        },
+        {
+          "high_tokens": 0,
+          "line": 74,
+          "max_entropy": 5.108133792877197,
+          "mean_entropy": 0.8999871842356192
+        },
+        {
+          "high_tokens": 0,
+          "line": 14,
+          "max_entropy": 5.0967278480529785,
+          "mean_entropy": 2.083678003762745
+        },
+        {
+          "high_tokens": 0,
+          "line": 49,
+          "max_entropy": 4.861748218536377,
+          "mean_entropy": 0.7702134593702411
+        }
+      ],
+      "language": "c",
+      "llm_cc": 8.6,
+      "lmcc_per_token": 0.011025641025641025,
+      "mean_entropy": 0.6095405699070677,
+      "path": "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/test/test_go_abi.c",
+      "score": 0.011025641025641025,
+      "score_mode": "lmcc",
+      "tau": 100.0,
+      "tau_rule": "absolute",
+      "token_count": 780,
+      "total_branch": 7,
+      "total_comp_level": 15,
+      "type": "file",
+      "id": "heldout/libdd_go_hook/test/test_go_abi.c",
+      "wall_seconds": 0.011873925977852196
+    },
+    {
+      "alpha": 0.8,
+      "analysis_version": 2,
+      "density": 0.0,
+      "entropy_cache_hit": true,
+      "functions": [],
+      "hierarchy_mode": "structural",
+      "high_entropy_tokens": 0,
+      "hotspots": [
+        {
+          "high_tokens": 0,
+          "line": 9,
+          "max_entropy": 7.153148651123047,
+          "mean_entropy": 2.8834094603856406
+        },
+        {
+          "high_tokens": 0,
+          "line": 13,
+          "max_entropy": 5.867276191711426,
+          "mean_entropy": 2.6846029038230577
+        },
+        {
+          "high_tokens": 0,
+          "line": 24,
+          "max_entropy": 5.713178634643555,
+          "mean_entropy": 2.9614251789503863
+        },
+        {
+          "high_tokens": 0,
+          "line": 164,
+          "max_entropy": 5.6149396896362305,
+          "mean_entropy": 1.4623716680052894
+        },
+        {
+          "high_tokens": 0,
+          "line": 132,
+          "max_entropy": 5.272894382476807,
+          "mean_entropy": 1.3885053917610397
+        },
+        {
+          "high_tokens": 0,
+          "line": 173,
+          "max_entropy": 5.07916259765625,
+          "mean_entropy": 0.9494650192167943
+        },
+        {
+          "high_tokens": 0,
+          "line": 197,
+          "max_entropy": 4.812917709350586,
+          "mean_entropy": 0.6000347492905954
+        },
+        {
+          "high_tokens": 0,
+          "line": 238,
+          "max_entropy": 4.672677040100098,
+          "mean_entropy": 1.081675606889933
+        },
+        {
+          "high_tokens": 0,
+          "line": 222,
+          "max_entropy": 4.624672889709473,
+          "mean_entropy": 1.2067651208625951
+        },
+        {
+          "high_tokens": 0,
+          "line": 73,
+          "max_entropy": 4.60451602935791,
+          "mean_entropy": 0.6817643280477829
+        }
+      ],
+      "language": "c",
+      "llm_cc": 32.6,
+      "lmcc_per_token": 0.014671467146714672,
+      "mean_entropy": 0.5320143962470285,
+      "path": "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/test/test_go_arm64_decode.c",
+      "score": 0.014671467146714672,
+      "score_mode": "lmcc",
+      "tau": 100.0,
+      "tau_rule": "absolute",
+      "token_count": 2222,
+      "total_branch": 27,
+      "total_comp_level": 55,
+      "type": "file",
+      "id": "heldout/libdd_go_hook/test/test_go_arm64_decode.c",
+      "wall_seconds": 0.03161573503166437
+    },
+    {
+      "alpha": 0.8,
+      "analysis_version": 2,
+      "density": 0.0,
+      "entropy_cache_hit": true,
+      "functions": [],
+      "hierarchy_mode": "structural",
+      "high_entropy_tokens": 0,
+      "hotspots": [
+        {
+          "high_tokens": 0,
+          "line": 16,
+          "max_entropy": 7.6442413330078125,
+          "mean_entropy": 4.149357497692108
+        },
+        {
+          "high_tokens": 0,
+          "line": 77,
+          "max_entropy": 6.264086723327637,
+          "mean_entropy": 0.9839478098594834
+        },
+        {
+          "high_tokens": 0,
+          "line": 34,
+          "max_entropy": 6.210201263427734,
+          "mean_entropy": 3.2424026069541774
+        },
+        {
+          "high_tokens": 0,
+          "line": 20,
+          "max_entropy": 5.835294723510742,
+          "mean_entropy": 2.4763594468434653
+        },
+        {
+          "high_tokens": 0,
+          "line": 86,
+          "max_entropy": 5.79221248626709,
+          "mean_entropy": 1.7786884939467364
+        },
+        {
+          "high_tokens": 0,
+          "line": 124,
+          "max_entropy": 5.63916540145874,
+          "mean_entropy": 3.344494385851754
+        },
+        {
+          "high_tokens": 0,
+          "line": 83,
+          "max_entropy": 5.48088264465332,
+          "mean_entropy": 1.0101841677346133
+        },
+        {
+          "high_tokens": 0,
+          "line": 75,
+          "max_entropy": 5.4647016525268555,
+          "mean_entropy": 1.071802512511987
+        },
+        {
+          "high_tokens": 0,
+          "line": 78,
+          "max_entropy": 5.361835479736328,
+          "mean_entropy": 0.972706256240669
+        },
+        {
+          "high_tokens": 0,
+          "line": 47,
+          "max_entropy": 5.359226226806641,
+          "mean_entropy": 0.9198373948864174
+        }
+      ],
+      "language": "c",
+      "llm_cc": 21.799999999999997,
+      "lmcc_per_token": 0.011726734803657879,
+      "mean_entropy": 0.6960804969599279,
+      "path": "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/test/test_go_type.c",
+      "score": 0.011726734803657879,
+      "score_mode": "lmcc",
+      "tau": 100.0,
+      "tau_rule": "absolute",
+      "token_count": 1859,
+      "total_branch": 17,
+      "total_comp_level": 41,
+      "type": "file",
+      "id": "heldout/libdd_go_hook/test/test_go_type.c",
+      "wall_seconds": 0.028244704008102417
+    },
+    {
+      "alpha": 0.8,
+      "analysis_version": 2,
+      "density": 0.0,
+      "entropy_cache_hit": true,
+      "functions": [],
+      "hierarchy_mode": "structural",
+      "high_entropy_tokens": 0,
+      "hotspots": [
+        {
+          "high_tokens": 0,
+          "line": 11,
+          "max_entropy": 7.501063823699951,
+          "mean_entropy": 3.288266733288765
+        },
+        {
+          "high_tokens": 0,
+          "line": 8,
+          "max_entropy": 7.097335338592529,
+          "mean_entropy": 2.9489023784796395
+        },
+        {
+          "high_tokens": 0,
+          "line": 14,
+          "max_entropy": 6.052275657653809,
+          "mean_entropy": 2.8785928208380938
+        },
+        {
+          "high_tokens": 0,
+          "line": 82,
+          "max_entropy": 5.499804496765137,
+          "mean_entropy": 1.7664283965423238
+        },
+        {
+          "high_tokens": 0,
+          "line": 25,
+          "max_entropy": 4.67059326171875,
+          "mean_entropy": 1.8255070840862269
+        },
+        {
+          "high_tokens": 0,
+          "line": 15,
+          "max_entropy": 4.2393670082092285,
+          "mean_entropy": 0.8447256430592989
+        },
+        {
+          "high_tokens": 0,
+          "line": 38,
+          "max_entropy": 4.132707595825195,
+          "mean_entropy": 1.2462878780885756
+        },
+        {
+          "high_tokens": 0,
+          "line": 16,
+          "max_entropy": 3.941584825515747,
+          "mean_entropy": 1.6105619015528219
+        },
+        {
+          "high_tokens": 0,
+          "line": 7,
+          "max_entropy": 3.93125319480896,
+          "mean_entropy": 0.7446545400242839
+        },
+        {
+          "high_tokens": 0,
+          "line": 68,
+          "max_entropy": 3.9266602993011475,
+          "mean_entropy": 0.5392927800305187
+        }
+      ],
+      "language": "c",
+      "llm_cc": 13.399999999999999,
+      "lmcc_per_token": 0.011733800350262696,
+      "mean_entropy": 0.45930563792580315,
+      "path": "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_go_hook/test/test_go_x86_decode.c",
+      "score": 0.011733800350262696,
+      "score_mode": "lmcc",
+      "tau": 100.0,
+      "tau_rule": "absolute",
+      "token_count": 1142,
+      "total_branch": 11,
+      "total_comp_level": 23,
+      "type": "file",
+      "id": "heldout/libdd_go_hook/test/test_go_x86_decode.c",
+      "wall_seconds": 0.016740676015615463
+    },
+    {
+      "alpha": 0.8,
+      "analysis_version": 2,
+      "density": 0.0,
+      "entropy_cache_hit": true,
+      "functions": [],
+      "hierarchy_mode": "structural",
+      "high_entropy_tokens": 0,
+      "hotspots": [
+        {
+          "high_tokens": 0,
+          "line": 20,
+          "max_entropy": 7.333578586578369,
+          "mean_entropy": 1.9612839437128666
+        },
+        {
+          "high_tokens": 0,
+          "line": 33,
+          "max_entropy": 6.696624755859375,
+          "mean_entropy": 1.4077435178385878
+        },
+        {
+          "high_tokens": 0,
+          "line": 25,
+          "max_entropy": 6.601987838745117,
+          "mean_entropy": 2.143475443302818
+        },
+        {
+          "high_tokens": 0,
+          "line": 100,
+          "max_entropy": 6.215809345245361,
+          "mean_entropy": 3.980396008118987
+        },
+        {
+          "high_tokens": 0,
+          "line": 46,
+          "max_entropy": 5.993720054626465,
+          "mean_entropy": 1.0460721732649836
+        },
+        {
+          "high_tokens": 0,
+          "line": 77,
+          "max_entropy": 5.930898666381836,
+          "mean_entropy": 2.483807545900345
+        },
+        {
+          "high_tokens": 0,
+          "line": 96,
+          "max_entropy": 5.740076065063477,
+          "mean_entropy": 1.4964359726661562
+        },
+        {
+          "high_tokens": 0,
+          "line": 50,
+          "max_entropy": 5.695306777954102,
+          "mean_entropy": 1.4118753328990092
+        },
+        {
+          "high_tokens": 0,
+          "line": 36,
+          "max_entropy": 5.53700065612793,
+          "mean_entropy": 1.4351626034961857
+        },
+        {
+          "high_tokens": 0,
+          "line": 103,
+          "max_entropy": 5.3702287673950195,
+          "mean_entropy": 1.7253849288875547
+        }
+      ],
+      "language": "python",
+      "llm_cc": 52.2,
+      "lmcc_per_token": 0.04873949579831933,
+      "mean_entropy": 1.1824329645373484,
+      "path": "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_nccl_profiler/test/analyze_spans.py",
+      "score": 0.04873949579831933,
+      "score_mode": "lmcc",
+      "tau": 100.0,
+      "tau_rule": "absolute",
+      "token_count": 1071,
+      "total_branch": 41,
+      "total_comp_level": 97,
+      "type": "file",
+      "id": "heldout/libdd_nccl_profiler/test/analyze_spans.py",
+      "wall_seconds": 0.019503053976222873
+    },
+    {
+      "alpha": 0.8,
+      "analysis_version": 2,
+      "density": 0.0,
+      "entropy_cache_hit": true,
+      "functions": [
+        {
+          "density": 0.0,
+          "end_line": 25,
+          "lmcc": 4.2,
+          "lmcc_per_token": 0.028187919463087248,
+          "mean_entropy": 1.0391629952189259,
+          "name": "main",
+          "score": 0.028187919463087248,
+          "start_line": 10,
+          "token_count": 149
+        }
+      ],
+      "hierarchy_mode": "structural",
+      "high_entropy_tokens": 0,
+      "hotspots": [
+        {
+          "high_tokens": 0,
+          "line": 24,
+          "max_entropy": 4.548839092254639,
+          "mean_entropy": 1.9498183590080589
+        },
+        {
+          "high_tokens": 0,
+          "line": 5,
+          "max_entropy": 4.526775360107422,
+          "mean_entropy": 3.1450881958007812
+        },
+        {
+          "high_tokens": 0,
+          "line": 18,
+          "max_entropy": 4.130714416503906,
+          "mean_entropy": 0.9307700183941051
+        },
+        {
+          "high_tokens": 0,
+          "line": 17,
+          "max_entropy": 4.079938888549805,
+          "mean_entropy": 0.9261748777506383
+        },
+        {
+          "high_tokens": 0,
+          "line": 10,
+          "max_entropy": 3.7552478313446045,
+          "mean_entropy": 2.6407814820607505
+        },
+        {
+          "high_tokens": 0,
+          "line": 11,
+          "max_entropy": 3.744009494781494,
+          "mean_entropy": 0.9201111829839647
+        },
+        {
+          "high_tokens": 0,
+          "line": 6,
+          "max_entropy": 3.683119773864746,
+          "mean_entropy": 1.8629531462987263
+        },
+        {
+          "high_tokens": 0,
+          "line": 22,
+          "max_entropy": 2.966531276702881,
+          "mean_entropy": 1.1926343007944524
+        },
+        {
+          "high_tokens": 0,
+          "line": 23,
+          "max_entropy": 2.9073147773742676,
+          "mean_entropy": 0.8219047816736358
+        },
+        {
+          "high_tokens": 0,
+          "line": 7,
+          "max_entropy": 2.734375476837158,
+          "mean_entropy": 0.8326470500656536
+        }
+      ],
+      "language": "python",
+      "llm_cc": 5.3999999999999995,
+      "lmcc_per_token": 0.03121387283236994,
+      "mean_entropy": 1.0371607939857044,
+      "path": "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_nccl_profiler/test/nccl_allreduce_workload.py",
+      "score": 0.03121387283236994,
+      "score_mode": "lmcc",
+      "tau": 100.0,
+      "tau_rule": "absolute",
+      "token_count": 173,
+      "total_branch": 4,
+      "total_comp_level": 11,
+      "type": "file",
+      "id": "heldout/libdd_nccl_profiler/test/nccl_allreduce_workload.py",
+      "wall_seconds": 0.003949250967707485
+    },
+    {
+      "alpha": 0.8,
+      "analysis_version": 2,
+      "density": 0.0,
+      "entropy_cache_hit": true,
+      "functions": [
+        {
+          "density": 0.0,
+          "end_line": 37,
+          "lmcc": 0.19999999999999996,
+          "lmcc_per_token": 0.010526315789473682,
+          "mean_entropy": 0.8374013130209947,
+          "name": "resetAcc",
+          "score": 0.010526315789473682,
+          "start_line": 35,
+          "token_count": 19
+        },
+        {
+          "density": 0.0,
+          "end_line": 51,
+          "lmcc": 2.8,
+          "lmcc_per_token": 0.02978723404255319,
+          "mean_entropy": 1.00963294686122,
+          "name": "dd_thread_current_parent_resolve",
+          "score": 0.02978723404255319,
+          "start_line": 41,
+          "token_count": 94
+        },
+        {
+          "density": 0.0,
+          "end_line": 56,
+          "lmcc": 0.19999999999999996,
+          "lmcc_per_token": 0.009090909090909089,
+          "mean_entropy": 1.5517571688767269,
+          "name": "inspectorGetTime",
+          "score": 0.009090909090909089,
+          "start_line": 56,
+          "token_count": 22
+        },
+        {
+          "density": 0.0,
+          "end_line": 57,
+          "lmcc": 0.19999999999999996,
+          "lmcc_per_token": 0.010526315789473682,
+          "mean_entropy": 1.9318326073453616,
+          "name": "ncclFuncToString",
+          "score": 0.010526315789473682,
+          "start_line": 57,
+          "token_count": 19
+        },
+        {
+          "density": 0.0,
+          "end_line": 60,
+          "lmcc": 0.19999999999999996,
+          "lmcc_per_token": 0.009523809523809521,
+          "mean_entropy": 1.655876886809156,
+          "name": "inspectorTimingSourceToString",
+          "score": 0.009523809523809521,
+          "start_line": 58,
+          "token_count": 21
+        },
+        {
+          "density": 0.0,
+          "end_line": 62,
+          "lmcc": 0.19999999999999996,
+          "lmcc_per_token": 0.008695652173913042,
+          "mean_entropy": 0.9417675165915051,
+          "name": "inspectorStringToDatatype",
+          "score": 0.008695652173913042,
+          "start_line": 62,
+          "token_count": 23
+        },
+        {
+          "density": 0.0,
+          "end_line": 86,
+          "lmcc": 0.19999999999999996,
+          "lmcc_per_token": 0.0009708737864077667,
+          "mean_entropy": 0.912915624912449,
+          "name": "UTEST",
+          "score": 0.0009708737864077667,
+          "start_line": 64,
+          "token_count": 206
+        },
+        {
+          "density": 0.0,
+          "end_line": 104,
+          "lmcc": 0.19999999999999996,
+          "lmcc_per_token": 0.0012987012987012985,
+          "mean_entropy": 0.31139981103403336,
+          "name": "UTEST",
+          "score": 0.0012987012987012985,
+          "start_line": 88,
+          "token_count": 154
+        }
+      ],
+      "hierarchy_mode": "structural",
+      "high_entropy_tokens": 0,
+      "hotspots": [
+        {
+          "high_tokens": 0,
+          "line": 14,
+          "max_entropy": 7.5972394943237305,
+          "mean_entropy": 4.259388402104378
+        },
+        {
+          "high_tokens": 0,
+          "line": 59,
+          "max_entropy": 6.416110038757324,
+          "mean_entropy": 1.9969652568300564
+        },
+        {
+          "high_tokens": 0,
+          "line": 30,
+          "max_entropy": 6.379922389984131,
+          "mean_entropy": 3.0258084535598755
+        },
+        {
+          "high_tokens": 0,
+          "line": 64,
+          "max_entropy": 5.923048973083496,
+          "mean_entropy": 2.879336880519986
+        },
+        {
+          "high_tokens": 0,
+          "line": 31,
+          "max_entropy": 5.748111248016357,
+          "mean_entropy": 2.6817703247070312
+        },
+        {
+          "high_tokens": 0,
+          "line": 19,
+          "max_entropy": 5.721510887145996,
+          "mean_entropy": 2.7883682449658713
+        },
+        {
+          "high_tokens": 0,
+          "line": 26,
+          "max_entropy": 5.720078468322754,
+          "mean_entropy": 4.015020072460175
+        },
+        {
+          "high_tokens": 0,
+          "line": 55,
+          "max_entropy": 5.710630893707275,
+          "mean_entropy": 3.7734237790107725
+        },
+        {
+          "high_tokens": 0,
+          "line": 21,
+          "max_entropy": 5.677485466003418,
+          "mean_entropy": 1.5649749583962764
+        },
+        {
+          "high_tokens": 0,
+          "line": 16,
+          "max_entropy": 5.4617156982421875,
+          "mean_entropy": 1.8681863941252232
+        }
+      ],
+      "language": "cpp",
+      "llm_cc": 14.8,
+      "lmcc_per_token": 0.019973009446693658,
+      "mean_entropy": 1.0381361454787106,
+      "path": "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_nccl_profiler/test/test_inspector_dd_span_accessor.cc",
+      "score": 0.019973009446693658,
+      "score_mode": "lmcc",
+      "tau": 100.0,
+      "tau_rule": "absolute",
+      "token_count": 741,
+      "total_branch": 12,
+      "total_comp_level": 26,
+      "type": "file",
+      "id": "heldout/libdd_nccl_profiler/test/test_inspector_dd_span_accessor.cc",
+      "wall_seconds": 0.012574599997606128
+    },
+    {
+      "alpha": 0.8,
+      "analysis_version": 2,
+      "density": 0.0,
+      "entropy_cache_hit": true,
+      "functions": [
+        {
+          "density": 0.0,
+          "end_line": 12,
+          "lmcc": 0.19999999999999996,
+          "lmcc_per_token": 0.009523809523809521,
+          "mean_entropy": 2.264008419144721,
+          "name": "discardLog",
+          "score": 0.009523809523809521,
+          "start_line": 12,
+          "token_count": 21
+        },
+        {
+          "density": 0.0,
+          "end_line": 26,
+          "lmcc": 7.199999999999999,
+          "lmcc_per_token": 0.06428571428571428,
+          "mean_entropy": 1.034231285299029,
+          "name": "waitForCollectiveAllocation",
+          "score": 0.06428571428571428,
+          "start_line": 14,
+          "token_count": 112
+        },
+        {
+          "density": 0.0,
+          "end_line": 40,
+          "lmcc": 7.199999999999999,
+          "lmcc_per_token": 0.06050420168067226,
+          "mean_entropy": 0.19506943643048108,
+          "name": "waitForP2pAllocation",
+          "score": 0.06050420168067226,
+          "start_line": 28,
+          "token_count": 119
+        },
+        {
+          "density": 0.0,
+          "end_line": 48,
+          "lmcc": 0.19999999999999996,
+          "lmcc_per_token": 0.005714285714285713,
+          "mean_entropy": 1.3249798805852022,
+          "name": "inspectorLockInit",
+          "score": 0.005714285714285713,
+          "start_line": 46,
+          "token_count": 35
+        },
+        {
+          "density": 0.0,
+          "end_line": 52,
+          "lmcc": 0.19999999999999996,
+          "lmcc_per_token": 0.006060606060606059,
+          "mean_entropy": 0.19584888344009718,
+          "name": "inspectorLockDestroy",
+          "score": 0.006060606060606059,
+          "start_line": 50,
+          "token_count": 33
+        },
+        {
+          "density": 0.0,
+          "end_line": 56,
+          "lmcc": 0.19999999999999996,
+          "lmcc_per_token": 0.00588235294117647,
+          "mean_entropy": 0.26909876270014244,
+          "name": "inspectorLockWr",
+          "score": 0.00588235294117647,
+          "start_line": 54,
+          "token_count": 34
+        },
+        {
+          "density": 0.0,
+          "end_line": 60,
+          "lmcc": 0.19999999999999996,
+          "lmcc_per_token": 0.00588235294117647,
+          "mean_entropy": 0.11337783026229932,
+          "name": "inspectorUnlockRWLock",
+          "score": 0.00588235294117647,
+          "start_line": 58,
+          "token_count": 34
+        },
+        {
+          "density": 0.0,
+          "end_line": 93,
+          "lmcc": 2.8,
+          "lmcc_per_token": 0.010294117647058823,
+          "mean_entropy": 1.0882389398888843,
+          "name": "UTEST",
+          "score": 0.010294117647058823,
+          "start_line": 62,
+          "token_count": 272
+        },
+        {
+          "density": 0.0,
+          "end_line": 124,
+          "lmcc": 2.8,
+          "lmcc_per_token": 0.00982456140350877,
+          "mean_entropy": 0.12040403867471659,
+          "name": "UTEST",
+          "score": 0.00982456140350877,
+          "start_line": 95,
+          "token_count": 285
+        }
+      ],
+      "hierarchy_mode": "structural",
+      "high_entropy_tokens": 0,
+      "hotspots": [
+        {
+          "high_tokens": 0,
+          "line": 12,
+          "max_entropy": 5.738585472106934,
+          "mean_entropy": 2.264008419144721
+        },
+        {
+          "high_tokens": 0,
+          "line": 14,
+          "max_entropy": 5.704834461212158,
+          "mean_entropy": 4.034612579005105
+        },
+        {
+          "high_tokens": 0,
+          "line": 10,
+          "max_entropy": 5.670570373535156,
+          "mean_entropy": 4.130972743034363
+        },
+        {
+          "high_tokens": 0,
+          "line": 62,
+          "max_entropy": 5.542510986328125,
+          "mean_entropy": 2.7250292752869427
+        },
+        {
+          "high_tokens": 0,
+          "line": 8,
+          "max_entropy": 5.43505859375,
+          "mean_entropy": 2.623285452524821
+        },
+        {
+          "high_tokens": 0,
+          "line": 1,
+          "max_entropy": 5.403172016143799,
+          "mean_entropy": 3.3605675058705464
+        },
+        {
+          "high_tokens": 0,
+          "line": 73,
+          "max_entropy": 5.319885730743408,
+          "mean_entropy": 1.8021807534281502
+        },
+        {
+          "high_tokens": 0,
+          "line": 5,
+          "max_entropy": 5.162580490112305,
+          "mean_entropy": 2.060124695301056
+        },
+        {
+          "high_tokens": 0,
+          "line": 3,
+          "max_entropy": 5.100317478179932,
+          "mean_entropy": 1.814055222121533
+        },
+        {
+          "high_tokens": 0,
+          "line": 79,
+          "max_entropy": 4.994156360626221,
+          "mean_entropy": 1.0975291740720754
+        }
+      ],
+      "language": "cpp",
+      "llm_cc": 29.799999999999997,
+      "lmcc_per_token": 0.030101010101010097,
+      "mean_entropy": 0.6867093310071067,
+      "path": "/home/bits/llmcc-model-study-20260905/corpus/heldout/libdd_nccl_profiler/test/test_inspector_event_pool.cc",
+      "score": 0.030101010101010097,
+      "score_mode": "lmcc",
+      "tau": 100.0,
+      "tau_rule": "absolute",
+      "token_count": 990,
+      "total_branch": 21,
+      "total_comp_level": 65,
+      "type": "file",
+      "id": "heldout/libdd_nccl_profiler/test/test_inspector_event_pool.cc",
+      "wall_seconds": 0.016764156986027956
+    }
+  ],
+  "totals": [
+    {
+      "analysis_version": 2,
+      "analyzed": 26,
+      "density": 0.0,
+      "discovered": 26,
+      "failed": 0,
+      "hierarchy_mode": "structural",
+      "high_entropy_tokens": 0,
+      "languages": {
+        "c": {
+          "analyzed": 19,
+          "density": 0.0,
+          "discovered": 19,
+          "failed": 0,
+          "high_entropy_tokens": 0,
+          "llm_cc": 493.20000000000005,
+          "lmcc_per_token": 0.02058173016734132,
+          "mean_entropy": 0.6115904065730535,
+          "score": 0.02058173016734132,
+          "token_count": 23963,
+          "total_branch": 351,
+          "total_comp_level": 1062
+        },
+        "cpp": {
+          "analyzed": 2,
+          "density": 0.0,
+          "discovered": 2,
+          "failed": 0,
+          "high_entropy_tokens": 0,
+          "llm_cc": 44.599999999999994,
+          "lmcc_per_token": 0.02576545349508954,
+          "mean_entropy": 0.8371468061795264,
+          "score": 0.02576545349508954,
+          "token_count": 1731,
+          "total_branch": 33,
+          "total_comp_level": 91
+        },
+        "go": {
+          "analyzed": 2,
+          "density": 0.0,
+          "discovered": 2,
+          "failed": 0,
+          "high_entropy_tokens": 0,
+          "llm_cc": 15.0,
+          "lmcc_per_token": 0.03424657534246575,
+          "mean_entropy": 0.6957259408102646,
+          "score": 0.03424657534246575,
+          "token_count": 438,
+          "total_branch": 11,
+          "total_comp_level": 31
+        },
+        "python": {
+          "analyzed": 3,
+          "density": 0.0,
+          "discovered": 3,
+          "failed": 0,
+          "high_entropy_tokens": 0,
+          "llm_cc": 143.0,
+          "lmcc_per_token": 0.0330635838150289,
+          "mean_entropy": 0.7683349041150263,
+          "score": 0.0330635838150289,
+          "token_count": 4325,
+          "total_branch": 105,
+          "total_comp_level": 295
+        }
+      },
+      "llm_cc": 695.8,
+      "lmcc_per_token": 0.02284532291427258,
+      "mean_entropy": 0.6478779412476354,
+      "partial": false,
+      "score": 0.02284532291427258,
+      "token_count": 30457,
+      "total_branch": 500,
+      "total_comp_level": 1479,
+      "type": "totals"
+    }
+  ],
+  "configuration": [
+    {
+      "alpha": 0.8,
+      "analysis_version": 2,
+      "backend": "cuda/gpu-layers=-1",
+      "batch_size": 256,
+      "cache": {
+        "enabled": true,
+        "limit_bytes": 536870912,
+        "namespace": "external/v1/entropy",
+        "version": 1
+      },
+      "context": 32768,
+      "effective_entropy_reducer": "device",
+      "entropy_reduction": "device",
+      "gpu_layers": -1,
+      "hierarchy_mode": "structural",
+      "hotspots": 10,
+      "include_headers": false,
+      "inference_abi": "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v2",
+      "language": "auto",
+      "model": "/home/bits/llmcc-model-study-20260905/models/Qwen2.5-Coder-1.5B.Q6_K.gguf",
+      "model_modification_time": 1788633450538371026,
+      "model_size": 1272739680,
+      "no_download": true,
+      "no_ignore": false,
+      "progress": "always",
+      "score_mode": "lmcc",
+      "tau": 100.0,
+      "tau_percentile": null,
+      "tau_rule": "absolute",
+      "type": "configuration"
+    }
+  ],
+  "idle_gpu_mib": 0,
+  "peak_gpu_mib": 0,
+  "gpu_memory_method": "sampled device-0 memory.used minus pre-run idle; 0.5-second interval"
+}

@@ -100,15 +100,15 @@ constexpr std::string_view kUsageBeforeContext =
     "[--prompt TEXT | --file PATH] [OPTIONS]\n"
     "  llm-cc models list [--available]|remove FILE|path\n"
     "  llm-cc backends list|fetch|path|remove\n"
-    "  llm-cc cache status|prune|clear [PATH] [--format text|json] "
-    "[--legacy]\n\n"
+    "  llm-cc cache status|prune [PATH] [--format text|json]\n"
+    "  llm-cc cache clear [PATH] [--legacy|--all] [--format text|json]\n\n"
     "Analysis options:\n"
     "  --lang NAME          infer per file with auto, or force every input to\n"
     "                       rust, c, cpp, java, python, go, javascript, or\n"
     "                       csharp (default: auto)\n"
     "  --include-headers     include headers during recursive discovery\n"
     "  --no-ignore           include ignored and generated source files\n"
-    "  --no-cache            disable repository-scoped entropy caching\n"
+    "  --no-cache            disable shared entropy caching\n"
     "  --no-download         do not fetch the model or backend bundle\n"
     "  --model GGUF          llama.cpp-compatible model\n"
     "  --model-name NAME     registered model (default: "
@@ -624,9 +624,10 @@ int RunBackends(int argc, char** argv) {
 
 struct CacheArguments {
   std::string_view action;
-  std::filesystem::path path = std::filesystem::current_path();
+  std::optional<std::filesystem::path> path;
   std::string_view format = "text";
   bool legacy = false;
+  bool all = false;
 };
 
 CacheArguments ParseCacheArguments(int argc, char** argv) {
@@ -647,6 +648,8 @@ CacheArguments ParseCacheArguments(int argc, char** argv) {
       }
     } else if (value == "--legacy") {
       arguments.legacy = true;
+    } else if (value == "--all") {
+      arguments.all = true;
     } else if (!value.starts_with('-') && !path_set) {
       arguments.path = std::filesystem::u8path(value);
       path_set = true;
@@ -658,60 +661,107 @@ CacheArguments ParseCacheArguments(int argc, char** argv) {
       arguments.action != "clear") {
     Usage("cache requires status, prune, or clear");
   }
-  if (arguments.legacy && arguments.action != "clear") {
-    Usage("--legacy is only valid with cache clear");
+  if ((arguments.legacy || arguments.all) && arguments.action != "clear") {
+    Usage("--legacy and --all are only valid with cache clear");
+  }
+  if (arguments.all && (arguments.legacy || arguments.path.has_value())) {
+    Usage("cache clear --all cannot be combined with PATH or --legacy");
   }
   return arguments;
 }
 
 int RunCache(int argc, char** argv) {
   const CacheArguments arguments = ParseCacheArguments(argc, argv);
-  const auto repository = llmcc::FindGitRepository(arguments.path);
-  if (!repository.has_value()) {
-    throw std::invalid_argument(PathUtf8(arguments.path) +
-                                " is not inside a Git worktree");
+  std::optional<std::string_view> cleared;
+  std::optional<llmcc::RepositoryCacheStatus> repository_status;
+  if (arguments.path.has_value()) {
+    const auto repository = llmcc::FindGitRepository(*arguments.path);
+    if (!repository.has_value()) {
+      throw std::invalid_argument(PathUtf8(*arguments.path) +
+                                  " is not inside a Git worktree");
+    }
+    repository_status = llmcc::GetRepositoryCacheStatus(*repository);
   }
   if (arguments.action == "prune") {
-    llmcc::PruneRepositoryCache(*repository);
+    llmcc::PruneEntropyCache();
   } else if (arguments.action == "clear") {
-    llmcc::ClearRepositoryCache(*repository);
-    if (arguments.legacy) {
-      llmcc::ClearLegacyRepositoryCache(*repository);
+    if (arguments.all) {
+      llmcc::ClearEntropyCache();
+      cleared = "shared v2 entropy cache";
+    } else {
+      const std::filesystem::path scoped_path =
+          arguments.path.value_or(std::filesystem::current_path());
+      const auto repository = llmcc::FindGitRepository(scoped_path);
+      if (!repository.has_value()) {
+        throw std::invalid_argument(PathUtf8(scoped_path) +
+                                    " is not inside a Git worktree");
+      }
+      llmcc::ClearRepositoryCache(*repository);
+      if (arguments.legacy) {
+        llmcc::ClearLegacyRepositoryCache(*repository);
+        cleared = "repository v1 and legacy entropy caches";
+      } else {
+        cleared = "repository v1 entropy cache";
+      }
+      repository_status = llmcc::GetRepositoryCacheStatus(*repository);
     }
   }
-  const auto status = llmcc::GetRepositoryCacheStatus(*repository);
+  const auto status = llmcc::GetEntropyCacheStatus();
   if (arguments.format == "json") {
-    std::cout << nlohmann::json{{"repository", PathUtf8(status.repository)},
-                                {"directory", PathUtf8(status.directory)},
-                                {"storage_version", 1},
-                                {"inference_abi", llmcc::InferenceAbi()},
-                                {"entries", status.entries},
-                                {"bytes", status.bytes},
-                                {"legacy_directory",
-                                 PathUtf8(status.legacy_directory)},
-                                {"legacy_entries", status.legacy_entries},
-                                {"legacy_bytes", status.legacy_bytes},
-                                {"entries_by_inference_abi",
-                                 status.entries_by_inference_abi},
-                                {"unknown_provenance_entries",
-                                 status.unknown_provenance_entries},
-                                {"malformed_entries", status.malformed_entries}}
-                     .dump()
-              << '\n';
+    nlohmann::json output{
+        {"scope", "user"},
+        {"directory", PathUtf8(status.directory)},
+        {"storage_version", status.storage_version},
+        {"inference_abi", llmcc::InferenceAbi()},
+        {"entries", status.entries},
+        {"bytes", status.bytes},
+        {"limit_bytes", status.limit},
+        {"retention_seconds", status.retention_seconds},
+        {"entries_by_inference_abi", status.entries_by_inference_abi},
+        {"malformed_entries", status.malformed_entries}};
+    if (repository_status.has_value()) {
+      output["repository_v1"] = {
+          {"repository", PathUtf8(repository_status->repository)},
+          {"directory", PathUtf8(repository_status->directory)},
+          {"entries", repository_status->entries},
+          {"bytes", repository_status->bytes},
+          {"legacy_directory", PathUtf8(repository_status->legacy_directory)},
+          {"legacy_entries", repository_status->legacy_entries},
+          {"legacy_bytes", repository_status->legacy_bytes},
+          {"unknown_provenance_entries",
+           repository_status->unknown_provenance_entries},
+          {"malformed_entries", repository_status->malformed_entries}};
+    }
+    if (cleared.has_value()) {
+      output["cleared"] = *cleared;
+    }
+    std::cout << output.dump() << '\n';
   } else {
-    std::cout << "repository: " << PathUtf8(status.repository) << '\n'
+    std::cout << "scope: user\n"
               << "directory: " << PathUtf8(status.directory) << '\n'
-              << "storage version: 1\n"
+              << "storage version: " << status.storage_version << '\n'
               << "inference ABI: " << llmcc::InferenceAbi() << '\n'
               << "entries: " << status.entries << '\n'
               << "bytes: " << status.bytes << '\n'
-              << "legacy directory: " << PathUtf8(status.legacy_directory)
-              << '\n'
-              << "legacy entries: " << status.legacy_entries << '\n'
-              << "legacy bytes: " << status.legacy_bytes << '\n'
-              << "unknown provenance entries: "
-              << status.unknown_provenance_entries << '\n'
+              << "limit bytes: " << status.limit << '\n'
+              << "retention seconds: " << status.retention_seconds << '\n'
               << "malformed entries: " << status.malformed_entries << '\n';
+    if (repository_status.has_value()) {
+      std::cout << "repository v1: " << PathUtf8(repository_status->repository)
+                << '\n'
+                << "repository v1 directory: "
+                << PathUtf8(repository_status->directory) << '\n'
+                << "repository v1 entries: " << repository_status->entries
+                << '\n'
+                << "repository v1 bytes: " << repository_status->bytes << '\n'
+                << "legacy directory: "
+                << PathUtf8(repository_status->legacy_directory) << '\n'
+                << "legacy entries: " << repository_status->legacy_entries
+                << '\n';
+    }
+    if (cleared.has_value()) {
+      std::cout << "cleared: " << *cleared << '\n';
+    }
   }
   return 0;
 }
@@ -894,14 +944,32 @@ nlohmann::json ConfigurationJson(
       {"gpu_layers", arguments.gpu_layers},
       {"inference_abi", llmcc::InferenceAbi()},
       {"cache",
-       {{"enabled", !arguments.no_cache},
-        {"version", 1},
-        {"namespace", "external/v1/entropy"},
-        {"limit_bytes", llmcc::kEntropyCacheLimit}}}};
+       {{"enabled",
+         !arguments.no_cache && !arguments.backend_directory.has_value()},
+        {"scope", "user"},
+        {"version", 2},
+        {"namespace", "v2/entropy"},
+        {"limit_bytes", llmcc::kEntropyCacheLimit},
+        {"retention_seconds", llmcc::kEntropyCacheMaxAgeSeconds}}}};
+  configuration["cache"]["entries"] = nullptr;
+  configuration["cache"]["bytes"] = nullptr;
+  if (configuration["cache"]["enabled"].get<bool>()) {
+    try {
+      const auto status = llmcc::GetEntropyCacheStatus(false);
+      configuration["cache"]["directory"] = PathUtf8(status.directory);
+      configuration["cache"]["entries"] = status.entries;
+      configuration["cache"]["bytes"] = status.bytes;
+    } catch (const std::exception&) {
+      // Cache bookkeeping must not prevent analysis or a validated hit.
+    }
+  }
   if (identity != nullptr) {
     configuration["model"] = PathUtf8(identity->canonical_path);
     configuration["model_size"] = identity->size;
     configuration["model_modification_time"] = identity->modification_time;
+    if (!identity->content_digest.empty()) {
+      configuration["model_sha256"] = identity->content_digest;
+    }
     configuration["backend"] = identity->backend;
     configuration["effective_entropy_reducer"] = identity->effective_reducer;
   }
@@ -1219,42 +1287,27 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
        device_available);
   const std::string backend_identity =
       BackendCacheIdentity(resolved_backend, arguments.gpu_layers);
+  const bool entropy_cache =
+      !arguments.no_cache && !arguments.backend_directory.has_value();
   const auto identity = llmcc::InspectModel(
       resolved_model, llmcc::InferenceAbi(), backend_identity,
       arguments.context, arguments.batch_size,
       llmcc::EntropyReductionName(arguments.entropy_reduction),
-      device_reduction ? "device" : "host");
+      device_reduction ? "device" : "host", entropy_cache);
   if (!text) {
     Emit(ConfigurationJson(arguments, requested_model, &identity));
   }
   for (const auto& message : discovery.warnings) {
     warning(message);
   }
-  const bool entropy_cache =
-      !arguments.no_cache && !arguments.backend_directory.has_value();
   if (!arguments.no_cache && arguments.backend_directory.has_value()) {
     warning("entropy caching is disabled for custom backend directories");
   }
-  if (entropy_cache &&
-      std::ranges::any_of(discovery.sources, [](const auto& source) {
-        return !source.repository.has_value();
-      })) {
-    warning("entropy caching is disabled for inputs outside Git worktrees");
-  }
   if (entropy_cache) {
-    std::set<std::filesystem::path> repositories;
-    for (const auto& source : discovery.sources) {
-      if (source.repository.has_value()) {
-        repositories.insert(*source.repository);
-      }
-    }
-    for (const auto& repository : repositories) {
-      try {
-        llmcc::CheckRepositoryCacheAvailability(repository);
-      } catch (const std::exception& error) {
-        warning("entropy cache is unavailable for " + PathUtf8(repository) +
-                ": " + error.what());
-      }
+    try {
+      llmcc::CheckEntropyCacheAvailability();
+    } catch (const std::exception& error) {
+      warning("entropy cache is unavailable: " + std::string(error.what()));
     }
   }
 
