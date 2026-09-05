@@ -1,5 +1,9 @@
 api_version: ci-toolkit/v1alpha1
 
+pull_requests:
+  title:
+    format: conventional-commits
+
 releases:
   uses: toolkit.release-please@v1
   with:
