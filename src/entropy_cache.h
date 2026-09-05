@@ -61,6 +61,7 @@ std::filesystem::path RepositoryCacheDirectory(
     const std::filesystem::path& repository);
 std::filesystem::path LegacyRepositoryCacheDirectory(
     const std::filesystem::path& repository);
+void CheckRepositoryCacheAvailability(const std::filesystem::path& repository);
 EntropyCacheLookup ReadEntropyCache(const std::filesystem::path& repository,
                                     std::string_view preprocessed_source,
                                     const ModelIdentity& model);

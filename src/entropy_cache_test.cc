@@ -164,6 +164,13 @@ int main() {  // NOLINT(bugprone-exception-escape)
   const auto migrated_status = llmcc::GetRepositoryCacheStatus(repository);
   llmcc::test::ExpectEq(migrated_status.legacy_entries, std::uint64_t{1},
                         "status reports legacy entries separately");
+  fs::remove(active_entry);
+  fs::create_directory(active_entry);
+  const auto migration_failure =
+      llmcc::ReadEntropyCache(repository, "ab", identity);
+  llmcc::test::Expect(migration_failure.hit,
+                      "legacy hit survives advisory migration failure");
+  fs::remove_all(active_entry);
   llmcc::ClearLegacyRepositoryCache(repository);
   llmcc::test::Expect(!fs::exists(legacy_entry) &&
                           fs::exists(repository / ".llm-cc-cache/other/keep"),
@@ -178,10 +185,11 @@ int main() {  // NOLINT(bugprone-exception-escape)
                                unsafe_directory.parent_path().parent_path());
   bool refused = false;
   try {
-    llmcc::WriteEntropyCache(unsafe, "ab", identity, records);
+    llmcc::CheckRepositoryCacheAvailability(unsafe);
   } catch (const std::runtime_error&) {
     refused = true;
   }
-  llmcc::test::Expect(refused, "external cache bucket symlink is refused");
+  llmcc::test::Expect(refused,
+                      "lightweight cache probe refuses external symlinks");
   return 0;
 }

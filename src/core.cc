@@ -172,14 +172,19 @@ std::pair<double, std::vector<SemanticUnit>> DetectSemanticUnits(
     }
   }
 
-  std::set<std::size_t> boundaries = {
-      FirstOverlappingToken(tokens, meaningful_start),
-      TokenIndexAt(tokens, meaningful_end)};
-  for (std::size_t i = 1; i < tokens.size(); ++i) {
+  const std::size_t source_start =
+      FirstOverlappingToken(tokens, meaningful_start);
+  const std::size_t source_end = TokenIndexAt(tokens, meaningful_end);
+  std::set<std::size_t> boundaries = {source_start, source_end};
+  bool marker_at_source_start = false;
+  for (std::size_t i = std::max<std::size_t>(1, source_start); i < source_end;
+       ++i) {
     if (tokens[i].entropy.has_value() && *tokens[i].entropy >= tau) {
-      const std::size_t boundary = first_token_on_line[i];
-      if (boundary > *boundaries.begin() &&
-          boundary < TokenIndexAt(tokens, meaningful_end)) {
+      const std::size_t boundary =
+          std::max(first_token_on_line[i], source_start);
+      if (boundary == source_start) {
+        marker_at_source_start = true;
+      } else if (boundary > source_start && boundary < source_end) {
         boundaries.insert(boundary);
       }
     }
@@ -189,8 +194,7 @@ std::pair<double, std::vector<SemanticUnit>> DetectSemanticUnits(
   if (hierarchy_mode == HierarchyMode::kStructural) {
     for (const StructuralEvent& event : structural_events) {
       const std::size_t boundary = TokenIndexAt(tokens, event.byte_offset);
-      if (boundary > *boundaries.begin() &&
-          boundary < TokenIndexAt(tokens, meaningful_end)) {
+      if (boundary > source_start && boundary < source_end) {
         boundaries.insert(boundary);
       }
     }
@@ -210,7 +214,9 @@ std::pair<double, std::vector<SemanticUnit>> DetectSemanticUnits(
   // root and creates one block for each entropy marker. Structural mode is a
   // true partition, so it retains the interval before the first boundary too.
   const std::size_t first_interval =
-      hierarchy_mode == HierarchyMode::kReference ? 1 : 0;
+      hierarchy_mode == HierarchyMode::kReference && !marker_at_source_start
+          ? 1
+          : 0;
   for (std::size_t i = first_interval; i + 1 < indices.size(); ++i) {
     const std::size_t start_index = indices[i];
     const std::size_t end_index = indices[i + 1];

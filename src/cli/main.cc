@@ -1123,6 +1123,11 @@ void PrintTotalsText(const MetricTotals& totals, std::string_view score_mode) {
 }
 
 int RunAnalyze(const AnalyzeArguments& arguments) {
+  if (arguments.entropy_reduction == llmcc::EntropyReduction::kDevice &&
+      arguments.gpu_layers != -1) {
+    throw std::invalid_argument(
+        "device entropy reduction requires GPU execution");
+  }
   const bool text = arguments.format == "text";
   ProgressReporter progress(arguments.progress);
   progress.Phase("discovering sources");
@@ -1242,7 +1247,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
     }
     for (const auto& repository : repositories) {
       try {
-        static_cast<void>(llmcc::GetRepositoryCacheStatus(repository));
+        llmcc::CheckRepositoryCacheAvailability(repository);
       } catch (const std::exception& error) {
         warning("entropy cache is unavailable for " + PathUtf8(repository) +
                 ": " + error.what());

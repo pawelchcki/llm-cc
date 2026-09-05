@@ -371,6 +371,9 @@ std::optional<std::vector<EntropyRecord>> ReadEntry(
     throw std::runtime_error("cannot inspect entropy cache entry " +
                              path.string() + ": " + error.message());
   }
+  if (!error && !std::filesystem::is_regular_file(status)) {
+    return std::nullopt;
+  }
   std::ifstream input(path, std::ios::binary);
   if (!input) {
     return std::nullopt;
@@ -536,6 +539,24 @@ std::filesystem::path LegacyRepositoryCacheDirectory(
   return LegacyLocation(repository).directory;
 }
 
+void CheckRepositoryCacheAvailability(const std::filesystem::path& repository) {
+  const auto location = ActiveLocation(repository);
+  CheckCachePath(location);
+  std::error_code error;
+  const auto status =
+      std::filesystem::symlink_status(location.directory, error);
+  if (error == std::errc::no_such_file_or_directory) {
+    return;
+  }
+  if (error) {
+    throw std::runtime_error("cannot inspect entropy cache: " +
+                             error.message());
+  }
+  if (!std::filesystem::is_directory(status)) {
+    throw std::runtime_error("entropy cache path is not a directory");
+  }
+}
+
 EntropyCacheLookup ReadEntropyCache(const std::filesystem::path& repository,
                                     std::string_view source,
                                     const ModelIdentity& model) {
@@ -550,7 +571,11 @@ EntropyCacheLookup ReadEntropyCache(const std::filesystem::path& repository,
     if (!legacy.has_value()) {
       return {};
     }
-    WriteEntropyCache(repository, source, model, *legacy);
+    try {
+      WriteEntropyCache(repository, source, model, *legacy);
+    } catch (const std::exception&) {
+      // Migration is advisory; the validated legacy data remains usable.
+    }
     return {.hit = true, .records = std::move(*legacy)};
   } catch (const std::exception&) {
     return {};

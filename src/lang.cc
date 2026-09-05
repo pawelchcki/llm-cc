@@ -362,8 +362,18 @@ void CollectCommentRanges(
 bool IsPythonLiteralString(TSNode node, std::string_view source) {
   const std::string_view type = ts_node_type(node);
   if (type == "parenthesized_expression") {
-    return ts_node_named_child_count(node) == 1 &&
-           IsPythonLiteralString(ts_node_named_child(node, 0), source);
+    bool saw_string = false;
+    for (std::uint32_t i = 0; i < ts_node_named_child_count(node); ++i) {
+      const TSNode child = ts_node_named_child(node, i);
+      if (IsNodeType(child, "comment")) {
+        continue;
+      }
+      if (saw_string || !IsPythonLiteralString(child, source)) {
+        return false;
+      }
+      saw_string = true;
+    }
+    return saw_string;
   }
   if (type == "concatenated_string") {
     bool saw_string = false;

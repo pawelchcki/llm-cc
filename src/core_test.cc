@@ -159,6 +159,18 @@ int main() {  // NOLINT(bugprone-exception-escape)
   Expect(std::abs(reference_golden.llm_cc - 2.8) < 1e-12,
          "reference golden raw score");
 
+  const auto first_line_marker_tokens = ByteTokens({std::nullopt, 2.0, 0.0});
+  const std::vector<std::size_t> first_line = {0};
+  const auto [first_line_tau, first_line_units] = llmcc::DetectSemanticUnits(
+      first_line_marker_tokens, {}, first_line,
+      {.kind = llmcc::TauRule::Kind::kAbsolute, .value = 1.0}, {},
+      llmcc::HierarchyMode::kReference);
+  ExpectEq(first_line_tau, 1.0, "first-line reference marker tau");
+  ExpectEq(first_line_units.size(), std::size_t{1},
+           "first-line reference marker creates a block");
+  ExpectEq(first_line_units.front().start_byte, std::size_t{0},
+           "first-line reference block starts at the source boundary");
+
   const auto whitespace_tokens = ByteTokens({std::nullopt, 0.0, 0.0, 0.0, 0.0});
   const llmcc::Analysis with_trailing_whitespace =
       llmcc::Analyze(whitespace_tokens, {}, {},

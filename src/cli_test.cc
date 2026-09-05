@@ -176,6 +176,10 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(Run(Quote(binary) + " " + Quote(empty_repository) +
                           " --hierarchy invalid >/dev/null 2>&1") != 0,
                       "invalid hierarchy mode is rejected");
+  llmcc::test::Expect(
+      Run(Quote(binary) + " " + Quote(empty_repository) +
+          " --entropy-reduction device >/dev/null 2>&1") != 0,
+      "empty discovery rejects device reduction without full GPU offload");
 
   const fs::path removed_option_error =
       fs::path(test_tmpdir) / "removed-option-error.txt";
