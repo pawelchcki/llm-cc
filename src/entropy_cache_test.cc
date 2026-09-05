@@ -194,7 +194,26 @@ int main() {  // NOLINT(bugprone-exception-escape)
                       "accounting maintenance failure preserves a valid hit");
   fs::remove(accounting);
 
-  const auto old_entry = llmcc::RepositoryCacheDirectory(root / "old") /
+  llmcc::WriteEntropyCache("clearable", model, Records("clearable"));
+  fs::remove(accounting);
+  fs::create_directory(accounting);
+  llmcc::ClearEntropyCache();
+  llmcc::test::Expect(
+      !llmcc::ReadEntropyCache("clearable", model).hit,
+      "clearing entries does not require a preliminary metadata write");
+
+  const auto old_repository = root / "old";
+  std::error_code canonical_error;
+  auto canonical = fs::weakly_canonical(old_repository, canonical_error);
+  if (canonical_error) canonical = old_repository.lexically_normal();
+  const auto native_utf8 = canonical.u8string();
+  const auto repository_hash = llmcc::Sha256Hex(std::string_view(
+      reinterpret_cast<const char*>(native_utf8.data()), native_utf8.size()));
+  llmcc::test::Expect(
+      llmcc::RepositoryCacheDirectory(old_repository) ==
+          root / repository_hash / "v1/entropy",
+      "v1 repository key retains the native path representation");
+  const auto old_entry = llmcc::RepositoryCacheDirectory(old_repository) /
                          (llmcc::EntropyCacheKey("legacy", model) + ".cbor");
   Write(old_entry, "old-v1-entry");
   llmcc::test::Expect(!llmcc::ReadEntropyCache("legacy", model).hit,

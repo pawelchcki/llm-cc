@@ -45,8 +45,8 @@ def main():
     args = parser.parse_args()
     root = args.root.resolve()
     (root / "models").mkdir(parents=True, exist_ok=True)
-    records = []
     pinned = {row["name"]: row for row in json.loads((root / "models.json").read_text())} if (root / "models.json").exists() else {}
+    records = dict(pinned)
     for name, repo, filename in MODELS:
         revision = pinned.get(name, {}).get("revision", "main")
         with urllib.request.urlopen(f"https://huggingface.co/api/models/{repo}/revision/{revision}?blobs=true") as response:
@@ -74,10 +74,12 @@ def main():
             downloaded.rename(target)
         for part in parts:
             part.unlink()
-        records.append(dict(name=name, repo=repo, revision=info["sha"], file=filename,
-                            bytes=target.stat().st_size, sha256=digest, url=url))
+        records[name] = dict(name=name, repo=repo, revision=info["sha"], file=filename,
+                             bytes=target.stat().st_size, sha256=digest, url=url)
+        checkpoint = [records[model_name] for model_name, _, _ in MODELS
+                      if model_name in records]
         manifest = root / "models.json.partial"
-        manifest.write_text(json.dumps(records, indent=2) + "\n")
+        manifest.write_text(json.dumps(checkpoint, indent=2) + "\n")
         manifest.replace(root / "models.json")
         print(f"VERIFIED {name}: {target.stat().st_size:,} bytes", flush=True)
 

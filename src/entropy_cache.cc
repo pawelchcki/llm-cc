@@ -40,7 +40,9 @@ CacheLocation RepositoryLocation(const std::filesystem::path& r) {
   auto p = std::filesystem::weakly_canonical(r, e);
   if (e) p = r.lexically_normal();
   auto b = EntropyCacheBaseDirectory();
-  const auto utf8 = p.generic_u8string();
+  // v1 used the native path representation, including Windows backslashes.
+  // Keep that exact spelling so upgrades can still find existing buckets.
+  const auto utf8 = p.u8string();
   const auto key = Sha256Hex(std::string_view(
       reinterpret_cast<const char*>(utf8.data()), utf8.size()));
   return {b, b / key / "v1" / "entropy"};
@@ -528,13 +530,27 @@ void ClearEntropyCache() {
   auto l = GlobalLocation();
   EnsureCacheDirectory(l);
   cache_io::FileLock z(l.directory.parent_path() / ".lock");
-  const auto a = LoadAccounting(l);
-  SaveAccounting(l, {a.bytes, a.entries, a.next_expiry, true});
+  // Invalidating the small accounting record does not allocate. In
+  // particular, clearing must remain possible when the filesystem is full.
+  // If the process stops partway through, the next access rebuilds it from
+  // the entries that remain.
+  const auto accounting = AccountingPath(l);
+  cache_io::CheckNotSymlink(accounting);
+  std::error_code error;
+  std::filesystem::remove(accounting, error);
+  if (error && error != std::errc::no_such_file_or_directory) {
+    throw std::system_error(error, "cannot invalidate entropy accounting");
+  }
   for (auto& e : Entries(l))
     if (!RemoveEntry(e.p))
       throw std::runtime_error("cannot clear entropy cache");
   CleanTemporaries(l);
-  SaveAccounting(l, Accounting{.dirty = false});
+  try {
+    SaveAccounting(l, Accounting{.dirty = false});
+  } catch (const std::exception&) {
+    // The missing record is a valid dirty state: readers rebuild from the
+    // now-empty directory. Do not turn successful reclamation into failure.
+  }
 }
 std::filesystem::path RepositoryCacheDirectory(const std::filesystem::path& r) {
   return RepositoryLocation(r).directory;
