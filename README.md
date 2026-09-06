@@ -104,7 +104,7 @@ the generated version header. Development builds use the configured artifact
 resolver (defaulting to `https://ci-artifacts.pawelchcki.workers.dev`), while
 exact release tags stamp the matching GitHub release URL. The resolver Worker
 is not deployed yet. Until it is, the supported path is
-`llm-cc backends fetch <name> --url <public_url>` with the Public URL from the
+`llm-cc backends fetch <name> --url <public_url> --assume-yes` with the Public URL from the
 CI comment. In workspace status output, the literal artifact URL value `none`
 means fetching is disabled; it becomes an empty build-time constant.
 
@@ -139,6 +139,8 @@ Analysis options are:
 --model GGUF
 --model-name NAME
 --no-download
+--assume-yes / -y
+--force-cpu
 --gpu-layers N
 --backend auto|cpu|cuda|rocm
 --include-headers
@@ -217,9 +219,14 @@ event order is:
 Consumers must wait for exit status zero and a terminal `totals` event with
 `partial == false`, then aggregate every `file` event. A `file_start`, a
 truncated stream, or an early file with no matching functions is not a complete
-project result. `--progress always` writes throttled model, file, cache, and
-token progress to stderr while leaving stdout JSONL unchanged; `auto` enables
-it only when stderr is a terminal.
+project result. `--progress auto` (the default) and `always` write an immediate
+phase message and a heartbeat every five seconds to stderr, including when
+redirected. These report elapsed time, the current file, token or byte counters,
+and time since counters advanced when available, even during blocked model loads,
+cache/GPU lock waits, or inference batches. Downloads with an unknown total size
+show `completed/? bytes`. `never` suppresses routine progress;
+errors and warnings remain. Analysis, `score`, and `backends fetch` share this
+behavior and stdout JSONL is unchanged.
 
 A `file` event retains `llm_cc`, `total_branch`, `total_comp_level`, `alpha`,
 `tau`, and the complete `units` hierarchy. It also contains normalized metrics,
@@ -232,8 +239,27 @@ file failure does not stop later files. Exit status is 0 for complete success,
 The default maximum input context is 131,072 tokens and the default batch size
 is 64. One inference context is reused across files, grows geometrically as
 needed, and has its model memory and positions cleared between inputs. Use
-`--context` and `--batch-size` to tune these limits. Inference uses the CPU by
-default; request GPU offload with `--gpu-layers`.
+`--context` and `--batch-size` to tune these limits. CLI inference defaults to
+full GPU offload (`--gpu-layers -1`) on automatic, CUDA, ROCm, and built-in Metal
+execution. GPU hardware is probed before backend downloads. If GPU setup fails,
+the command stops with a CPU rerun command. CPU execution requires `--force-cpu`,
+`--backend cpu`, or `--gpu-layers 0`. Contradictory CPU and accelerator options
+are rejected in either argument order; positive layer counts retain partial
+offload. Library APIs keep their existing defaults and are noninteractive.
+
+For CI with downloads authorized, or explicit CPU execution with a smaller model:
+
+```sh
+llm-cc src --assume-yes > results.jsonl 2> progress.log
+llm-cc src --force-cpu --model-name qwen2.5-coder-3b-q6_k --assume-yes
+printf 'int x = 1;' | llm-cc score --force-cpu \
+  --model-name qwen2.5-coder-1.5b-q6_k --assume-yes
+```
+
+CPU inference can be slow. Consider Qwen 3B first, then 1.5B for lower memory;
+0.5B is the testing option. Memory guidance estimates weight size plus headroom,
+while context allocations also need memory. The selected model never changes
+automatically.
 
 `--entropy-reduction auto` performs entropy and observed-token log-probability
 reduction on the GPU when full offload (`--gpu-layers -1`) guarantees that the
@@ -261,10 +287,17 @@ Without `--model`, `llm-cc` uses the first entry in its built-in registry,
 `qwen2.5-coder-3b-q6_k`, and
 `qwen2.5-coder-0.5b-q4_k_m`. Select one with `--model-name NAME`;
 `--model-name` and `--model` are mutually exclusive. The tool first checks
-`models/<registered file>`, then its model cache. If the model is absent it
-downloads it over HTTPS to a `.partial` file and resumes that file on the next
-attempt. Interactive downloads show a progress bar, transferred size, and
-current average speed. Disable downloading with `--no-download`.
+`models/<registered file>`, then its model cache. If the model is absent,
+it asks before downloading over HTTPS to a resumable `.partial` file. Each
+missing model or backend bundle needs confirmation; a backend confirmation
+includes its checksum and manifest. The prompt shows source, destination, and
+size when known, and defaults to `[y/N]`. Confirmation uses the interactive
+terminal, never piped scoring input. Without a terminal the command exits promptly
+unless `--assume-yes` (`-y`) is supplied. Valid cached assets need no confirmation,
+and concurrent acquisition rechecks the cache under its lock before asking.
+`--no-download` forbids network access even with `--assume-yes`. Connections time
+out after 15 seconds and stalled transfers after 60 seconds; partial downloads
+are retained for a later attempt.
 
 The cache directory follows this precedence:
 
@@ -342,10 +375,21 @@ Manage the versioned CUDA and ROCm bundle cache with:
 ```sh
 llm-cc backends list
 llm-cc backends fetch cuda
-llm-cc backends fetch rocm --url https://example.invalid/backend.bundle
+llm-cc backends fetch rocm --url https://example.invalid/backend.bundle --assume-yes
 llm-cc backends path [cuda|rocm]
 llm-cc backends remove cuda|rocm
 ```
+
+`list` distinguishes verified, invalid, and missing bundle-cache entries from
+locally discoverable backend sources. It does not download or initialize a GPU;
+listed sources explicitly say the device is untested. Extracted directories
+without verified bundle provenance are available only through an explicit
+`--backend-dir DIR` recovery choice.
+
+HTTP errors retain the status and failing URL. A 404 identifies the artifact and
+build commit; publication may be unavailable. Use `backends fetch NAME --url URL
+--assume-yes` with a matching bundle, supply `--backend-dir DIR` (or
+`LLM_CC_BACKEND_DIR`), or rerun with `--force-cpu`.
 
 `fetch` normally uses the artifact base URL stamped into the binary. `--url`
 overrides it with the exact bundle URL, and is the fallback for a build with no

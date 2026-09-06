@@ -49,6 +49,13 @@ int main() try {
   std::error_code error;
   fs::remove_all(root, error);
   fs::create_directories(root);
+  const fs::path fake_kfd = root / "kfd";
+  std::fstream(fake_kfd, std::ios::in | std::ios::out | std::ios::trunc)
+      << "fixture";
+  Expect(llmcc::RocmDeviceAccessible(fake_kfd),
+         "read-write KFD fixture is accessible");
+  Expect(!llmcc::RocmDeviceAccessible(root / "missing-kfd"),
+         "missing KFD device is inaccessible");
 
   const fs::path mixed = root / "mixed";
   // Raw KFD node 0 is a CPU and must not consume a HIP GPU ordinal. Deliberate

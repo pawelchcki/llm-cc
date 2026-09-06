@@ -156,6 +156,17 @@ int main() try {
          "requested automatic download follows generated policy");
   Expect(!llmcc::AutomaticBackendFetchAllowed(false),
          "an explicit no-fetch request never permits downloading");
+  Expect(llmcc::IsGpuAllocationFailure(
+             "ggml_cuda: cudaMalloc failed: out of memory"),
+         "CUDA out-of-memory diagnostics are recoverable");
+  Expect(llmcc::IsGpuAllocationFailure(
+             "ggml_metal: failed to allocate backend buffer"),
+         "Metal allocation diagnostics are recoverable");
+  Expect(
+      !llmcc::IsGpuAllocationFailure("llama_model_loader: invalid model magic"),
+      "invalid models are not classified as GPU failures");
+  Expect(!llmcc::IsGpuAllocationFailure("failed to allocate model metadata"),
+         "host allocation errors are not classified as GPU failures");
 
   namespace fs = std::filesystem;
   const char* temporary = std::getenv("TEST_TMPDIR");
@@ -326,6 +337,22 @@ int main() try {
          "validated runtime cache carries its payload verification");
   WriteFile(cached_bundle.parent_path() / "cuda.manifest.json",
             R"({"git_sha":"actual"})");
+
+  const fs::path alternate_bundle = root / "alternate.bundle";
+  const llmcc::ResolvedBackendPlugin cache_skipped =
+      llmcc::ResolveBackendPlugin(
+          BackendKind::kCuda, std::nullopt, std::span<const fs::path>{},
+          [] { return false; }, [&] { return runtime_root; }, "test-version",
+          "expected",
+          [&] {
+            return std::optional<llmcc::ResolvedBackendPlugin>(
+                {{.source = llmcc::BackendPluginSource::kBundle,
+                  .path = alternate_bundle,
+                  .payload_verified = true}});
+          },
+          {}, false);
+  ExpectEq(cache_skipped.path, alternate_bundle,
+           "runtime cache can be excluded after separate inspection");
 
   bool repair_called = false;
   const fs::path repaired_bundle = root / "repaired.bundle";

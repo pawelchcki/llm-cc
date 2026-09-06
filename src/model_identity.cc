@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "src/cache_io.h"
+#include "src/progress.h"
 #include "src/sha256.h"
 
 #if !defined(_WIN32)
@@ -34,6 +35,11 @@ struct FileSignature {
   std::uint64_t inode = 0;
   std::int64_t change_time = 0;
 };
+
+std::string PathUtf8(const std::filesystem::path& path) {
+  const std::u8string value = path.u8string();
+  return std::string(reinterpret_cast<const char*>(value.data()), value.size());
+}
 
 FileSignature Signature(const std::filesystem::path& path) {
 #if !defined(_WIN32)
@@ -157,17 +163,23 @@ std::optional<std::string> ReadMemo(const std::filesystem::path& path,
 }
 
 std::string HashFile(const std::filesystem::path& path) {
+  const std::string display_path = PathUtf8(path);
+  ReportPhase("hashing model " + display_path);
   std::ifstream input(path, std::ios::binary);
-  if (!input) throw std::runtime_error("cannot open model " + path.string());
+  if (!input) throw std::runtime_error("cannot open model " + display_path);
   Sha256 hash;
   // Keep hashing bounded in memory, including on platforms with small stacks.
   std::array<char, 64 * 1024> buffer{};
+  std::uint64_t completed = 0;
+  const auto total = std::filesystem::file_size(path);
   while (input.read(buffer.data(), buffer.size()) || input.gcount() != 0) {
+    completed += static_cast<std::uint64_t>(input.gcount());
+    ReportCounter(completed, total, "bytes");
     hash.Update(std::span<const char>(
         buffer.data(), static_cast<std::size_t>(input.gcount())));
   }
   if (!input.eof())
-    throw std::runtime_error("cannot read model " + path.string());
+    throw std::runtime_error("cannot read model " + display_path);
   const auto digest = hash.Finish();
   static constexpr char kDigits[] = "0123456789abcdef";
   std::string result;

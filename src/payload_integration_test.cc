@@ -26,8 +26,10 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(test_srcdir != nullptr && test_workspace != nullptr &&
                           test_tmpdir != nullptr,
                       "Bazel test environment");
-  const fs::path executable = fs::path(test_srcdir) / test_workspace / "dist" /
-                              "llm-cc-0.1-linux-x86_64";
+  const fs::path executable =
+      fs::path(test_srcdir) / test_workspace / "dist" / "llm-cc-linux-x86_64";
+  llmcc::test::Expect(fs::is_regular_file(executable),
+                      "embedded executable fixture exists");
   const fs::path runtime = fs::path(test_tmpdir) / "runtime";
   llmcc::test::ExpectEq(setenv("LLM_CC_RUNTIME_DIR", runtime.c_str(), 1), 0,
                         "runtime override is set");

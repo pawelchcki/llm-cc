@@ -1,5 +1,7 @@
 #include "src/inference_guard.h"
 
+#include "src/progress.h"
+
 #if !defined(_WIN32)
 #include <fcntl.h>
 #include <sys/file.h>
@@ -54,8 +56,9 @@ InferenceGuard::InferenceGuard(std::string_view backend) {
     descriptor_ = -1;
     throw error;
   }
-  std::cerr << "warning: waiting for another llm-cc process to release the "
-            << backend << " inference device\n";
+  ReportPhase("waiting for GPU inference lock");
+  ReportWarning("waiting for another llm-cc process to release the " +
+                std::string(backend) + " inference device");
   while (flock(descriptor_, LOCK_EX) != 0) {
     if (errno != EINTR) {
       const auto error =

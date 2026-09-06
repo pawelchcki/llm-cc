@@ -1,10 +1,137 @@
+#include <algorithm>
 #include <limits>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 
 #include "src/backend.h"
 
 namespace llmcc {
+
+ExecutionOptions ResolveExecutionOptions(BackendKind backend,
+                                         std::optional<std::int32_t> gpu_layers,
+                                         bool force_cpu) {
+  if (gpu_layers && *gpu_layers < -1) {
+    throw std::invalid_argument("--gpu-layers must be -1 or greater");
+  }
+  const bool accelerator =
+      backend == BackendKind::kCuda || backend == BackendKind::kRocm;
+  if ((force_cpu && accelerator) ||
+      ((force_cpu || backend == BackendKind::kCpu) && gpu_layers &&
+       *gpu_layers != 0) ||
+      (accelerator && gpu_layers == 0)) {
+    throw std::invalid_argument(
+        "contradictory CPU and accelerator options (--force-cpu, --backend, "
+        "--gpu-layers)");
+  }
+  if (force_cpu || backend == BackendKind::kCpu || gpu_layers == 0) {
+    return {BackendKind::kCpu, 0};
+  }
+  return {backend, gpu_layers.value_or(-1)};
+}
+
+std::string CpuRecoveryCommand(int argc, char** argv, bool score) {
+  std::string result = "CPU rerun: llm-cc";
+  if (score) result += " score";
+  const auto append_argument = [&](std::string_view arg) {
+#ifdef _WIN32
+    result += " \"";
+    std::size_t backslashes = 0;
+    for (char ch : arg) {
+      if (ch == '\\') {
+        ++backslashes;
+        continue;
+      }
+      if (ch == '"') {
+        result.append(backslashes * 2 + 1, '\\');
+        result += ch;
+        backslashes = 0;
+        continue;
+      }
+      result.append(backslashes, '\\');
+      backslashes = 0;
+      result += static_cast<unsigned char>(ch) < 32 || ch == 127 ? '?' : ch;
+    }
+    // Backslashes before the closing quote must be doubled for the Windows
+    // command-line parser to retain them in the argument.
+    result.append(backslashes * 2, '\\');
+    result += '"';
+#else
+    result += " '";
+    for (char ch : arg) {
+      if (ch == '\'')
+        result += "'\\''";
+      else if (static_cast<unsigned char>(ch) < 32 || ch == 127)
+        result += '?';
+      else
+        result += ch;
+    }
+    result += "'";
+#endif
+  };
+  for (int i = 1; i < argc; ++i) {
+    const std::string_view arg = argv[i];
+    if (arg == "--backend" || arg == "--gpu-layers" || arg == "--backend-dir" ||
+        arg == "--entropy-reduction") {
+      ++i;
+      continue;
+    }
+    if (arg == "--force-cpu") continue;
+    append_argument(arg);
+    const bool flag = arg == "--assume-yes" || arg == "-y" ||
+                      arg == "--no-download" || arg == "--include-headers" ||
+                      arg == "--no-ignore" || arg == "--no-cache" ||
+                      arg == "--entropy" || arg == "--override-memory-check";
+    // Option values are data even when they spell an execution option, e.g.
+    // score --prompt --backend or analyze --model --force-cpu.
+    if (arg.starts_with('-') && !flag && i + 1 < argc) {
+      append_argument(argv[++i]);
+    }
+  }
+  return result + " --force-cpu";
+}
+
+std::string SmallerModelGuidance(std::optional<std::uint64_t> available) {
+  std::string result =
+      "Smaller models: --model-name qwen2.5-coder-3b-q6_k (~2.5 GB), then "
+      "--model-name qwen2.5-coder-1.5b-q6_k (~1.3 GB); "
+      "qwen2.5-coder-0.5b-q4_k_m (~0.4 GB) is the testing option.";
+  if (available) {
+    result += " Available memory: " + std::to_string(*available) + " bytes; ";
+    if (*available > 3'000'000'000ULL)
+      result += "3B may fit";
+    else if (*available > 1'560'000'000ULL)
+      result += "1.5B may fit";
+    else if (*available > 480'000'000ULL)
+      result += "only the testing model may fit";
+    else
+      result += "none is estimated to fit";
+    result += " (weights plus 20% headroom; context also needs memory).";
+  }
+  return result;
+}
+
+bool IsGpuAllocationFailure(std::string_view diagnostics) {
+  std::string normalized(diagnostics);
+  std::ranges::transform(normalized, normalized.begin(), [](unsigned char ch) {
+    return ch >= 'A' && ch <= 'Z' ? static_cast<char>(ch + ('a' - 'A'))
+                                  : static_cast<char>(ch);
+  });
+  const auto contains = [&](std::string_view text) {
+    return normalized.find(text) != std::string::npos;
+  };
+  const bool allocation_failure =
+      contains("out of memory") || contains("failed to allocate") ||
+      contains("allocation failed") || contains("cannot allocate") ||
+      contains("unable to allocate") || contains("memory allocation") ||
+      contains("alloc_buffer") || contains("malloc failed");
+  const bool gpu_backend =
+      contains("cuda") || contains("cublas") || contains("hip") ||
+      contains("rocm") || contains("metal") || contains("gpu") ||
+      contains("device") || contains("backend buffer") ||
+      contains("backend_buffer") || contains("ggml_backend");
+  return allocation_failure && gpu_backend;
+}
 
 BackendKind ParseBackend(std::string_view value) {
   if (value == "auto") {

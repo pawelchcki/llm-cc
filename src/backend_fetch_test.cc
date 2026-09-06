@@ -16,6 +16,7 @@
 #include <thread>
 #include <vector>
 
+#include "src/progress.h"
 #include "src/sha256.h"
 #include "src/test_util.h"
 
@@ -374,6 +375,8 @@ void TestConcurrentFetch(const fs::path& root) {
   std::exception_ptr first_error;
   std::exception_ptr second_error;
   std::thread first([&] {
+    llmcc::ProgressReporter progress("never");
+    llmcc::CliSession session(progress, true, false);
     try {
       static_cast<void>(llmcc::FetchBackendBundle(options, downloader));
     } catch (...) {
@@ -381,6 +384,8 @@ void TestConcurrentFetch(const fs::path& root) {
     }
   });
   std::thread second([&] {
+    llmcc::ProgressReporter progress("never");
+    llmcc::CliSession session(progress, true, false);
     try {
       static_cast<void>(llmcc::FetchBackendBundle(options, downloader));
     } catch (...) {
@@ -431,6 +436,41 @@ void TestDownloadSemantics(const fs::path& root) {
          "fallback manifest request reports progress");
 }
 
+void TestDownloadFailure(const fs::path& root) {
+  auto options = Options(root);
+  options.git_sha = "expected";
+  options.explicit_url = "https://example.invalid/missing.bundle";
+  try {
+    llmcc::FetchBackendBundle(options, [](std::string_view url, const fs::path&,
+                                          const llmcc::DownloadOptions&) {
+      throw std::runtime_error("HTTP 404 for " + std::string(url));
+    });
+    Expect(false, "missing download rejected");
+  } catch (const std::runtime_error& error) {
+    const std::string message = error.what();
+    for (auto part : {"HTTP 404", "https://example.invalid/missing.bundle",
+                      "build commit expected", "publication may be unavailable",
+                      "backends fetch cuda --url URL --assume-yes",
+                      "--backend-dir", "--force-cpu"}) {
+      Expect(message.find(part) != std::string::npos,
+             std::string("backend failure retains ") + part);
+    }
+  }
+  int requests = 0;
+  llmcc::ProgressReporter progress("never");
+  llmcc::CliSession session(progress, true, true);
+  try {
+    llmcc::FetchBackendBundle(
+        options, [&](std::string_view, const fs::path&,
+                     const llmcc::DownloadOptions&) { ++requests; });
+    Expect(false, "offline missing bundle rejected");
+  } catch (const std::runtime_error& error) {
+    Expect(std::string(error.what()).find("--no-download") != std::string::npos,
+           "offline rejection explained");
+  }
+  Expect(requests == 0, "offline overrides acceptance without network");
+}
+
 }  // namespace
 
 int main() {  // NOLINT(bugprone-exception-escape)
@@ -440,6 +480,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
   std::error_code error;
   fs::remove_all(root, error);
 
+  TestDownloadFailure(root / "failure");
   TestBaseUrls(root / "bases");
   TestExplicitUrl(root / "explicit");
   TestWholeFileMismatch(root / "whole-file-mismatch");

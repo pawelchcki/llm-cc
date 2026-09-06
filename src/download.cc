@@ -1,6 +1,8 @@
 #include "src/download.h"
 
 #include <curl/curl.h>
+
+#include "src/progress.h"
 #if defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -93,11 +95,21 @@ class DownloadProgress {
     progress->downloaded_ = std::max<curl_off_t>(0, downloaded);
     const bool complete = progress->download_total_ > 0 &&
                           progress->downloaded_ >= progress->download_total_;
-    progress->Render(complete);
+    if (llmcc::CliSessionActive()) {
+      const std::uint64_t total =
+          progress->download_total_ > 0
+              ? progress->resume_offset_ + progress->download_total_
+              : 0;
+      llmcc::ReportCounter(progress->resume_offset_ + progress->downloaded_,
+                           total, "bytes");
+    } else {
+      progress->Render(complete);
+    }
     return 0;
   }
 
   void Finish() {
+    if (llmcc::CliSessionActive()) return;
     Render(true);
     if (interactive_ && rendered_) {
       std::cerr << '\n';
@@ -303,9 +315,24 @@ void StreamDownload(std::istream& input, const std::filesystem::path& target,
 #endif
 }
 
+std::string DownloadFailureMessage(std::string_view url, long status,
+                                   std::string_view detail, bool timed_out) {
+  std::string message = "download failed for " + std::string(url) + " (HTTP " +
+                        std::to_string(status) + "): " + std::string(detail);
+  if (timed_out) {
+    message +=
+        " (15-second connection / 60-second stalled-transfer timeout; partial "
+        "download preserved)";
+  }
+  return message;
+}
+
 void DownloadFile(std::string_view download_url,
                   const std::filesystem::path& target,
                   const DownloadOptions& options) {
+  CheckDownloadAllowed();
+  ReportPhase("downloading " + std::string(options.noun) + " from " +
+              SanitizeUrlForDiagnostic(download_url));
   const std::string url(download_url);
   if (target.has_parent_path()) {
     std::filesystem::create_directories(target.parent_path());
@@ -319,7 +346,7 @@ void DownloadFile(std::string_view download_url,
   }
   CurlGlobal global;
   for (;;) {
-    if (options.show_progress) {
+    if (options.show_progress && !CliSessionActive()) {
       std::cerr << (resume_offset == 0 ? "Downloading " : "Resuming ")
                 << options.noun
                 << (resume_offset == 0 ? " from " : " download from ")
@@ -345,13 +372,18 @@ void DownloadFile(std::string_view download_url,
     std::array<char, CURL_ERROR_SIZE> error_buffer{};
     SetOption(curl.get(), CURLOPT_URL, url.c_str());
     SetOption(curl.get(), CURLOPT_FOLLOWLOCATION, 1L);
+    SetOption(curl.get(), CURLOPT_CONNECTTIMEOUT, kConnectTimeoutSeconds);
+    SetOption(curl.get(), CURLOPT_LOW_SPEED_LIMIT, 1L);
+    SetOption(curl.get(), CURLOPT_LOW_SPEED_TIME,
+              kStalledTransferTimeoutSeconds);
     SetOption(curl.get(), CURLOPT_FAILONERROR, 1L);
     SetOption(curl.get(), CURLOPT_USERAGENT, "llm-cc/1");
     SetOption(curl.get(), CURLOPT_ERRORBUFFER, error_buffer.data());
     SetOption(curl.get(), CURLOPT_WRITEFUNCTION, &WriteBytes);
     SetOption(curl.get(), CURLOPT_WRITEDATA, &write_context);
-    SetOption(curl.get(), CURLOPT_NOPROGRESS, options.show_progress ? 0L : 1L);
-    if (options.show_progress) {
+    const bool observe = options.show_progress || CliSessionActive();
+    SetOption(curl.get(), CURLOPT_NOPROGRESS, observe ? 0L : 1L);
+    if (observe) {
       SetOption(curl.get(), CURLOPT_XFERINFOFUNCTION,
                 &DownloadProgress::Update);
       SetOption(curl.get(), CURLOPT_XFERINFODATA, &progress);
@@ -373,6 +405,10 @@ void DownloadFile(std::string_view download_url,
     }
     long status = 0;
     curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status);
+    char* effective_url = nullptr;
+    curl_easy_getinfo(curl.get(), CURLINFO_EFFECTIVE_URL, &effective_url);
+    const std::string failed_url =
+        SanitizeUrlForDiagnostic(effective_url ? effective_url : url);
     if (resume_offset > 0 && status == 200) {
       output.close();
       std::filesystem::resize_file(partial, 0);
@@ -386,11 +422,8 @@ void DownloadFile(std::string_view download_url,
         detail = error_buffer[0] != '\0' ? error_buffer.data()
                                          : curl_easy_strerror(result);
       }
-      std::string message = "download failed for ";
-      message.append(url);
-      message.append(": ");
-      message.append(detail);
-      throw std::runtime_error(message);
+      throw std::runtime_error(DownloadFailureMessage(
+          failed_url, status, detail, result == CURLE_OPERATION_TIMEDOUT));
     }
     if ((resume_offset > 0 && status != 206) ||
         (resume_offset == 0 && status != 200)) {
@@ -398,7 +431,7 @@ void DownloadFile(std::string_view download_url,
         std::filesystem::resize_file(partial, resume_offset);
       }
       throw std::runtime_error("download returned unexpected HTTP status " +
-                               std::to_string(status));
+                               std::to_string(status) + " for " + failed_url);
     }
     break;
   }
@@ -419,6 +452,10 @@ void DownloadFile(std::string_view download_url,
 
 void DownloadModel(std::string_view model_url,
                    const std::filesystem::path& target) {
+  std::optional<std::uint64_t> bytes;
+  for (const auto& model : Models())
+    if (model.url == model_url) bytes = model.approx_bytes;
+  ConfirmDownload(model_url, target, "model", bytes);
   DownloadFile(model_url, target,
                {.noun = "model",
                 .show_progress = true,

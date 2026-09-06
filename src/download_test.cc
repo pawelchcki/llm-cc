@@ -28,5 +28,30 @@ int main() {  // NOLINT(bugprone-exception-escape)
   contents.assign(std::istreambuf_iterator<char>(resumed_input), {});
   llmcc::test::ExpectEq(contents, std::string("first second"),
                         "resume appends");
+  const auto missing = llmcc::DownloadFailureMessage(
+      "https://example.invalid/missing.bundle", 404, "not found", false);
+  llmcc::test::Expect(
+      missing.find("HTTP 404") != std::string::npos &&
+          missing.find("https://example.invalid/missing.bundle") !=
+              std::string::npos,
+      "HTTP errors retain status and failing URL");
+  const auto timed_out = llmcc::DownloadFailureMessage(
+      "https://example.invalid/slow", 200, "too slow", true);
+  llmcc::test::Expect(
+      timed_out.find("15-second connection") != std::string::npos &&
+          timed_out.find("60-second stalled-transfer") != std::string::npos &&
+          timed_out.find("partial download preserved") != std::string::npos,
+      "timeout diagnostic identifies limits and recovery");
+  const fs::path interrupted = root / "interrupted.gguf";
+  std::istringstream truncated("part");
+  bool failed = false;
+  try {
+    llmcc::StreamDownload(truncated, interrupted, 0, 10);
+  } catch (const std::runtime_error&) {
+    failed = true;
+  }
+  llmcc::test::Expect(failed && !fs::exists(interrupted) &&
+                          fs::file_size(llmcc::PartialPath(interrupted)) == 4,
+                      "failed transfer preserves partial bytes");
   return 0;
 }

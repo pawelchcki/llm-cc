@@ -443,6 +443,7 @@ cc_library(
     srcs = ["src/backend_fetch.cc"],
     hdrs = ["src/backend_fetch.h"],
     deps = [
+        ":progress",
         ":download",
         ":payload",
         ":version",
@@ -495,6 +496,7 @@ cc_library(
         "//conditions:default": [],
     }),
     deps = [
+        ":progress",
         ":backend_fetch",
         ":backend_policy",
         ":build_config",
@@ -512,7 +514,7 @@ cc_library(
         "src/payload.h",
         "src/payload_format.h",
     ],
-    deps = select({
+    deps = [":progress"] + select({
         ":host_macos": [],
         ":host_windows": [],
         "//conditions:default": [
@@ -533,6 +535,7 @@ cc_library(
     srcs = ["src/analyze.cc"],
     hdrs = ["src/analyze.h"],
     deps = [
+        ":backend_policy",
         ":core",
         ":entropy_cache",
         ":jsonl",
@@ -549,6 +552,7 @@ cc_library(
 
 cc_library(
     name = "cache_io",
+    deps = [":progress"],
     hdrs = ["src/cache_io.h"],
 )
 
@@ -562,6 +566,7 @@ cc_library(
     srcs = ["src/cache.cc"],
     hdrs = ["src/cache.h"],
     deps = [
+        ":progress",
         ":cache_io",
         ":models",
         "@nlohmann_json//:json",
@@ -593,6 +598,7 @@ cc_library(
         "//conditions:default": [],
     }),
     deps = [
+        ":progress",
         ":cache",
         ":curl",
         ":models",
@@ -610,6 +616,7 @@ cc_library(
         "src/model_identity.h",
     ],
     deps = [
+        ":progress",
         ":cache_io",
         ":jsonl",
         ":sha256",
@@ -655,6 +662,7 @@ cc_library(
 
 cc_library(
     name = "inference_guard",
+    deps = [":progress"],
     srcs = ["src/inference_guard.cc"],
     hdrs = ["src/inference_guard.h"],
 )
@@ -671,6 +679,7 @@ cc_library(
         "//conditions:default": ["LLMCC_BACKEND_CPU"],
     }),
     deps = [
+        ":progress",
         ":backend_fetch",
         ":backend_runtime",
         ":cache",
@@ -759,6 +768,7 @@ cc_binary(
         "//conditions:default": [],
     }),
     deps = [
+        ":progress",
         ":analyze",
         ":backend_fetch",
         ":cache",
@@ -786,6 +796,7 @@ cc_binary(
         "-Wl,--dynamic-list=$(location //third_party:ggml_backend_abi.list)",
     ],
     deps = [
+        ":progress",
         ":analyze",
         ":backend_fetch",
         ":cache",
@@ -1082,6 +1093,7 @@ cc_test(
         "//conditions:default": [],
     }),
     deps = [
+        ":progress",
         ":backend_fetch",
         ":sha256",
         ":test_util",
@@ -1306,6 +1318,7 @@ test_suite(
         ":model_identity_test",
         ":models_test",
         ":project_test",
+        ":progress_test",
         ":rocm_topology_test",
         ":score_cmd_test",
         ":scoring_test",
@@ -1322,4 +1335,16 @@ test_suite(
         ":install_test",
         ":payload_integration_test",
     ],
+)
+
+cc_library(
+    name = "progress",
+    srcs = ["src/progress.cc"],
+    hdrs = ["src/progress.h"],
+)
+
+cc_test(
+    name = "progress_test",
+    srcs = ["src/progress_test.cc"],
+    deps = [":progress", ":backend_policy", ":cache", ":test_util"],
 )

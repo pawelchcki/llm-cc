@@ -6,6 +6,7 @@
 #include <functional>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -17,6 +18,26 @@ struct BackendDevice {
   BackendKind backend;
   std::uint64_t free_memory;
 };
+
+struct ExecutionOptions {
+  BackendKind backend = BackendKind::kAuto;
+  std::int32_t gpu_layers = -1;
+};
+
+class GpuRecoverableError : public std::runtime_error {
+ public:
+  using std::runtime_error::runtime_error;
+};
+
+ExecutionOptions ResolveExecutionOptions(BackendKind backend,
+                                         std::optional<std::int32_t> gpu_layers,
+                                         bool force_cpu);
+std::string CpuRecoveryCommand(int argc, char** argv, bool score = false);
+std::string SmallerModelGuidance(
+    std::optional<std::uint64_t> available = std::nullopt);
+bool IsGpuAllocationFailure(std::string_view diagnostics);
+
+std::string DiscoverBackendSource(BackendKind backend);
 
 BackendKind ParseBackend(std::string_view value);
 std::string_view BackendName(BackendKind backend);
@@ -40,6 +61,7 @@ class BackendLogCapture {
   ~BackendLogCapture();
 
   [[nodiscard]] std::string Error() const;
+  void Clear();
 
  private:
   std::string errors_;
@@ -60,7 +82,8 @@ struct ResolvedBackendPlugin {
 
 // Resolves a GPU plugin in production order. The callback keeps the embedded
 // payload probe at step 2 without making filesystem-only unit tests load it.
-// fetch_backend is the network-backed last resort at step 6.
+// fetch_backend is the network-backed last resort at step 6. Callers that have
+// already inspected the runtime cache may exclude it from resolution.
 ResolvedBackendPlugin ResolveBackendPlugin(
     BackendKind backend,
     const std::optional<std::filesystem::path>& backend_directory,
@@ -71,7 +94,8 @@ ResolvedBackendPlugin ResolveBackendPlugin(
     const std::function<std::optional<ResolvedBackendPlugin>()>& fetch_backend =
         {},
     const std::function<std::optional<std::filesystem::path>()>&
-        installed_root = {});
+        installed_root = {},
+    bool include_runtime_cache = true);
 
 // Loads exactly the backend plugins needed by this inference invocation. The
 // object must outlive all llama.cpp objects created by the caller.
