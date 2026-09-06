@@ -116,7 +116,7 @@ jobs:
           cd "$RUNNER_TEMP"
           "$binary" --version
           "$binary" score --model-name qwen2.5-coder-0.5b-q4_k_m --prompt 'int add(int a, int b) { return a + b; }' \
-            --force-cpu --assume-yes > smoke.json
+            --context-size 512 --batch-size 8 --threads 4 --force-cpu --assume-yes > smoke.json
           python -c 'import json; rows=[json.loads(line) for line in open("smoke.json")]; assert any(isinstance(row.get("log_probability"), (int, float)) for row in rows), rows'
       - uses: actions/upload-artifact@v7
         with:
