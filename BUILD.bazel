@@ -365,6 +365,7 @@ configure_make_variant(
     configure_command = "Configure",
     configure_in_place = True,
     configure_options = [
+        "--libdir=lib64",
         "--openssldir=/etc/ssl",
         "no-apps",
         "no-dso",
