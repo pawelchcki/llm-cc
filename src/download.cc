@@ -29,6 +29,7 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <vector>
 
 #include "src/cache.h"
 
@@ -280,7 +281,8 @@ void StreamDownload(std::istream& input, const std::filesystem::path& target,
     throw std::runtime_error("failed to open partial download " +
                              partial.string());
   }
-  std::array<char, std::size_t{1024} * 1024> buffer{};
+  // A 1 MiB automatic buffer exhausts the default Windows thread stack.
+  std::vector<char> buffer(std::size_t{1024} * 1024);
   std::uint64_t downloaded = resume_offset;
   while (input) {
     input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
