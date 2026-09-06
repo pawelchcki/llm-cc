@@ -314,6 +314,24 @@ void AddFile(const std::filesystem::path& path, bool explicit_file,
           .path = canonical, .language = language, .repository = repository});
 }
 
+bool SkipDirectory(const std::filesystem::path& path,
+                   const std::filesystem::path& root, bool no_ignore) {
+  const std::string name = PathUtf8(path.filename());
+  if (name == ".git" || name == ".llm-cc-cache") {
+    return true;
+  }
+#if defined(_WIN32)
+  if (IsDirectoryReparsePoint(path)) {
+    return true;
+  }
+#endif
+  if (no_ignore) {
+    return false;
+  }
+  return GeneratedDirectory(name) || PythonVirtualEnvironment(path) ||
+         (name == "out" && path.parent_path() == root);
+}
+
 void FilesystemWalk(const std::filesystem::path& directory,
                     const DiscoveryOptions& options,
                     const std::optional<std::filesystem::path>& repository,
@@ -332,32 +350,21 @@ void FilesystemWalk(const std::filesystem::path& directory,
   }
   while (iterator != end) {
     const auto entry = *iterator;
-    const auto name = PathUtf8(entry.path().filename());
     const bool directory_entry = entry.is_directory(error);
     if (error) {
       error.clear();
       iterator.increment(error);
       continue;
     }
-    bool skip_directory =
-        directory_entry &&
-        (name == ".llm-cc-cache" ||
-         (!options.no_ignore &&
-          (GeneratedDirectory(name) || PythonVirtualEnvironment(entry.path()) ||
-           (name == "out" && entry.path().parent_path() == directory))) ||
-         name == ".git");
-#if defined(_WIN32)
-    skip_directory = skip_directory ||
-                     (directory_entry && IsDirectoryReparsePoint(entry.path()));
-#endif
-    if (directory_entry && skip_directory) {
-      iterator.disable_recursion_pending();
+    if (directory_entry) {
+      if (SkipDirectory(entry.path(), directory, options.no_ignore)) {
+        iterator.disable_recursion_pending();
+      }
     } else if (entry.is_regular_file(error) && !error) {
       const auto canonical = std::filesystem::canonical(entry.path(), error);
-      if (!error && IsWithin(canonical, directory)) {
-        if (options.no_ignore || !CSharpGeneratedPath(canonical, directory)) {
-          AddFile(canonical, false, options, repository, files);
-        }
+      if (!error && IsWithin(canonical, directory) &&
+          (options.no_ignore || !CSharpGeneratedPath(canonical, directory))) {
+        AddFile(canonical, false, options, repository, files);
       }
     }
     error.clear();
@@ -388,39 +395,43 @@ bool GitWalk(const std::filesystem::path& input,
     return false;
   }
   std::set<std::filesystem::path> nested_repositories;
-  std::size_t start = 0;
-  while (start < result.output.size()) {
-    const std::size_t end = result.output.find('\0', start);
-    const std::string_view relative(
-        result.output.data() + start,
-        (end == std::string::npos ? result.output.size() : end) - start);
-    if (!relative.empty()) {
-      const std::filesystem::path candidate =
-          repository / std::filesystem::u8path(relative);
-      std::error_code error;
-      const auto canonical = std::filesystem::canonical(candidate, error);
-      if (!error && IsWithin(canonical, input)) {
-        const bool generated = GeneratedPath(canonical, repository);
-        if (std::filesystem::is_directory(canonical, error) && !error) {
-          const auto nested_repository = FindGitRepository(canonical);
-          if ((options.no_ignore || !generated) &&
-              nested_repository.has_value() &&
-              *nested_repository != repository &&
-              nested_repositories.insert(*nested_repository).second) {
-            if (!GitWalk(canonical, *nested_repository, options, files)) {
-              FilesystemWalk(canonical, options, nested_repository, files);
-            }
-          }
-        } else if (!error && std::filesystem::is_regular_file(canonical) &&
-                   (options.no_ignore || !generated)) {
-          AddFile(canonical, false, options, repository, files);
-        }
+  std::string_view remaining = result.output;
+  while (!remaining.empty()) {
+    const std::size_t end = remaining.find('\0');
+    const std::string_view relative = remaining.substr(0, end);
+    remaining = end == std::string_view::npos ? std::string_view{}
+                                              : remaining.substr(end + 1);
+    if (relative.empty()) {
+      continue;
+    }
+    const std::filesystem::path candidate =
+        repository / std::filesystem::u8path(relative);
+    std::error_code error;
+    const auto canonical = std::filesystem::canonical(candidate, error);
+    if (error || !IsWithin(canonical, input)) {
+      continue;
+    }
+    const bool generated = GeneratedPath(canonical, repository);
+    const bool directory = std::filesystem::is_directory(canonical, error);
+    if (error) {
+      continue;
+    }
+    if (!directory) {
+      if (std::filesystem::is_regular_file(canonical) &&
+          (options.no_ignore || !generated)) {
+        AddFile(canonical, false, options, repository, files);
       }
+      continue;
     }
-    if (end == std::string::npos) {
-      break;
+    const auto nested_repository = FindGitRepository(canonical);
+    if ((!options.no_ignore && generated) || !nested_repository.has_value() ||
+        *nested_repository == repository ||
+        !nested_repositories.insert(*nested_repository).second) {
+      continue;
     }
-    start = end + 1;
+    if (!GitWalk(canonical, *nested_repository, options, files)) {
+      FilesystemWalk(canonical, options, nested_repository, files);
+    }
   }
   return true;
 }

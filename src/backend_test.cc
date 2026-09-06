@@ -400,6 +400,7 @@ int main() try {
   const fs::path missing_cache =
       llmcc::BackendBundlePath({.name = "cuda",
                                 .version = "test-version",
+                                .git_sha = {},
                                 .runtime_root = empty_runtime});
   Expect(ThrowsContaining<std::runtime_error>(resolve_missing,
                                               missing_cache.string()),

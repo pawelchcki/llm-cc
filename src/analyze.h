@@ -65,6 +65,9 @@ class ProjectAnalyzer {
   [[nodiscard]] bool ScorerLoaded() const;
 
  private:
+  EntropyProvider& Provider();
+  EntropyCacheLookup ReadRecords(std::string_view source);
+
   ProjectAnalysisOptions options_;
   ProviderFactory factory_;
   std::unique_ptr<EntropyProvider> provider_;
