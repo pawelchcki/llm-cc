@@ -6,6 +6,7 @@
 #include <functional>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -22,6 +23,12 @@ struct ExecutionOptions {
   BackendKind backend = BackendKind::kAuto;
   std::int32_t gpu_layers = -1;
 };
+
+class GpuRecoverableError : public std::runtime_error {
+ public:
+  using std::runtime_error::runtime_error;
+};
+
 ExecutionOptions ResolveExecutionOptions(BackendKind backend,
                                          std::optional<std::int32_t> gpu_layers,
                                          bool force_cpu);

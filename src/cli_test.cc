@@ -163,6 +163,16 @@ int main() {  // NOLINT(bugprone-exception-escape)
       Read(backend_error).find("cannot open input file") != std::string::npos &&
           Read(backend_error).find("CPU rerun:") == std::string::npos,
       "GPU-independent input failures do not suggest a CPU rerun");
+#ifdef LLMCC_TEST_BACKEND_METAL
+  Expect(Run(Quote(binary) + " score --model " + Quote(missing_score_model) +
+             " --prompt x --gpu-layers -1 --progress never >/dev/null 2>" +
+             Quote(backend_error)) != 0,
+         "scoring validates a missing model after GPU initialization");
+  Expect(
+      Read(backend_error).find("could not stat model") != std::string::npos &&
+          Read(backend_error).find("CPU rerun:") == std::string::npos,
+      "model-stat failures do not suggest a CPU rerun");
+#endif
 
   const fs::path empty_repository = fs::path(test_tmpdir) / "empty-repository";
   fs::create_directories(empty_repository);
@@ -496,8 +506,9 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(Run(uncached_command) != 0,
                       "invalid model analysis fails");
   llmcc::test::Expect(
-      Read(backend_diagnostics).find("ggml_metal_") == std::string::npos,
-      "analysis suppresses routine Metal backend diagnostics");
+      Read(backend_diagnostics).find("ggml_metal_") == std::string::npos &&
+          Read(backend_diagnostics).find("CPU rerun:") == std::string::npos,
+      "model failures suppress routine GPU diagnostics and CPU recovery");
   const auto [preprocessed, offsets] =
       llmcc::StripComments(Read(source), llmcc::Language::kRust);
   static_cast<void>(offsets);

@@ -1169,7 +1169,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       // The capture swallows the loader's diagnostics, so re-attach them to the
       // generic plugin error before unwinding.
       const std::string detail = backend_log.Error();
-      throw std::runtime_error(
+      throw llmcc::GpuRecoverableError(
           std::string(error.what()) +
           (detail.empty() ? std::string() : ": " + detail));
     }
@@ -1294,6 +1294,9 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       auto& language_totals = languages[language];
       ++language_totals.analyzed;
       Accumulate(result.analysis, language_totals);
+    } catch (const llmcc::GpuRecoverableError&) {
+      progress.FailFile();
+      throw;
     } catch (const llmcc::ScorerInitializationError& error) {
       progress.FailFile();
       ++totals.failed;
@@ -1358,17 +1361,10 @@ int Main(int argc, char** argv) {
       const auto arguments = ParseAnalyzeArguments(argc, argv);
       try {
         result = RunAnalyze(arguments);
-      } catch (const std::exception& error) {
-        if (arguments.gpu_layers != 0) {
-          throw std::runtime_error(std::string(error.what()) + "\n" +
-                                   llmcc::CpuRecoveryCommand(argc, argv) +
-                                   "\n" + llmcc::SmallerModelGuidance());
-        }
-        throw;
-      }
-      if (result == 2 && arguments.gpu_layers != 0) {
-        std::cerr << llmcc::CpuRecoveryCommand(argc, argv) << '\n'
-                  << llmcc::SmallerModelGuidance() << '\n';
+      } catch (const llmcc::GpuRecoverableError& error) {
+        throw std::runtime_error(std::string(error.what()) + "\n" +
+                                 llmcc::CpuRecoveryCommand(argc, argv) + "\n" +
+                                 llmcc::SmallerModelGuidance());
       }
     }
     std::cout.flush();

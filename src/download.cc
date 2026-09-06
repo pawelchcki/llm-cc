@@ -332,7 +332,7 @@ void DownloadFile(std::string_view download_url,
                   const DownloadOptions& options) {
   CheckDownloadAllowed();
   ReportPhase("downloading " + std::string(options.noun) + " from " +
-              std::string(download_url));
+              SanitizeUrlForDiagnostic(download_url));
   const std::string url(download_url);
   if (target.has_parent_path()) {
     std::filesystem::create_directories(target.parent_path());

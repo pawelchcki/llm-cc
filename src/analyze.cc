@@ -6,6 +6,7 @@
 #include <ranges>
 #include <stdexcept>
 
+#include "src/backend.h"
 #include "src/lang.h"
 
 namespace llmcc {
@@ -53,6 +54,8 @@ FileAnalysisResult ProjectAnalyzer::AnalyzeFile(const DiscoveredSource& source,
       }
       try {
         provider_ = factory_();
+      } catch (const GpuRecoverableError&) {
+        throw;
       } catch (const std::exception& error) {
         initialization_error_ = error.what();
         throw ScorerInitializationError(*initialization_error_);

@@ -535,6 +535,7 @@ cc_library(
     srcs = ["src/analyze.cc"],
     hdrs = ["src/analyze.h"],
     deps = [
+        ":backend_policy",
         ":core",
         ":entropy_cache",
         ":jsonl",
