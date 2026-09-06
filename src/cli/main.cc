@@ -666,7 +666,6 @@ CacheArguments ParseCacheArguments(int argc, char** argv) {
     Usage("cache requires status, prune, or clear");
   }
   CacheArguments arguments{.action = argv[2]};
-  bool path_set = false;
   for (int index = 3; index < argc; ++index) {
     const std::string_view value = argv[index];
     if (value == "--format") {
@@ -681,9 +680,8 @@ CacheArguments ParseCacheArguments(int argc, char** argv) {
       arguments.legacy = true;
     } else if (value == "--all") {
       arguments.all = true;
-    } else if (!value.starts_with('-') && !path_set) {
+    } else if (!value.starts_with('-') && !arguments.path.has_value()) {
       arguments.path = std::filesystem::u8path(value);
-      path_set = true;
     } else {
       Usage("invalid cache option: " + std::string(value));
     }
@@ -816,24 +814,11 @@ int RunCache(int argc, char** argv) {
 
 class LlamaEntropyProvider : public llmcc::EntropyProvider {
  public:
-  LlamaEntropyProvider(
-      const std::filesystem::path& cache_dir,
-      const std::filesystem::path& model, std::uint32_t context,
-      std::int32_t gpu_layers, llmcc::BackendKind backend,
-      std::uint32_t batch_size, llmcc::EntropyReduction entropy_reduction,
-      std::function<void(std::size_t, std::size_t)> progress,
-      const std::optional<std::filesystem::path>& backend_directory,
-      bool no_download, bool fetch_backend)
+  LlamaEntropyProvider(const std::filesystem::path& cache_dir,
+                       const std::filesystem::path& model,
+                       const llmcc::InferenceOptions& options)
       : scorer_((llmcc::MarkCachedModelUsed(cache_dir, model), model),
-                {.context_size = context,
-                 .gpu_layers = gpu_layers,
-                 .backend = backend,
-                 .batch_size = batch_size,
-                 .entropy_reduction = entropy_reduction,
-                 .progress = std::move(progress),
-                 .backend_directory = backend_directory,
-                 .no_download = no_download,
-                 .fetch_backend = fetch_backend}) {}
+                options) {}
 
   std::vector<llmcc::EntropyRecord> Score(std::string_view source) override {
     return scorer_.ScoreRecords(source);
@@ -888,29 +873,27 @@ nlohmann::json ScoreJson(const llmcc::Metrics& metrics,
   return metrics.lmcc_per_token;
 }
 
+llmcc::Metrics TotalMetrics(const MetricTotals& totals) {
+  if (totals.token_count == 0) {
+    return {};
+  }
+  const double tokens = static_cast<double>(totals.token_count);
+  return {.token_count = totals.token_count,
+          .high_entropy_tokens = totals.high_entropy_tokens,
+          .entropy_sum = totals.entropy_sum,
+          .lmcc = totals.lmcc,
+          .lmcc_per_token = totals.lmcc / tokens,
+          .density = static_cast<double>(totals.high_entropy_tokens) / tokens,
+          .mean_entropy = totals.entropy_sum / tokens};
+}
+
 nlohmann::json TotalsMetricsJson(const MetricTotals& totals,
                                  std::string_view score_mode) {
-  nlohmann::json lmcc_per_token = nullptr;
-  nlohmann::json density = nullptr;
-  nlohmann::json mean_entropy = nullptr;
-  nlohmann::json score = nullptr;
-  if (totals.token_count != 0) {
-    const double token_count = static_cast<double>(totals.token_count);
-    lmcc_per_token = totals.lmcc / token_count;
-    density = static_cast<double>(totals.high_entropy_tokens) / token_count;
-    mean_entropy = totals.entropy_sum / token_count;
-    if (score_mode == "density") {
-      score = density;
-    } else if (score_mode == "mean") {
-      score = mean_entropy;
-    } else {
-      score = lmcc_per_token;
-    }
-  }
-  return {{"score", std::move(score)},
-          {"lmcc_per_token", std::move(lmcc_per_token)},
-          {"density", std::move(density)},
-          {"mean_entropy", std::move(mean_entropy)},
+  const auto metrics = TotalMetrics(totals);
+  return {{"score", ScoreJson(metrics, score_mode)},
+          {"lmcc_per_token", ScoreJson(metrics, "lmcc")},
+          {"density", ScoreJson(metrics, "density")},
+          {"mean_entropy", ScoreJson(metrics, "mean")},
           {"token_count", totals.token_count},
           {"high_entropy_tokens", totals.high_entropy_tokens}};
 }
@@ -956,14 +939,6 @@ nlohmann::json ConfigurationJson(
   const char* effective_reducer =
       arguments.entropy_reduction == llmcc::EntropyReduction::kDevice ? "device"
                                                                       : "host";
-  nlohmann::json configured_tau = nullptr;
-  if (!percentile) {
-    configured_tau = arguments.tau.value_or(0.67);
-  }
-  nlohmann::json configured_percentile = nullptr;
-  if (percentile) {
-    configured_percentile = *arguments.tau_percentile;
-  }
   nlohmann::json configuration = {
       {"type", "configuration"},
       {"analysis_version", 2},
@@ -984,9 +959,11 @@ nlohmann::json ConfigurationJson(
       {"effective_entropy_reducer", effective_reducer},
       {"score_mode", arguments.score_mode},
       {"tau_rule", percentile ? "percentile" : "absolute"},
-      {"tau", std::move(configured_tau)},
+      {"tau", percentile ? nlohmann::json()
+                         : nlohmann::json(arguments.tau.value_or(0.67))},
       {"hotspots", arguments.hotspots},
-      {"tau_percentile", std::move(configured_percentile)},
+      {"tau_percentile", percentile ? nlohmann::json(*arguments.tau_percentile)
+                                    : nlohmann::json()},
       {"alpha", arguments.alpha},
       {"backend", RequestedBackendCacheIdentity(arguments)},
       {"gpu_layers", arguments.gpu_layers},
@@ -1039,22 +1016,14 @@ void Accumulate(const llmcc::Analysis& analysis, MetricTotals& totals) {
 
 nlohmann::json FunctionJson(const llmcc::FunctionScore& function,
                             std::string_view score_mode) {
-  nlohmann::json lmcc_per_token = nullptr;
-  nlohmann::json density = nullptr;
-  nlohmann::json mean_entropy = nullptr;
-  if (function.metrics.token_count != 0) {
-    lmcc_per_token = function.metrics.lmcc_per_token;
-    density = function.metrics.density;
-    mean_entropy = function.metrics.mean_entropy;
-  }
   return {{"name", function.name},
           {"start_line", function.start_line},
           {"end_line", function.end_line},
           {"score", ScoreJson(function.metrics, score_mode)},
           {"lmcc", function.metrics.lmcc},
-          {"lmcc_per_token", std::move(lmcc_per_token)},
-          {"density", std::move(density)},
-          {"mean_entropy", std::move(mean_entropy)},
+          {"lmcc_per_token", ScoreJson(function.metrics, "lmcc")},
+          {"density", ScoreJson(function.metrics, "density")},
+          {"mean_entropy", ScoreJson(function.metrics, "mean")},
           {"token_count", function.metrics.token_count}};
 }
 
@@ -1139,25 +1108,10 @@ void PrintFileText(const llmcc::DiscoveredSource& source,
 }
 
 void PrintTotalsText(const MetricTotals& totals, std::string_view score_mode) {
-  std::cout << "totals   score ";
-  if (totals.token_count == 0) {
-    std::cout << "null";
-  } else {
-    llmcc::Metrics metrics{
-        .token_count = totals.token_count,
-        .high_entropy_tokens = totals.high_entropy_tokens,
-        .entropy_sum = totals.entropy_sum,
-        .lmcc = totals.lmcc,
-        .lmcc_per_token = totals.lmcc / static_cast<double>(totals.token_count),
-        .density = static_cast<double>(totals.high_entropy_tokens) /
-                   static_cast<double>(totals.token_count),
-        .mean_entropy =
-            totals.entropy_sum / static_cast<double>(totals.token_count)};
-    std::cout << FormatScore(metrics, score_mode);
-  }
-  std::cout << " (" << ScoreLabel(score_mode) << ")   files " << totals.analyzed
-            << '/' << totals.discovered << "   tokens " << totals.token_count
-            << '\n';
+  std::cout << "totals   score "
+            << FormatScore(TotalMetrics(totals), score_mode) << " ("
+            << ScoreLabel(score_mode) << ")   files " << totals.analyzed << '/'
+            << totals.discovered << "   tokens " << totals.token_count << '\n';
 }
 
 nlohmann::json FileJson(const llmcc::DiscoveredSource& source,
@@ -1357,13 +1311,20 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       [&]() {
         progress.Phase("loading model after entropy cache miss");
         return std::make_unique<LlamaEntropyProvider>(
-            model_cache, identity.canonical_path, arguments.context,
-            arguments.gpu_layers, resolved_backend, arguments.batch_size,
-            arguments.entropy_reduction,
-            [&](std::size_t completed, std::size_t total) {
-              progress.Tokens(completed, total);
-            },
-            arguments.backend_directory, arguments.no_download, fetch_backend);
+            model_cache, identity.canonical_path,
+            llmcc::InferenceOptions{
+                .context_size = arguments.context,
+                .gpu_layers = arguments.gpu_layers,
+                .backend = resolved_backend,
+                .batch_size = arguments.batch_size,
+                .entropy_reduction = arguments.entropy_reduction,
+                .progress =
+                    [&](std::size_t completed, std::size_t total) {
+                      progress.Tokens(completed, total);
+                    },
+                .backend_directory = arguments.backend_directory,
+                .no_download = arguments.no_download,
+                .fetch_backend = fetch_backend});
       });
 
   MetricTotals totals;
