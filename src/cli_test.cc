@@ -152,6 +152,17 @@ int main() {  // NOLINT(bugprone-exception-escape)
       Read(backend_error).find("'--prompt' '--backend'") != std::string::npos &&
           Read(backend_error).find("CPU rerun:") != std::string::npos,
       "GPU recovery keeps flag-like scoring input intact");
+  const fs::path missing_score_input =
+      fs::path(test_tmpdir) / "missing-score-input.txt";
+  Expect(Run(Quote(binary) + " score --model " + Quote(missing_score_model) +
+             " --file " + Quote(missing_score_input) +
+             " --backend cuda --no-download --progress never >/dev/null 2>" +
+             Quote(backend_error)) != 0,
+         "scoring validates input before initializing a GPU backend");
+  Expect(
+      Read(backend_error).find("cannot open input file") != std::string::npos &&
+          Read(backend_error).find("CPU rerun:") == std::string::npos,
+      "GPU-independent input failures do not suggest a CPU rerun");
 
   const fs::path empty_repository = fs::path(test_tmpdir) / "empty-repository";
   fs::create_directories(empty_repository);

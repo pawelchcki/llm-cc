@@ -225,11 +225,21 @@ LoadedPlugin LoadPlugin(
   std::optional<RocmTopology> rocm_topology;
   if (backend == BackendKind::kRocm) {
     rocm_topology = ConfigureRocmVisibility();
-    // Without a successful hardware probe and usable KFD device, only local
-    // plugins may be tried. Containers can expose topology without /dev/kfd.
-    if (!rocm_topology.has_value() || !RocmDeviceAccessible()) {
-      fetch_backend = false;
+    // Containers can expose topology without granting access to /dev/kfd.
+    // Loading or downloading a plugin cannot make that device usable.
+    if (rocm_topology.has_value() && rocm_topology->has_supported_device &&
+        !RocmDeviceAccessible()) {
+      const std::string message =
+          "an AMD GPU is visible but /dev/kfd is not accessible; grant this "
+          "process read-write access to /dev/kfd";
+      if (required) throw std::runtime_error(message + "; " + GpuOffloadHelp());
+      return {.backend = backend,
+              .registry = nullptr,
+              .hardware_detected = true,
+              .failure = std::make_exception_ptr(std::runtime_error(message))};
     }
+    // An inconclusive hardware probe must not initiate a network download.
+    if (!rocm_topology.has_value()) fetch_backend = false;
     if (rocm_topology.has_value() && !rocm_topology->has_supported_device) {
       if (required && rocm_topology->has_unsupported_device) {
         throw std::runtime_error(RocmUnsupportedSystemMessage(*rocm_topology) +

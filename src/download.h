@@ -24,6 +24,7 @@ inline constexpr long kConnectTimeoutSeconds = 15;
 inline constexpr long kStalledTransferTimeoutSeconds = 60;
 std::string DownloadFailureMessage(std::string_view url, long status,
                                    std::string_view detail, bool timed_out);
+std::string SanitizeUrlForDiagnostic(std::string_view url);
 
 void StreamDownload(std::istream& input, const std::filesystem::path& target,
                     std::uint64_t resume_offset,

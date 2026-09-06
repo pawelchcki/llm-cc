@@ -87,6 +87,11 @@ struct Arguments {
   std::string progress = "auto";
 };
 
+class GpuRecoverableError : public std::runtime_error {
+ public:
+  using std::runtime_error::runtime_error;
+};
+
 constexpr std::string_view kUsageBeforeContext =
     "Usage: llm-cc score (--model MODEL.gguf | --model-name NAME) "
     "[INPUT] [OPTIONS]\n\n"
@@ -659,6 +664,7 @@ struct ScoreOptions {
   bool device_reduction;
   std::string_view context_option;
   const std::function<void(std::size_t, std::size_t)>* progress = nullptr;
+  bool* inference_started = nullptr;
 };
 
 class HostReductionPool {
@@ -868,6 +874,9 @@ void ScoreInput(llama_model* model, llmcc::BackendLogCapture& backend_log,
   }
 
   const std::size_t total_scored_tokens = tokens.size() - 1;
+  if (options.inference_started != nullptr) {
+    *options.inference_started = true;
+  }
   llmcc::ReportPhase("inference");
   llmcc::ReportCounter(0, total_scored_tokens, "tokens");
   if (options.progress != nullptr && *options.progress) {
@@ -1023,10 +1032,10 @@ void ScoreInput(llama_model* model, llmcc::BackendLogCapture& backend_log,
                negative_log_likelihood, options.device_reduction);
 }
 
-int Run(const Arguments& arguments, const llmcc::BackendRuntime& backend,
+int Run(const Arguments& arguments, std::string_view input,
+        const llmcc::BackendRuntime& backend,
         llmcc::BackendLogCapture& backend_log, std::ostream& output,
         std::ostream& diagnostics) {
-  const std::string input = ReadInput(arguments);
   llmcc::InferenceGuard inference_guard(llmcc::BackendName(backend.selected()));
   const bool use_gpu = arguments.gpu_layers != 0;
   const std::optional<std::uint64_t> gpu_available =
@@ -1036,13 +1045,21 @@ int Run(const Arguments& arguments, const llmcc::BackendRuntime& backend,
                                     llmcc::CompiledBackend() == "metal");
   if (arguments.entropy_reduction == llmcc::EntropyReduction::kDevice &&
       !device_available) {
-    throw std::runtime_error("device entropy reduction requires GPU execution");
+    const std::string message =
+        "device entropy reduction requires GPU execution";
+    if (use_gpu) throw GpuRecoverableError(message);
+    throw std::runtime_error(message);
   }
   const bool device_reduction =
       arguments.entropy_reduction == llmcc::EntropyReduction::kDevice ||
       (arguments.entropy_reduction == llmcc::EntropyReduction::kAuto &&
        device_available);
-  CheckAvailableMemory(arguments, use_gpu, gpu_available);
+  try {
+    CheckAvailableMemory(arguments, use_gpu, gpu_available);
+  } catch (const std::exception& error) {
+    if (use_gpu) throw GpuRecoverableError(error.what());
+    throw;
+  }
 
   llama_model_params model_parameters = llama_model_default_params();
   model_parameters.n_gpu_layers = arguments.gpu_layers;
@@ -1065,18 +1082,25 @@ int Run(const Arguments& arguments, const llmcc::BackendRuntime& backend,
     host_reduction.emplace(
         HostReductionWorkerCount(arguments.batch_size, arguments.threads));
   }
-  ScoreInput(model.get(), backend_log, input,
-             {.bos = arguments.bos,
-              .context_size = arguments.context_size,
-              .threads = arguments.threads,
-              .entropy = arguments.entropy,
-              .batch_size = arguments.batch_size,
-              .device_reduction = device_reduction,
-              .context_option = "--context-size",
-              .progress = nullptr},
-             &output, nullptr, &diagnostics, context, context_capacity, sampler,
-             device_state,
-             host_reduction.has_value() ? &*host_reduction : nullptr);
+  bool inference_started = false;
+  try {
+    ScoreInput(model.get(), backend_log, input,
+               {.bos = arguments.bos,
+                .context_size = arguments.context_size,
+                .threads = arguments.threads,
+                .entropy = arguments.entropy,
+                .batch_size = arguments.batch_size,
+                .device_reduction = device_reduction,
+                .context_option = "--context-size",
+                .progress = nullptr,
+                .inference_started = &inference_started},
+               &output, nullptr, &diagnostics, context, context_capacity,
+               sampler, device_state,
+               host_reduction.has_value() ? &*host_reduction : nullptr);
+  } catch (const std::exception& error) {
+    if (use_gpu && inference_started) throw GpuRecoverableError(error.what());
+    throw;
+  }
   return 0;
 }
 
@@ -1269,6 +1293,8 @@ int RunScoreCommand(int argc, char** argv) {
     gpu_requested = arguments.gpu_layers != 0;
     ProgressReporter progress(arguments.progress);
     CliSession session(progress, arguments.assume_yes, arguments.no_download);
+    progress.Phase("reading scoring input");
+    const std::string input = ReadInput(arguments);
     progress.Phase("resolving inference backend");
     BackendLogCapture capture;
     // Keep the preflight backend alive through model loading and inference.
@@ -1281,8 +1307,11 @@ int RunScoreCommand(int argc, char** argv) {
             ShouldFetchBackend(arguments.backend, arguments.gpu_layers));
       } catch (const std::exception& error) {
         const auto detail = capture.Error();
-        throw std::runtime_error(std::string(error.what()) +
-                                 (detail.empty() ? "" : ": " + detail));
+        const std::string message =
+            std::string(error.what()) +
+            (detail.empty() ? std::string() : ": " + detail);
+        if (gpu_requested) throw GpuRecoverableError(message);
+        throw std::runtime_error(message);
       }
     }();
     progress.Phase("resolving model");
@@ -1292,11 +1321,10 @@ int RunScoreCommand(int argc, char** argv) {
                        arguments.no_download, std::filesystem::current_path(),
                        CacheDir(), DownloadModel);
     }
-    progress.Phase("reading scoring input");
-    return Run(arguments, backend, capture, std::cout, std::cerr);
+    return Run(arguments, input, backend, capture, std::cout, std::cerr);
   } catch (const std::exception& error) {
     std::cerr << "error: " << error.what() << '\n';
-    if (gpu_requested) {
+    if (gpu_requested && dynamic_cast<const GpuRecoverableError*>(&error)) {
       std::cerr << CpuRecoveryCommand(argc, argv, true) << '\n'
                 << SmallerModelGuidance() << '\n';
     }

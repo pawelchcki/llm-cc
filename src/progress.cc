@@ -8,6 +8,15 @@
 namespace llmcc {
 namespace {
 thread_local CliSession* session = nullptr;
+
+std::string PathUtf8(const std::filesystem::path& path) {
+#if defined(_WIN32)
+  const std::u8string value = path.u8string();
+  return std::string(reinterpret_cast<const char*>(value.data()), value.size());
+#else
+  return path.string();
+#endif
+}
 }  // namespace
 
 std::string TerminalSafe(std::string_view text) {
@@ -160,7 +169,7 @@ void ProgressReporter::StartFile(std::size_t index, std::size_t total,
   {
     std::lock_guard lock(mutex_);
     file_ = "[" + std::to_string(index) + "/" + std::to_string(total) + "] " +
-            TerminalSafe(path.string());
+            TerminalSafe(PathUtf8(path));
   }
   Phase("analyzing");
 }
@@ -257,7 +266,7 @@ void ConfirmDownload(std::string_view url, const std::filesystem::path& target,
   try {
     const std::string prompt =
         std::string(description) + " source=" + std::string(url) +
-        " destination=" + target.string() + " size=" +
+        " destination=" + PathUtf8(target) + " size=" +
         (bytes ? std::to_string(*bytes) + " bytes (approximate)" : "unknown");
     if (session->assume_yes) {
       RequireDownloadConsent(true, session->no_download, nullptr, std::cerr,
