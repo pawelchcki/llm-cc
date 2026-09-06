@@ -42,12 +42,6 @@ int main() {  // NOLINT(bugprone-exception-escape)
           timed_out.find("60-second stalled-transfer") != std::string::npos &&
           timed_out.find("partial download preserved") != std::string::npos,
       "timeout diagnostic identifies limits and recovery");
-  llmcc::test::ExpectEq(
-      llmcc::SanitizeUrlForDiagnostic(
-          "https://user:password@example.invalid/object/model.gguf?"
-          "X-Amz-Signature=secret#fragment"),
-      std::string("https://example.invalid/object/model.gguf"),
-      "redirect diagnostics redact credentials, query, and fragment");
   const fs::path interrupted = root / "interrupted.gguf";
   std::istringstream truncated("part");
   bool failed = false;

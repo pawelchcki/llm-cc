@@ -100,6 +100,22 @@ std::string TerminalSafe(std::string_view text) {
   return safe;
 }
 
+std::string SanitizeUrlForDiagnostic(std::string_view url) {
+  const std::size_t suffix = url.find_first_of("?#");
+  std::string sanitized(url.substr(0, suffix));
+  const std::size_t scheme = sanitized.find("://");
+  if (scheme == std::string::npos) return sanitized;
+  const std::size_t authority = scheme + 3;
+  const std::size_t path = sanitized.find('/', authority);
+  const std::size_t authority_end =
+      path == std::string::npos ? sanitized.size() : path;
+  const std::size_t userinfo = sanitized.rfind('@', authority_end);
+  if (userinfo != std::string::npos && userinfo >= authority) {
+    sanitized.erase(authority, userinfo + 1 - authority);
+  }
+  return sanitized;
+}
+
 ProgressReporter::ProgressReporter(std::string_view mode)
     : ProgressReporter(mode, std::cerr) {}
 ProgressReporter::ProgressReporter(std::string_view mode, std::ostream& output,
@@ -265,7 +281,7 @@ void ConfirmDownload(std::string_view url, const std::filesystem::path& target,
   session->progress.Pause(true);
   try {
     const std::string prompt =
-        std::string(description) + " source=" + std::string(url) +
+        std::string(description) + " source=" + SanitizeUrlForDiagnostic(url) +
         " destination=" + PathUtf8(target) + " size=" +
         (bytes ? std::to_string(*bytes) + " bytes (approximate)" : "unknown");
     if (session->assume_yes) {

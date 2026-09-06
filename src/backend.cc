@@ -295,10 +295,13 @@ LoadedPlugin LoadPlugin(
     if (required) {
       throw std::runtime_error(MissingGpuBackendMessage(backend));
     }
+    const bool hardware_detected =
+        backend != BackendKind::kRocm || rocm_topology.has_value();
     return {.backend = backend,
             .registry = nullptr,
-            .hardware_detected = true,
-            .missing_with_download_disabled = no_download || !fetch_backend,
+            .hardware_detected = hardware_detected,
+            .missing_with_download_disabled =
+                hardware_detected && (no_download || !fetch_backend),
             .failure = (no_download || !fetch_backend) ? nullptr : failure};
   } catch (...) {
     const std::exception_ptr failure = std::current_exception();

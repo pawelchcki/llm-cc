@@ -30,6 +30,12 @@ bool Fails(F work, std::string_view message) {
 int main() {
   using namespace std::chrono_literals;
   using llmcc::BackendKind;
+  llmcc::test::ExpectEq(
+      llmcc::SanitizeUrlForDiagnostic(
+          "https://user:password@example.invalid/object/model.gguf?"
+          "X-Amz-Signature=secret#fragment"),
+      std::string("https://example.invalid/object/model.gguf"),
+      "download prompts redact credentials, query, and fragment");
   for (auto backend :
        {BackendKind::kAuto, BackendKind::kCuda, BackendKind::kRocm}) {
     Expect(llmcc::ResolveExecutionOptions(backend, std::nullopt, false)

@@ -17,6 +17,7 @@
 namespace llmcc {
 
 std::string TerminalSafe(std::string_view text);
+std::string SanitizeUrlForDiagnostic(std::string_view url);
 
 // A CLI-scoped observer. Library calls without a scope remain silent and
 // noninteractive. The worker owns no inference objects and joins on unwind.

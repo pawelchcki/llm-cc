@@ -327,22 +327,6 @@ std::string DownloadFailureMessage(std::string_view url, long status,
   return message;
 }
 
-std::string SanitizeUrlForDiagnostic(std::string_view url) {
-  const std::size_t suffix = url.find_first_of("?#");
-  std::string sanitized(url.substr(0, suffix));
-  const std::size_t scheme = sanitized.find("://");
-  if (scheme == std::string::npos) return sanitized;
-  const std::size_t authority = scheme + 3;
-  const std::size_t path = sanitized.find('/', authority);
-  const std::size_t authority_end =
-      path == std::string::npos ? sanitized.size() : path;
-  const std::size_t userinfo = sanitized.rfind('@', authority_end);
-  if (userinfo != std::string::npos && userinfo >= authority) {
-    sanitized.erase(authority, userinfo + 1 - authority);
-  }
-  return sanitized;
-}
-
 void DownloadFile(std::string_view download_url,
                   const std::filesystem::path& target,
                   const DownloadOptions& options) {

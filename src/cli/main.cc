@@ -1366,7 +1366,7 @@ int Main(int argc, char** argv) {
         }
         throw;
       }
-      if (result != 0 && arguments.gpu_layers != 0) {
+      if (result == 2 && arguments.gpu_layers != 0) {
         std::cerr << llmcc::CpuRecoveryCommand(argc, argv) << '\n'
                   << llmcc::SmallerModelGuidance() << '\n';
       }
