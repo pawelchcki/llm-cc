@@ -9,3 +9,44 @@ releases:
   with:
     strategy: simple
     version_file: version.txt
+
+automations:
+  - id: gpu-backends
+    triggers:
+      - id: gpu-build
+        uses: github.commit-status@v1
+        with:
+          event: github.commit_status
+          states: [success]
+          targets:
+            - default_branch: {}
+            - pull_request: { state: open, base_branches: ["*"] }
+          status:
+            context: GPU backends
+            creator: { login: "buildbuddy-io[bot]", id: 130678843 }
+            target_url: { scheme: https, host: pawel.buildbuddy.io, path_pattern: "/invocation/{uuid}" }
+            require_target_head_sha: true
+    sources:
+      - id: gpu-files
+        uses: buildbuddy.workflow-artifacts@v1
+        with:
+          invocation_url: "{{ event.target_url }}"
+          artifacts:
+            - { name: "llm-cc-backend-*-linux-x86_64.bundle", media_type: application/octet-stream, max_bytes: 2147483648 }
+            - { name: "llm-cc-backend-*-linux-x86_64.bundle.sha256", media_type: text/plain, max_bytes: 4096 }
+            - { name: "llm-cc-backend-*-linux-x86_64.manifest.json", media_type: application/json, max_bytes: 65536 }
+    actions:
+      - id: publish
+        uses: toolkit.public-folder@v1
+        with: { source: gpu-files, security_profile: untrusted-data, retention: 14d, keep_default_branch_sets: 5 }
+      - id: comment
+        uses: github.pull-request-comment@v1
+        needs: [publish]
+        when: { target: pull_request }
+        with:
+          operation: upsert
+          marker: "<!-- ci-toolkit:gpu-backends -->"
+          body: |
+            <!-- ci-toolkit:gpu-backends -->
+            ### GPU backends for `{{ commit.sha | markdown_escape }}`
+            {{ actions.publish.outputs.file_table }}
