@@ -78,6 +78,7 @@ register_toolchains("@cuda//toolchain:nvcc-local-toolchain")
 # M4 and pkg-config are only declared toolchain slots and must remain unused.
 register_toolchains(
     "@rules_foreign_cc//toolchains:built_make_toolchain",
+    "//tools:linux_arm64_ninja_toolchain",
     "//tools:unused_m4_toolchain",
     "//tools:unused_pkgconfig_toolchain",
 )
