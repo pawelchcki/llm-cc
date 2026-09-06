@@ -701,6 +701,93 @@ CacheArguments ParseCacheArguments(int argc, char** argv) {
   return arguments;
 }
 
+void PrintCacheJson(
+    const llmcc::EntropyCacheStatus& status,
+    const std::optional<llmcc::RepositoryCacheStatus>& repository_status,
+    std::optional<std::string_view> cleared) {
+  nlohmann::json output{
+      {"scope", "user"},
+      {"directory", PathUtf8(status.directory)},
+      {"storage_version", status.storage_version},
+      {"inference_abi", llmcc::InferenceAbi()},
+      {"entries", status.entries},
+      {"bytes", status.bytes},
+      {"limit_bytes", status.limit},
+      {"retention_seconds", status.retention_seconds},
+      {"entries_by_inference_abi", status.entries_by_inference_abi},
+      {"malformed_entries", status.malformed_entries}};
+  if (repository_status.has_value()) {
+    output["repository_v1"] = {
+        {"repository", PathUtf8(repository_status->repository)},
+        {"directory", PathUtf8(repository_status->directory)},
+        {"entries", repository_status->entries},
+        {"bytes", repository_status->bytes},
+        {"legacy_directory", PathUtf8(repository_status->legacy_directory)},
+        {"legacy_entries", repository_status->legacy_entries},
+        {"legacy_bytes", repository_status->legacy_bytes},
+        {"unknown_provenance_entries",
+         repository_status->unknown_provenance_entries},
+        {"malformed_entries", repository_status->malformed_entries}};
+  }
+  if (cleared.has_value()) {
+    output["cleared"] = *cleared;
+  }
+  std::cout << output.dump() << '\n';
+}
+
+void PrintCacheText(
+    const llmcc::EntropyCacheStatus& status,
+    const std::optional<llmcc::RepositoryCacheStatus>& repository_status,
+    std::optional<std::string_view> cleared) {
+  std::cout << "scope: user\n"
+            << "directory: " << PathUtf8(status.directory) << '\n'
+            << "storage version: " << status.storage_version << '\n'
+            << "inference ABI: " << llmcc::InferenceAbi() << '\n'
+            << "entries: " << status.entries << '\n'
+            << "bytes: " << status.bytes << '\n'
+            << "limit bytes: " << status.limit << '\n'
+            << "retention seconds: " << status.retention_seconds << '\n'
+            << "malformed entries: " << status.malformed_entries << '\n';
+  if (repository_status.has_value()) {
+    std::cout << "repository v1: " << PathUtf8(repository_status->repository)
+              << '\n'
+              << "repository v1 directory: "
+              << PathUtf8(repository_status->directory) << '\n'
+              << "repository v1 entries: " << repository_status->entries << '\n'
+              << "repository v1 bytes: " << repository_status->bytes << '\n'
+              << "legacy directory: "
+              << PathUtf8(repository_status->legacy_directory) << '\n'
+              << "legacy entries: " << repository_status->legacy_entries
+              << '\n';
+  }
+  if (cleared.has_value()) {
+    std::cout << "cleared: " << *cleared << '\n';
+  }
+}
+
+std::string_view ClearCache(
+    const CacheArguments& arguments,
+    std::optional<llmcc::RepositoryCacheStatus>& repository_status) {
+  if (arguments.all) {
+    llmcc::ClearEntropyCache();
+    return "shared v2 entropy cache";
+  }
+  const std::filesystem::path scoped_path =
+      arguments.path.value_or(std::filesystem::current_path());
+  const auto repository = llmcc::FindGitRepository(scoped_path);
+  if (!repository.has_value()) {
+    throw std::invalid_argument(PathUtf8(scoped_path) +
+                                " is not inside a Git worktree");
+  }
+  llmcc::ClearRepositoryCache(*repository);
+  if (arguments.legacy) {
+    llmcc::ClearLegacyRepositoryCache(*repository);
+  }
+  repository_status = llmcc::GetRepositoryCacheStatus(*repository);
+  return arguments.legacy ? "repository v1 and legacy entropy caches"
+                          : "repository v1 entropy cache";
+}
+
 int RunCache(int argc, char** argv) {
   const CacheArguments arguments = ParseCacheArguments(argc, argv);
   std::optional<std::string_view> cleared;
@@ -716,83 +803,13 @@ int RunCache(int argc, char** argv) {
   if (arguments.action == "prune") {
     llmcc::PruneEntropyCache();
   } else if (arguments.action == "clear") {
-    if (arguments.all) {
-      llmcc::ClearEntropyCache();
-      cleared = "shared v2 entropy cache";
-    } else {
-      const std::filesystem::path scoped_path =
-          arguments.path.value_or(std::filesystem::current_path());
-      const auto repository = llmcc::FindGitRepository(scoped_path);
-      if (!repository.has_value()) {
-        throw std::invalid_argument(PathUtf8(scoped_path) +
-                                    " is not inside a Git worktree");
-      }
-      llmcc::ClearRepositoryCache(*repository);
-      if (arguments.legacy) {
-        llmcc::ClearLegacyRepositoryCache(*repository);
-        cleared = "repository v1 and legacy entropy caches";
-      } else {
-        cleared = "repository v1 entropy cache";
-      }
-      repository_status = llmcc::GetRepositoryCacheStatus(*repository);
-    }
+    cleared = ClearCache(arguments, repository_status);
   }
   const auto status = llmcc::GetEntropyCacheStatus();
   if (arguments.format == "json") {
-    nlohmann::json output{
-        {"scope", "user"},
-        {"directory", PathUtf8(status.directory)},
-        {"storage_version", status.storage_version},
-        {"inference_abi", llmcc::InferenceAbi()},
-        {"entries", status.entries},
-        {"bytes", status.bytes},
-        {"limit_bytes", status.limit},
-        {"retention_seconds", status.retention_seconds},
-        {"entries_by_inference_abi", status.entries_by_inference_abi},
-        {"malformed_entries", status.malformed_entries}};
-    if (repository_status.has_value()) {
-      output["repository_v1"] = {
-          {"repository", PathUtf8(repository_status->repository)},
-          {"directory", PathUtf8(repository_status->directory)},
-          {"entries", repository_status->entries},
-          {"bytes", repository_status->bytes},
-          {"legacy_directory", PathUtf8(repository_status->legacy_directory)},
-          {"legacy_entries", repository_status->legacy_entries},
-          {"legacy_bytes", repository_status->legacy_bytes},
-          {"unknown_provenance_entries",
-           repository_status->unknown_provenance_entries},
-          {"malformed_entries", repository_status->malformed_entries}};
-    }
-    if (cleared.has_value()) {
-      output["cleared"] = *cleared;
-    }
-    std::cout << output.dump() << '\n';
+    PrintCacheJson(status, repository_status, cleared);
   } else {
-    std::cout << "scope: user\n"
-              << "directory: " << PathUtf8(status.directory) << '\n'
-              << "storage version: " << status.storage_version << '\n'
-              << "inference ABI: " << llmcc::InferenceAbi() << '\n'
-              << "entries: " << status.entries << '\n'
-              << "bytes: " << status.bytes << '\n'
-              << "limit bytes: " << status.limit << '\n'
-              << "retention seconds: " << status.retention_seconds << '\n'
-              << "malformed entries: " << status.malformed_entries << '\n';
-    if (repository_status.has_value()) {
-      std::cout << "repository v1: " << PathUtf8(repository_status->repository)
-                << '\n'
-                << "repository v1 directory: "
-                << PathUtf8(repository_status->directory) << '\n'
-                << "repository v1 entries: " << repository_status->entries
-                << '\n'
-                << "repository v1 bytes: " << repository_status->bytes << '\n'
-                << "legacy directory: "
-                << PathUtf8(repository_status->legacy_directory) << '\n'
-                << "legacy entries: " << repository_status->legacy_entries
-                << '\n';
-    }
-    if (cleared.has_value()) {
-      std::cout << "cleared: " << *cleared << '\n';
-    }
+    PrintCacheText(status, repository_status, cleared);
   }
   return 0;
 }
