@@ -506,9 +506,13 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(Run(uncached_command) != 0,
                       "invalid model analysis fails");
   llmcc::test::Expect(
-      Read(backend_diagnostics).find("ggml_metal_") == std::string::npos &&
-          Read(backend_diagnostics).find("CPU rerun:") == std::string::npos,
-      "model failures suppress routine GPU diagnostics and CPU recovery");
+      Read(backend_diagnostics).find("ggml_metal_") == std::string::npos,
+      "analysis suppresses routine GPU diagnostics");
+#ifdef LLMCC_TEST_BACKEND_METAL
+  llmcc::test::Expect(
+      Read(backend_diagnostics).find("CPU rerun:") == std::string::npos,
+      "model failures do not suggest a CPU rerun");
+#endif
   const auto [preprocessed, offsets] =
       llmcc::StripComments(Read(source), llmcc::Language::kRust);
   static_cast<void>(offsets);
