@@ -180,17 +180,22 @@ int main() {  // NOLINT(bugprone-exception-escape)
         ++failing_factories;
         throw std::runtime_error("model load failed");
       });
-  bool initialization_failed = false;
-  try {
-    static_cast<void>(partially_cached.AnalyzeFile(miss, "fn miss() {}\n"));
-  } catch (const llmcc::ScorerInitializationError&) {
-    initialization_failed = true;
+  for (int attempt = 0; attempt < 2; ++attempt) {
+    bool initialization_failed = false;
+    try {
+      static_cast<void>(partially_cached.AnalyzeFile(miss, "fn miss() {}\n"));
+    } catch (const llmcc::ScorerInitializationError& error) {
+      initialization_failed = true;
+      llmcc::test::ExpectEq(std::string(error.what()),
+                            std::string("model load failed"),
+                            "cache misses preserve the initialization error");
+    }
+    llmcc::test::Expect(initialization_failed,
+                        "cache miss reports scorer initialization failure");
+    llmcc::test::Expect(
+        partially_cached.AnalyzeFile(second, "fn b() {}\n").entropy_cache_hit,
+        "cache hit remains available after initialization failure");
   }
-  llmcc::test::Expect(initialization_failed,
-                      "cache miss reports scorer initialization failure");
-  llmcc::test::Expect(
-      partially_cached.AnalyzeFile(second, "fn b() {}\n").entropy_cache_hit,
-      "cache hit remains available after initialization failure");
   llmcc::test::ExpectEq(failing_factories, 1,
                         "failed scorer initialization is not retried");
 

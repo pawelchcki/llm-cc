@@ -89,6 +89,97 @@ void ValidateBackendDirectory(const std::filesystem::path& directory) {
   throw std::runtime_error(message);
 }
 
+std::optional<ResolvedBackendPlugin> ResolveConfiguredPlugin(
+    BackendKind backend, const std::filesystem::path& directory) {
+  ValidateBackendDirectory(directory);
+  std::vector<std::pair<std::filesystem::path, BackendPluginSource>> candidates;
+  if (const auto artifact = BackendArtifactName(BackendName(backend));
+      artifact.has_value()) {
+    candidates.emplace_back(directory / (*artifact + ".bundle"),
+                            BackendPluginSource::kBundle);
+  }
+  candidates.emplace_back(directory / BundleName(backend),
+                          BackendPluginSource::kBundle);
+  candidates.emplace_back(directory / PluginName(backend),
+                          BackendPluginSource::kSharedLibrary);
+  for (const auto& [path, source] : candidates) {
+    if (IsRegularFile(path)) {
+      return ResolvedBackendPlugin{.source = source, .path = path};
+    }
+  }
+  return std::nullopt;
+}
+
+bool HasInstalledArtifact(const std::filesystem::path& installed_bundle,
+                          const std::filesystem::path& installed_checksum,
+                          const std::filesystem::path& installed_manifest) {
+  for (const std::filesystem::path& path : {
+           installed_bundle,
+           installed_checksum,
+           installed_manifest,
+           std::filesystem::path(installed_bundle.string() + ".partial"),
+           std::filesystem::path(installed_checksum.string() + ".partial"),
+           std::filesystem::path(installed_manifest.string() + ".partial"),
+       }) {
+    std::error_code error;
+    const std::filesystem::file_status status =
+        std::filesystem::symlink_status(path, error);
+    if (!error && status.type() != std::filesystem::file_type::not_found) {
+      return true;
+    }
+    if (error && error != std::errc::no_such_file_or_directory &&
+        error != std::errc::not_a_directory) {
+      throw std::runtime_error("could not inspect installed backend " +
+                               path.string() + ": " + error.message());
+    }
+  }
+  return false;
+}
+
+std::optional<ResolvedBackendPlugin> ResolveInstalledBundle(
+    BackendKind backend, std::string_view version, std::string_view git_sha,
+    const std::function<std::optional<std::filesystem::path>()>&
+        installed_root) {
+  if (!installed_root) {
+    return std::nullopt;
+  }
+  const auto root = installed_root();
+  if (!root.has_value()) {
+    return std::nullopt;
+  }
+  BackendFetchOptions installed_options{
+      .name = BackendName(backend),
+      .version = version,
+      .git_sha = git_sha,
+      .runtime_root = *root,
+  };
+  const std::filesystem::path installed_bundle =
+      BackendBundlePath(installed_options);
+  const std::filesystem::path installed_checksum =
+      ChecksumPath(installed_bundle);
+  const std::filesystem::path installed_manifest =
+      installed_bundle.parent_path() /
+      (std::string(BackendName(backend)) + ".manifest.json");
+
+  try {
+    if (HasInstalledArtifact(installed_bundle, installed_checksum,
+                             installed_manifest)) {
+      VerifyBackendBundle(installed_options);
+      return ResolvedBackendPlugin{
+          .source = BackendPluginSource::kInstalledBundle,
+          .path = installed_bundle,
+          .payload_verified = true};
+    }
+  } catch (const std::exception& error) {
+    throw std::runtime_error(
+        "invalid installed " + std::string(BackendName(backend)) +
+        " backend bundle at " + installed_bundle.string() + ": " +
+        error.what() + "; reinstall with 'bazel run --config=" +
+        std::string(BackendName(backend)) + " //:install'");
+  }
+  return std::nullopt;
+}
+
 #ifdef LLM_CC_DYNAMIC_BACKENDS
 
 std::optional<std::filesystem::path> ExecutablePath() {
@@ -436,22 +527,9 @@ ResolvedBackendPlugin ResolveBackendPlugin(
   //   5. the versioned runtime cache,
   //   6. the optional network-fetch seam below.
   if (backend_directory.has_value()) {
-    ValidateBackendDirectory(*backend_directory);
-    std::vector<std::pair<std::filesystem::path, BackendPluginSource>>
-        candidates;
-    if (const auto artifact = BackendArtifactName(BackendName(backend));
-        artifact.has_value()) {
-      candidates.emplace_back(*backend_directory / (*artifact + ".bundle"),
-                              BackendPluginSource::kBundle);
-    }
-    candidates.emplace_back(*backend_directory / BundleName(backend),
-                            BackendPluginSource::kBundle);
-    candidates.emplace_back(*backend_directory / PluginName(backend),
-                            BackendPluginSource::kSharedLibrary);
-    for (const auto& [path, source] : candidates) {
-      if (IsRegularFile(path)) {
-        return {.source = source, .path = path};
-      }
+    if (auto configured =
+            ResolveConfiguredPlugin(backend, *backend_directory)) {
+      return *configured;
     }
   }
 
@@ -461,62 +539,9 @@ ResolvedBackendPlugin ResolveBackendPlugin(
     return {.source = BackendPluginSource::kEmbedded, .path = {}};
   }
 
-  if (installed_root) {
-    if (const auto root = installed_root(); root.has_value()) {
-      BackendFetchOptions installed_options{
-          .name = BackendName(backend),
-          .version = version,
-          .git_sha = git_sha,
-          .runtime_root = *root,
-      };
-      const std::filesystem::path installed_bundle =
-          BackendBundlePath(installed_options);
-      const std::filesystem::path installed_checksum =
-          ChecksumPath(installed_bundle);
-      const std::filesystem::path installed_manifest =
-          installed_bundle.parent_path() /
-          (std::string(BackendName(backend)) + ".manifest.json");
-      const auto has_artifact = [&] {
-        for (const std::filesystem::path& path : {
-                 installed_bundle,
-                 installed_checksum,
-                 installed_manifest,
-                 std::filesystem::path(installed_bundle.string() + ".partial"),
-                 std::filesystem::path(installed_checksum.string() +
-                                       ".partial"),
-                 std::filesystem::path(installed_manifest.string() +
-                                       ".partial"),
-             }) {
-          std::error_code error;
-          const std::filesystem::file_status status =
-              std::filesystem::symlink_status(path, error);
-          if (!error &&
-              status.type() != std::filesystem::file_type::not_found) {
-            return true;
-          }
-          if (error && error != std::errc::no_such_file_or_directory &&
-              error != std::errc::not_a_directory) {
-            throw std::runtime_error("could not inspect installed backend " +
-                                     path.string() + ": " + error.message());
-          }
-        }
-        return false;
-      };
-      try {
-        if (has_artifact()) {
-          VerifyBackendBundle(installed_options);
-          return {.source = BackendPluginSource::kInstalledBundle,
-                  .path = installed_bundle,
-                  .payload_verified = true};
-        }
-      } catch (const std::exception& error) {
-        throw std::runtime_error(
-            "invalid installed " + std::string(BackendName(backend)) +
-            " backend bundle at " + installed_bundle.string() + ": " +
-            error.what() + "; reinstall with 'bazel run --config=" +
-            std::string(BackendName(backend)) + " //:install'");
-      }
-    }
+  if (auto installed =
+          ResolveInstalledBundle(backend, version, git_sha, installed_root)) {
+    return *installed;
   }
 
   for (const std::filesystem::path& candidate : runfile_candidates) {

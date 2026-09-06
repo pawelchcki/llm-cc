@@ -206,45 +206,43 @@ void ApplyBackendDirectoryEnvironment(
   }
 }
 
-void SetAnalyzeOption(AnalyzeArguments& arguments, std::string_view option,
-                      std::string_view value) {
-  if (option == "--lang") {
-    arguments.language_name = value;
-    if (value == "auto") {
-      arguments.language.reset();
-    } else {
-      arguments.language = llmcc::ParseLanguage(value);
-      arguments.language_name = llmcc::LanguageName(*arguments.language);
-    }
-  } else if (option == "--model") {
-    arguments.model = std::filesystem::u8path(value);
-  } else if (option == "--model-name") {
-    arguments.model_name = value;
-  } else if (option == "--gpu-layers") {
+bool SetExecutionOption(AnalyzeArguments& arguments, std::string_view option,
+                        std::string_view value) {
+  if (option == "--gpu-layers") {
     arguments.gpu_layers = ParseNumber<std::int32_t>(option, value);
     arguments.requested_gpu_layers = arguments.gpu_layers;
     if (arguments.gpu_layers < -1) {
       Usage("--gpu-layers must be -1 or greater");
     }
-  } else if (option == "--backend") {
+    return true;
+  }
+  if (option == "--backend") {
     try {
       arguments.backend = llmcc::ParseBackend(value);
     } catch (const std::invalid_argument& error) {
       Usage(error.what());
     }
-  } else if (option == "--backend-dir") {
+    return true;
+  }
+  if (option == "--backend-dir") {
     arguments.backend_directory = std::filesystem::u8path(value);
-  } else if (option == "--context") {
+    return true;
+  }
+  if (option == "--context") {
     arguments.context = ParseNumber<std::uint32_t>(option, value);
     if (arguments.context == 0) {
       Usage("--context must be positive");
     }
-  } else if (option == "--batch-size") {
+    return true;
+  }
+  if (option == "--batch-size") {
     arguments.batch_size = ParseNumber<std::uint32_t>(option, value);
     if (arguments.batch_size == 0) {
       Usage("--batch-size must be positive");
     }
-  } else if (option == "--entropy-reduction") {
+    return true;
+  }
+  if (option == "--entropy-reduction") {
     if (value == "auto") {
       arguments.entropy_reduction = llmcc::EntropyReduction::kAuto;
     } else if (value == "host") {
@@ -254,7 +252,68 @@ void SetAnalyzeOption(AnalyzeArguments& arguments, std::string_view option,
     } else {
       Usage("--entropy-reduction expects auto, host, or device");
     }
-  } else if (option == "--hierarchy") {
+    return true;
+  }
+  return false;
+}
+
+bool SetOutputOption(AnalyzeArguments& arguments, std::string_view option,
+                     std::string_view value) {
+  if (option == "--hotspots") {
+    arguments.hotspots = ParseNumber<std::size_t>(option, value);
+    return true;
+  }
+  if (option == "--score") {
+    arguments.score_mode = value;
+    if (arguments.score_mode != "lmcc" && arguments.score_mode != "density" &&
+        arguments.score_mode != "mean") {
+      Usage("--score expects lmcc, density, or mean");
+    }
+    return true;
+  }
+  if (option == "--format") {
+    arguments.format = value == "json" ? "jsonl" : std::string(value);
+    if (arguments.format != "jsonl" && arguments.format != "text") {
+      Usage("--format expects jsonl, json, or text");
+    }
+    return true;
+  }
+  if (option == "--progress") {
+    arguments.progress = value;
+    if (arguments.progress != "auto" && arguments.progress != "always" &&
+        arguments.progress != "never") {
+      Usage("--progress expects auto, always, or never");
+    }
+    return true;
+  }
+  return false;
+}
+
+void SetAnalyzeOption(AnalyzeArguments& arguments, std::string_view option,
+                      std::string_view value) {
+  if (SetExecutionOption(arguments, option, value) ||
+      SetOutputOption(arguments, option, value)) {
+    return;
+  }
+  if (option == "--lang") {
+    arguments.language_name = value;
+    if (value == "auto") {
+      arguments.language.reset();
+    } else {
+      arguments.language = llmcc::ParseLanguage(value);
+      arguments.language_name = llmcc::LanguageName(*arguments.language);
+    }
+    return;
+  }
+  if (option == "--model") {
+    arguments.model = std::filesystem::u8path(value);
+    return;
+  }
+  if (option == "--model-name") {
+    arguments.model_name = value;
+    return;
+  }
+  if (option == "--hierarchy") {
     if (value == "structural") {
       arguments.hierarchy_mode = llmcc::HierarchyMode::kStructural;
     } else if (value == "reference") {
@@ -262,34 +321,21 @@ void SetAnalyzeOption(AnalyzeArguments& arguments, std::string_view option,
     } else {
       Usage("--hierarchy expects structural or reference");
     }
-  } else if (option == "--tau-percentile") {
-    arguments.tau_percentile = ParseNumber<double>(option, value);
-  } else if (option == "--tau") {
-    arguments.tau = ParseNumber<double>(option, value);
-  } else if (option == "--hotspots") {
-    arguments.hotspots = ParseNumber<std::size_t>(option, value);
-  } else if (option == "--score") {
-    arguments.score_mode = value;
-    if (arguments.score_mode != "lmcc" && arguments.score_mode != "density" &&
-        arguments.score_mode != "mean") {
-      Usage("--score expects lmcc, density, or mean");
-    }
-  } else if (option == "--format") {
-    arguments.format = value == "json" ? "jsonl" : std::string(value);
-    if (arguments.format != "jsonl" && arguments.format != "text") {
-      Usage("--format expects jsonl, json, or text");
-    }
-  } else if (option == "--progress") {
-    arguments.progress = value;
-    if (arguments.progress != "auto" && arguments.progress != "always" &&
-        arguments.progress != "never") {
-      Usage("--progress expects auto, always, or never");
-    }
-  } else if (option == "--alpha") {
-    arguments.alpha = ParseNumber<double>(option, value);
-  } else {
-    Usage("unknown option: " + std::string(option));
+    return;
   }
+  if (option == "--tau-percentile") {
+    arguments.tau_percentile = ParseNumber<double>(option, value);
+    return;
+  }
+  if (option == "--tau") {
+    arguments.tau = ParseNumber<double>(option, value);
+    return;
+  }
+  if (option == "--alpha") {
+    arguments.alpha = ParseNumber<double>(option, value);
+    return;
+  }
+  Usage("unknown option: " + std::string(option));
 }
 
 AnalyzeArguments ParseAnalyzeArguments(int argc, char** argv) {
@@ -485,6 +531,99 @@ void RemoveBackendFile(const std::filesystem::path& path) {
   }
 }
 
+bool BackendBundleCached(const std::filesystem::path& path) {
+  std::error_code error;
+  const bool cached = std::filesystem::is_regular_file(path, error);
+  if (error && error != std::errc::no_such_file_or_directory &&
+      error != std::errc::not_a_directory) {
+    throw std::runtime_error("could not inspect backend bundle " +
+                             PathUtf8(path) + ": " + error.message());
+  }
+  return cached;
+}
+
+void ListBackend(std::string_view name) {
+  const std::filesystem::path path =
+      llmcc::BackendBundlePath(BackendOptions(name));
+  const bool cached = BackendBundleCached(path);
+  if (!cached) {
+    std::cout << name << "\tbundle-cache=not cached\tlocal-source="
+              << llmcc::DiscoverBackendSource(llmcc::ParseBackend(name))
+              << '\n';
+    return;
+  }
+  std::error_code error;
+  const std::uintmax_t size = std::filesystem::file_size(path, error);
+  if (error) {
+    throw std::runtime_error("could not measure backend bundle " +
+                             PathUtf8(path) + ": " + error.message());
+  }
+  std::string status = "verified";
+  try {
+    llmcc::VerifyBackendBundle(BackendOptions(name));
+  } catch (const std::exception&) {
+    status = "invalid";
+  }
+  std::cout << name << "\tbundle-cache=" << status << "\t" << PathUtf8(path)
+            << '\t' << size << " bytes\tlocal-source="
+            << llmcc::DiscoverBackendSource(llmcc::ParseBackend(name)) << '\n';
+}
+
+void FetchBackend(int argc, char** argv) {
+  const std::string_view name = BackendBundleName(argv[3]);
+  std::optional<std::string> explicit_url;
+  bool no_download = false;
+  bool assume_yes = false;
+  std::string progress_mode = "auto";
+  for (int index = 4; index < argc; ++index) {
+    const std::string_view option = argv[index];
+    if (option == "--no-download") {
+      no_download = true;
+    } else if (option == "--assume-yes" || option == "-y") {
+      assume_yes = true;
+    } else if (option == "--progress") {
+      if (++index >= argc) Usage("--progress requires a value");
+      progress_mode = argv[index];
+    } else if (option == "--url") {
+      if (explicit_url.has_value()) {
+        Usage("--url may only be specified once");
+      }
+      if (++index >= argc) {
+        Usage("--url requires a value");
+      }
+      explicit_url = argv[index];
+    } else {
+      Usage("invalid backends fetch option: " + std::string(option));
+    }
+  }
+  ProgressReporter progress(progress_mode);
+  llmcc::CliSession session(progress, assume_yes, no_download);
+  progress.Phase("resolving backend bundle");
+  std::cout << PathUtf8(llmcc::FetchBackendBundle(
+                   BackendOptions(name, explicit_url)))
+            << '\n';
+}
+
+void RemoveBackend(std::string_view name) {
+  const std::filesystem::path bundle =
+      llmcc::BackendBundlePath(BackendOptions(name));
+  const bool cached = BackendBundleCached(bundle);
+  const std::array files = {
+      bundle,
+      ChecksumPath(bundle),
+      bundle.parent_path() / (std::string(name) + ".manifest.json"),
+  };
+  for (const std::filesystem::path& path : files) {
+    RemoveBackendFile(path);
+    RemoveBackendFile(PartialPath(path));
+  }
+  if (cached) {
+    std::cout << name << "\tremoved\t" << PathUtf8(bundle) << '\n';
+  } else {
+    std::cout << name << "\tnot cached\n";
+  }
+}
+
 int RunBackends(int argc, char** argv) {
   if (argc < 3) {
     Usage("backends requires list, fetch, path, or remove");
@@ -492,72 +631,12 @@ int RunBackends(int argc, char** argv) {
   const std::string_view action = argv[2];
   if (action == "list" && argc == 3) {
     for (const std::string_view name : {"cuda", "rocm"}) {
-      const std::filesystem::path path =
-          llmcc::BackendBundlePath(BackendOptions(name));
-      std::error_code error;
-      const bool cached = std::filesystem::is_regular_file(path, error);
-      if (error && error != std::errc::no_such_file_or_directory &&
-          error != std::errc::not_a_directory) {
-        throw std::runtime_error("could not inspect backend bundle " +
-                                 PathUtf8(path) + ": " + error.message());
-      }
-      if (!cached) {
-        std::cout << name << "\tbundle-cache=not cached\tlocal-source="
-                  << llmcc::DiscoverBackendSource(llmcc::ParseBackend(name))
-                  << '\n';
-        continue;
-      }
-      const std::uintmax_t size = std::filesystem::file_size(path, error);
-      if (error) {
-        throw std::runtime_error("could not measure backend bundle " +
-                                 PathUtf8(path) + ": " + error.message());
-      }
-      std::string status = "verified";
-      try {
-        llmcc::VerifyBackendBundle(BackendOptions(name));
-      } catch (const std::exception&) {
-        status = "invalid";
-      }
-      std::cout << name << "\tbundle-cache=" << status << "\t" << PathUtf8(path)
-                << '\t' << size << " bytes\tlocal-source="
-                << llmcc::DiscoverBackendSource(llmcc::ParseBackend(name))
-                << '\n';
+      ListBackend(name);
     }
     return 0;
   }
   if (action == "fetch" && argc >= 4) {
-    const std::string_view name = BackendBundleName(argv[3]);
-    std::optional<std::string> explicit_url;
-    bool no_download = false;
-    bool assume_yes = false;
-    std::string progress_mode = "auto";
-    for (int index = 4; index < argc; ++index) {
-      const std::string_view option = argv[index];
-      if (option == "--no-download") {
-        no_download = true;
-      } else if (option == "--assume-yes" || option == "-y") {
-        assume_yes = true;
-      } else if (option == "--progress") {
-        if (++index >= argc) Usage("--progress requires a value");
-        progress_mode = argv[index];
-      } else if (option == "--url") {
-        if (explicit_url.has_value()) {
-          Usage("--url may only be specified once");
-        }
-        if (++index >= argc) {
-          Usage("--url requires a value");
-        }
-        explicit_url = argv[index];
-      } else {
-        Usage("invalid backends fetch option: " + std::string(option));
-      }
-    }
-    ProgressReporter progress(progress_mode);
-    llmcc::CliSession session(progress, assume_yes, no_download);
-    progress.Phase("resolving backend bundle");
-    std::cout << PathUtf8(llmcc::FetchBackendBundle(
-                     BackendOptions(name, explicit_url)))
-              << '\n';
+    FetchBackend(argc, argv);
     return 0;
   }
   if (action == "path" && (argc == 3 || argc == 4)) {
@@ -568,30 +647,7 @@ int RunBackends(int argc, char** argv) {
     return 0;
   }
   if (action == "remove" && argc == 4) {
-    const std::string_view name = BackendBundleName(argv[3]);
-    const std::filesystem::path bundle =
-        llmcc::BackendBundlePath(BackendOptions(name));
-    std::error_code error;
-    const bool cached = std::filesystem::is_regular_file(bundle, error);
-    if (error && error != std::errc::no_such_file_or_directory &&
-        error != std::errc::not_a_directory) {
-      throw std::runtime_error("could not inspect backend bundle " +
-                               PathUtf8(bundle) + ": " + error.message());
-    }
-    const std::array files = {
-        bundle,
-        ChecksumPath(bundle),
-        bundle.parent_path() / (std::string(name) + ".manifest.json"),
-    };
-    for (const std::filesystem::path& path : files) {
-      RemoveBackendFile(path);
-      RemoveBackendFile(PartialPath(path));
-    }
-    if (cached) {
-      std::cout << name << "\tremoved\t" << PathUtf8(bundle) << '\n';
-    } else {
-      std::cout << name << "\tnot cached\n";
-    }
+    RemoveBackend(BackendBundleName(argv[3]));
     return 0;
   }
   Usage("invalid backends command");
@@ -1087,6 +1143,87 @@ void PrintTotalsText(const MetricTotals& totals, std::string_view score_mode) {
             << '\n';
 }
 
+nlohmann::json FileJson(const llmcc::DiscoveredSource& source,
+                        const llmcc::FileAnalysisResult& result,
+                        const AnalyzeArguments& arguments) {
+  const std::string language(llmcc::LanguageName(source.language));
+  nlohmann::json event = llmcc::AnalysisJson(result.analysis);
+  event["type"] = "file";
+  event["path"] = PathUtf8(source.path);
+  event["language"] = language;
+  event["entropy_cache_hit"] = result.entropy_cache_hit;
+  event["score"] = ScoreJson(result.analysis.metrics, arguments.score_mode);
+  event["score_mode"] = arguments.score_mode;
+  event["functions"] = nlohmann::json::array();
+  for (const llmcc::FunctionScore& function : result.functions) {
+    event["functions"].push_back(FunctionJson(function, arguments.score_mode));
+  }
+  if (arguments.hotspots != 0) {
+    event["hotspots"] = nlohmann::json::array();
+    for (const llmcc::Hotspot& hotspot : result.hotspots) {
+      event["hotspots"].push_back({{"line", hotspot.line},
+                                   {"max_entropy", hotspot.max_entropy},
+                                   {"mean_entropy", hotspot.mean_entropy},
+                                   {"high_tokens", hotspot.high_tokens}});
+    }
+  }
+  return event;
+}
+
+void ReportFileError(const llmcc::DiscoveredSource& source,
+                     const std::exception& error, bool text, bool fatal) {
+  if (text) {
+    std::cerr << "error: " << TerminalSafe(PathUtf8(source.path)) << ": "
+              << TerminalSafe(error.what()) << '\n';
+    return;
+  }
+  nlohmann::json event = {{"type", "error"},
+                          {"path", PathUtf8(source.path)},
+                          {"language", llmcc::LanguageName(source.language)},
+                          {"message", error.what()}};
+  if (fatal) {
+    event["fatal"] = true;
+  }
+  Emit(event);
+}
+
+llmcc::BackendKind ResolveAnalysisBackend(const AnalyzeArguments& arguments,
+                                          const llmcc::ModelSpec& model_spec,
+                                          ProgressReporter& progress) {
+  const bool fetch_backend =
+      ShouldFetchBackend(arguments.backend, arguments.gpu_layers);
+  // An explicit backend supplies an exact cache identity, so existing models
+  // need a device check only on a cache miss.
+  if (arguments.backend != llmcc::BackendKind::kAuto &&
+      (arguments.model.has_value() ||
+       std::filesystem::exists(llmcc::CacheDir() / model_spec.file) ||
+       std::filesystem::exists(std::filesystem::current_path() / "models" /
+                               model_spec.file))) {
+    progress.Phase("configured backend=" +
+                   std::string(llmcc::BackendName(arguments.backend)) +
+                   " gpu_layers=" + std::to_string(arguments.gpu_layers) +
+                   " (device checked on cache miss)");
+    return arguments.backend;
+  }
+  if (arguments.gpu_layers == 0) {
+    return llmcc::BackendKind::kCpu;
+  }
+  llmcc::BackendLogCapture backend_log;
+  try {
+    llmcc::BackendRuntime runtime(arguments.backend, arguments.gpu_layers,
+                                  LLM_CC_VERSION, arguments.backend_directory,
+                                  arguments.no_download, fetch_backend);
+    return runtime.selected();
+  } catch (const std::exception& error) {
+    // The capture swallows the loader's diagnostics, so re-attach them to the
+    // generic plugin error before unwinding.
+    const std::string detail = backend_log.Error();
+    throw llmcc::GpuRecoverableError(
+        std::string(error.what()) +
+        (detail.empty() ? std::string() : ": " + detail));
+  }
+}
+
 int RunAnalyze(const AnalyzeArguments& arguments) {
   if (arguments.entropy_reduction == llmcc::EntropyReduction::kDevice &&
       arguments.gpu_layers != -1) {
@@ -1142,38 +1279,8 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       arguments.model_name.has_value()
           ? *llmcc::FindModel(*arguments.model_name)
           : llmcc::DefaultModel();
-  const llmcc::BackendKind resolved_backend = [&]() {
-    // An explicit backend supplies an exact cache identity, so existing models
-    // need a device check only on a cache miss.
-    if (arguments.backend != llmcc::BackendKind::kAuto &&
-        (arguments.model.has_value() ||
-         std::filesystem::exists(llmcc::CacheDir() / model_spec.file) ||
-         std::filesystem::exists(std::filesystem::current_path() / "models" /
-                                 model_spec.file))) {
-      progress.Phase("configured backend=" +
-                     std::string(llmcc::BackendName(arguments.backend)) +
-                     " gpu_layers=" + std::to_string(arguments.gpu_layers) +
-                     " (device checked on cache miss)");
-      return arguments.backend;
-    }
-    if (arguments.gpu_layers == 0) {
-      return llmcc::BackendKind::kCpu;
-    }
-    llmcc::BackendLogCapture backend_log;
-    try {
-      llmcc::BackendRuntime runtime(arguments.backend, arguments.gpu_layers,
-                                    LLM_CC_VERSION, arguments.backend_directory,
-                                    arguments.no_download, fetch_backend);
-      return runtime.selected();
-    } catch (const std::exception& error) {
-      // The capture swallows the loader's diagnostics, so re-attach them to the
-      // generic plugin error before unwinding.
-      const std::string detail = backend_log.Error();
-      throw llmcc::GpuRecoverableError(
-          std::string(error.what()) +
-          (detail.empty() ? std::string() : ": " + detail));
-    }
-  }();
+  const llmcc::BackendKind resolved_backend =
+      ResolveAnalysisBackend(arguments, model_spec, progress);
   const std::filesystem::path model_cache = llmcc::CacheDir();
   progress.Phase("resolving model");
   const auto resolved_model = llmcc::ResolveModel(
@@ -1265,29 +1372,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       if (text) {
         PrintFileText(source, contents, result, arguments.score_mode);
       } else {
-        nlohmann::json event = llmcc::AnalysisJson(result.analysis);
-        event["type"] = "file";
-        event["path"] = PathUtf8(source.path);
-        event["language"] = language;
-        event["entropy_cache_hit"] = result.entropy_cache_hit;
-        event["score"] =
-            ScoreJson(result.analysis.metrics, arguments.score_mode);
-        event["score_mode"] = arguments.score_mode;
-        event["functions"] = nlohmann::json::array();
-        for (const llmcc::FunctionScore& function : result.functions) {
-          event["functions"].push_back(
-              FunctionJson(function, arguments.score_mode));
-        }
-        if (arguments.hotspots != 0) {
-          event["hotspots"] = nlohmann::json::array();
-          for (const llmcc::Hotspot& hotspot : result.hotspots) {
-            event["hotspots"].push_back({{"line", hotspot.line},
-                                         {"max_entropy", hotspot.max_entropy},
-                                         {"mean_entropy", hotspot.mean_entropy},
-                                         {"high_tokens", hotspot.high_tokens}});
-          }
-        }
-        Emit(event);
+        Emit(FileJson(source, result, arguments));
       }
       ++totals.analyzed;
       Accumulate(result.analysis, totals);
@@ -1301,32 +1386,16 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       progress.FailFile();
       ++totals.failed;
       ++languages[language].failed;
-      if (text) {
-        std::cerr << "error: " << TerminalSafe(PathUtf8(source.path)) << ": "
-                  << TerminalSafe(error.what()) << '\n';
-      } else {
-        Emit({{"type", "error"},
-              {"path", PathUtf8(source.path)},
-              {"language", language},
-              {"message", error.what()},
-              {"fatal", true}});
-      }
+      ReportFileError(source, error, text, true);
       fatal = true;
     } catch (const std::exception& error) {
       progress.FailFile();
       ++totals.failed;
       ++languages[language].failed;
-      if (text) {
-        std::cerr << "error: " << TerminalSafe(PathUtf8(source.path)) << ": "
-                  << TerminalSafe(error.what()) << '\n';
-      } else {
-        Emit({{"type", "error"},
-              {"path", PathUtf8(source.path)},
-              {"language", language},
-              {"message", error.what()}});
-      }
+      ReportFileError(source, error, text, false);
     }
   }
+
   if (text) {
     PrintTotalsText(totals, arguments.score_mode);
   } else {

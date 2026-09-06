@@ -171,46 +171,30 @@ void ApplyBackendDirectoryEnvironment(Arguments& arguments) {
   }
 }
 
-void SetOption(Arguments& arguments, std::string_view option,
-               std::string_view value) {
-  if ((option == "--prompt" && arguments.file.has_value()) ||
-      (option == "--file" && arguments.prompt.has_value())) {
-    Usage("--prompt and --file are mutually exclusive");
-  }
-  if (option == "--model") {
-    arguments.model = std::filesystem::u8path(value);
-  } else if (option == "--model-name") {
-    arguments.model_name = value;
-  } else if (option == "--prompt") {
-    arguments.prompt = value;
-  } else if (option == "--file") {
-    arguments.file = std::filesystem::u8path(value);
-  } else if (option == "--bos") {
-    if (value == "auto") {
-      arguments.bos = BosMode::kAuto;
-    } else if (value == "always") {
-      arguments.bos = BosMode::kAlways;
-    } else if (value == "never") {
-      arguments.bos = BosMode::kNever;
-    } else {
-      Usage("--bos expects auto, always, or never");
-    }
-  } else if (option == "--context-size") {
+bool SetExecutionOption(Arguments& arguments, std::string_view option,
+                        std::string_view value) {
+  if (option == "--context-size") {
     arguments.context_size = ParseInteger<std::uint32_t>(option, value);
     if (arguments.context_size == 0) {
       Usage("--context-size must be positive");
     }
-  } else if (option == "--threads") {
+    return true;
+  }
+  if (option == "--threads") {
     arguments.threads = ParseInteger<std::int32_t>(option, value);
     if (arguments.threads < 1) {
       Usage("--threads must be positive");
     }
-  } else if (option == "--batch-size") {
+    return true;
+  }
+  if (option == "--batch-size") {
     arguments.batch_size = ParseInteger<std::uint32_t>(option, value);
     if (arguments.batch_size == 0) {
       Usage("--batch-size must be positive");
     }
-  } else if (option == "--entropy-reduction") {
+    return true;
+  }
+  if (option == "--entropy-reduction") {
     if (value == "auto") {
       arguments.entropy_reduction = llmcc::EntropyReduction::kAuto;
     } else if (value == "host") {
@@ -220,27 +204,75 @@ void SetOption(Arguments& arguments, std::string_view option,
     } else {
       Usage("--entropy-reduction expects auto, host, or device");
     }
-  } else if (option == "--gpu-layers") {
+    return true;
+  }
+  if (option == "--gpu-layers") {
     arguments.gpu_layers = ParseInteger<std::int32_t>(option, value);
     arguments.requested_gpu_layers = arguments.gpu_layers;
     if (arguments.gpu_layers < -1) {
       Usage("--gpu-layers must be -1 or greater");
     }
-  } else if (option == "--backend") {
+    return true;
+  }
+  if (option == "--backend") {
     try {
       arguments.backend = llmcc::ParseBackend(value);
     } catch (const std::invalid_argument& error) {
       Usage(error.what());
     }
-  } else if (option == "--progress") {
+    return true;
+  }
+  if (option == "--backend-dir") {
+    arguments.backend_directory = std::filesystem::u8path(value);
+    return true;
+  }
+  return false;
+}
+
+void SetOption(Arguments& arguments, std::string_view option,
+               std::string_view value) {
+  if ((option == "--prompt" && arguments.file.has_value()) ||
+      (option == "--file" && arguments.prompt.has_value())) {
+    Usage("--prompt and --file are mutually exclusive");
+  }
+  if (SetExecutionOption(arguments, option, value)) {
+    return;
+  }
+  if (option == "--model") {
+    arguments.model = std::filesystem::u8path(value);
+    return;
+  }
+  if (option == "--model-name") {
+    arguments.model_name = value;
+    return;
+  }
+  if (option == "--prompt") {
+    arguments.prompt = value;
+    return;
+  }
+  if (option == "--file") {
+    arguments.file = std::filesystem::u8path(value);
+    return;
+  }
+  if (option == "--bos") {
+    if (value == "auto") {
+      arguments.bos = BosMode::kAuto;
+    } else if (value == "always") {
+      arguments.bos = BosMode::kAlways;
+    } else if (value == "never") {
+      arguments.bos = BosMode::kNever;
+    } else {
+      Usage("--bos expects auto, always, or never");
+    }
+    return;
+  }
+  if (option == "--progress") {
     if (value != "auto" && value != "always" && value != "never")
       Usage("--progress expects auto, always, or never");
     arguments.progress = value;
-  } else if (option == "--backend-dir") {
-    arguments.backend_directory = std::filesystem::u8path(value);
-  } else {
-    Usage("unknown option: " + std::string(option));
+    return;
   }
+  Usage("unknown option: " + std::string(option));
 }
 
 Arguments ParseArguments(int argc, char** argv) {
@@ -814,6 +846,101 @@ void WriteSummary(std::ostream* diagnostics, std::size_t tokens,
                << " perplexity=" << std::exp(mean_nll) << '\n';
 }
 
+void PrepareContext(llama_model* model, llmcc::BackendLogCapture& backend_log,
+                    const ScoreOptions& options, std::uint32_t required,
+                    Context& context, std::uint32_t& context_capacity,
+                    Sampler& sampler, DeviceEntropyState& device_state) {
+  if (context && context_capacity >= required) {
+    llama_memory_clear(llama_get_memory(context.get()), true);
+    return;
+  }
+  std::uint32_t capacity =
+      context_capacity == 0 ? std::min(options.context_size,
+                                       std::max(required, options.batch_size))
+                            : context_capacity;
+  while (capacity < required) {
+    const std::uint64_t doubled = static_cast<std::uint64_t>(capacity) * 2;
+    capacity = static_cast<std::uint32_t>(
+        std::min<std::uint64_t>(options.context_size, doubled));
+  }
+  context.reset();
+  sampler.reset();
+  llama_context_params parameters = llama_context_default_params();
+  parameters.n_ctx = capacity;
+  parameters.n_batch = options.batch_size;
+  parameters.n_ubatch = options.batch_size;
+  parameters.n_seq_max = 1;
+  parameters.n_outputs_max = options.batch_size;
+  parameters.n_outputs_max_per_seq = options.batch_size;
+  parameters.n_threads = options.threads;
+  parameters.n_threads_batch = options.threads;
+  llama_sampler_seq_config sampler_config{};
+  if (options.device_reduction) {
+    sampler = MakeDeviceEntropySampler(device_state);
+    sampler_config = {.seq_id = 0, .sampler = sampler.get()};
+    parameters.samplers = &sampler_config;
+    parameters.n_samplers = 1;
+  }
+  context.reset(llama_init_from_model(model, parameters));
+  if (!context) {
+    context_capacity = 0;
+    const std::string detail = backend_log.Error();
+    throw std::runtime_error("could not create inference context" +
+                             (detail.empty() ? std::string() : ": " + detail));
+  }
+  context_capacity = capacity;
+}
+
+std::vector<llmcc::TokenScore> ScoreHostBatch(
+    llama_context* context, std::span<const llama_token> targets,
+    std::int32_t vocabulary_size, bool entropy, HostReductionPool& reduction) {
+  std::vector<float*> logits_rows(targets.size());
+  for (std::size_t index = 0; index < targets.size(); ++index) {
+    logits_rows[index] =
+        llama_get_logits_ith(context, static_cast<std::int32_t>(index));
+    if (logits_rows[index] == nullptr) {
+      throw std::runtime_error("model returned no logits");
+    }
+    if (targets[index] < 0 || targets[index] >= vocabulary_size) {
+      throw std::runtime_error(
+          "tokenizer produced a token outside the vocabulary");
+    }
+  }
+  std::vector<llmcc::TokenScore> scores(targets.size());
+  reduction.Reduce(logits_rows, targets,
+                   static_cast<std::size_t>(vocabulary_size), entropy, scores);
+  return scores;
+}
+
+llmcc::TokenScore ReadDeviceScore(llama_context* context, std::size_t index,
+                                  bool entropy) {
+  llmcc::TokenScore score{};
+  const float* statistics =
+      llama_get_sampled_probs_ith(context, static_cast<std::int32_t>(index));
+  const std::uint32_t statistics_count = llama_get_sampled_probs_count_ith(
+      context, static_cast<std::int32_t>(index));
+  if (statistics == nullptr || statistics_count != 2 ||
+      !std::isfinite(statistics[0]) || !std::isfinite(statistics[1]) ||
+      statistics[0] < 0.0F) {
+    throw std::runtime_error(
+        "device entropy reduction returned invalid logits");
+  }
+  score.log_probability = statistics[1];
+  score.probability = std::exp(score.log_probability);
+  if (entropy) {
+    score.entropy = statistics[0];
+  }
+  return score;
+}
+
+void ReportScoringProgress(const ScoreOptions& options, std::size_t scored,
+                           std::size_t total) {
+  llmcc::ReportCounter(scored, total, "tokens");
+  if (options.progress != nullptr && *options.progress) {
+    (*options.progress)(scored, total);
+  }
+}
+
 void ScoreInput(llama_model* model, llmcc::BackendLogCapture& backend_log,
                 std::string_view input, const ScoreOptions& options,
                 std::ostream* output,
@@ -871,54 +998,13 @@ void ScoreInput(llama_model* model, llmcc::BackendLogCapture& backend_log,
     *options.inference_started = true;
   }
   llmcc::ReportPhase("inference");
-  llmcc::ReportCounter(0, total_scored_tokens, "tokens");
-  if (options.progress != nullptr && *options.progress) {
-    (*options.progress)(0, total_scored_tokens);
-  }
+  ReportScoringProgress(options, 0, total_scored_tokens);
 
   const std::size_t batch_size =
       std::min<std::size_t>(options.batch_size, tokens.size() - 1);
-  const auto required = static_cast<std::uint32_t>(tokens.size());
-  if (!context || context_capacity < required) {
-    std::uint32_t capacity =
-        context_capacity == 0 ? std::min(options.context_size,
-                                         std::max(required, options.batch_size))
-                              : context_capacity;
-    while (capacity < required) {
-      const std::uint64_t doubled = static_cast<std::uint64_t>(capacity) * 2;
-      capacity = static_cast<std::uint32_t>(
-          std::min<std::uint64_t>(options.context_size, doubled));
-    }
-    context.reset();
-    sampler.reset();
-    llama_context_params parameters = llama_context_default_params();
-    parameters.n_ctx = capacity;
-    parameters.n_batch = options.batch_size;
-    parameters.n_ubatch = options.batch_size;
-    parameters.n_seq_max = 1;
-    parameters.n_outputs_max = options.batch_size;
-    parameters.n_outputs_max_per_seq = options.batch_size;
-    parameters.n_threads = options.threads;
-    parameters.n_threads_batch = options.threads;
-    llama_sampler_seq_config sampler_config{};
-    if (options.device_reduction) {
-      sampler = MakeDeviceEntropySampler(device_state);
-      sampler_config = {.seq_id = 0, .sampler = sampler.get()};
-      parameters.samplers = &sampler_config;
-      parameters.n_samplers = 1;
-    }
-    context.reset(llama_init_from_model(model, parameters));
-    if (!context) {
-      context_capacity = 0;
-      const std::string detail = backend_log.Error();
-      throw std::runtime_error(
-          "could not create inference context" +
-          (detail.empty() ? std::string() : ": " + detail));
-    }
-    context_capacity = capacity;
-  } else {
-    llama_memory_clear(llama_get_memory(context.get()), true);
-  }
+  PrepareContext(model, backend_log, options,
+                 static_cast<std::uint32_t>(tokens.size()), context,
+                 context_capacity, sampler, device_state);
 
   const std::int32_t vocabulary_size = llama_vocab_n_tokens(vocabulary);
   double negative_log_likelihood = 0.0;
@@ -955,25 +1041,10 @@ void ScoreInput(llama_model* model, llmcc::BackendLogCapture& backend_log,
     }
     std::vector<llmcc::TokenScore> host_scores;
     if (!options.device_reduction) {
-      host_scores.resize(count);
-      std::vector<float*> logits_rows(count);
-      for (std::size_t index = 0; index < count; ++index) {
-        logits_rows[index] = llama_get_logits_ith(
-            context.get(), static_cast<std::int32_t>(index));
-        if (logits_rows[index] == nullptr) {
-          throw std::runtime_error("model returned no logits");
-        }
-        const llama_token target = tokens[source + index + 1];
-        if (target < 0 || target >= vocabulary_size) {
-          throw std::runtime_error(
-              "tokenizer produced a token outside the vocabulary");
-        }
-      }
-      host_reduction->Reduce(
-          logits_rows,
+      host_scores = ScoreHostBatch(
+          context.get(),
           std::span<const llama_token>(tokens.data() + source + 1, count),
-          static_cast<std::size_t>(vocabulary_size), options.entropy,
-          host_scores);
+          vocabulary_size, options.entropy, *host_reduction);
     }
     for (std::size_t index = 0; index < count; ++index) {
       const std::size_t target_index = source + index + 1;
@@ -982,27 +1053,10 @@ void ScoreInput(llama_model* model, llmcc::BackendLogCapture& backend_log,
         throw std::runtime_error(
             "tokenizer produced a token outside the vocabulary");
       }
-      llmcc::TokenScore score{};
-      if (options.device_reduction) {
-        const float* statistics = llama_get_sampled_probs_ith(
-            context.get(), static_cast<std::int32_t>(index));
-        const std::uint32_t statistics_count =
-            llama_get_sampled_probs_count_ith(context.get(),
-                                              static_cast<std::int32_t>(index));
-        if (statistics == nullptr || statistics_count != 2 ||
-            !std::isfinite(statistics[0]) || !std::isfinite(statistics[1]) ||
-            statistics[0] < 0.0F) {
-          throw std::runtime_error(
-              "device entropy reduction returned invalid logits");
-        }
-        score.log_probability = statistics[1];
-        score.probability = std::exp(score.log_probability);
-        if (options.entropy) {
-          score.entropy = statistics[0];
-        }
-      } else {
-        score = host_scores[index];
-      }
+      const llmcc::TokenScore score =
+          options.device_reduction
+              ? ReadDeviceScore(context.get(), index, options.entropy)
+              : host_scores[index];
       const std::string piece = TokenPiece(vocabulary, target);
       if (output != nullptr) {
         WriteScore(*output, target_index - first_observed, target, piece, score,
@@ -1016,10 +1070,7 @@ void ScoreInput(llama_model* model, llmcc::BackendLogCapture& backend_log,
       negative_log_likelihood -= score.log_probability;
       ++scored;
     }
-    llmcc::ReportCounter(scored, total_scored_tokens, "tokens");
-    if (options.progress != nullptr && *options.progress) {
-      (*options.progress)(scored, total_scored_tokens);
-    }
+    ReportScoringProgress(options, scored, total_scored_tokens);
   }
   WriteSummary(diagnostics, tokens.size() - first_observed, scored,
                negative_log_likelihood, options.device_reduction);

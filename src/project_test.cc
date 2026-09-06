@@ -202,6 +202,32 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(!fallback.sources[0].repository.has_value(),
                       "non-Git source has no cache repository");
 
+  Write(plain / ".venv/dependency.py", "def dependency(): pass\n");
+  Write(plain / "out/Generated.java", "class Generated {}\n");
+  Write(plain / "src/out/Kept.java", "class Kept {}\n");
+  Write(plain / "bin/Generated.cs", "class Generated {}\n");
+  Write(plain / ".llm-cc-cache/never.rs", "fn never() {}\n");
+  const auto filtered_fallback = llmcc::DiscoverSources({plain});
+  llmcc::test::ExpectEq(filtered_fallback.sources.size(), std::size_t{2},
+                        "filesystem discovery filters generated subtrees");
+  llmcc::test::Expect(
+      std::ranges::any_of(filtered_fallback.sources,
+                          [](const auto& source) {
+                            return source.path.filename() == "Kept.java";
+                          }),
+      "filesystem discovery preserves nested source directories named out");
+  const auto unfiltered_fallback =
+      llmcc::DiscoverSources({plain}, {.no_ignore = true});
+  llmcc::test::ExpectEq(
+      unfiltered_fallback.sources.size(), std::size_t{5},
+      "no-ignore includes generated files in filesystem discovery");
+  llmcc::test::Expect(
+      std::ranges::none_of(unfiltered_fallback.sources,
+                           [](const auto& source) {
+                             return source.path.filename() == "never.rs";
+                           }),
+      "no-ignore still excludes the entropy cache in filesystem discovery");
+
   const fs::path environment = fs::path(temporary) / "custom-environment";
   Write(environment / "pyvenv.cfg", "home = /usr/bin\n");
   Write(environment / "lib/site-packages/dependency.py",
