@@ -25,6 +25,8 @@ build:macos --macos_minimum_os=14.0
 build:windows --cxxopt=/std:c++20
 # C++ fixture tests and Bash integration tests use the runfiles directory.
 build:windows --enable_runfiles
+# The standalone Windows executable includes the MSVC runtime.
+build:windows --features=static_link_msvcrt
 
 build:release --compilation_mode=opt
 build:release --strip=always

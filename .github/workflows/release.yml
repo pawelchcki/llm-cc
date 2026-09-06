@@ -53,7 +53,9 @@ jobs:
       - name: Configure Windows toolchain
         if: runner.os == 'Windows'
         run: |
-          echo 'BAZEL_SH=C:/Program Files/Git/bin/bash.exe' >> "$GITHUB_ENV"
+          # Bazel's Bash launcher writes this into a shebang, which cannot
+          # contain spaces. Git for Windows has this standard short path.
+          echo 'BAZEL_SH=C:/PROGRA~1/Git/bin/bash.exe' >> "$GITHUB_ENV"
       - name: Prepare release stamp
         id: release
         run: tools/release_ref.sh
@@ -73,6 +75,25 @@ jobs:
           if [[ "$PLATFORM" == linux-arm64 ]]; then floor=2.35; fi
           tools/check_glibc_version.sh bazel-bin/llm-cc "$floor"
           tools/check_static_link.sh bazel-bin/llm-cc
+      - name: Verify macOS system-library dependencies
+        if: runner.os == 'macOS'
+        run: |
+          otool -L bazel-bin/llm-cc
+          unexpected="$(otool -L bazel-bin/llm-cc | tail -n +2 | awk '{print $1}' | grep -Ev '^(/usr/lib/|/System/Library/)' || true)"
+          [[ -z "$unexpected" ]] || { echo "Unexpected libraries: $unexpected" >&2; exit 1; }
+      - name: Verify Windows executable needs no redistributable DLLs
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+          $dumpbin = & $vswhere -latest -products '*' -find 'VC/Tools/MSVC/**/bin/Hostx64/x64/dumpbin.exe' | Select-Object -First 1
+          if (!$dumpbin) { throw 'dumpbin was not found' }
+          $dependencies = & $dumpbin /dependents bazel-bin/llm-cc.exe
+          if ($LASTEXITCODE -ne 0) { throw 'dumpbin failed' }
+          $dependencies
+          if ($dependencies -match '(?i)(VCRUNTIME|MSVCP|libcurl|libssl|libcrypto).*\.dll') {
+            throw 'Release executable requires an external runtime DLL'
+          }
       - name: Stage standalone executable
         env:
           VERSION: ${{ steps.release.outputs.version }}

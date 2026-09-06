@@ -403,6 +403,7 @@ cmake(
             CURL_USE_SECTRANSP = "ON",
         ),
         ":host_windows": curl_cmake_options(
+            CMAKE_MSVC_RUNTIME_LIBRARY = "MultiThreaded",
             CURL_USE_OPENSSL = "OFF",
             CURL_USE_SCHANNEL = "ON",
         ),
@@ -1043,6 +1044,11 @@ sh_test(
     name = "install_test",
     srcs = ["//tools:install_test.sh"],
     data = ["//tools:install.sh"],
+    # This tests the Unix source installer, which uses flock/shlock.
+    target_compatible_with = select({
+        ":host_windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
 )
 
 alias(
@@ -1169,6 +1175,12 @@ cc_test(
 cc_test(
     name = "cli_test",
     srcs = ["src/cli_test.cc"],
+    # This harness uses POSIX shell quoting and wait status. Native Windows
+    # release execution is covered by the packaged-executable smoke test.
+    target_compatible_with = select({
+        ":host_windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
     data = [
         ":llm-cc",
     ] + glob(["testdata/cli/*"]),
