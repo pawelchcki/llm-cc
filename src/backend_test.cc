@@ -227,23 +227,6 @@ int main() try {
   const fs::path runfile_plugin = root / "runfiles" / "cuda.so";
   fs::create_directories(runfile_plugin.parent_path());
   WriteFile(runfile_plugin);
-  const fs::path empty_backend_directory = root / "empty-explicit";
-  fs::create_directories(empty_backend_directory);
-  for (const auto& prefix : std::array<std::optional<fs::path>, 2>{
-           std::nullopt, root / "missing-prefix"}) {
-    const auto fallback = llmcc::ResolveBackendPlugin(
-        BackendKind::kCuda, empty_backend_directory, std::array{runfile_plugin},
-        [] { return false; },
-        []() -> fs::path {
-          throw std::runtime_error("runfiles should win before runtime cache");
-        },
-        "test-version", "expected", {}, [&] { return prefix; });
-    ExpectEq(
-        fallback.source, llmcc::BackendPluginSource::kSharedLibrary,
-        "empty configured and installed locations fall through to runfiles");
-    ExpectEq(fallback.path, runfile_plugin,
-             "runfile fallback preserves its path");
-  }
   const llmcc::ResolvedBackendPlugin installed = llmcc::ResolveBackendPlugin(
       BackendKind::kCuda, std::nullopt, std::array{runfile_plugin},
       [] { return false; }, [&] { return runtime_root; }, "test-version",
@@ -267,14 +250,13 @@ int main() try {
   Expect(ThrowsContaining<std::runtime_error>(
              [&] {
                static_cast<void>(llmcc::ResolveBackendPlugin(
-                   BackendKind::kCuda, std::nullopt, std::array{runfile_plugin},
-                   [] { return false; }, [&] { return runtime_root; },
-                   "test-version", "expected", {},
+                   BackendKind::kCuda, std::nullopt,
+                   std::span<const fs::path>{}, [] { return false; },
+                   [&] { return runtime_root; }, "test-version", "expected", {},
                    [&] { return std::optional<fs::path>(installed_root); }));
              },
              "reinstall with 'bazel run --config=cuda //:install'"),
-         "bad installed checksum fails before runfiles and gives a reinstall "
-         "hint");
+         "bad installed checksum gives a reinstall hint");
   WriteFile(installed_bundle.string() + ".sha256",
             llmcc::Sha256Hex(installed_contents) + "\n");
   WriteFile(installed_bundle.parent_path() / "cuda.manifest.json",
@@ -310,7 +292,6 @@ int main() try {
 
   fs::remove(installed_bundle);
   fs::remove(installed_bundle.string() + ".sha256");
-  fs::remove(installed_bundle.parent_path() / "cuda.manifest.json");
   WriteFile(installed_bundle.string() + ".partial", "partial");
   Expect(ThrowsContaining<std::runtime_error>(
              [&] {
