@@ -62,11 +62,7 @@ cuda.redist_json(
     version = "13.0.2",
 )
 cuda.toolkit(name = "cuda")
-use_repo(
-    cuda,
-    "cuda",
-    cuda_cublas = "cuda_cublas_v13.1.0.3",
-)
+use_repo(cuda, "cuda")
 
 register_toolchains("@cuda//toolchain:nvcc-local-toolchain")
 

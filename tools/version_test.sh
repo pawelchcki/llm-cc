@@ -46,6 +46,11 @@ tagged_output="$("$tagged_repo/tools/version.sh")"
   echo "exact tag: expected 0.1.0, got $tagged_output" >&2
   exit 1
 }
+tagged_sha="$(git -C "$tagged_repo" rev-parse HEAD)"
+tagged_status="$(LLM_CC_RESOLVER_BASE=https://ignored.example "$tagged_repo/tools/bazel_status.sh")"
+grep -qx "STABLE_LLM_CC_GIT_SHA $tagged_sha" <<<"$tagged_status"
+grep -qx 'STABLE_LLM_CC_VERSION 0.1.0' <<<"$tagged_status"
+grep -qx 'STABLE_LLM_CC_ARTIFACT_BASE_URL https://github.com/pawelchcki/llm-cc/releases/download/v0.1.0' <<<"$tagged_status"
 
 untagged_repo="$(make_repo untagged 0.1.0)"
 untagged_sha="$(git -C "$untagged_repo" rev-parse --short HEAD)"
@@ -60,7 +65,7 @@ grep -qx "STABLE_LLM_CC_GIT_SHA $untagged_full_sha" <<<"$untagged_status" || {
   echo "clean status did not stamp HEAD" >&2
   exit 1
 }
-grep -qx "STABLE_LLM_CC_ARTIFACT_BASE_URL https://ci-artifacts.pawelchcki.workers.dev/pawelchcki/llm-cc/$untagged_full_sha" <<<"$untagged_status" || {
+grep -qx "STABLE_LLM_CC_ARTIFACT_BASE_URL https://ci-toolkit.pawelchcki.workers.dev/artifacts/pawelchcki/llm-cc/$untagged_full_sha" <<<"$untagged_status" || {
   echo "clean status did not stamp the resolver URL" >&2
   exit 1
 }

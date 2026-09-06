@@ -92,6 +92,13 @@ load("@rules_cc//cc:cc_library.bzl", "cc_library")
 
 package(default_visibility = ["//visibility:public"])
 
+# Use these pinned archives directly: rules_cuda's generated cuBLAS repository
+# exists only on CUDA hosts, so importing it in MODULE.bazel breaks macOS.
+exports_files([
+    "sdk/lib/libcublas_static.a",
+    "sdk/lib/libcublasLt_static.a",
+])
+
 filegroup(
     name = "sdk",
     srcs = glob(["sdk/**"]),
