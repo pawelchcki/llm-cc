@@ -54,7 +54,6 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           echo 'BAZEL_SH=C:/Program Files/Git/bin/bash.exe' >> "$GITHUB_ENV"
-          echo 'BAZEL_VC=C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC' >> "$GITHUB_ENV"
       - name: Prepare release stamp
         id: release
         run: tools/release_ref.sh
@@ -62,7 +61,8 @@ jobs:
         env:
           BACKEND: ${{ matrix.backend }}
         run: |
-          bazel test --config=distribution --config="$BACKEND" --lockfile_mode=off --jobs=4 //:unit //:integration
+          python tools/release_assets_test.py
+          bazel test --config=distribution --config="$BACKEND" --lockfile_mode=off --jobs=4 --test_output=errors //:unit //:integration
           bazel build --config=distribution --config="$BACKEND" --lockfile_mode=off --jobs=4 //:llm-cc
       - name: Verify Linux runtime compatibility
         if: runner.os == 'Linux'
@@ -206,6 +206,7 @@ jobs:
           COMMIT: ${{ steps.release.outputs.commit }}
         run: |
           python tools/release_assets.py verify --version "$VERSION" --commit "$COMMIT" --output "$RUNNER_TEMP/release-assets"
+          python tools/release_bundle_smoke.py "$RUNNER_TEMP/release-assets" "$VERSION"
       - uses: actions/upload-artifact@v7
         with:
           name: complete-release
@@ -245,4 +246,14 @@ jobs:
             name="llm-cc-backend-$backend-linux-x86_64.manifest.json"
             curl --fail --location --retry 5 --retry-all-errors "$base/$name" -o published-manifest
             cmp "release-assets/$name" published-manifest
+          done
+      - name: Install from GitHub and automatically fetch the released GPU bundles
+        env:
+          LLM_CC_RUNTIME_DIR: ${{ runner.temp }}/published-runtime
+        run: |
+          python3 release-assets/install_release.py --version "$TAG" --bin-dir "$RUNNER_TEMP/installed"
+          "$RUNNER_TEMP/installed/llm-cc" --version
+          for backend in cuda rocm; do
+            "$RUNNER_TEMP/installed/llm-cc" backends fetch "$backend" --assume-yes
+            "$RUNNER_TEMP/installed/llm-cc" backends fetch "$backend" --no-download
           done

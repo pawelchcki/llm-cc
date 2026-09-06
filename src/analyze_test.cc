@@ -113,7 +113,11 @@ int main() {  // NOLINT(bugprone-exception-escape)
   const char* temporary = std::getenv("TEST_TMPDIR");
   llmcc::test::Expect(temporary != nullptr, "TEST_TMPDIR is set");
   const fs::path entropy_root = fs::path(temporary) / "entropy-cache";
+#ifdef _WIN32
+  _wputenv_s(L"LLM_CC_ENTROPY_CACHE_DIR", entropy_root.c_str());
+#else
   setenv("LLM_CC_ENTROPY_CACHE_DIR", entropy_root.c_str(), 1);
+#endif
   const fs::path repository = fs::path(temporary) / "repo";
   const fs::path model = fs::path(temporary) / "model.gguf";
   fs::create_directories(repository);
