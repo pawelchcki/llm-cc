@@ -80,7 +80,8 @@ struct ResolvedBackendPlugin {
 
 // Resolves a GPU plugin in production order. The callback keeps the embedded
 // payload probe at step 2 without making filesystem-only unit tests load it.
-// fetch_backend is the network-backed last resort at step 6.
+// fetch_backend is the network-backed last resort at step 6. Callers that have
+// already inspected the runtime cache may exclude it from resolution.
 ResolvedBackendPlugin ResolveBackendPlugin(
     BackendKind backend,
     const std::optional<std::filesystem::path>& backend_directory,
@@ -91,7 +92,8 @@ ResolvedBackendPlugin ResolveBackendPlugin(
     const std::function<std::optional<ResolvedBackendPlugin>()>& fetch_backend =
         {},
     const std::function<std::optional<std::filesystem::path>()>&
-        installed_root = {});
+        installed_root = {},
+    bool include_runtime_cache = true);
 
 // Loads exactly the backend plugins needed by this inference invocation. The
 // object must outlive all llama.cpp objects created by the caller.

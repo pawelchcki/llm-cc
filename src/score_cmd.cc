@@ -1129,6 +1129,7 @@ class EntropyScorer::Impl {
         context_limit_(inference_options.context_size),
         batch_size_(inference_options.batch_size),
         progress_(inference_options.progress),
+        use_gpu_(inference_options.gpu_layers != 0),
         threads_(static_cast<std::int32_t>(
             std::max(1U, std::thread::hardware_concurrency()))) {
     Arguments arguments;
@@ -1198,6 +1199,7 @@ class EntropyScorer::Impl {
 
   std::vector<EntropyRecord> ScoreRecords(std::string_view input) {
     std::vector<EntropyRecord> records;
+    bool inference_started = false;
     try {
       ScoreInput(model_.get(), backend_log_, input,
                  {.bos = BosMode::kAuto,
@@ -1207,14 +1209,18 @@ class EntropyScorer::Impl {
                   .batch_size = batch_size_,
                   .device_reduction = device_reduction_,
                   .context_option = "--context",
-                  .progress = &progress_},
+                  .progress = &progress_,
+                  .inference_started = &inference_started},
                  nullptr, &records, nullptr, context_, context_capacity_,
                  sampler_, device_state_,
                  host_reduction_.has_value() ? &*host_reduction_ : nullptr);
-    } catch (...) {
+    } catch (const std::exception& error) {
       context_.reset();
       sampler_.reset();
       context_capacity_ = 0;
+      if (use_gpu_ && inference_started) {
+        throw GpuRecoverableError(error.what());
+      }
       throw;
     }
     return records;
@@ -1234,6 +1240,7 @@ class EntropyScorer::Impl {
   std::function<void(std::size_t, std::size_t)> progress_;
   std::uint32_t context_capacity_ = 0;
   bool device_reduction_ = false;
+  bool use_gpu_ = false;
   std::int32_t threads_;
 };
 

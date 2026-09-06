@@ -420,8 +420,8 @@ ResolvedBackendPlugin ResolveBackendPlugin(
     const std::function<std::filesystem::path()>& runtime_root,
     std::string_view version, std::string_view git_sha,
     const std::function<std::optional<ResolvedBackendPlugin>()>& fetch_backend,
-    const std::function<std::optional<std::filesystem::path>()>&
-        installed_root) {
+    const std::function<std::optional<std::filesystem::path>()>& installed_root,
+    bool include_runtime_cache) {
   if (backend != BackendKind::kCuda && backend != BackendKind::kRocm) {
     throw std::invalid_argument("only CUDA and ROCm plugins can be resolved");
   }
@@ -530,7 +530,7 @@ ResolvedBackendPlugin ResolveBackendPlugin(
       .runtime_root = runtime_root(),
   };
   const std::filesystem::path cached_bundle = BackendBundlePath(cached_options);
-  if (IsRegularFile(cached_bundle)) {
+  if (include_runtime_cache && IsRegularFile(cached_bundle)) {
     try {
       VerifyBackendBundle(cached_options);
       return {.source = BackendPluginSource::kBundle,
@@ -573,7 +573,7 @@ std::string DiscoverBackendSource(BackendKind backend) {
         backend, directory, PluginCandidates(backend),
         [backend] { return HasEmbeddedPayload(BackendName(backend)); },
         [] { return RuntimeRoot(); }, LLM_CC_VERSION, LLM_CC_GIT_SHA, {},
-        [] { return InstalledBackendRoot(); });
+        [] { return InstalledBackendRoot(); }, false);
     if (resolved.source == BackendPluginSource::kEmbedded)
       return "embedded (device untested)";
     return resolved.path.string() + " (device untested)";

@@ -28,6 +28,15 @@
 namespace llmcc {
 namespace cache_io {
 
+inline std::string PathUtf8(const std::filesystem::path& path) {
+#if defined(_WIN32)
+  const std::u8string value = path.u8string();
+  return std::string(reinterpret_cast<const char*>(value.data()), value.size());
+#else
+  return path.string();
+#endif
+}
+
 inline void CheckNotSymlink(const std::filesystem::path& path) {
   std::error_code error;
   const auto status = std::filesystem::symlink_status(path, error);
@@ -74,7 +83,7 @@ inline std::string UniqueSuffix() {
 class FileLock {
  public:
   explicit FileLock(const std::filesystem::path& path) {
-    ReportPhase("waiting for cache lock " + path.string());
+    ReportPhase("waiting for cache lock " + PathUtf8(path));
     if (!path.parent_path().empty()) {
       std::filesystem::create_directories(path.parent_path());
     }

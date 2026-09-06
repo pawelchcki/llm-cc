@@ -327,6 +327,22 @@ int main() try {
   WriteFile(cached_bundle.parent_path() / "cuda.manifest.json",
             R"({"git_sha":"actual"})");
 
+  const fs::path alternate_bundle = root / "alternate.bundle";
+  const llmcc::ResolvedBackendPlugin cache_skipped =
+      llmcc::ResolveBackendPlugin(
+          BackendKind::kCuda, std::nullopt, std::span<const fs::path>{},
+          [] { return false; }, [&] { return runtime_root; }, "test-version",
+          "expected",
+          [&] {
+            return std::optional<llmcc::ResolvedBackendPlugin>(
+                {{.source = llmcc::BackendPluginSource::kBundle,
+                  .path = alternate_bundle,
+                  .payload_verified = true}});
+          },
+          {}, false);
+  ExpectEq(cache_skipped.path, alternate_bundle,
+           "runtime cache can be excluded after separate inspection");
+
   bool repair_called = false;
   const fs::path repaired_bundle = root / "repaired.bundle";
   const llmcc::ResolvedBackendPlugin repaired = llmcc::ResolveBackendPlugin(
