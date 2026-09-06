@@ -35,6 +35,7 @@ ExecutionOptions ResolveExecutionOptions(BackendKind backend,
 std::string CpuRecoveryCommand(int argc, char** argv, bool score = false);
 std::string SmallerModelGuidance(
     std::optional<std::uint64_t> available = std::nullopt);
+bool IsGpuAllocationFailure(std::string_view diagnostics);
 
 std::string DiscoverBackendSource(BackendKind backend);
 
@@ -60,6 +61,7 @@ class BackendLogCapture {
   ~BackendLogCapture();
 
   [[nodiscard]] std::string Error() const;
+  void Clear();
 
  private:
   std::string errors_;

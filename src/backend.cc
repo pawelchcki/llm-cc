@@ -412,6 +412,8 @@ std::string BackendLogCapture::Error() const {
   return result;
 }
 
+void BackendLogCapture::Clear() { errors_.clear(); }
+
 ResolvedBackendPlugin ResolveBackendPlugin(
     BackendKind backend,
     const std::optional<std::filesystem::path>& backend_directory,

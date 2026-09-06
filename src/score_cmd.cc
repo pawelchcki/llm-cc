@@ -539,10 +539,7 @@ void CheckAvailableMemory(const Arguments& arguments, bool use_gpu,
     if (use_gpu && !gpu_available.has_value()) {
       const llmcc::MemoryCheckResult result =
           llmcc::CheckMemory(model_bytes, 0, gpu_available, true, false);
-      throw llmcc::GpuRecoverableError(
-          result.error + "\n" +
-          llmcc::SmallerModelGuidance(use_gpu ? gpu_available
-                                              : host_available));
+      throw llmcc::GpuRecoverableError(result.error);
     }
     llmcc::ReportWarning(
         "could not determine available host memory; skipping memory check");
@@ -552,11 +549,9 @@ void CheckAvailableMemory(const Arguments& arguments, bool use_gpu,
   const llmcc::MemoryCheckResult result = llmcc::CheckMemory(
       model_bytes, *host_available, gpu_available, use_gpu, false);
   if (!result.ok) {
-    const std::string message =
-        result.error + "\n" +
-        llmcc::SmallerModelGuidance(use_gpu ? gpu_available : host_available);
-    if (use_gpu) throw llmcc::GpuRecoverableError(message);
-    throw std::runtime_error(message);
+    if (use_gpu) throw llmcc::GpuRecoverableError(result.error);
+    throw std::runtime_error(result.error + "\n" +
+                             llmcc::SmallerModelGuidance(host_available));
   }
 }
 
@@ -1058,14 +1053,20 @@ int Run(const Arguments& arguments, std::string_view input,
   model_parameters.n_gpu_layers = arguments.gpu_layers;
   const std::string model_path = Utf8Path(arguments.model);
   llmcc::ReportPhase("loading model");
+  backend_log.Clear();
   Model model(llama_model_load_from_file(model_path.c_str(), model_parameters),
               llama_model_free);
   if (!model) {
     const std::string detail = backend_log.Error();
-    throw std::runtime_error(
+    const std::string message =
         "could not load model: " + arguments.model.string() +
-        (detail.empty() ? std::string() : ": " + detail));
+        (detail.empty() ? std::string() : ": " + detail);
+    if (use_gpu && llmcc::IsGpuAllocationFailure(detail)) {
+      throw llmcc::GpuRecoverableError(message);
+    }
+    throw std::runtime_error(message);
   }
+  backend_log.Clear();
   DeviceEntropyState device_state;
   Sampler sampler(nullptr, llama_sampler_free);
   Context context(nullptr, llama_free);
@@ -1160,14 +1161,20 @@ class EntropyScorer::Impl {
     parameters.n_gpu_layers = inference_options.gpu_layers;
     const std::string utf8_model_path = Utf8Path(model_path);
     ReportPhase("loading model");
+    backend_log_.Clear();
     model_.reset(
         llama_model_load_from_file(utf8_model_path.c_str(), parameters));
     if (!model_) {
       const std::string detail = backend_log_.Error();
-      throw std::runtime_error(
+      const std::string message =
           "could not load model: " + model_path.string() +
-          (detail.empty() ? std::string() : ": " + detail));
+          (detail.empty() ? std::string() : ": " + detail);
+      if (use_gpu_ && IsGpuAllocationFailure(detail)) {
+        throw GpuRecoverableError(message);
+      }
+      throw std::runtime_error(message);
     }
+    backend_log_.Clear();
     if (!device_reduction_) {
       host_reduction_.emplace(HostReductionWorkerCount(batch_size_, threads_));
     }
