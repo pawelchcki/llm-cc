@@ -755,6 +755,9 @@ class HostReductionPool {
       stopping_ = true;
     }
     task_ready_.notify_all();
+    for (auto& worker : workers_) {
+      worker.join();
+    }
   }
 
   void WorkerLoop() {
@@ -815,7 +818,9 @@ class HostReductionPool {
   std::size_t workers_pending_ = 0;
   std::atomic_size_t next_row_ = 0;
   std::exception_ptr worker_error_;
-  std::vector<std::jthread> workers_;
+  // Apple SDKs before macOS 26 do not provide std::jthread. StopWorkers
+  // joins these threads on both normal destruction and constructor failure.
+  std::vector<std::thread> workers_;
 };
 
 void CheckBatchSize(std::uint32_t batch_size) {
