@@ -102,15 +102,25 @@ llm-cc --version
 ### Prebuilt releases
 
 Download an executable from [GitHub Releases](https://github.com/pawelchcki/llm-cc/releases),
-or use the included installer with Python 3.9+:
+or use the included installer with Python 3.9+ on macOS or Linux:
 
 ```sh
 python3 tools/install_release.py
 ```
 
-It selects your platform, verifies SHA-256, and installs into `$HOME/.local/bin`.
-Linux x86-64 releases can download matching CUDA/ROCm bundles; macOS includes
-Metal. Windows x64 and Linux ARM64 releases use CPU. Model weights are separate.
+On Windows, use the Python launcher:
+
+```powershell
+py -3 tools/install_release.py
+```
+
+The installer selects your platform, verifies SHA-256, and installs into
+`$HOME/.local/bin` (or `%USERPROFILE%\.local\bin` on Windows). Ensure that
+directory is on `PATH` before running `llm-cc`; pass `--bin-dir PATH` to choose
+another location. Linux x86-64 releases require glibc 2.28 or newer and can
+download matching CUDA/ROCm bundles. Linux ARM64 releases require glibc 2.35 or
+newer and use CPU. macOS includes Metal, while Windows x64 uses CPU. Model
+weights are separate.
 
 ## Usage
 
