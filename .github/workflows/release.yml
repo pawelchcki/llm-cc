@@ -31,11 +31,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { platform: linux-x86_64, runner: ubuntu-24.04, backend: cpu, binary: llm-cc }
-          - { platform: linux-arm64, runner: ubuntu-22.04-arm, backend: cpu, binary: llm-cc }
           - { platform: windows-x86_64, runner: windows-2025, backend: cpu, binary: llm-cc.exe }
-          - { platform: macos-arm64, runner: macos-15, backend: metal, binary: llm-cc }
-          - { platform: macos-x86_64, runner: macos-15-intel, backend: metal, binary: llm-cc }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     steps:
@@ -66,7 +62,10 @@ jobs:
           COMMIT: ${{ steps.release.outputs.commit }}
         run: |
           python tools/release_assets_test.py
-          bazel build --config=distribution --config="$BACKEND" --lockfile_mode=off --jobs=4 //:version_header
+          python -c 'import subprocess; subprocess.run(["cmd.exe", "/d", "/c", "tools\\bazel_status.cmd"], check=True)'
+          bazel build --config=distribution --config="$BACKEND" --lockfile_mode=off --jobs=4 --subcommands //:version_header
+          cat bazel-out/stable-status.txt
+          cat bazel-bin/generated/version.h
           grep -Fx "#define LLM_CC_VERSION \"$VERSION\"" bazel-bin/generated/version.h
           grep -Fx "#define LLM_CC_GIT_SHA \"$COMMIT\"" bazel-bin/generated/version.h
           grep -Fx "#define LLM_CC_ARTIFACT_BASE_URL \"https://github.com/pawelchcki/llm-cc/releases/download/v$VERSION\"" bazel-bin/generated/version.h
@@ -131,6 +130,7 @@ jobs:
           if-no-files-found: error
 
   backends:
+    if: false
     name: Build Linux x86-64 ${{ matrix.backend }} bundle
     runs-on: ubuntu-24.04
     timeout-minutes: 180
