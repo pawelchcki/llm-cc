@@ -3,7 +3,9 @@ common --enable_platform_specific_config
 build --announce_rc
 build --show_timestamps
 build --action_env=SOURCE_DATE_EPOCH=0
-build --workspace_status_command=tools/bazel_status.sh
+# Invoke the interpreter explicitly; Windows cannot execute a .sh status
+# command directly, and status collection precedes platform-config expansion.
+build --workspace_status_command="bash tools/bazel_status.sh"
 build --@rules_cuda//cuda:runtime=@cuda//:cuda_runtime_static
 
 build:cpu --//:backend=cpu
@@ -23,6 +25,10 @@ build:macos --macos_minimum_os=14.0
 # MSVC defaults to C++14, while llm-cc uses C++20 library and language
 # features, including std::span and designated initializers.
 build:windows --cxxopt=/std:c++20
+# C++ fixture tests and Bash integration tests use the runfiles directory.
+build:windows --enable_runfiles
+# The standalone Windows executable includes the MSVC runtime.
+build:windows --features=static_link_msvcrt
 
 build:release --compilation_mode=opt
 build:release --strip=always

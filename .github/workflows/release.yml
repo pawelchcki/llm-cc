@@ -2,140 +2,285 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish assets (requires selecting an existing version tag)
+        type: boolean
+        default: false
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  RELEASE_PUBLISH: ${{ github.event_name == 'push' || inputs.publish }}
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
+  binaries:
+    name: Build ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-x86_64, runner: ubuntu-24.04, backend: cpu, binary: llm-cc }
+          - { platform: linux-arm64, runner: ubuntu-22.04-arm, backend: cpu, binary: llm-cc }
+          - { platform: windows-x86_64, runner: windows-2025, backend: cpu, binary: llm-cc.exe }
+          - { platform: macos-arm64, runner: macos-15, backend: metal, binary: llm-cc }
+          - { platform: macos-x86_64, runner: macos-15-intel, backend: metal, binary: llm-cc }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
     steps:
-      - name: Check out tagged commit
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          fetch-tags: true
-
-      - name: Set up Bazel
-        uses: bazel-contrib/setup-bazel@0.19.0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: bazel-contrib/setup-bazel@0.19.0
         with:
           bazelisk-cache: true
-          disk-cache: ${{ github.workflow }}
+          disk-cache: release-${{ matrix.platform }}
           repository-cache: true
-
-      - name: Build and verify portable CPU binary
-        shell: bash
+      - name: Configure Windows toolchain
+        if: runner.os == 'Windows'
         run: |
-          set -euo pipefail
-          bazel build --config=distribution --config=portable //:cpu_static_archive
-          tools/check_glibc_version.sh bazel-bin/llm-cc 2.28
+          # Bazel's Bash launcher writes this into a shebang, which cannot
+          # contain spaces. Git for Windows has this standard short path.
+          echo 'BAZEL_SH=C:/PROGRA~1/Git/bin/bash.exe' >> "$GITHUB_ENV"
+      - name: Prepare release stamp
+        id: release
+        run: tools/release_ref.sh
+      - name: Test and build distribution binary
+        env:
+          BACKEND: ${{ matrix.backend }}
+          VERSION: ${{ steps.release.outputs.version }}
+          COMMIT: ${{ steps.release.outputs.commit }}
+        run: |
+          python tools/release_assets_test.py
+          bazel build --config=distribution --config="$BACKEND" --lockfile_mode=off --jobs=4 //:version_header
+          grep -Fx "#define LLM_CC_VERSION \"$VERSION\"" bazel-bin/generated/version.h
+          grep -Fx "#define LLM_CC_GIT_SHA \"$COMMIT\"" bazel-bin/generated/version.h
+          grep -Fx "#define LLM_CC_ARTIFACT_BASE_URL \"https://github.com/pawelchcki/llm-cc/releases/download/v$VERSION\"" bazel-bin/generated/version.h
+          bazel test --config=distribution --config="$BACKEND" --lockfile_mode=off --jobs=4 --test_output=errors //:unit //:integration
+          bazel build --config=distribution --config="$BACKEND" --lockfile_mode=off --jobs=4 //:llm-cc
+      - name: Verify Linux runtime compatibility
+        if: runner.os == 'Linux'
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          floor=2.28
+          if [[ "$PLATFORM" == linux-arm64 ]]; then floor=2.35; fi
+          tools/check_glibc_version.sh bazel-bin/llm-cc "$floor"
           tools/check_static_link.sh bazel-bin/llm-cc
+      - name: Verify macOS system-library dependencies
+        if: runner.os == 'macOS'
+        run: |
+          otool -L bazel-bin/llm-cc
+          unexpected="$(otool -L bazel-bin/llm-cc | tail -n +2 | awk '{print $1}' | grep -Ev '^(/usr/lib/|/System/Library/)' || true)"
+          [[ -z "$unexpected" ]] || { echo "Unexpected libraries: $unexpected" >&2; exit 1; }
+      - name: Verify Windows executable needs no redistributable DLLs
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+          $dumpbin = & $vswhere -latest -products '*' -find 'VC/Tools/MSVC/**/bin/Hostx64/x64/dumpbin.exe' | Select-Object -First 1
+          if (!$dumpbin) { throw 'dumpbin was not found' }
+          $dependencies = & $dumpbin /dependents bazel-bin/llm-cc.exe
+          if ($LASTEXITCODE -ne 0) { throw 'dumpbin failed' }
+          $dependencies
+          if ($dependencies -match '(?i)(VCRUNTIME|MSVCP|libcurl|libssl|libcrypto).*\.dll') {
+            throw 'Release executable requires an external runtime DLL'
+          }
+      - name: Stage standalone executable
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          COMMIT: ${{ steps.release.outputs.commit }}
+          PLATFORM: ${{ matrix.platform }}
+          BINARY: ${{ matrix.binary }}
+        run: |
+          python tools/release_assets.py binary --version "$VERSION" --commit "$COMMIT" \
+            --platform "$PLATFORM" --binary "bazel-bin/$BINARY" --output "$RUNNER_TEMP/release-assets"
+      - name: Smoke test standalone package with a real model
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+          LLM_CC_RUNTIME_DIR: ${{ runner.temp }}/smoke-runtime
+          XDG_CACHE_HOME: ${{ runner.temp }}/smoke-models
+        run: |
+          suffix=""
+          if [[ "$PLATFORM" == windows-x86_64 ]]; then suffix=.exe; fi
+          binary="$RUNNER_TEMP/release-assets/llm-cc-$VERSION-$PLATFORM$suffix"
+          cd "$RUNNER_TEMP"
+          "$binary" --version
+          "$binary" score --model-name qwen2.5-coder-0.5b-q4_k_m --prompt 'int add(int a, int b) { return a + b; }' \
+            --context-size 512 --batch-size 8 --threads 4 --force-cpu --assume-yes > smoke.json
+          python -c 'import json; rows=[json.loads(line) for line in open("smoke.json")]; assert any(isinstance(row.get("log_probability"), (int, float)) for row in rows), rows'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.platform }}
+          path: ${{ runner.temp }}/release-assets/*
+          if-no-files-found: error
 
-          version="${GITHUB_REF_NAME#v}"
-          actual="$(bazel-bin/llm-cc --version)"
-          expected="llm-cc ${version}"
-          if [[ "$actual" != "$expected" ]]; then
-            echo "::error::Version stamp mismatch: expected '$expected', got '$actual'" >&2
+  backends:
+    name: Build Linux x86-64 ${{ matrix.backend }} bundle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [cuda, rocm]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Prepare release stamp
+        id: release
+        run: tools/release_ref.sh
+      - name: Reuse verified GPU bundle for this exact commit
+        id: reuse
+        env:
+          BACKEND: ${{ matrix.backend }}
+          VERSION: ${{ steps.release.outputs.version }}
+          COMMIT: ${{ steps.release.outputs.commit }}
+          RESOLVER_BASE: ${{ vars.LLM_CC_RESOLVER_BASE || 'https://ci-toolkit.pawelchcki.workers.dev/artifacts' }}
+        run: |
+          stem="llm-cc-backend-$BACKEND-linux-x86_64"
+          base="${RESOLVER_BASE%/}/pawelchcki/llm-cc/$COMMIT"
+          mkdir -p "$RUNNER_TEMP/gpu-input"
+          cd "$RUNNER_TEMP/gpu-input"
+          for file in "$stem.manifest.json" "$stem.bundle.sha256" "$stem.bundle"; do
+            if ! curl --fail --location --silent --show-error --retry 2 --connect-timeout 15 --max-time 600 \
+                "$base/$file" --output "$file"; then
+              echo 'hit=false' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          if python "$GITHUB_WORKSPACE/tools/release_assets.py" backend --version "$VERSION" --commit "$COMMIT" \
+              --backend "$BACKEND" --bundle "$stem.bundle" --manifest "$stem.manifest.json" \
+              --output "$RUNNER_TEMP/release-assets"; then
+            echo 'hit=true' >> "$GITHUB_OUTPUT"
+          else
             exit 1
           fi
-
-      - name: Fetch and verify GPU backends
-        timeout-minutes: 135
-        env:
-          RESOLVER_BASE: ${{ vars.LLM_CC_RESOLVER_BASE || 'https://ci-toolkit.pawelchcki.workers.dev/artifacts' }}
-        shell: bash
+      - name: Make room for pinned GPU toolchains
+        if: steps.reuse.outputs.hit != 'true'
         run: |
-          set -euo pipefail
-          commit_sha="$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
-          artifact_base="${RESOLVER_BASE%/}/pawelchcki/llm-cc/${commit_sha}"
-          mkdir -p gpu-assets
-          deadline=$((SECONDS + 7500))
-
-          missing_backend() {
-            echo "::error::GPU backends for this commit are missing or invalid (${commit_sha}); refusing to publish a CPU-only release." >&2
-            exit 1
-          }
-
-          fetch_artifact() {
-            local url="$1"
-            local destination="$2"
-            while ! curl --fail --location --silent --show-error \
-              --output "$destination" "$url"; do
-              rm -f "$destination"
-              if ((SECONDS >= deadline)); then
-                return 1
-              fi
-              echo "Waiting for ${url}"
-              sleep 60
-            done
-          }
-
-          for backend in cuda rocm; do
-            bundle="llm-cc-backend-${backend}-linux-x86_64.bundle"
-            manifest="llm-cc-backend-${backend}-linux-x86_64.manifest.json"
-            if ! fetch_artifact "${artifact_base}/${bundle}.sha256" \
-              "gpu-assets/${bundle}.sha256"; then
-              missing_backend
-            fi
-            if ! fetch_artifact "${artifact_base}/${manifest}" \
-              "gpu-assets/${manifest}"; then
-              missing_backend
-            fi
-            if ! fetch_artifact "${artifact_base}/${bundle}" \
-              "gpu-assets/${bundle}"; then
-              missing_backend
-            fi
-            if ! (cd gpu-assets && sha256sum -c "${bundle}.sha256"); then
-              missing_backend
-            fi
-          done
-
-      - name: Prepare versioned release assets
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
-          commit_sha="$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
-          output_dir="release-assets"
-          mkdir -p "$output_dir"
-
-          tar -xzf bazel-bin/llm-cc-linux-x86_64-cpu-static.tar.gz \
-            -C "$output_dir" --strip-components=1 \
-            llm-cc-linux-x86_64-cpu-static/llm-cc
-          mv "$output_dir/llm-cc" \
-            "$output_dir/llm-cc-${version}-linux-x86_64"
-
-          assets=("llm-cc-${version}-linux-x86_64")
-          for backend in cuda rocm; do
-            source="gpu-assets/llm-cc-backend-${backend}-linux-x86_64.bundle"
-            unversioned="llm-cc-backend-${backend}-linux-x86_64.bundle"
-            target="llm-cc-backend-${backend}-${version}-linux-x86_64.bundle"
-            cp "$source" "$output_dir/$unversioned"
-            cp "$source" "$output_dir/$target"
-            cp "${source}.sha256" "$output_dir/${unversioned}.sha256"
-            (cd "$output_dir" && sha256sum "$target" > "${target}.sha256")
-            assets+=("$unversioned" "${unversioned}.sha256" "$target" "${target}.sha256")
-
-            source_manifest="gpu-assets/llm-cc-backend-${backend}-linux-x86_64.manifest.json"
-            unversioned_manifest="llm-cc-backend-${backend}-linux-x86_64.manifest.json"
-            target_manifest="llm-cc-backend-${backend}-${version}-linux-x86_64.manifest.json"
-            jq --arg version "$version" --arg git_sha "$commit_sha" '
-              if .git_sha == $git_sha then
-                .version = $version
-              else
-                error("backend manifest git_sha does not match tagged commit")
-              end
-            ' "$source_manifest" > "$output_dir/$unversioned_manifest"
-            cp "$output_dir/$unversioned_manifest" "$output_dir/$target_manifest"
-            assets+=("$unversioned_manifest" "$target_manifest")
-          done
-
-          (cd "$output_dir" && sha256sum "${assets[@]}" > SHA256SUMS)
-
-      - name: Upload assets to release
+          # Only disposable hosted-runner SDKs; none are inputs to our pinned build.
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      - uses: bazel-contrib/setup-bazel@0.19.0
+        if: steps.reuse.outputs.hit != 'true'
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+      - name: Build bundle from tagged source when CI artifacts are unavailable
+        if: steps.reuse.outputs.hit != 'true'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
+          BACKEND: ${{ matrix.backend }}
+          VERSION: ${{ steps.release.outputs.version }}
+          COMMIT: ${{ steps.release.outputs.commit }}
+        run: |
+          bazel build --config=release --config="$BACKEND" --lockfile_mode=off --jobs=4 "//dist:backend_$BACKEND"
+          module="$(find -L bazel-bin/external -type f -path '*llama_cpp*' -name "libllm-cc-backend-$BACKEND.so" -print -quit)"
+          tools/check_glibc_version.sh "$module" 2.28
+          stem="llm-cc-backend-$BACKEND-linux-x86_64"
+          python tools/release_assets.py backend --version "$VERSION" --commit "$COMMIT" --backend "$BACKEND" \
+            --bundle "bazel-bin/dist/backend_$BACKEND/$stem.bundle" \
+            --manifest "bazel-bin/dist/backend_$BACKEND/manifest.json" --output "$RUNNER_TEMP/release-assets"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-backend-${{ matrix.backend }}
+          path: ${{ runner.temp }}/release-assets/*
+          if-no-files-found: error
+          compression-level: 0
+
+  assemble:
+    name: Verify complete release
+    needs: [binaries, backends]
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Prepare release stamp
+        id: release
+        run: tools/release_ref.sh
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: ${{ runner.temp }}/release-assets
+          merge-multiple: true
+      - name: Require every platform, backend, checksum and matching commit
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          COMMIT: ${{ steps.release.outputs.commit }}
+        run: |
+          python tools/release_assets.py verify --version "$VERSION" --commit "$COMMIT" --output "$RUNNER_TEMP/release-assets"
+          python tools/release_bundle_smoke.py "$RUNNER_TEMP/release-assets" "$VERSION"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: complete-release
+          path: ${{ runner.temp }}/release-assets/*
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    name: Publish GitHub release packages
+    needs: assemble
+    if: github.event_name == 'push' || inputs.publish
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.assemble.outputs.tag }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: complete-release
+          path: release-assets
+      - name: Upload the verified complete asset set
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --draft --title "$TAG" --generate-notes
+          fi
+          gh release upload "$TAG" release-assets/* --clobber
+          gh release edit "$TAG" --draft=false
+      - name: Verify publicly downloadable checksums and bundle metadata
+        run: |
+          base="https://github.com/$GH_REPO/releases/download/$TAG"
+          curl --fail --location --retry 5 --retry-all-errors "$base/SHA256SUMS" -o published-checksums
+          cmp release-assets/SHA256SUMS published-checksums
+          for backend in cuda rocm; do
+            name="llm-cc-backend-$backend-linux-x86_64.manifest.json"
+            curl --fail --location --retry 5 --retry-all-errors "$base/$name" -o published-manifest
+            cmp "release-assets/$name" published-manifest
+          done
+      - name: Install from GitHub and automatically fetch the released GPU bundles
+        env:
+          LLM_CC_RUNTIME_DIR: ${{ runner.temp }}/published-runtime
+        run: |
+          python3 release-assets/install_release.py --version "$TAG" --bin-dir "$RUNNER_TEMP/installed"
+          "$RUNNER_TEMP/installed/llm-cc" --version
+          for backend in cuda rocm; do
+            "$RUNNER_TEMP/installed/llm-cc" backends fetch "$backend" --assume-yes
+            "$RUNNER_TEMP/installed/llm-cc" backends fetch "$backend" --no-download
+          done

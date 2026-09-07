@@ -29,7 +29,11 @@ llvm = use_extension("@toolchains_llvm//toolchain/extensions:llvm.bzl", "llvm")
 llvm.toolchain(
     name = "llvm_toolchain",
     cxx_standard = {"": "c++20"},
-    llvm_version = "22.1.7",
+    # LLVM 22 has no official Intel macOS distribution.
+    llvm_versions = {
+        "": "22.1.7",
+        "darwin-x86_64": "20.1.7",
+    },
 )
 use_repo(llvm, "llvm_toolchain", "llvm_toolchain_llvm")
 
@@ -38,7 +42,11 @@ use_repo(llvm, "llvm_toolchain", "llvm_toolchain_llvm")
 llvm.toolchain(
     name = "llvm_toolchain_portable",
     cxx_standard = {"": "c++20"},
-    llvm_version = "22.1.7",
+    # LLVM 22 has no official Intel macOS distribution.
+    llvm_versions = {
+        "": "22.1.7",
+        "darwin-x86_64": "20.1.7",
+    },
 )
 llvm.toolchain_root(
     name = "llvm_toolchain_portable",
@@ -62,11 +70,7 @@ cuda.redist_json(
     version = "13.0.2",
 )
 cuda.toolkit(name = "cuda")
-use_repo(
-    cuda,
-    "cuda",
-    cuda_cublas = "cuda_cublas_v13.1.0.3",
-)
+use_repo(cuda, "cuda")
 
 register_toolchains("@cuda//toolchain:nvcc-local-toolchain")
 
@@ -74,6 +78,7 @@ register_toolchains("@cuda//toolchain:nvcc-local-toolchain")
 # M4 and pkg-config are only declared toolchain slots and must remain unused.
 register_toolchains(
     "@rules_foreign_cc//toolchains:built_make_toolchain",
+    "//tools:linux_arm64_ninja_toolchain",
     "//tools:unused_m4_toolchain",
     "//tools:unused_pkgconfig_toolchain",
 )
@@ -95,7 +100,9 @@ register_toolchains(
 )
 
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
 http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+
 cuda_sdk_repository = use_repo_rule("//tools:gpu_sdk_repositories.bzl", "cuda_sdk_repository")
 
 cuda_sdk_repository(name = "cuda_sdk")
@@ -239,8 +246,8 @@ http_archive(
 http_archive(
     name = "openssl",
     build_file = "//third_party:all.BUILD.bazel",
-    patches = ["//third_party:openssl_reproducible_buildinfo.patch"],
     patch_strip = 1,
+    patches = ["//third_party:openssl_reproducible_buildinfo.patch"],
     sha256 = "a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2",
     strip_prefix = "openssl-3.5.8",
     urls = ["https://github.com/openssl/openssl/releases/download/openssl-3.5.8/openssl-3.5.8.tar.gz"],

@@ -155,13 +155,13 @@ CUDA_ARCHS = [
 cuda_pruned_archive(
     name = "cublas_static_archive",
     archs = CUDA_ARCHS,
-    src = "@cuda_cublas//:cublas/lib/libcublas_static.a",
+    src = "@cuda_sdk//:sdk/lib/libcublas_static.a",
 )
 
 cuda_pruned_archive(
     name = "cublas_lt_static_archive",
     archs = CUDA_ARCHS,
-    src = "@cuda_cublas//:cublas/lib/libcublasLt_static.a",
+    src = "@cuda_sdk//:sdk/lib/libcublasLt_static.a",
 )
 
 cc_import(

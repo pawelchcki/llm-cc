@@ -4,6 +4,18 @@ load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 
 package(default_visibility = ["//visibility:public"])
 
+# The prebuilt Ninja ARM64 binary requires glibc 2.38. Build the pinned source
+# on ARM64 so the release can still be built on Ubuntu 22.04 (glibc 2.35).
+toolchain(
+    name = "linux_arm64_ninja_toolchain",
+    exec_compatible_with = [
+        "@platforms//os:linux",
+        "@platforms//cpu:aarch64",
+    ],
+    toolchain = "@rules_foreign_cc//toolchains/private:built_ninja",
+    toolchain_type = "@rules_foreign_cc//toolchains:ninja_toolchain",
+)
+
 filegroup(
     name = "cpp_sources",
     srcs = glob([

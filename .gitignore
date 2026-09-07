@@ -3,3 +3,4 @@
 /models/
 .llm-cc-cache/
 *.gguf
+__pycache__/

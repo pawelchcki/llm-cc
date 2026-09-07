@@ -11,7 +11,7 @@ git_sha="unknown"
 artifact_base_url="none"
 resolved_git_sha=""
 worktree_status=""
-default_resolver_base="https://ci-artifacts.pawelchcki.workers.dev"
+default_resolver_base="https://ci-toolkit.pawelchcki.workers.dev/artifacts"
 
 if command -v git >/dev/null 2>&1 &&
     git -C "$repo_root" rev-parse --git-dir >/dev/null 2>&1 &&

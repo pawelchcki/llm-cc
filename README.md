@@ -99,14 +99,14 @@ that target. `//:cpu_static_archive` emits
 `llm-cc-linux-x86_64-cpu-static.tar.gz`, whose root directory has the same name
 without `.tar.gz`. Release automation adds versions to published asset names.
 
-Stamped builds also define `LLM_CC_GIT_SHA` and `LLM_CC_ARTIFACT_BASE_URL` in
-the generated version header. Development builds use the configured artifact
-resolver (defaulting to `https://ci-artifacts.pawelchcki.workers.dev`), while
-exact release tags stamp the matching GitHub release URL. The resolver Worker
-is not deployed yet. Until it is, the supported path is
-`llm-cc backends fetch <name> --url <public_url> --assume-yes` with the Public URL from the
-CI comment. In workspace status output, the literal artifact URL value `none`
-means fetching is disabled; it becomes an empty build-time constant.
+Stamped builds define `LLM_CC_GIT_SHA` and `LLM_CC_ARTIFACT_BASE_URL` in
+the generated version header. Clean development builds use the commit's
+CI artifact resolver at `https://ci-toolkit.pawelchcki.workers.dev/artifacts`.
+Exact release tags use `https://github.com/pawelchcki/llm-cc/releases/download/vVERSION`,
+so an installed release downloads bundles from its own release, even after a
+newer version is published. Dirty or unstamped builds have no automatic URL;
+`llm-cc backends fetch <name> --url <public_url> --assume-yes` is the explicit
+override. The workspace-status value `none` becomes an empty build-time URL.
 
 Automatic backend downloads are disabled in source builds, including stamped
 and `--config=release` builds. `--config=distribution` combines release
@@ -119,8 +119,8 @@ explicit fetch command.
 Each pull request publishes immutable CUDA and ROCm backend bundles. An
 automated pull-request comment links the bundles, their checksums, expiration
 dates, and stable resolver URLs. A distribution build automatically uses the
-resolver URL for its commit to fetch the matching backend bundle once the
-resolver Worker is deployed.
+resolver URL for its commit to fetch the matching Linux x86-64 backend bundle.
+These temporary CI files are separate from permanent GitHub release assets.
 
 ## Analyze source and projects
 
@@ -520,10 +520,68 @@ framework. CI runs the full Bazel test suite and the portable release gates.
 
 ## Releases
 
-Conventional Commits drive Release Please, which opens the release pull request
-and creates the version tag when that pull request is merged. Each release
-includes the CPU binary, standalone CUDA and ROCm backend bundles, and a
-`SHA256SUMS` file covering the published assets. Bundle manifests are included
-when they are available from the matching commit's GPU build.
+Conventional Commits drive Release Please, which opens a release pull request
+and creates the version tag when it is merged. The `Release` workflow builds
+and tests the complete platform matrix before uploading any packages:
+
+| Platform | Executable | Acceleration | Minimum OS/runtime |
+| --- | --- | --- | --- |
+| Linux x86-64 | `llm-cc-VERSION-linux-x86_64` | Downloadable CUDA and ROCm bundles | glibc 2.28 |
+| Linux ARM64 | `llm-cc-VERSION-linux-arm64` | CPU | glibc 2.35 |
+| Windows x64 | `llm-cc-VERSION-windows-x86_64.exe` | CPU | Windows 10/11 x64 |
+| macOS Apple Silicon | `llm-cc-VERSION-macos-arm64` | Built-in Metal | macOS 14 |
+| macOS Intel | `llm-cc-VERSION-macos-x86_64` | Built-in Metal | macOS 14 |
+
+Download an executable directly from [GitHub Releases](https://github.com/pawelchcki/llm-cc/releases),
+or run the included Python installer (Python 3.9+) to detect your OS and CPU,
+select the matching executable, and verify its SHA-256 before installing:
+
+```sh
+python3 tools/install_release.py                     # latest stable release
+python3 tools/install_release.py --version 0.2.0     # a specific release
+python3 tools/install_release.py --bin-dir ~/.local/bin
+```
+
+On Windows use `py -3` instead of `python3`. No compiler or Bazel is needed;
+`install_release.py` is also attached to every release. Ensure the chosen bin
+directory is on `PATH`.
+
+Linux x86-64 releases automatically select the matching CUDA or ROCm bundle
+when GPU hardware is detected and a download is permitted. `--assume-yes`
+accepts downloads in unattended use; `--no-download` prevents them. To fetch
+explicitly, without supplying a URL:
+
+```sh
+llm-cc backends fetch cuda --assume-yes
+llm-cc backends fetch rocm --assume-yes
+```
+
+Bundles use stable names within each version's release:
+`llm-cc-backend-{cuda,rocm}-linux-x86_64.bundle`, with `.sha256` and
+`.manifest.json` sidecars. Both the footer and whole-file checksums are checked,
+and the manifest must match the executable's source commit. Other platforms
+do not fetch these Linux bundles. macOS embeds Metal; Windows and Linux ARM64
+currently use CPU. Model weights download separately on all platforms.
+
+Every release includes individual executable checksums, `release-manifest.json`
+with the platform mapping, and `SHA256SUMS` covering all assets. Release builds
+reuse verified CI GPU bundles for the exact commit or build them from source
+when those temporary artifacts are unavailable. A missing platform, corrupt
+asset, or mismatched backend commit fails the release.
+
+To rehearse the complete build and packaging process without publishing:
+
+```sh
+gh workflow run release.yml --ref YOUR_BRANCH -f publish=false
+```
+
+The rehearsal creates a runner-local version tag to exercise the same GitHub
+URL stamp as a release, and uploads `complete-release` as an Actions artifact.
+It does not create a remote tag or GitHub release. Tag pushes publish
+automatically; an existing version tag can also be retried with:
+
+```sh
+gh workflow run release.yml --ref v0.2.0 -f publish=true
+```
 
 Repository: [pawelchcki/llm-cc](https://github.com/pawelchcki/llm-cc)

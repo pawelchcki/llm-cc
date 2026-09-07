@@ -95,8 +95,14 @@ std::optional<uint64_t> LastUsed(const std::filesystem::path& p) {
   std::error_code e;
   auto t = std::filesystem::last_write_time(p, e);
   if (e) return std::nullopt;
+#ifdef _MSC_VER
+  const auto system_time =
+      std::chrono::clock_cast<std::chrono::system_clock>(t);
+#else
+  const auto system_time = std::chrono::file_clock::to_sys(t);
+#endif
   return std::chrono::duration_cast<std::chrono::seconds>(
-             std::chrono::file_clock::to_sys(t).time_since_epoch())
+             system_time.time_since_epoch())
       .count();
 }
 std::vector<EntryInfo> Entries(const CacheLocation& l) {
@@ -249,11 +255,14 @@ bool RemoveEntry(const std::filesystem::path& p) {
 }
 void TouchEntry(const std::filesystem::path& path) {
   std::error_code error;
-  std::filesystem::last_write_time(
-      path,
-      std::chrono::file_clock::from_sys(
-          std::chrono::system_clock::from_time_t(Now())),
-      error);
+  const auto system_time = std::chrono::system_clock::from_time_t(Now());
+#ifdef _MSC_VER
+  const auto file_time =
+      std::chrono::clock_cast<std::chrono::file_clock>(system_time);
+#else
+  const auto file_time = std::chrono::file_clock::from_sys(system_time);
+#endif
+  std::filesystem::last_write_time(path, file_time, error);
 }
 
 bool Expired(std::optional<uint64_t> used) {

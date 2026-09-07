@@ -129,6 +129,38 @@ void AddValidBundle(FakeDownloads& downloads, std::string_view url,
                           llmcc::Sha256Hex(bundle) + "  bundle\n");
 }
 
+void TestStampedDefaults(const fs::path& root) {
+  for (const std::string name : {"cuda", "rocm"}) {
+    llmcc::BackendFetchOptions options{.name = name,
+                                       .runtime_root = root / name};
+    const auto artifact = llmcc::BackendArtifactName(name);
+    if (!artifact || options.git_sha.empty() || options.base_url.empty()) {
+      continue;
+    }
+    if (options.version.find("-dev.") == std::string_view::npos) {
+      ExpectEq(std::string(options.base_url),
+               "https://github.com/pawelchcki/llm-cc/releases/download/v" +
+                   std::string(options.version),
+               "released binary uses its own GitHub release");
+    }
+    const std::string base(options.base_url);
+    const std::string url = base + "/" + *artifact + ".bundle";
+    FakeDownloads downloads;
+    AddValidBundle(downloads, url, name);
+    downloads.files[base + "/" + *artifact + ".manifest.json"] =
+        "{\"git_sha\":\"" + std::string(options.git_sha) + "\"}";
+    const auto cached =
+        llmcc::FetchBackendBundle(options, downloads.Downloader());
+    ExpectEq(downloads.requests.front().url, url,
+             "stamped defaults select the matching platform bundle");
+    const auto requests = downloads.requests.size();
+    ExpectEq(llmcc::FetchBackendBundle(options, downloads.Downloader()), cached,
+             "second fetch reuses the verified release bundle");
+    ExpectEq(downloads.requests.size(), requests,
+             "verified release cache requires no more downloads");
+  }
+}
+
 void TestBaseUrls(const fs::path& root) {
 #if defined(__linux__) && defined(__x86_64__)
   ExpectEq(llmcc::BackendArtifactName("cuda"),
@@ -482,6 +514,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
 
   TestDownloadFailure(root / "failure");
   TestBaseUrls(root / "bases");
+  TestStampedDefaults(root / "stamped-defaults");
   TestExplicitUrl(root / "explicit");
   TestWholeFileMismatch(root / "whole-file-mismatch");
   TestFooterMismatch(root / "footer-mismatch");
