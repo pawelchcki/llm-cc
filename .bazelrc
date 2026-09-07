@@ -27,6 +27,9 @@ build:windows --cxxopt=/std:c++20
 build:windows --enable_runfiles
 # The standalone Windows executable includes the MSVC runtime.
 build:windows --features=static_link_msvcrt
+# Windows requires a native command for workspace status; invoking a .sh file
+# directly can return no output and silently produce an unstamped executable.
+build:windows --workspace_status_command=tools/bazel_status.cmd
 
 build:release --compilation_mode=opt
 build:release --strip=always

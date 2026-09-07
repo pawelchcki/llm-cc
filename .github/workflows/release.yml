@@ -62,8 +62,14 @@ jobs:
       - name: Test and build distribution binary
         env:
           BACKEND: ${{ matrix.backend }}
+          VERSION: ${{ steps.release.outputs.version }}
+          COMMIT: ${{ steps.release.outputs.commit }}
         run: |
           python tools/release_assets_test.py
+          bazel build --config=distribution --config="$BACKEND" --lockfile_mode=off --jobs=4 //:version_header
+          grep -Fx "#define LLM_CC_VERSION \"$VERSION\"" bazel-bin/generated/version.h
+          grep -Fx "#define LLM_CC_GIT_SHA \"$COMMIT\"" bazel-bin/generated/version.h
+          grep -Fx "#define LLM_CC_ARTIFACT_BASE_URL \"https://github.com/pawelchcki/llm-cc/releases/download/v$VERSION\"" bazel-bin/generated/version.h
           bazel test --config=distribution --config="$BACKEND" --lockfile_mode=off --jobs=4 --test_output=errors //:unit //:integration
           bazel build --config=distribution --config="$BACKEND" --lockfile_mode=off --jobs=4 //:llm-cc
       - name: Verify Linux runtime compatibility
