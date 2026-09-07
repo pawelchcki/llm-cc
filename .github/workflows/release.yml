@@ -62,15 +62,9 @@ jobs:
           COMMIT: ${{ steps.release.outputs.commit }}
         run: |
           python tools/release_assets_test.py
-          python -c 'import subprocess; subprocess.run(["cmd.exe", "/d", "/c", "tools\\bazel_status.cmd"], check=True)'
           bazel build --config=distribution --config="$BACKEND" --lockfile_mode=off --jobs=4 --subcommands //:version_header
           cat bazel-out/stable-status.txt
           cat bazel-bin/generated/version.h
-          for command in 'echo STABLE_PROBE native' 'tools/bazel_status.cmd' "$PWD/tools/bazel_status.cmd" 'bash.exe tools/bazel_status.sh'; do
-            bazel build --config=distribution --config="$BACKEND" --lockfile_mode=off --jobs=4 --stamp "--workspace_status_command=$command" //:version_header
-            cat bazel-out/stable-status.txt
-            cat bazel-bin/generated/version.h
-          done
           grep -Fx "#define LLM_CC_VERSION \"$VERSION\"" bazel-bin/generated/version.h
           grep -Fx "#define LLM_CC_GIT_SHA \"$COMMIT\"" bazel-bin/generated/version.h
           grep -Fx "#define LLM_CC_ARTIFACT_BASE_URL \"https://github.com/pawelchcki/llm-cc/releases/download/v$VERSION\"" bazel-bin/generated/version.h

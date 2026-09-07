@@ -5,4 +5,3 @@ version.txt text eol=lf
 buildbuddy.yaml text eol=lf
 # Exact source-span fixtures must have identical bytes on Windows and Unix.
 testdata/** text eol=lf
-*.cmd text eol=crlf
