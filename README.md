@@ -1,513 +1,193 @@
 # llm-cc
 
-`llm-cc` computes entropy-guided language-model code complexity (LM-CC) for
-Rust, C, C++, Java, Python, Go, Node.js JavaScript, and C#. It is one C++20
-binary built entirely with Bazel.
+`llm-cc` measures entropy-guided language-model code complexity (LM-CC) in Rust,
+C, C++, Java, Python, Go, Node.js JavaScript, and C#. It helps identify files,
+functions, and source lines to inspect when planning refactoring, using a local
+GGUF model through llama.cpp.
 
-The analyzer removes comments with tree-sitter, obtains teacher-forced token
-entropy from a llama.cpp-compatible GGUF, detects semantic boundaries, builds
-the paper's compositional hierarchy, and streams compact JSONL.
+## Motivation
 
-## Build
+Code quality is an investment in readability, maintainability, and reliable
+work by both people and coding agents. Clear structure makes changes easier
+to understand and review. LM-CC adds a model-sensitive refactoring signal
+alongside tests, code review, and engineering judgment; a lower score alone
+cannot establish that a change improves the code.
 
-Bazelisk reads the pinned Bazel version automatically:
+The paper *Rethinking Code Complexity Through the Lens of Large Language
+Models* describes [semantic decomposition](https://arxiv.org/html/2602.07882v1#S3.SS2)
+using token uncertainty and structural boundaries, then defines
+[LM-CC](https://arxiv.org/html/2602.07882v1#S3.SS4) from branching and
+compositional depth. This implementation removes comments and Python docstrings
+before measuring entropy and constructing that hierarchy.
 
-```sh
-bazel build //:llm-cc
-bazel test //:unit
-bazel test //:integration
-```
+The paper's [rewriting experiment](https://arxiv.org/html/2602.07882v1#S4.SS2)
+reports program-repair pass@1 increasing from **13.4% to 16.2%** on its selected
+rewrite subset. Selection required lower LM-CC without lower cyclomatic
+complexity; passing original tests was also required outside the repair task.
+That result motivates investigating refactoring opportunities, but does not
+validate every rewrite, this implementation's defaults, or its normalized score.
 
-Run `bazel test //:model_smoke_test` to opt into a CPU-only check against the
-smallest registered real model; this downloads a checksum-pinned 398 MB GGUF.
+## Installation
 
-The build downloads checksum-pinned LLVM, llama.cpp, tree-sitter and its Rust,
-C, C++, Java, Python, Go, JavaScript, and C# source bundles, nlohmann/json,
-curl, and, on non-macOS platforms, OpenSSL. macOS curl builds use Apple's
-Secure Transport and system trust store.
-`bazel build //:llm-cc` selects CPU on Linux and Metal on macOS. The Linux CPU
-binary includes no CUDA or ROCm implementation, but retains the dynamic backend
-loader and exported ggml ABI so locally installed GPU bundles can be selected.
-On
-Linux x86-64, `--config=universal` opts into the fat CPU + CUDA + ROCm build.
-Its private GPU modules stay in Bazel runfiles during development; packaging
-`//dist:linux_x86_64` appends them to the executable. The universal build is
-slow and needs about 80 GB of disk. Other explicit backend builds remain
-available:
+### From source
+
+Install Git, then clone the repository and select the source revision:
 
 ```sh
-bazel build --config=release --config=universal //:llm-cc
-bazel build --config=release --config=rocm //:llm-cc
-bazel build --config=release --config=cuda //:llm-cc
-bazel build --config=release --config=metal //:llm-cc
-bazel build --config=release --config=cpu //:llm-cc
+git clone https://github.com/pawelchcki/llm-cc.git
+cd llm-cc
+git checkout main
 ```
 
-ROCm builds download AMD's checksum-pinned TheRock 7.14.0 `gfx110X` SDK and
-compile deterministic code objects for `gfx1100`, `gfx1101`, and `gfx1102`.
-CUDA builds assemble a checksum-pinned CUDA 13.0.2 subset from NVIDIA's
-redistributable component archives. NVCC compiles device code one translation
-unit per Bazel action and delegates its host phase to pinned Clang 22. CUDA's
-x86 headers reject libc++, so that host phase reads pinned libstdc++ headers;
-no GCC executable runs. Application, CPU, and HIP code all compile with pinned
-Clang and libc++. Linux targets use a checksum-pinned Debian Stretch sysroot,
-and neither backend searches the host for a vendor SDK, compiler, C library,
-or GNU Make.
-
-HIP sources receive repository-relative deterministic compilation-unit IDs;
-HIP/CUDA host paths are prefix-mapped and optional host ccache discovery is
-disabled. This keeps sandbox locations out of accelerator artifacts.
-
-Metal builds embed the Metal source in the binary instead of producing a
-machine-specific `.metallib`. Bazel uses the Xcode selected by `xcode-select`,
-while `--config=metal` retains a macOS 14.0 deployment target. Xcode and the
-Apple SDK are licensed host prerequisites and cannot be downloaded hermetically
-by the repository.
-
-The ROCm backend targets Linux x86_64 Radeon `gfx110X`. The default CPU build
-supports other Linux platforms; change the pinned TheRock artifact and
-`GPU_TARGETS` together when adding another AMD GPU family.
-
-Install to `$HOME/.local/bin`, or choose another prefix:
+Replace `main` with a release tag or commit if you need a particular revision.
+Install [Bazelisk](https://github.com/bazelbuild/bazelisk#installation), which
+automatically downloads and runs the Bazel version pinned in [.bazelversion](.bazelversion).
+On macOS with Homebrew:
 
 ```sh
-bazel run //:install
-bazel run //:install -- --prefix /opt/llm-cc
-bazel run --config=cuda //:install
-bazel run --config=rocm //:install -- --prefix /opt/llm-cc
+brew install bazelisk
 ```
 
-Installation uses atomic replacement for `bin/llm-cc` and for the matching
-build-key directory beneath `lib/llm-cc/backends/`. A plain Linux install is CPU-only;
-`--config=cuda` installs the CUDA bundle, and `--config=rocm` installs the ROCm
-bundle with its runtime closure. The installer stages and verifies its new
-executable before swapping the complete bundle set, so a CPU reinstall removes
-stale same-build GPU bundles. `--config=universal` retains its embedded CUDA
-and ROCm payloads. On macOS, the default and `--config=metal` produce the
-standalone static Metal Mach-O executable.
-
-Build deterministic distribution artifacts with:
+On Linux x86-64, download the Bazelisk binary and install it as `bazel`:
 
 ```sh
-bazel build --config=release --config=universal //dist:linux_x86_64
-bazel build --config=release --config=metal //dist:macos
+mkdir -p "$HOME/.local/bin"
+curl -fL https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-amd64 \
+  -o "$HOME/.local/bin/bazel"
+chmod +x "$HOME/.local/bin/bazel"
 ```
 
-The Linux target emits `llm-cc-linux-x86_64` and its SHA-256 checksum.
-Compatibility labels `//:universal_archive` and `//:install_payload` resolve to
-that target. `//:cpu_static_archive` emits
-`llm-cc-linux-x86_64-cpu-static.tar.gz`, whose root directory has the same name
-without `.tar.gz`. Release automation adds versions to published asset names.
-
-Stamped builds define `LLM_CC_GIT_SHA` and `LLM_CC_ARTIFACT_BASE_URL` in
-the generated version header. Clean development builds use the commit's
-CI artifact resolver at `https://ci-toolkit.pawelchcki.workers.dev/artifacts`.
-Exact release tags use `https://github.com/pawelchcki/llm-cc/releases/download/vVERSION`,
-so an installed release downloads bundles from its own release, even after a
-newer version is published. Dirty or unstamped builds have no automatic URL;
-`llm-cc backends fetch <name> --url <public_url> --assume-yes` is the explicit
-override. The workspace-status value `none` becomes an empty build-time URL.
-
-Automatic backend downloads are disabled in source builds, including stamped
-and `--config=release` builds. `--config=distribution` combines release
-settings with automatic backend fetching for published CPU binaries. This is
-independent of model downloads, and `llm-cc backends fetch` always remains an
-explicit fetch command.
-
-### Pull-request GPU bundles
-
-Each pull request publishes immutable CUDA and ROCm backend bundles. An
-automated pull-request comment links the bundles, their checksums, expiration
-dates, and stable resolver URLs. A distribution build automatically uses the
-resolver URL for its commit to fetch the matching Linux x86-64 backend bundle.
-These temporary CI files are separate from permanent GitHub release assets.
-
-## Analyze source and projects
-
-Pass any number of files and directories. Directories are searched recursively;
-canonical paths are deduplicated and analyzed in sorted order. The language is
-inferred per file, or can be forced for every input:
+For Linux ARM64 CPU builds, use the `bazelisk-linux-arm64` asset instead. Add
+the installation directory to `PATH` on either platform, and keep this setting
+in your shell startup file:
 
 ```sh
-llm-cc src include/widget.hpp --include-headers --model /path/to/model.gguf
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Analysis options are:
+Run the command matching your platform from the checkout:
 
-```text
---lang auto|rust|c|cpp|java|python|go|javascript|csharp
---model GGUF
---model-name NAME
---no-download
---assume-yes / -y
---force-cpu
---gpu-layers N
---backend auto|cpu|cuda|rocm
---include-headers
---no-ignore
---no-cache
---context N
---batch-size N
---entropy-reduction auto|host|device
---hierarchy structural|reference
---score lmcc|density|mean
---tau N
---tau-percentile N
---hotspots N
---format jsonl|text
---progress auto|always|never
---alpha N
+| Platform | Prerequisites | Installation command |
+| --- | --- | --- |
+| macOS Metal | macOS 14+, Metal-capable hardware, full Xcode selected through `xcode-select` | `bazel run --config=release --config=metal //:install` |
+| Linux AMD ROCm | x86-64, a supported `gfx1100`/`gfx1101`/`gfx1102` GPU, compatible AMD driver, GPU device permissions | `bazel run --config=release --config=rocm //:install` |
+| Linux NVIDIA CUDA | x86-64, supported NVIDIA GPU, driver compatible with CUDA 13.0.2 | `bazel run --config=release --config=cuda //:install` |
+
+Bazel downloads the pinned Linux compilers and GPU SDKs; a system CUDA or ROCm
+SDK is unnecessary. Drivers and device access remain host prerequisites. Follow
+[AMD's device-access guidance](https://rocm.docs.amd.com/projects/install-on-linux/en/docs-7.1.1/install/prerequisites.html#configuring-permissions-for-gpu-access)
+and [NVIDIA's driver compatibility guidance](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html)
+for your system. macOS builds use the selected Xcode and Apple SDK.
+
+For a CPU installation:
+
+```sh
+bazel run --config=release --config=cpu //:install
 ```
 
-Automatic detection recognizes `.rs`; `.c`; C/C++ headers and `.cc`, `.cpp`,
-`.cxx`, `.c++`; CUDA `.cu` sources and `.cuh` headers through the C++ grammar;
-`.java`; `.py`, `.pyw`, `.pyi`; `.go`; `.js`, `.mjs`, `.cjs`; and `.cs`,
-`.csx`. In addition to the canonical `--lang` names above, `c++`,
-`py`, `golang`, `js`, `node`, `nodejs`, `node.js`, `cs`, and `c#` are accepted
-as aliases. JavaScript support is for Node.js runtime files only; JSX and all
-TypeScript variants are intentionally excluded.
+The default prefix is `$HOME/.local`, placing the executable in its `bin`
+directory. Append `-- --prefix PATH` to any install command to change it, for
+example:
 
-The default headline score is `lmcc_per_token`, selected with `--score lmcc`.
-This is a per-token heuristic: it divides raw LM-CC by the number of scored
-tokens, but is neither length-invariant nor independently validated. The raw
-`llm_cc` field remains available and is length-dependent. `--score density`
-selects the fraction of tokens at or above tau, while `--score mean` selects
-mean token entropy. The other metrics remain present regardless of the
-headline mode.
+```sh
+bazel run --config=release --config=metal //:install -- --prefix "$HOME/opt/llm-cc"
+```
 
-`--hierarchy structural` is the default. It combines entropy boundaries with
-AST scope terminations, uses the first meaningful source byte for scope
-membership, and excludes whitespace-only intervals. `--hierarchy reference`
-uses the entropy-led, logical-nonblank-line partitioning contract from the
-pinned authors' revision `c38a26afdfc29ee517d734c6b677a4d6c65ec59b` for
-Python. Other languages apply the same policy with their tree-sitter scopes as
-language extensions. Both file and function analysis use the selected mode,
-and functions continue to use their file's resolved tau.
+Add that prefix's `bin` directory to `PATH` instead. Verify the installation:
 
-Comments and actual Python module, class, function, nested-function, and async
-function docstrings are removed before inference. Newlines and mappings to the
-original source are preserved. Assigned strings, non-docstring string
-expressions, bytes literals, and f-strings remain source content.
+```sh
+llm-cc --version
+```
 
-Tau defaults to an absolute threshold of 0.67 nats. That value was calibrated
-by the paper on CodeLlama-7b and may require `--tau` tuning for other models.
-Use `--tau-percentile N` to opt into a file-relative percentile instead;
-`--tau` and `--tau-percentile` are mutually exclusive. `--hotspots N` controls
-the number of highest-entropy source lines reported per file, and 0 disables
-hotspots. `--format text` prints a human-readable file/function/hotspot report;
-the default `jsonl` format (`json` is an alias) is intended for tooling.
+### Prebuilt releases
 
-Explicit header files are always accepted. Recursive discovery omits headers
-unless `--include-headers` is set. In a Git worktree, discovery uses tracked
-files plus unignored untracked files, including nested ignore rules. If Git is
-unavailable, the analyzer emits a warning and walks the filesystem. Common
-generated and dependency directories are skipped by default. `--no-ignore`
-includes Git-ignored and generated sources; `.git/` and `.llm-cc-cache/` remain
-excluded.
+Download an executable from [GitHub Releases](https://github.com/pawelchcki/llm-cc/releases),
+or use the included installer with Python 3.9+:
 
-Analysis output is compact JSONL and each line is flushed immediately. The
-event order is:
+```sh
+python3 tools/install_release.py
+```
 
-1. `start`: `discovered` and the requested `model`.
-2. `configuration`: resolved language/discovery options, model, context, batch
-   size, hierarchy and entropy-reduction modes, score mode, tau rule, hotspot
-   count, alpha, backend, inference ABI, and cache identity.
-3. Zero or more `warning` events.
-4. A `file_start`, then either `file` or `error`, for each source.
-5. `totals` with additive project metrics, per-language totals, and `partial`.
+It selects your platform, verifies SHA-256, and installs into `$HOME/.local/bin`.
+Linux x86-64 releases can download matching CUDA/ROCm bundles; macOS includes
+Metal. Windows x64 and Linux ARM64 releases use CPU. Model weights are separate.
 
-Consumers must wait for exit status zero and a terminal `totals` event with
-`partial == false`, then aggregate every `file` event. A `file_start`, a
-truncated stream, or an early file with no matching functions is not a complete
-project result. `--progress auto` (the default) and `always` write an immediate
-phase message and a heartbeat every five seconds to stderr, including when
-redirected. These report elapsed time, the current file, token or byte counters,
-and time since counters advanced when available, even during blocked model loads,
-cache/GPU lock waits, or inference batches. Downloads with an unknown total size
-show `completed/? bytes`. `never` suppresses routine progress;
-errors and warnings remain. Analysis, `score`, and `backends fetch` share this
-behavior and stdout JSONL is unchanged.
+## Usage
 
-A `file` event retains `llm_cc`, `total_branch`, `total_comp_level`, `alpha`,
-`tau`, and the complete `units` hierarchy. It also contains normalized metrics,
-the selected headline `score`, per-function scores, entropy hotspots, the
-canonical `path`, resolved `language`, and `entropy_cache_hit`. Configuration,
-file, and totals events contain `analysis_version` and `hierarchy_mode`. An individual
-file failure does not stop later files. Exit status is 0 for complete success,
-1 for partial results, and 2 for configuration or model failures.
+Get a readable project report with file scores, function scores, and entropy
+hotspots:
 
-The default maximum input context is 131,072 tokens and the default batch size
-is 64. One inference context is reused across files, grows geometrically as
-needed, and has its model memory and positions cleared between inputs. Use
-`--context` and `--batch-size` to tune these limits. CLI inference defaults to
-full GPU offload (`--gpu-layers -1`) on automatic, CUDA, ROCm, and built-in Metal
-execution. GPU hardware is probed before backend downloads. If GPU setup fails,
-the command stops with a CPU rerun command. CPU execution requires `--force-cpu`,
-`--backend cpu`, or `--gpu-layers 0`. Contradictory CPU and accelerator options
-are rejected in either argument order; positive layer counts retain partial
-offload. Library APIs keep their existing defaults and are noninteractive.
+```sh
+llm-cc src --format text
+```
 
-For CI with downloads authorized, or explicit CPU execution with a smaller model:
+Inputs may be files or recursively searched directories. Languages are detected
+per file. Discovery respects Git ignore rules and skips common generated
+folders; add `--include-headers` to discover headers. Explicit headers are always
+accepted. JavaScript support excludes JSX and TypeScript.
+
+Select your own llama.cpp-compatible GGUF:
+
+```sh
+llm-cc src include/widget.hpp --include-headers --model /path/to/model.gguf --format text
+```
+
+Without `--model`, the default is `deepseek-coder-v2-lite-base-q6_k` (about
+14 GB). Use `llm-cc models list --available` to inspect registered models and
+`--model-name NAME` to choose one. `--model` and `--model-name` are mutually
+exclusive; model selection never changes automatically.
+
+Missing models require download confirmation. `--assume-yes` (`-y`) accepts
+model and permitted backend downloads for unattended use; without it, missing
+assets cause a prompt or an error if no terminal is available. `--no-download`
+prevents these downloads even with `--assume-yes`.
+
+GPU execution defaults to full offload (`--gpu-layers -1`). Linux supports
+`--backend cuda` or `--backend rocm`; Metal uses automatic runtime selection.
+GPU setup failures stop with a suggested CPU command. Explicitly request CPU
+execution, including after a CPU installation:
+
+```sh
+llm-cc src --force-cpu --model-name qwen2.5-coder-3b-q6_k --assume-yes --format text
+```
+
+CPU inference can be slow. The registered Qwen 3B model is about 2.5 GB;
+`qwen2.5-coder-1.5b-q6_k` needs about 1.3 GB of weights. Allow additional memory
+for inference. The [model-selection experiment](experiments/model-selection/README.md)
+compares timings, memory, and ranking agreement with the default; it does not
+measure downstream coding quality.
+
+For unattended JSONL output, the default format:
 
 ```sh
 llm-cc src --assume-yes > results.jsonl 2> progress.log
-llm-cc src --force-cpu --model-name qwen2.5-coder-3b-q6_k --assume-yes
-printf 'int x = 1;' | llm-cc score --force-cpu \
-  --model-name qwen2.5-coder-1.5b-q6_k --assume-yes
 ```
 
-CPU inference can be slow. Consider Qwen 3B first, then 1.5B for lower memory;
-0.5B is the testing option. Memory guidance estimates weight size plus headroom,
-while context allocations also need memory. The selected model never changes
-automatically.
+Progress goes to stderr. Consumers must collect every `file` event and wait for
+both exit status **0** and a terminal `totals` event with `partial == false`.
+A truncated stream or `file_start` is incomplete. Exit **1** indicates partial
+results; **2** indicates configuration or model failure. Individual file errors
+do not prevent later files from being analyzed.
 
-`--entropy-reduction auto` performs entropy and observed-token log-probability
-reduction on the GPU when full offload (`--gpu-layers -1`) guarantees that the
-final logits execute there; partial offload conservatively reports a host
-fallback because output-layer placement is model-dependent. `host` retains the
-ordinary full-logits path. Explicit `device` likewise requires full offload.
-The device graph uses a
-max-shifted reduction and transfers two floats per scored row instead of a
-vocabulary-sized logits row. Host/device comparisons allow `1e-5` nats for
-entropy and `1e-5` absolute plus relative tolerance for log probability;
-classifications within that distance of tau can be floating-point sensitive.
+## Interpreting scores
 
-GPU-backed invocations are serialized per user and backend, so concurrent
-`llm-cc` processes wait instead of competing to load the same large model.
-Routine llama.cpp initialization diagnostics are suppressed; actionable
-warnings and errors still go to stderr. If a Codex sandbox reports zero GPU
-memory, `llm-cc` identifies the sandbox and recommends running with permission
-to access the accelerator directly.
+The raw `llm_cc` field combines branching and compositional depth and depends
+on input length. The default headline, `lmcc_per_token` (`--score lmcc`), divides
+raw LM-CC by the number of scored tokens. This normalization is a heuristic:
+it is neither length-invariant nor independently validated. `--score density`
+selects the fraction of tokens at or above the entropy threshold; `--score mean`
+selects mean entropy. Raw and normalized metrics remain available in JSONL.
 
-## Models
-
-Without `--model`, `llm-cc` uses the first entry in its built-in registry,
-`deepseek-coder-v2-lite-base-q6_k`. The registry also contains
-`deepseek-coder-6.7b-base-q6_k`, `qwen2.5-coder-1.5b-q6_k`,
-`qwen2.5-coder-3b-q6_k`, and
-`qwen2.5-coder-0.5b-q4_k_m`. Select one with `--model-name NAME`;
-`--model-name` and `--model` are mutually exclusive. The tool first checks
-`models/<registered file>`, then its model cache. If the model is absent,
-it asks before downloading over HTTPS to a resumable `.partial` file. Each
-missing model or backend bundle needs confirmation; a backend confirmation
-includes its checksum and manifest. The prompt shows source, destination, and
-size when known, and defaults to `[y/N]`. Confirmation uses the interactive
-terminal, never piped scoring input. Without a terminal the command exits promptly
-unless `--assume-yes` (`-y`) is supplied. Valid cached assets need no confirmation,
-and concurrent acquisition rechecks the cache under its lock before asking.
-`--no-download` forbids network access even with `--assume-yes`. Connections time
-out after 15 seconds and stalled transfers after 60 seconds; partial downloads
-are retained for a later attempt.
-
-The cache directory follows this precedence:
-
-1. `LLM_CC_CACHE_DIR`
-2. `$XDG_CACHE_HOME/llm-cc/models`
-3. `$HOME/.cache/llm-cc/models`
-
-Inspect it with:
-
-```sh
-llm-cc models path
-llm-cc models list
-llm-cc models list --available
-llm-cc models remove MODEL.gguf
-```
-
-`models list` shows cached GGUF files and their timestamps. Add `--available`
-to show every built-in model, its approximate download size, and whether its
-registered file is cached.
-
-The default model is
-[DeepSeek-Coder-V2-Lite-Base Q6_K](https://huggingface.co/bartowski/DeepSeek-Coder-V2-Lite-Base-GGUF).
-Base code models are preferable to chat-tuned models because LM-CC measures the
-raw next-token uncertainty distribution.
-
-Two smaller alternatives are available:
-
-| Model name | Approximate download | Guidance |
-| --- | ---: | --- |
-| `qwen2.5-coder-1.5b-q6_k` | 1.3 GB | Lower memory use; rank correlation 0.90 with the default in our sample. |
-| `qwen2.5-coder-3b-q6_k` | 2.5 GB | Closer rankings; correlation 0.93 and the same top five files in our sample. |
-
-```sh
-llm-cc src --model-name qwen2.5-coder-1.5b-q6_k --context 32768
-llm-cc src --model-name qwen2.5-coder-3b-q6_k --context 32768
-```
-
-Both have a native 32,768-token context. Changing models requires a fresh
-score baseline. The [model-selection experiment](experiments/model-selection/README.md)
-contains reproducible timings, memory measurements, and scoring comparisons
-on pinned `dd-trace-c` history; it measures agreement with the default, not
-downstream coding quality.
-
-## Raw scoring
-
-The scoring contract remains available as a subcommand:
-
-```sh
-llm-cc score --model model.gguf --entropy --prompt 'The quick brown fox'
-llm-cc score --model model.gguf --entropy --file source.cpp
-```
-
-`score` accepts a local `--model` or a registered `--model-name`, plus
-`--prompt` or `--file`, `--bos auto|always|never`, `--context-size`, `--threads`,
-`--gpu-layers`, `--backend`, `--backend-dir`, `--batch-size`,
-`--entropy-reduction`, `--no-download`, `--override-memory-check`, and
-`--entropy`. It emits one JSONL object per observed token. It never samples or
-generates a continuation. Its default maximum input context is 131,072 tokens;
-use `--context-size` to override it. Mean negative log-likelihood and perplexity
-go to stderr.
-
-```json
-{"position":0,"token_id":785,"piece":"The","bytes_hex":"546865","probability":null,"log_probability":null,"entropy":null}
-```
-
-The analyzer calls the same scorer in-process and consumes typed records; no
-JSONL parse or subprocess is involved. One model is loaded per analyzer
-invocation, on the first entropy cache miss. Misses share a bounded reusable
-inference context; an all-hit invocation never loads model weights.
-
-## Backends
-
-Manage the versioned CUDA and ROCm bundle cache with:
-
-```sh
-llm-cc backends list
-llm-cc backends fetch cuda
-llm-cc backends fetch rocm --url https://example.invalid/backend.bundle --assume-yes
-llm-cc backends path [cuda|rocm]
-llm-cc backends remove cuda|rocm
-```
-
-`list` distinguishes verified, invalid, and missing bundle-cache entries from
-locally discoverable backend sources. It does not download or initialize a GPU;
-listed sources explicitly say the device is untested. Extracted directories
-without verified bundle provenance are available only through an explicit
-`--backend-dir DIR` recovery choice.
-
-HTTP errors retain the status and failing URL. A 404 identifies the artifact and
-build commit; publication may be unavailable. Use `backends fetch NAME --url URL
---assume-yes` with a matching bundle, supply `--backend-dir DIR` (or
-`LLM_CC_BACKEND_DIR`), or rerun with `--force-cpu`.
-
-`fetch` normally uses the artifact base URL stamped into the binary. `--url`
-overrides it with the exact bundle URL, and is the fallback for a build with no
-stamped artifact URL; the checksum is fetched from `<url>.sha256` and the
-manifest from the same directory. Cache hits revalidate both the bundle footer
-and, for stamped binaries, the manifest's build commit. `remove` deletes final
-files and any resumable `.partial` downloads. Automatic GPU resolution uses
-this order:
-
-1. `--backend-dir`, or `LLM_CC_BACKEND_DIR` when the option is absent
-2. an embedded payload footer in the executable
-3. a verified installed bundle under the actual executable's prefix
-4. beside-the-executable and Bazel runfiles plugins
-5. the versioned bundle in the runtime cache
-6. a fetched bundle when the build enables automatic fetching and
-   `--no-download` is absent
-
-Within the configured backend directory, the resolver checks the distribution
-bundle name, then `cuda.bundle` or `rocm.bundle`, then the raw shared library.
-`LLM_CC_RUNTIME_DIR` overrides the root used for downloaded bundles and
-extracted ROCm files. Otherwise the runtime root is
-`$XDG_CACHE_HOME/llm-cc/runtime`, or `$HOME/.cache/llm-cc/runtime` when
-`XDG_CACHE_HOME` is unset.
-
-Installed bundles use the same version/build-key path as the runtime cache, at
-`<prefix>/lib/llm-cc/backends/<build-key>/`, and are found relative to the
-canonical running executable. A malformed installed bundle is rejected with a
-reinstall command. If GPU offload has no usable local bundle, the error names
-the matching `--config=cuda` or `--config=rocm` install command, the explicit
-`backends fetch` command, and `--backend cpu --gpu-layers 0`.
-
-`--backend auto` is the default. When GPU layers are requested it totals free
-VRAM for each usable family and chooses the larger aggregate, preferring CUDA
-on a tie. CUDA driver availability is checked before resolving or fetching its
-bundle. Explicit `cuda` or `rocm` loads only that GPU plugin plus CPU and fails
-clearly when the requested device is unavailable. `cpu` rejects nonzero GPU
-layers.
-
-An embedded universal ELF reads its raw payload footer through `/proc/self/exe`.
-CUDA is copied into an immutable sealed memfd and never touches disk. ROCm's
-exact pinned userspace and architecture-data closure is atomically materialized
-under a content-addressed, owner-only cache. CPU execution does not inspect or
-materialize either GPU payload.
-
-## Shared entropy cache
-
-Token bytes and entropy values are stored as versioned CBOR in one private,
-user-scoped cache that is shared by repositories, linked worktrees, and files
-outside Git. The base directory follows this precedence:
-
-```text
-$LLM_CC_ENTROPY_CACHE_DIR
-$XDG_CACHE_HOME/llm-cc/entropy
-$HOME/.cache/llm-cc/entropy
-```
-
-Entries live in the `v2/entropy/` namespace. Analysis never modifies
-`.gitignore`, `.git/info/exclude`, Git configuration, or the source tree.
-
-Cache keys cover the SHA-256 of prepared source and model contents, inference
-ABI, requested runtime backend and GPU-layer policy, context limit, batch size,
-requested reduction policy, and effective reducer. Tau, alpha, hierarchy mode, and score mode are
-deliberately excluded, so changing them recomputes the inexpensive hierarchy
-from cached entropy. Model digests are memoized separately using file identity,
-size, and high-resolution modification/change timestamps. Unchanged weights
-avoid another full read; moving or copying identical weights retains the same
-entropy key after verification. `--no-cache` skips model hashing.
-
-Reads validate that token bytes cover the complete preprocessed source.
-Corrupt entries become misses, writes use same-directory atomic replacement,
-and owned cache-directory symlinks are never followed. Hits refresh recency
-after checking expiry. Housekeeping runs at most daily during use and on explicit
-pruning. Before publication, expired entries are removed and the least recently
-used entries are evicted as needed to keep committed entropy files within 1 GiB.
-Entries expire after 20 days without use; oversized entries and entries that
-cannot fit after eviction are not cached. Filesystem allocation overhead,
-temporary writes, and small metadata files are additional. Completed model
-weights, resumable downloads, digest memos, and backend bundles remain separate.
-
-Inspect or prune the shared cache. An optional `PATH` adds a report for the
-older repository-scoped v1 stores only:
-
-```sh
-llm-cc cache status [PATH] [--format text|json]
-llm-cc cache prune  [PATH] [--format text|json]
-llm-cc cache clear --all [--format text|json]
-llm-cc cache clear  [PATH] [--format text|json]
-llm-cc cache clear  [PATH] --legacy [--format text|json]
-```
-
-Status reports the user scope, v2 storage version, limit, retention, entry
-count, bytes, and malformed entries. The former v1 stores are cold and are
-never promoted because they do not contain content-based model provenance.
-`cache clear --all` clears the shared v2 cache. A path-scoped `clear` removes
-only its old v1 bucket; `--legacy` additionally clears its former local
-`.llm-cc-cache/llm-cc/v1/entropy/` namespace.
-Without `PATH`, the scoped clear uses the current repository.
-
-## Hermetic Linux build
-
-Linux x86-64 builds use checksum-pinned Clang 22 and a Debian Stretch glibc
-2.24 sysroot by default. The shipped ABI contract remains glibc 2.28 or newer;
-CI rejects any imported symbol above that ceiling. The `portable` profile is
-retained as an explicit alias:
-
-```sh
-bazel build --config=release --config=portable --config=universal //dist:linux_x86_64
-tools/check_glibc_version.sh bazel-bin/dist/llm-cc-linux-x86_64 2.28
-tools/check_static_link.sh bazel-bin/dist/llm-cc-linux-x86_64
-```
-
-The hermetic Linux build uses static OpenSSL and curl for model downloads. The
-CA bundle is selected from `SSL_CERT_FILE` first, followed by common Debian,
-Fedora/RHEL, SUSE, and extracted trust-store paths. On macOS, curl uses Secure
-Transport and the system trust store by default; `SSL_CERT_FILE` remains an
-explicit override.
+Compare revisions with the same model, quantization, hierarchy, and inference
+settings. Establish a fresh baseline when changing them. The default
+`--hierarchy structural` combines entropy and syntax boundaries. The absolute
+threshold defaults to `--tau 0.67` nats, used with CodeLlama-7b in the paper;
+other models may need tuning. Use scores and hotspots to choose code to inspect,
+then assess changes through readability, maintainability, tests, and review.
 
 ## Development
+
+The project is a C++20 executable built with Bazel. Run the development checks:
 
 ```sh
 bazel test //:unit
@@ -515,73 +195,7 @@ bazel test //:integration
 tools/run_clang_tidy.sh
 ```
 
-The project intentionally uses small standalone C++ tests instead of a test
-framework. CI runs the full Bazel test suite and the portable release gates.
-
-## Releases
-
-Conventional Commits drive Release Please, which opens a release pull request
-and creates the version tag when it is merged. The `Release` workflow builds
-and tests the complete platform matrix before uploading any packages:
-
-| Platform | Executable | Acceleration | Minimum OS/runtime |
-| --- | --- | --- | --- |
-| Linux x86-64 | `llm-cc-VERSION-linux-x86_64` | Downloadable CUDA and ROCm bundles | glibc 2.28 |
-| Linux ARM64 | `llm-cc-VERSION-linux-arm64` | CPU | glibc 2.35 |
-| Windows x64 | `llm-cc-VERSION-windows-x86_64.exe` | CPU | Windows 10/11 x64 |
-| macOS Apple Silicon | `llm-cc-VERSION-macos-arm64` | Built-in Metal | macOS 14 |
-| macOS Intel | `llm-cc-VERSION-macos-x86_64` | Built-in Metal | macOS 14 |
-
-Download an executable directly from [GitHub Releases](https://github.com/pawelchcki/llm-cc/releases),
-or run the included Python installer (Python 3.9+) to detect your OS and CPU,
-select the matching executable, and verify its SHA-256 before installing:
-
-```sh
-python3 tools/install_release.py                     # latest stable release
-python3 tools/install_release.py --version 0.2.0     # a specific release
-python3 tools/install_release.py --bin-dir ~/.local/bin
-```
-
-On Windows use `py -3` instead of `python3`. No compiler or Bazel is needed;
-`install_release.py` is also attached to every release. Ensure the chosen bin
-directory is on `PATH`.
-
-Linux x86-64 releases automatically select the matching CUDA or ROCm bundle
-when GPU hardware is detected and a download is permitted. `--assume-yes`
-accepts downloads in unattended use; `--no-download` prevents them. To fetch
-explicitly, without supplying a URL:
-
-```sh
-llm-cc backends fetch cuda --assume-yes
-llm-cc backends fetch rocm --assume-yes
-```
-
-Bundles use stable names within each version's release:
-`llm-cc-backend-{cuda,rocm}-linux-x86_64.bundle`, with `.sha256` and
-`.manifest.json` sidecars. Both the footer and whole-file checksums are checked,
-and the manifest must match the executable's source commit. Other platforms
-do not fetch these Linux bundles. macOS embeds Metal; Windows and Linux ARM64
-currently use CPU. Model weights download separately on all platforms.
-
-Every release includes individual executable checksums, `release-manifest.json`
-with the platform mapping, and `SHA256SUMS` covering all assets. Release builds
-reuse verified CI GPU bundles for the exact commit or build them from source
-when those temporary artifacts are unavailable. A missing platform, corrupt
-asset, or mismatched backend commit fails the release.
-
-To rehearse the complete build and packaging process without publishing:
-
-```sh
-gh workflow run release.yml --ref YOUR_BRANCH -f publish=false
-```
-
-The rehearsal creates a runner-local version tag to exercise the same GitHub
-URL stamp as a release, and uploads `complete-release` as an Actions artifact.
-It does not create a remote tag or GitHub release. Tag pushes publish
-automatically; an existing version tag can also be retried with:
-
-```sh
-gh workflow run release.yml --ref v0.2.0 -f publish=true
-```
-
-Repository: [pawelchcki/llm-cc](https://github.com/pawelchcki/llm-cc)
+The optional `bazel test //:model_smoke_test` downloads a pinned 398 MB model
+for a real CPU inference check. See [DESIGN.md](DESIGN.md) for implementation
+background and [CHANGELOG.md](CHANGELOG.md) for changes. `llm-cc --help` lists
+all analysis options; `llm-cc score --help` documents raw token scoring.
