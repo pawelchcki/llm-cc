@@ -31,6 +31,9 @@ backend="${BACKEND:-cpu}"
 args=(--config=release --config="$backend" --stamp --workspace_status_command='bash status.sh'
   --@renamed_engine//:source_version=0.2.0-consumer-fixture
   --@renamed_engine//:source_commit=a300b37b912a06f79869582b7f870eace005b329)
+if [[ -n "${CUDA_ARCHS:-}" ]]; then
+  args+=("--@renamed_engine//:cuda_archs=$CUDA_ARCHS")
+fi
 bazel build "${args[@]}" @renamed_engine//:install
 execution_root="$(bazel info execution_root)"
 launcher="$execution_root/$(bazel cquery "${args[@]}" @renamed_engine//:install --output=files)"

@@ -73,13 +73,13 @@ make_install_dir() {
       make_install_dir "$parent"
     fi
     mkdir -p -- "$directory"
-    chmod 0755 -- "$directory"
+    chmod 0755 "$directory"
   fi
 }
 make_install_dir "$prefix"
 bin_dir="$prefix/bin"
 make_install_dir "$bin_dir"
-chmod 0755 -- "$bin_dir"
+chmod 0755 "$bin_dir"
 physical_bin_dir="$(cd -P -- "$bin_dir" && pwd)"
 install_prefix="$(dirname -- "$physical_bin_dir")"
 install_root="$install_prefix/lib/llm-cc"
@@ -112,7 +112,7 @@ else
 fi
 
 make_install_dir "$install_root"
-chmod 0755 -- "$install_prefix/lib" "$install_root"
+chmod 0755 "$install_prefix/lib" "$install_root"
 work_dir="$(mktemp -d "$physical_bin_dir/.llm-cc-install.XXXXXXXX")"
 stage_dir=""
 staged_bundle_dir=""
@@ -206,7 +206,7 @@ fi
 bundle_dir="$(dirname -- "$backend_path")"
 bundle_parent="$(dirname -- "$bundle_dir")"
 make_install_dir "$bundle_parent"
-chmod 0755 -- "$bundle_parent"
+chmod 0755 "$bundle_parent"
 stage_dir="$(mktemp -d "$bundle_parent/.${bundle_dir##*/}.incoming.XXXXXXXX")"
 staged_bundle_dir="$stage_dir"
 
@@ -232,7 +232,7 @@ for index in "${!bundle_sources[@]}"; do
   install -m 0644 "$source_manifest" "$stage_dir/$backend.manifest.json"
 done
 
-chmod 0755 -- "$stage_dir"
+chmod 0755 "$stage_dir"
 
 # Swap a complete set, including an empty CPU/Metal set, so a backend change
 # cannot leave a stale same-build GPU bundle active.

@@ -30,6 +30,7 @@ jobs:
       - uses: bazel-contrib/setup-bazel@0.19.0
         with:
           bazelisk-cache: true
+          disk-cache: reusable-builds-${{ runner.os }}-${{ runner.arch }}
           repository-cache: true
       - name: Install LLVM runtime dependencies
         if: runner.os == 'Linux'
@@ -50,7 +51,22 @@ jobs:
           if readelf -d bazel-bin/llm-cc | grep -E 'NEEDED.*(libcrypto|libssl|libstdc\+\+|libc\+\+)'; then exit 1; fi
       - name: Resolve macOS CUDA lock entries
         if: runner.os == 'macOS'
-        run: bazel mod deps
+        run: |
+          bazel mod deps
+          # Force the downstream Linux job to resolve its own components, even
+          # when the checkout already contains Linux entries from development.
+          python3 - <<'PYLOCK'
+          import json
+          from pathlib import Path
+          path = Path("MODULE.bazel.lock")
+          lock = json.loads(path.read_text())
+          for name, results in lock["moduleExtensions"].items():
+              if name.endswith("%toolchains") or name.endswith("cuda:extensions.bzl%toolchain"):
+                  for key in list(results):
+                      if "os:linux" in key:
+                          del results[key]
+          path.write_text(json.dumps(lock, indent=2) + "\n")
+          PYLOCK
       - uses: actions/upload-artifact@v4
         if: runner.os == 'macOS'
         with:
@@ -65,11 +81,12 @@ jobs:
       - uses: bazel-contrib/setup-bazel@0.19.0
         with:
           bazelisk-cache: true
+          disk-cache: reusable-builds-${{ runner.os }}-${{ runner.arch }}
           repository-cache: true
       - run: sudo apt-get update && sudo apt-get install -y libxml2
       - run: tools/check_build_configuration.sh
       - run: BACKEND=cpu tools/check_consumer.sh
-      - run: BACKEND=cuda tools/check_consumer.sh
+      - run: BACKEND=cuda CUDA_ARCHS=compute_86:sm_86 tools/check_consumer.sh
 
   transferred-lock:
     needs: platform
@@ -80,6 +97,7 @@ jobs:
       - uses: bazel-contrib/setup-bazel@0.19.0
         with:
           bazelisk-cache: true
+          disk-cache: reusable-builds-${{ runner.os }}-${{ runner.arch }}
           repository-cache: true
       - uses: actions/download-artifact@v4
         with:

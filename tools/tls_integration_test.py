@@ -32,19 +32,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
 def main():
     probe, fixtures = map(Path, sys.argv[1:])
     root = Path(os.environ["TEST_TMPDIR"])
+    # A short-lived leaf with serverAuth works with Apple SecTrust as well as
+    # BoringSSL and Schannel. Generate it at test time so fixtures do not expire.
+    extensions = root / "server.ext"
+    extensions.write_text("basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:localhost\n")
+    subprocess.run(["openssl", "req", "-new", "-newkey", "rsa:2048", "-nodes",
+                    "-keyout", str(root / "server.key"), "-out", str(root / "server.csr"),
+                    "-subj", "/CN=localhost"], check=True, capture_output=True)
+    subprocess.run(["openssl", "x509", "-req", "-in", str(root / "server.csr"),
+                    "-CA", str(fixtures / "ca.pem"), "-CAkey", str(fixtures / "ca.key"),
+                    "-set_serial", "1", "-days", "7", "-extfile", str(extensions),
+                    "-out", str(root / "server.pem")], check=True, capture_output=True)
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    context.load_cert_chain(fixtures / "server.pem", fixtures / "server.key")
+    context.load_cert_chain(root / "server.pem", root / "server.key")
     server.socket = context.wrap_socket(server.socket, server_side=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
         for name, host, endpoint, ca, success in [
-            ("trusted", "localhost", "data", "server.pem", True),
+            ("trusted", "localhost", "data", "ca.pem", True),
             ("untrusted", "localhost", "data", "untrusted.pem", False),
-            ("hostname", "127.0.0.1", "data", "server.pem", False),
-            ("redirect", "localhost", "redirect", "server.pem", True),
-            ("resumed", "localhost", "data", "server.pem", True),
+            ("hostname", "127.0.0.1", "data", "ca.pem", False),
+            ("redirect", "localhost", "redirect", "ca.pem", True),
+            ("resumed", "localhost", "data", "ca.pem", True),
         ]:
             target = root / name
             if name == "resumed":

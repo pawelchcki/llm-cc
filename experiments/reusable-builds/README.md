@@ -59,3 +59,8 @@ A full baseline comparison under the same compiler and headers found no added or
 removed diagnostic messages; those existing static-analysis findings remain.
 The final A10 installation also passes offline bundle verification and CPU
 inference with a local model.
+
+The clean Ubuntu CUDA build/install check also passed without Make. UID 10001
+read every installed bundle/manifest/checksum, verified the CUDA bundle offline
+without a GPU, and ran local-model CPU inference. The same restrictive-prefix
+mode checks passed for CPU and CUDA installations.
