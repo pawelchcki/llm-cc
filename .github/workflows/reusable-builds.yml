@@ -114,5 +114,5 @@ jobs:
               if name.endswith("%toolchains") or name.endswith("cuda:extensions.bzl%toolchain"):
                   assert "general" not in results, name
                   assert any("os:linux" in key for key in results), (name, results.keys())
-                  assert any("os:mac" in key for key in results), (name, results.keys())
+                  assert any("os:osx" in key for key in results), (name, results.keys())
           PY

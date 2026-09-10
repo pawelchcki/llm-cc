@@ -1217,6 +1217,9 @@ backend_locations(name = "backend_locations", out = "generated/backend_locations
 sh_test(
     name = "tls_integration_test",
     srcs = ["//tools:tls_integration_test.sh"],
+    # The local TLS fixture uses the developer/CI Python and OpenSSL tools.
+    # Windows test actions otherwise discard setup-python's PATH entries.
+    env_inherit = ["PATH"],
     args = ["$(location //tools:tls_integration_test.py)", "$(location //tools:tls_download_probe)", "testdata/tls"],
     data = ["//tools:tls_integration_test.py", "//tools:tls_download_probe"] + glob(["testdata/tls/*"]),
     tags = ["requires-network"],

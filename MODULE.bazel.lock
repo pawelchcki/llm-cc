@@ -626,6 +626,110 @@
             }
           }
         }
+      },
+      "os:osx,arch:aarch64": {
+        "bzlTransitiveDigest": "e1XbBw/9S2Z6UDkEHD8tLMCDyiQ+WnGiwCMK004QJ8I=",
+        "usagesDigest": "ZGUtkMl6i578eb3/9PYERuLD+DMSm+kTC3bwf6GkHUU=",
+        "recordedInputs": [
+          "REPO_MAPPING:,bazel_tools bazel_tools",
+          "REPO_MAPPING:,rules_cuda rules_cuda+",
+          "REPO_MAPPING:,toolchains_llvm toolchains_llvm+",
+          "REPO_MAPPING:bazel_features+,bazel_features_globals bazel_features++version_extension+bazel_features_globals",
+          "REPO_MAPPING:bazel_features+,bazel_features_version bazel_features++version_extension+bazel_features_version",
+          "REPO_MAPPING:bazel_tools,rules_cc rules_cc+",
+          "REPO_MAPPING:rules_cc+,bazel_features bazel_features+",
+          "REPO_MAPPING:rules_cc+,bazel_skylib bazel_skylib+",
+          "REPO_MAPPING:rules_cc+,bazel_tools bazel_tools",
+          "REPO_MAPPING:rules_cc+,cc_compatibility_proxy rules_cc++compatibility_proxy+cc_compatibility_proxy",
+          "REPO_MAPPING:rules_cc+,platforms platforms",
+          "REPO_MAPPING:rules_cc+,rules_cc rules_cc+",
+          "REPO_MAPPING:rules_cc++compatibility_proxy+cc_compatibility_proxy,rules_cc rules_cc+",
+          "REPO_MAPPING:rules_cuda+,bazel_tools bazel_tools",
+          "REPO_MAPPING:rules_cuda+,rules_cc rules_cc+",
+          "REPO_MAPPING:toolchains_llvm+,bazel_features bazel_features+",
+          "REPO_MAPPING:toolchains_llvm+,bazel_tools bazel_tools",
+          "REPO_MAPPING:toolchains_llvm+,helly25_bzl helly25_bzl+",
+          "REPO_MAPPING:toolchains_llvm+,llvm_distributions_data toolchains_llvm++llvm_distributions+llvm_distributions_data",
+          "REPO_MAPPING:,llvm_toolchain_llvm +toolchains+llvm_toolchain_llvm",
+          "REPO_MAPPING:,linux_glibc_sysroot +toolchains+linux_glibc_sysroot"
+        ],
+        "generatedRepoSpecs": {
+          "cuda_host_toolchain": {
+            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:http.bzl%http_archive",
+            "attributes": {
+              "build_file": "@@//third_party:cuda_host_toolchain.BUILD.bazel",
+              "patch_strip": 1,
+              "patches": [
+                "@@//third_party:cuda_host_sysroot_package.patch"
+              ],
+              "sha256": "d6eca7f1ea736ef6f868a027a9d0baa875f9513755026aed2badc04a2b9cd7bd",
+              "strip_prefix": "x86-64--glibc--stable-2023.08-1",
+              "urls": [
+                "https://toolchains.bootlin.com/downloads/releases/toolchains/x86-64/tarballs/x86-64--glibc--stable-2023.08-1.tar.bz2"
+              ]
+            }
+          },
+          "linux_glibc_sysroot": {
+            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:http.bzl%http_archive",
+            "attributes": {
+              "build_file_content": "\npackage(default_visibility = [\"//visibility:public\"])\nfilegroup(name = \"sysroot\", srcs = glob([\"**\"]))\nexports_files([\"usr/include/stdlib.h\"])\n    ",
+              "sha256": "73d828bf653f8f8548be704ce1ded4d195bf2bf937fc5426dd5636a9940d1969",
+              "urls": [
+                "https://commondatastorage.googleapis.com/chrome-linux-sysroot/toolchain/3c248ba4290a5ad07085b7af07e6785bf1ae5b66/debian_stretch_amd64_sysroot.tar.xz"
+              ]
+            }
+          },
+          "llvm_toolchain_llvm": {
+            "repoRuleId": "@@toolchains_llvm+//toolchain:rules.bzl%llvm",
+            "attributes": {
+              "llvm_versions": {
+                "": "22.1.7",
+                "darwin-x86_64": "20.1.7"
+              }
+            }
+          },
+          "llvm_toolchain": {
+            "repoRuleId": "@@toolchains_llvm+//toolchain:rules.bzl%toolchain",
+            "attributes": {
+              "llvm_versions": {
+                "": "22.1.7",
+                "darwin-x86_64": "20.1.7"
+              },
+              "cxx_standard": {
+                "": "c++20"
+              }
+            }
+          },
+          "llvm_toolchain_portable": {
+            "repoRuleId": "@@toolchains_llvm+//toolchain:rules.bzl%toolchain",
+            "attributes": {
+              "llvm_versions": {
+                "": "22.1.7",
+                "darwin-x86_64": "20.1.7"
+              },
+              "cxx_standard": {
+                "": "c++20"
+              },
+              "toolchain_roots": {
+                "": "'@@+toolchains+llvm_toolchain_llvm//'"
+              },
+              "sysroot": {
+                "linux-x86_64": "'@@+toolchains+linux_glibc_sysroot//:sysroot'"
+              }
+            }
+          },
+          "cuda_sdk": {
+            "repoRuleId": "@@//tools:gpu_sdk_repositories.bzl%cuda_sdk_repository",
+            "attributes": {}
+          },
+          "cuda": {
+            "repoRuleId": "@@rules_cuda+//cuda/private:repositories.bzl%cuda_toolkit",
+            "attributes": {
+              "components_mapping": {},
+              "version": "13.0.2"
+            }
+          }
+        }
       }
     },
     "@@pybind11_bazel+//:internal_configure.bzl%internal_configure_extension": {
@@ -650,6 +754,35 @@
     },
     "@@rules_cuda+//cuda:extensions.bzl%toolchain": {
       "os:linux,arch:amd64": {
+        "bzlTransitiveDigest": "JQzk5D8Urjq7JhLoERDJRKOjyfy0ZXEsIrZcUuxDFMk=",
+        "usagesDigest": "s59HgqlhFcRs0rUAFHpDHArw+w5o7L81nMYh0W1UiK4=",
+        "recordedInputs": [
+          "REPO_MAPPING:bazel_features+,bazel_features_globals bazel_features++version_extension+bazel_features_globals",
+          "REPO_MAPPING:bazel_features+,bazel_features_version bazel_features++version_extension+bazel_features_version",
+          "REPO_MAPPING:bazel_tools,rules_cc rules_cc+",
+          "REPO_MAPPING:rules_cc+,bazel_features bazel_features+",
+          "REPO_MAPPING:rules_cc+,bazel_skylib bazel_skylib+",
+          "REPO_MAPPING:rules_cc+,bazel_tools bazel_tools",
+          "REPO_MAPPING:rules_cc+,cc_compatibility_proxy rules_cc++compatibility_proxy+cc_compatibility_proxy",
+          "REPO_MAPPING:rules_cc+,platforms platforms",
+          "REPO_MAPPING:rules_cc+,rules_cc rules_cc+",
+          "REPO_MAPPING:rules_cc++compatibility_proxy+cc_compatibility_proxy,rules_cc rules_cc+",
+          "REPO_MAPPING:rules_cuda+,bazel_tools bazel_tools",
+          "REPO_MAPPING:rules_cuda+,rules_cc rules_cc+"
+        ],
+        "generatedRepoSpecs": {
+          "cuda": {
+            "repoRuleId": "@@rules_cuda+//cuda/private:repositories.bzl%cuda_toolkit",
+            "attributes": {
+              "components_mapping": {},
+              "nvcc_version": "",
+              "toolkit_path": "",
+              "version": ""
+            }
+          }
+        }
+      },
+      "os:osx,arch:aarch64": {
         "bzlTransitiveDigest": "JQzk5D8Urjq7JhLoERDJRKOjyfy0ZXEsIrZcUuxDFMk=",
         "usagesDigest": "s59HgqlhFcRs0rUAFHpDHArw+w5o7L81nMYh0W1UiK4=",
         "recordedInputs": [
