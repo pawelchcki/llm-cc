@@ -21,12 +21,24 @@ inline constexpr std::uint32_t kDefaultBatchSize = 64;
 enum class EntropyReduction : std::uint8_t { kAuto, kHost, kDevice };
 std::string_view EntropyReductionName(EntropyReduction reduction);
 
+enum class FlashAttention : std::uint8_t { kAuto, kOn, kOff };
+enum class KvCacheType : std::uint8_t { kF16, kQ8_0, kQ4_0 };
+std::string_view FlashAttentionName(FlashAttention setting);
+std::string_view KvCacheTypeName(KvCacheType type);
+std::uint32_t ContextRequestCapacity(std::uint32_t context_limit,
+                                     std::uint32_t batch_size,
+                                     std::uint32_t required_tokens);
+
 struct InferenceOptions {
   std::uint32_t context_size = kDefaultContextSize;
   std::int32_t gpu_layers = 0;
   BackendKind backend = BackendKind::kAuto;
   std::uint32_t batch_size = kDefaultBatchSize;
   EntropyReduction entropy_reduction = EntropyReduction::kAuto;
+  FlashAttention flash_attention = FlashAttention::kOn;
+  KvCacheType kv_cache_type = KvCacheType::kQ8_0;
+  bool kv_offload = true;
+  bool backend_diagnostics = false;
   std::function<void(std::size_t, std::size_t)> progress;
   std::optional<std::filesystem::path> backend_directory;
   bool no_download = false;

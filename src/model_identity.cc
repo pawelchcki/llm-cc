@@ -1,6 +1,7 @@
 #include "src/model_identity.h"
 
 #include <array>
+#include <chrono>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -15,6 +16,14 @@
 #include "src/progress.h"
 #include "src/sha256.h"
 
+#if defined(_WIN32)
+#include <bcrypt.h>
+#elif defined(__APPLE__)
+#include <CommonCrypto/CommonDigest.h>
+#else
+#include <openssl/evp.h>
+#endif
+
 #if !defined(_WIN32)
 #include <sys/stat.h>
 #else
@@ -27,6 +36,102 @@
 namespace llmcc {
 std::filesystem::path EntropyCacheBaseDirectory();
 namespace {
+
+class NativeSha256 {
+ public:
+  NativeSha256() {
+#if defined(_WIN32)
+    if (BCryptOpenAlgorithmProvider(&algorithm_, BCRYPT_SHA256_ALGORITHM,
+                                    nullptr, 0) != 0) {
+      throw std::runtime_error("cannot initialize SHA-256");
+    }
+    if (BCryptCreateHash(algorithm_, &hash_, nullptr, 0, nullptr, 0, 0) != 0) {
+      BCryptCloseAlgorithmProvider(algorithm_, 0);
+      algorithm_ = nullptr;
+      throw std::runtime_error("cannot initialize SHA-256");
+    }
+#elif defined(__APPLE__)
+    if (CC_SHA256_Init(&context_) != 1) {
+      throw std::runtime_error("cannot initialize SHA-256");
+    }
+#else
+    context_ = EVP_MD_CTX_new();
+    if (context_ == nullptr ||
+        EVP_DigestInit_ex(context_, EVP_sha256(), nullptr) != 1) {
+      EVP_MD_CTX_free(context_);
+      context_ = nullptr;
+      throw std::runtime_error("cannot initialize SHA-256");
+    }
+#endif
+  }
+
+  NativeSha256(const NativeSha256&) = delete;
+  NativeSha256& operator=(const NativeSha256&) = delete;
+
+  ~NativeSha256() {
+#if defined(_WIN32)
+    if (hash_ != nullptr) {
+      BCryptDestroyHash(hash_);
+    }
+    if (algorithm_ != nullptr) {
+      BCryptCloseAlgorithmProvider(algorithm_, 0);
+    }
+#elif !defined(__APPLE__)
+    EVP_MD_CTX_free(context_);
+#endif
+  }
+
+  void Update(const char* bytes, std::size_t size) {
+#if defined(_WIN32)
+    if (size > std::numeric_limits<ULONG>::max() ||
+        BCryptHashData(hash_,
+                       reinterpret_cast<PUCHAR>(const_cast<char*>(bytes)),
+                       static_cast<ULONG>(size), 0) != 0) {
+      throw std::runtime_error("cannot update SHA-256");
+    }
+#elif defined(__APPLE__)
+    if (size > std::numeric_limits<CC_LONG>::max() ||
+        CC_SHA256_Update(&context_, bytes, static_cast<CC_LONG>(size)) != 1) {
+      throw std::runtime_error("cannot update SHA-256");
+    }
+#else
+    if (EVP_DigestUpdate(context_, bytes, size) != 1) {
+      throw std::runtime_error("cannot update SHA-256");
+    }
+#endif
+  }
+
+  std::array<std::uint8_t, 32> Finish() {
+    std::array<std::uint8_t, 32> digest{};
+#if defined(_WIN32)
+    if (BCryptFinishHash(hash_, digest.data(),
+                         static_cast<ULONG>(digest.size()), 0) != 0) {
+      throw std::runtime_error("cannot finish SHA-256");
+    }
+#elif defined(__APPLE__)
+    if (CC_SHA256_Final(digest.data(), &context_) != 1) {
+      throw std::runtime_error("cannot finish SHA-256");
+    }
+#else
+    unsigned int size = 0;
+    if (EVP_DigestFinal_ex(context_, digest.data(), &size) != 1 ||
+        size != digest.size()) {
+      throw std::runtime_error("cannot finish SHA-256");
+    }
+#endif
+    return digest;
+  }
+
+ private:
+#if defined(_WIN32)
+  BCRYPT_ALG_HANDLE algorithm_ = nullptr;
+  BCRYPT_HASH_HANDLE hash_ = nullptr;
+#elif defined(__APPLE__)
+  CC_SHA256_CTX context_{};
+#else
+  EVP_MD_CTX* context_ = nullptr;
+#endif
+};
 
 struct FileSignature {
   std::uint64_t size;
@@ -165,29 +270,37 @@ std::optional<std::string> ReadMemo(const std::filesystem::path& path,
 std::string HashFile(const std::filesystem::path& path) {
   const std::string display_path = PathUtf8(path);
   ReportPhase("hashing model " + display_path);
+  const auto started = std::chrono::steady_clock::now();
   std::ifstream input(path, std::ios::binary);
   if (!input) throw std::runtime_error("cannot open model " + display_path);
-  Sha256 hash;
+  NativeSha256 hash;
   // Keep hashing bounded in memory, including on platforms with small stacks.
-  std::array<char, 64 * 1024> buffer{};
+  std::array<char, std::size_t{64} * 1024> buffer{};
   std::uint64_t completed = 0;
   const auto total = std::filesystem::file_size(path);
   while (input.read(buffer.data(), buffer.size()) || input.gcount() != 0) {
     completed += static_cast<std::uint64_t>(input.gcount());
     ReportCounter(completed, total, "bytes");
-    hash.Update(std::span<const char>(
-        buffer.data(), static_cast<std::size_t>(input.gcount())));
+    hash.Update(buffer.data(), static_cast<std::size_t>(input.gcount()));
   }
   if (!input.eof())
     throw std::runtime_error("cannot read model " + display_path);
   const auto digest = hash.Finish();
-  static constexpr char kDigits[] = "0123456789abcdef";
+  static constexpr std::array kDigits = {'0', '1', '2', '3', '4', '5',
+                                         '6', '7', '8', '9', 'a', 'b',
+                                         'c', 'd', 'e', 'f'};
   std::string result;
   result.reserve(64);
   for (const auto byte : digest) {
     result.push_back(kDigits[byte >> 4]);
     result.push_back(kDigits[byte & 15]);
   }
+  const auto milliseconds =
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now() - started)
+          .count();
+  ReportPhase("model hash complete bytes=" + std::to_string(completed) +
+              " duration_ms=" + std::to_string(milliseconds));
   return result;
 }
 
@@ -296,11 +409,15 @@ std::string ModelDigest(const std::vector<HashedFile>& files) {
 
 }  // namespace
 
-ModelIdentity InspectModel(
-    const std::filesystem::path& model, std::string_view inference_abi,
-    std::string_view backend, std::uint32_t context_limit,
-    std::uint32_t batch_size, std::string_view reduction_policy,
-    std::string_view effective_reducer, bool cache_enabled) {
+ModelIdentity InspectModel(const std::filesystem::path& model,
+                           std::string_view inference_abi,
+                           std::string_view backend,
+                           std::uint32_t context_limit,
+                           std::uint32_t batch_size,
+                           std::string_view reduction_policy,
+                           std::string_view effective_reducer,
+                           bool cache_enabled, std::string_view flash_attention,
+                           std::string_view kv_cache_type, bool kv_offload) {
   std::error_code error;
   const auto canonical = std::filesystem::canonical(model, error);
   if (error)
@@ -351,6 +468,9 @@ ModelIdentity InspectModel(
           .batch_size = batch_size,
           .reduction_policy = std::string(reduction_policy),
           .effective_reducer = std::string(effective_reducer),
+          .flash_attention = std::string(flash_attention),
+          .kv_cache_type = std::string(kv_cache_type),
+          .kv_offload = kv_offload,
           .content_digest = std::move(digest)};
 }
 

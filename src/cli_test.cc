@@ -92,6 +92,11 @@ int main() {  // NOLINT(bugprone-exception-escape)
               std::string::npos &&
           Read(analyze_help).find("--batch-size") != std::string::npos &&
           Read(analyze_help).find("--entropy-reduction") != std::string::npos &&
+          Read(analyze_help).find("--flash-attn") != std::string::npos &&
+          Read(analyze_help).find("--kv-cache-type") != std::string::npos &&
+          Read(analyze_help).find("--kv-offload") != std::string::npos &&
+          Read(analyze_help).find("--backend-diagnostics") !=
+              std::string::npos &&
           Read(analyze_help).find("--progress") != std::string::npos,
       "analysis documents hierarchy and inference controls");
   llmcc::test::Expect(
@@ -114,7 +119,11 @@ int main() {  // NOLINT(bugprone-exception-escape)
       "score documents runtime backend selection");
   llmcc::test::Expect(
       Read(score_help).find("--batch-size") != std::string::npos &&
-          Read(score_help).find("--entropy-reduction") != std::string::npos,
+          Read(score_help).find("--entropy-reduction") != std::string::npos &&
+          Read(score_help).find("--flash-attn") != std::string::npos &&
+          Read(score_help).find("--kv-cache-type") != std::string::npos &&
+          Read(score_help).find("--kv-offload") != std::string::npos &&
+          Read(score_help).find("--backend-diagnostics") != std::string::npos,
       "score documents batching and reduction controls");
   llmcc::test::Expect(
       Read(score_help).find("--model-name NAME") != std::string::npos,
@@ -200,6 +209,9 @@ int main() {  // NOLINT(bugprone-exception-escape)
                           empty_events[1]["analysis_version"] == 2 &&
                           empty_events[1]["batch_size"] == 64 &&
                           empty_events[1]["entropy_reduction"] == "auto" &&
+                          empty_events[1]["flash_attn"] == "on" &&
+                          empty_events[1]["kv_cache_type"] == "q8_0" &&
+                          empty_events[1]["kv_offload"] == "on" &&
                           empty_events[3]["hierarchy_mode"] == "structural" &&
                           empty_events[3]["analysis_version"] == 2,
                       "default analysis metadata is additive and versioned");
@@ -236,13 +248,24 @@ int main() {  // NOLINT(bugprone-exception-escape)
       Run(Quote(binary) + " " + Quote(empty_repository) +
           " --force-cpu --entropy-reduction device >/dev/null 2>&1") != 0,
       "empty discovery rejects device reduction without full GPU offload");
+  for (const std::string& prefix :
+       {" " + Quote(empty_repository),
+        std::string(" score --model missing.gguf --prompt x")}) {
+    Expect(Run(Quote(binary) + prefix +
+               " --flash-attn off --kv-cache-type q8_0 >/dev/null 2>" +
+               Quote(invalid_options_error)) != 0,
+           "quantized K/V with disabled Flash Attention is rejected");
+    Expect(Read(invalid_options_error).find("quantized K/V cache requires") !=
+               std::string::npos,
+           "incompatible K/V and attention settings are explained");
+  }
 
   for (const std::string options :
        {"--force-cpu --backend cuda", "--backend cuda --force-cpu",
         "--force-cpu --gpu-layers -1", "--gpu-layers -1 --force-cpu",
         "--backend cpu --gpu-layers 2", "--gpu-layers 2 --backend cpu",
         "--backend rocm --gpu-layers 0", "--gpu-layers 0 --backend rocm"}) {
-    for (const std::string prefix :
+    for (const std::string& prefix :
          {" " + Quote(empty_repository),
           std::string(" score --model missing.gguf --prompt x")}) {
       Expect(Run(Quote(binary) + prefix + " " + options + " >/dev/null 2>" +
@@ -521,7 +544,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
   constexpr std::string_view backend = "cpu";
   const auto identity = llmcc::InspectModel(
       fake_model,
-      "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v2", backend,
+      "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v3", backend,
       128U * 1024U);
   const std::size_t first_newline = preprocessed.find('\n');
   const std::size_t second_newline = preprocessed.find('\n', first_newline + 1);
@@ -820,7 +843,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
                         std::uint64_t{8}, "cache status counts entries");
   llmcc::test::Expect(
       status["scope"] == "user" && status["storage_version"] == 2 &&
-          status["inference_abi"].get<std::string>().ends_with("/entropy-v2") &&
+          status["inference_abi"].get<std::string>().ends_with("/entropy-v3") &&
           status["limit_bytes"] == llmcc::kEntropyCacheLimit &&
           status["retention_seconds"] == llmcc::kEntropyCacheMaxAgeSeconds &&
           status.contains("entries_by_inference_abi") &&
@@ -867,7 +890,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
 
   const auto deferred_backend_identity = llmcc::InspectModel(
       fake_model,
-      "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v2",
+      "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v3",
       "cuda/gpu-layers=-1", 128U * 1024U, 64, "auto", "device");
   llmcc::WriteEntropyCache(
       preprocessed, deferred_backend_identity,

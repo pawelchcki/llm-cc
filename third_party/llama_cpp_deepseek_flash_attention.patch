@@ -1,0 +1,134 @@
+diff --git a/ggml/src/ggml-cuda/fattn.cu b/ggml/src/ggml-cuda/fattn.cu
+--- a/ggml/src/ggml-cuda/fattn.cu
++++ b/ggml/src/ggml-cuda/fattn.cu
+@@ -140,16 +140,19 @@ static void ggml_cuda_flash_attn_ext_mma_f16(ggml_backend_cuda_context & ctx, gg
+             break;
+         case 192: {
+-            // MiMo-V2.5 / V2.5-Pro / V2-Flash: gqa_ratio is 8 (SWA) or 16 (full attn)
++            // Legacy DeepSeek uses equal Q/KV head counts; newer 192/128
++            // layouts use GQA ratios of 8 or 16.
+             GGML_ASSERT(V->ne[0] == 128);
+-            float max_bias = 0.0f;
+-            memcpy(&max_bias, (const float *) KQV->op_params + 1, sizeof(float));
+-            const bool use_gqa_opt = mask && max_bias == 0.0f;
+-            GGML_ASSERT(use_gqa_opt);
+             GGML_ASSERT(Q->ne[2] % K->ne[2] == 0);
+             const int gqa_ratio = Q->ne[2] / K->ne[2];
+-            if (gqa_ratio % 16 == 0) {
++            if (gqa_ratio == 1) {
++                ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<192, 128, 1>(ctx, dst);
++            } else if (gqa_ratio % 16 == 0) {
+                 ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<192, 128, 16>(ctx, dst);
+             } else {
++                float max_bias = 0.0f;
++                memcpy(&max_bias, (const float *) KQV->op_params + 1, sizeof(float));
++                const bool use_gqa_opt = mask && max_bias == 0.0f;
++                GGML_ASSERT(use_gqa_opt);
+                 GGML_ASSERT(gqa_ratio % 8 == 0);
+                 ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<192, 128,  8>(ctx, dst);
+             }
+@@ -405,9 +408,10 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
+             break;
+         case 192:
+-            if (V->ne[0] != 128 || !gqa_opt_applies) {
++            if (V->ne[0] != 128) {
+                 return BEST_FATTN_KERNEL_NONE;
+             }
+-            if (gqa_ratio % 8 != 0) {
++            if (gqa_ratio != 1 &&
++                    (!gqa_opt_applies || gqa_ratio % 8 != 0)) {
+                 return BEST_FATTN_KERNEL_NONE;
+             }
+             break;
+@@ -468,4 +472,6 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
+     // 192 satisfies % 64 == 0 but has no vec instance (DKQ != DV); force it onto the MMA path.
+     const bool can_use_vector_kernel = Q->ne[0] <= 256 && Q->ne[0] % 64 == 0 && Q->ne[0] != 192 && K->ne[1] % FATTN_KQ_STRIDE == 0;
+
++    // Keep the normal platform heuristic for equal-head 192/128: RDNA3 WMMA
++    // uses the tile kernel, while CUDA and CDNA select MMA when valid.
+     // If Turing tensor cores are available, use them:
+    if (turing_mma_available(cc) && Q->ne[0] != 40 && Q->ne[0] != 72) {
+diff --git a/ggml/src/ggml-cuda/fattn-tile.cuh b/ggml/src/ggml-cuda/fattn-tile.cuh
+--- a/ggml/src/ggml-cuda/fattn-tile.cuh
++++ b/ggml/src/ggml-cuda/fattn-tile.cuh
+@@ -1282,6 +1282,11 @@ static void launch_fattn_tile_switch_ncols2(ggml_backend_cuda_context & ctx, ggm
+     }
+     if constexpr (DKQ == 192) {
+-        // MiMo-V2.5 / V2.5-Pro / V2-Flash: gqa_ratio is 8 (SWA) or 16 (full attn)
++        // Legacy DeepSeek uses equal Q/KV head counts; newer 192/128
++        // layouts use GQA ratios of 8 or 16.
++        if (gqa_ratio == 1) {
++            launch_fattn_tile_switch_ncols1<DKQ, DV, 1, use_logit_softcap>(ctx, dst);
++            return;
++        }
+         if (use_gqa_opt && gqa_ratio % 16 == 0) {
+             launch_fattn_tile_switch_ncols1<DKQ, DV, 16, use_logit_softcap>(ctx, dst);
+             return;
+diff --git a/ggml/src/ggml-cuda/fattn-mma-f16.cuh b/ggml/src/ggml-cuda/fattn-mma-f16.cuh
+--- a/ggml/src/ggml-cuda/fattn-mma-f16.cuh
++++ b/ggml/src/ggml-cuda/fattn-mma-f16.cuh
+@@ -1743,7 +1743,7 @@ static __global__ void flash_attn_ext_f16(
+         NO_DEVICE_CODE;
+         return;
+     }
+-    if (DKQ == 192 && ncols2 != 8 && ncols2 != 16) {
++    if (DKQ == 192 && ncols2 != 1 && ncols2 != 8 && ncols2 != 16) {
+         NO_DEVICE_CODE;
+         return;
+     }
+diff --git a/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_8-ncols2_1.cu b/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_8-ncols2_1.cu
+--- a/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_8-ncols2_1.cu
++++ b/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_8-ncols2_1.cu
+@@ -7,4 +7,5 @@ DECL_FATTN_MMA_F16_CASE(80, 80, 8, 1);
+ DECL_FATTN_MMA_F16_CASE(96, 96, 8, 1);
+ DECL_FATTN_MMA_F16_CASE(112, 112, 8, 1);
+ DECL_FATTN_MMA_F16_CASE(128, 128, 8, 1);
++DECL_FATTN_MMA_F16_CASE(192, 128, 8, 1);
+ DECL_FATTN_MMA_F16_CASE(256, 256, 8, 1);
+diff --git a/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_16-ncols2_1.cu b/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_16-ncols2_1.cu
+--- a/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_16-ncols2_1.cu
++++ b/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_16-ncols2_1.cu
+@@ -7,4 +7,5 @@ DECL_FATTN_MMA_F16_CASE(80, 80, 16, 1);
+ DECL_FATTN_MMA_F16_CASE(96, 96, 16, 1);
+ DECL_FATTN_MMA_F16_CASE(112, 112, 16, 1);
+ DECL_FATTN_MMA_F16_CASE(128, 128, 16, 1);
++DECL_FATTN_MMA_F16_CASE(192, 128, 16, 1);
+ DECL_FATTN_MMA_F16_CASE(256, 256, 16, 1);
+diff --git a/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_32-ncols2_1.cu b/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_32-ncols2_1.cu
+--- a/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_32-ncols2_1.cu
++++ b/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_32-ncols2_1.cu
+@@ -7,4 +7,5 @@ DECL_FATTN_MMA_F16_CASE(80, 80, 32, 1);
+ DECL_FATTN_MMA_F16_CASE(96, 96, 32, 1);
+ DECL_FATTN_MMA_F16_CASE(112, 112, 32, 1);
+ DECL_FATTN_MMA_F16_CASE(128, 128, 32, 1);
++DECL_FATTN_MMA_F16_CASE(192, 128, 32, 1);
+ DECL_FATTN_MMA_F16_CASE(256, 256, 32, 1);
+diff --git a/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_64-ncols2_1.cu b/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_64-ncols2_1.cu
+--- a/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_64-ncols2_1.cu
++++ b/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_64-ncols2_1.cu
+@@ -7,4 +7,5 @@ DECL_FATTN_MMA_F16_CASE(80, 80, 64, 1);
+ DECL_FATTN_MMA_F16_CASE(96, 96, 64, 1);
+ DECL_FATTN_MMA_F16_CASE(112, 112, 64, 1);
+ DECL_FATTN_MMA_F16_CASE(128, 128, 64, 1);
++DECL_FATTN_MMA_F16_CASE(192, 128, 64, 1);
+ DECL_FATTN_MMA_F16_CASE(256, 256, 64, 1);
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -9957,5 +9957,16 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+         }
+     }
++    // Legacy DeepSeek: DKQ=192, DV=128, equal Q/KV heads. Exercise short
++    // and remainder prompt widths with every llm-cc K/V cache choice. The
++    // backend-ops harness compares each selected GPU backend with CPU.
++    for (int nb : { 1, 3, 17, 33, 75 }) {
++        for (ggml_type type_KV : { GGML_TYPE_F16, GGML_TYPE_Q8_0, GGML_TYPE_Q4_0 }) {
++            test_cases.emplace_back(new test_flash_attn_ext(
++                192, 128, 4, {1, 1}, 127, nb, true, false, 0, 0,
++                GGML_PREC_F32, type_KV, type_KV));
++        }
++    }
++
+     // mixed quant and Q1_0 test cases
+     test_cases.emplace_back(new test_flash_attn_ext(64, 64, 4, {1, 1}, 128, 2, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_Q8_0, GGML_TYPE_Q4_0));
+     test_cases.emplace_back(new test_flash_attn_ext(64, 64, 4, {1, 1}, 128, 2, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_Q4_0, GGML_TYPE_F16));

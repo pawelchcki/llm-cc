@@ -1,0 +1,32 @@
+{
+  "repository": "llm-cc",
+  "revision": "495004c5561e60e0b2b6855ae73507431d593067",
+  "files": [
+    {"id":"src/backend.cc","group":"benchmark","source":"src/backend.cc","commit":"495004c5561e60e0b2b6855ae73507431d593067","bytes":28836,"sha256":"f0464e82b6c0d1d3c28f9f6088b8cceaf3d982dccd1aac22ac1b573011dffb38"},
+    {"id":"src/backend_fetch.cc","group":"benchmark","source":"src/backend_fetch.cc","commit":"495004c5561e60e0b2b6855ae73507431d593067","bytes":28182,"sha256":"ec27b7b2fce69a2b93e45d8b93f4441c9216f97743a86a6900a0e15a9f59524b"},
+    {"id":"src/payload.cc","group":"benchmark","source":"src/payload.cc","commit":"495004c5561e60e0b2b6855ae73507431d593067","bytes":24124,"sha256":"40e54a06c907a27eba83f413f472ea5ca5fea8ff245ea721df95a372b2e67636"},
+    {"id":"src/entropy_cache.cc","group":"benchmark","source":"src/entropy_cache.cc","commit":"495004c5561e60e0b2b6855ae73507431d593067","bytes":23353,"sha256":"69e33847793f59a6ecfa8bd8b6a1f66f3dc8fbdb36eea8dbee49a345a82b866f"},
+    {"id":"src/project.cc","group":"benchmark","source":"src/project.cc","commit":"495004c5561e60e0b2b6855ae73507431d593067","bytes":18146,"sha256":"f59de7d347ca33820525b791ca04ababd05dcb0c9736cc1120bcb9e53d88cb3f"},
+    {"id":"src/download.cc","group":"benchmark","source":"src/download.cc","commit":"495004c5561e60e0b2b6855ae73507431d593067","bytes":16165,"sha256":"1eb9dc0fe23a2132d7206a076330e2298bdc992d1b90a2391ad785ede91426d3"},
+    {"id":"src/core.cc","group":"benchmark","source":"src/core.cc","commit":"495004c5561e60e0b2b6855ae73507431d593067","bytes":14500,"sha256":"cdb80e1405093dc464e401237abfb525ac74cfad6e1e3837d8e23e9a7c6e839d"},
+    {"id":"src/cache.cc","group":"benchmark","source":"src/cache.cc","commit":"495004c5561e60e0b2b6855ae73507431d593067","bytes":13774,"sha256":"f77a8aa00088daded123250f15a8a8ecb4ec4f9999269ff8a50ea063d249b65b"},
+    {"id":"src/model_identity.cc","group":"benchmark","source":"src/model_identity.cc","commit":"495004c5561e60e0b2b6855ae73507431d593067","bytes":13208,"sha256":"bffd50be77ae23ebd241a1effc75348995798243de7e19fb146de6e7cca09a7a"},
+    {"id":"src/progress.cc","group":"benchmark","source":"src/progress.cc","commit":"495004c5561e60e0b2b6855ae73507431d593067","bytes":11109,"sha256":"2ab6ea111f9cb76a79c127bfdf74886f667f34dec19544a5c10f2eeef538f959"},
+    {"id":"src/analyze.cc","group":"benchmark","source":"src/analyze.cc","commit":"495004c5561e60e0b2b6855ae73507431d593067","bytes":9053,"sha256":"217e1820b3ba73a89ebc92fe8063b624029fa8e7ae162a2ebce02d0e171b76aa"},
+    {"id":"src/cache_io.h","group":"benchmark","source":"src/cache_io.h","commit":"495004c5561e60e0b2b6855ae73507431d593067","bytes":8917,"sha256":"66d01e553668fccd0c65afe95080941b85fc4b4f92c067c624ac82dd91eb554f"},
+    {"id":"src/jsonl.cc","group":"benchmark","source":"src/jsonl.cc","commit":"495004c5561e60e0b2b6855ae73507431d593067","bytes":8209,"sha256":"7fe2dae5e6278e881d582493f1ea2717ab98f7a9ac49f68624956750d3bd8167"},
+    {"id":"src/backend_policy.cc","group":"benchmark","source":"src/backend_policy.cc","commit":"495004c5561e60e0b2b6855ae73507431d593067","bytes":8027,"sha256":"e5ca52c75c015560e3983383fb89e417ec50867fe6f46d2057adcb0c6e4a84c4"},
+    {"id":"src/scoring.cc","group":"benchmark","source":"src/scoring.cc","commit":"495004c5561e60e0b2b6855ae73507431d593067","bytes":7550,"sha256":"f4856a3457c1daa4dbed663942ed3800ec8025ff2921170f570dfeedd7181b78"},
+    {"id":"src/rocm_topology.cc","group":"benchmark","source":"src/rocm_topology.cc","commit":"495004c5561e60e0b2b6855ae73507431d593067","bytes":7444,"sha256":"39845861b0d1f299d258c42937866824af21a29f4619dc5365e6532392e97282"},
+    {"id":"src/sha256.h","group":"benchmark","source":"src/sha256.h","commit":"495004c5561e60e0b2b6855ae73507431d593067","bytes":5378,"sha256":"71af64ef450d4a93957ad8fc6e20bfaa14243903192e480eb653542c36de0d6e"},
+    {"id":"src/backend.h","group":"benchmark","source":"src/backend.h","commit":"495004c5561e60e0b2b6855ae73507431d593067","bytes":4143,"sha256":"f1bdb22f0cd471c12b95d6b50dcb06bec51d50470fdba835fc5d57375923c398"},
+    {"id":"src/progress.h","group":"benchmark","source":"src/progress.h","commit":"495004c5561e60e0b2b6855ae73507431d593067","bytes":3244,"sha256":"a68744959ba32d5e44202d8cc11f2d25b47577d84b7dd79d01536f28a7e4fc73"},
+    {"id":"src/core.h","group":"benchmark","source":"src/core.h","commit":"495004c5561e60e0b2b6855ae73507431d593067","bytes":3026,"sha256":"fe4283c46b3f3a8af193354c78b7b8c2f303d993068b316c8f637813845eaadd"},
+    {"id":"src/inference_guard.cc","group":"benchmark","source":"src/inference_guard.cc","commit":"495004c5561e60e0b2b6855ae73507431d593067","bytes":2427,"sha256":"866a8c939374ca605611c53572c279dd99faa5dfec3c9dfea210c5e0be728b1e"},
+    {"id":"src/entropy_cache.h","group":"benchmark","source":"src/entropy_cache.h","commit":"495004c5561e60e0b2b6855ae73507431d593067","bytes":2809,"sha256":"8261dae685f2d6bff02d80577675073e754ccde252c98872526f4429e3fbfe01"},
+    {"id":"src/cache.h","group":"benchmark","source":"src/cache.h","commit":"495004c5561e60e0b2b6855ae73507431d593067","bytes":2491,"sha256":"fae4f377c7a6762a2c91405155569b482906940efc84b9be8599a49169097665"},
+    {"id":"src/models.h","group":"benchmark","source":"src/models.h","commit":"495004c5561e60e0b2b6855ae73507431d593067","bytes":2227,"sha256":"407582056e85a2b08f255af290729b03aea283a94f9fed48bab73a9fcc3429a1"},
+    {"id":"src/lang.h","group":"benchmark","source":"src/lang.h","commit":"495004c5561e60e0b2b6855ae73507431d593067","bytes":1799,"sha256":"03b189de553f865c42e61db004968022321d639dc8232e972fe56c0d245f3697"},
+    {"id":"src/backend_fetch.h","group":"benchmark","source":"src/backend_fetch.h","commit":"495004c5561e60e0b2b6855ae73507431d593067","bytes":1513,"sha256":"a904ea13bf7619bd6fe492834fd6bc93d7210dac4e17ec99cd066d28ca2f7f07"}
+  ]
+}

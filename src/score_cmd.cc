@@ -19,6 +19,7 @@
 #include <iostream>
 #include <iterator>
 #include <limits>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -80,6 +81,10 @@ struct Arguments {
   llmcc::BackendKind backend = llmcc::BackendKind::kAuto;
   std::uint32_t batch_size = llmcc::kDefaultBatchSize;
   llmcc::EntropyReduction entropy_reduction = llmcc::EntropyReduction::kAuto;
+  llmcc::FlashAttention flash_attention = llmcc::FlashAttention::kOn;
+  llmcc::KvCacheType kv_cache_type = llmcc::KvCacheType::kQ8_0;
+  bool kv_offload = true;
+  bool backend_diagnostics = false;
   std::optional<std::filesystem::path> backend_directory;
   bool entropy = false;
   bool no_download = false;
@@ -113,6 +118,11 @@ constexpr std::string_view kUsageAfterContext =
     "  --backend NAME         auto, cpu, cuda, or rocm (default: auto)\n"
     "  --batch-size N         decode rows per batch (default: 64)\n"
     "  --entropy-reduction M  auto, host, or device (default: auto)\n"
+    "  --flash-attn M         auto, on, or off (default: on)\n"
+    "  --kv-cache-type T      f16, q8_0, or q4_0 for K and V (default: q8_0)\n"
+    "  --kv-offload M         on or off (default: on)\n"
+    "  --backend-diagnostics  show backend warnings, allocations, and bounded "
+    "operation placement\n"
     "  --backend-dir DIR      GPU backend bundle/shared-library directory\n"
     "  --override-memory-check  bypass the preflight memory check\n"
     "  --progress M           auto, always, or never on stderr\n"
@@ -203,6 +213,40 @@ bool SetExecutionOption(Arguments& arguments, std::string_view option,
       arguments.entropy_reduction = llmcc::EntropyReduction::kDevice;
     } else {
       Usage("--entropy-reduction expects auto, host, or device");
+    }
+    return true;
+  }
+  if (option == "--flash-attn") {
+    if (value == "auto") {
+      arguments.flash_attention = llmcc::FlashAttention::kAuto;
+    } else if (value == "on") {
+      arguments.flash_attention = llmcc::FlashAttention::kOn;
+    } else if (value == "off") {
+      arguments.flash_attention = llmcc::FlashAttention::kOff;
+    } else {
+      Usage("--flash-attn expects auto, on, or off");
+    }
+    return true;
+  }
+  if (option == "--kv-cache-type") {
+    if (value == "f16") {
+      arguments.kv_cache_type = llmcc::KvCacheType::kF16;
+    } else if (value == "q8_0") {
+      arguments.kv_cache_type = llmcc::KvCacheType::kQ8_0;
+    } else if (value == "q4_0") {
+      arguments.kv_cache_type = llmcc::KvCacheType::kQ4_0;
+    } else {
+      Usage("--kv-cache-type expects f16, q8_0, or q4_0");
+    }
+    return true;
+  }
+  if (option == "--kv-offload") {
+    if (value == "on") {
+      arguments.kv_offload = true;
+    } else if (value == "off") {
+      arguments.kv_offload = false;
+    } else {
+      Usage("--kv-offload expects on or off");
     }
     return true;
   }
@@ -306,6 +350,10 @@ Arguments ParseArguments(int argc, char** argv) {
       arguments.override_memory_check = true;
       continue;
     }
+    if (option == "--backend-diagnostics") {
+      arguments.backend_diagnostics = true;
+      continue;
+    }
     if (i + 1 >= argc) {
       Usage(std::string(option) + " requires a value");
     }
@@ -334,6 +382,10 @@ Arguments ParseArguments(int argc, char** argv) {
       arguments.gpu_layers != -1) {
     Usage(
         "device entropy reduction requires full GPU offload (--gpu-layers -1)");
+  }
+  if (arguments.kv_cache_type != llmcc::KvCacheType::kF16 &&
+      arguments.flash_attention == llmcc::FlashAttention::kOff) {
+    Usage("quantized K/V cache requires --flash-attn on or auto");
   }
   ApplyBackendDirectoryEnvironment(arguments);
   if (arguments.backend_directory.has_value()) {
@@ -687,10 +739,131 @@ struct ScoreOptions {
   bool entropy;
   std::uint32_t batch_size;
   bool device_reduction;
+  llmcc::FlashAttention flash_attention;
+  llmcc::KvCacheType kv_cache_type;
+  bool kv_offload;
+  bool backend_diagnostics;
+  bool require_gpu_attention;
   std::string_view context_option;
   const std::function<void(std::size_t, std::size_t)>* progress = nullptr;
   bool* inference_started = nullptr;
 };
+
+llama_flash_attn_type ToLlamaFlashAttention(llmcc::FlashAttention setting) {
+  switch (setting) {
+    case llmcc::FlashAttention::kAuto:
+      return LLAMA_FLASH_ATTN_TYPE_AUTO;
+    case llmcc::FlashAttention::kOn:
+      return LLAMA_FLASH_ATTN_TYPE_ENABLED;
+    case llmcc::FlashAttention::kOff:
+      return LLAMA_FLASH_ATTN_TYPE_DISABLED;
+  }
+  throw std::logic_error("unknown Flash Attention setting");
+}
+
+ggml_type ToGgmlKvType(llmcc::KvCacheType type) {
+  switch (type) {
+    case llmcc::KvCacheType::kF16:
+      return GGML_TYPE_F16;
+    case llmcc::KvCacheType::kQ8_0:
+      return GGML_TYPE_Q8_0;
+    case llmcc::KvCacheType::kQ4_0:
+      return GGML_TYPE_Q4_0;
+  }
+  throw std::logic_error("unknown K/V cache type");
+}
+
+struct PlacementDiagnostics {
+  bool enabled = false;
+  bool reject_cpu_attention = false;
+  bool cpu_attention = false;
+  std::map<std::string, std::size_t> placements;
+};
+
+bool ObservePlacement(ggml_tensor* tensor, bool ask, void* opaque) {
+  auto& state = *static_cast<PlacementDiagnostics*>(opaque);
+  const bool attention = tensor->op == GGML_OP_FLASH_ATTN_EXT;
+  std::string device = "unallocated";
+  bool cpu = false;
+  if (tensor->buffer != nullptr) {
+    auto* const type = ggml_backend_buffer_get_type(tensor->buffer);
+    if (auto* const backend_device = ggml_backend_buft_get_device(type);
+        backend_device != nullptr) {
+      device = ggml_backend_dev_name(backend_device);
+      cpu =
+          ggml_backend_dev_type(backend_device) == GGML_BACKEND_DEVICE_TYPE_CPU;
+    } else {
+      device = ggml_backend_buft_name(type);
+    }
+  }
+  if (state.reject_cpu_attention && attention && cpu) {
+    state.cpu_attention = true;
+  }
+  if (ask) {
+    return state.enabled || (state.reject_cpu_attention && attention);
+  }
+  if (state.enabled) {
+    const std::string key =
+        std::string(ggml_op_name(tensor->op)) + "@" + device;
+    if (state.placements.contains(key) || state.placements.size() < 32) {
+      ++state.placements[key];
+    }
+  }
+  return !state.cpu_attention;
+}
+
+bool AbortCpuAttention(void* opaque) {
+  return static_cast<PlacementDiagnostics*>(opaque)->cpu_attention;
+}
+
+[[noreturn]] void ThrowCpuAttentionFallback() {
+  throw std::runtime_error(
+      "FLASH_ATTN_EXT would run on CPU while full GPU offload, GPU K/V "
+      "placement, and --flash-attn on were requested; use --flash-attn "
+      "auto|off or --kv-offload off");
+}
+
+void ReportPlacements(const PlacementDiagnostics& state) {
+  if (!state.enabled) {
+    return;
+  }
+  std::size_t emitted = 0;
+  for (const auto& [placement, count] : state.placements) {
+    if (emitted++ == 32) {
+      break;
+    }
+    llmcc::ReportDiagnostic("operation=" + placement +
+                            " count=" + std::to_string(count));
+  }
+}
+
+void ReportBackendLog(const llmcc::BackendLogCapture& log, bool enabled) {
+  if (!enabled) {
+    return;
+  }
+  if (const std::string details = log.Diagnostics(); !details.empty()) {
+    llmcc::ReportDiagnostic("backend log:\n" + details);
+  }
+}
+
+void ReportBackendInventory(bool enabled) {
+  if (!enabled) {
+    return;
+  }
+  const std::size_t count = ggml_backend_dev_count();
+  llmcc::ReportDiagnostic("backend devices=" + std::to_string(count));
+  for (std::size_t index = 0; index < count; ++index) {
+    ggml_backend_dev_t device = ggml_backend_dev_get(index);
+    std::size_t free_bytes = 0;
+    std::size_t total_bytes = 0;
+    ggml_backend_dev_memory(device, &free_bytes, &total_bytes);
+    llmcc::ReportDiagnostic("device=" + std::to_string(index) + " name=" +
+                            ggml_backend_dev_name(device) + " description=" +
+                            ggml_backend_dev_description(device) +
+                            " free_bytes=" + std::to_string(free_bytes) +
+                            " total_bytes=" + std::to_string(total_bytes));
+  }
+}
 
 class HostReductionPool {
  public:
@@ -829,6 +1002,18 @@ void CheckBatchSize(std::uint32_t batch_size) {
   }
 }
 
+void CheckInferenceOptions(const llmcc::InferenceOptions& options) {
+  CheckBatchSize(options.batch_size);
+  if (options.context_size == 0) {
+    throw std::invalid_argument("context size must be positive");
+  }
+  if (options.kv_cache_type != llmcc::KvCacheType::kF16 &&
+      options.flash_attention == llmcc::FlashAttention::kOff) {
+    throw std::invalid_argument(
+        "quantized K/V cache requires Flash Attention auto or on");
+  }
+}
+
 std::size_t HostReductionWorkerCount(std::uint32_t batch_size,
                                      std::int32_t threads) {
   return std::min<std::size_t>(batch_size, std::max<std::int32_t>(1, threads));
@@ -854,22 +1039,21 @@ void WriteSummary(std::ostream* diagnostics, std::size_t tokens,
 void PrepareContext(llama_model* model, llmcc::BackendLogCapture& backend_log,
                     const ScoreOptions& options, std::uint32_t required,
                     Context& context, std::uint32_t& context_capacity,
-                    Sampler& sampler, DeviceEntropyState& device_state) {
+                    Sampler& sampler, DeviceEntropyState& device_state,
+                    PlacementDiagnostics& placement) {
   if (context && context_capacity >= required) {
+    llmcc::ReportPhase(
+        "resetting inference context requested=" + std::to_string(required) +
+        " allocated=" + std::to_string(context_capacity));
     llama_memory_clear(llama_get_memory(context.get()), true);
     return;
   }
-  std::uint32_t capacity =
-      context_capacity == 0 ? std::min(options.context_size,
-                                       std::max(required, options.batch_size))
-                            : context_capacity;
-  while (capacity < required) {
-    const std::uint64_t doubled = static_cast<std::uint64_t>(capacity) * 2;
-    capacity = static_cast<std::uint32_t>(
-        std::min<std::uint64_t>(options.context_size, doubled));
-  }
+  const std::uint32_t capacity = llmcc::ContextRequestCapacity(
+      options.context_size, options.batch_size, required);
   context.reset();
   sampler.reset();
+  llmcc::ReportPhase("creating inference context requested=" +
+                     std::to_string(capacity));
   llama_context_params parameters = llama_context_default_params();
   parameters.n_ctx = capacity;
   parameters.n_batch = options.batch_size;
@@ -879,6 +1063,24 @@ void PrepareContext(llama_model* model, llmcc::BackendLogCapture& backend_log,
   parameters.n_outputs_max_per_seq = options.batch_size;
   parameters.n_threads = options.threads;
   parameters.n_threads_batch = options.threads;
+  parameters.flash_attn_type = ToLlamaFlashAttention(options.flash_attention);
+  parameters.type_k = ToGgmlKvType(options.kv_cache_type);
+  parameters.type_v = ToGgmlKvType(options.kv_cache_type);
+  parameters.offload_kqv = options.kv_offload;
+  placement.enabled = options.backend_diagnostics;
+  placement.reject_cpu_attention =
+      options.flash_attention == llmcc::FlashAttention::kOn &&
+      options.kv_offload && options.require_gpu_attention;
+  placement.cpu_attention = false;
+  placement.placements.clear();
+  if (placement.enabled || placement.reject_cpu_attention) {
+    parameters.cb_eval = ObservePlacement;
+    parameters.cb_eval_user_data = &placement;
+  }
+  if (placement.reject_cpu_attention) {
+    parameters.abort_callback = AbortCpuAttention;
+    parameters.abort_callback_data = &placement;
+  }
   llama_sampler_seq_config sampler_config{};
   if (options.device_reduction) {
     sampler = MakeDeviceEntropySampler(device_state);
@@ -886,6 +1088,7 @@ void PrepareContext(llama_model* model, llmcc::BackendLogCapture& backend_log,
     parameters.samplers = &sampler_config;
     parameters.n_samplers = 1;
   }
+  backend_log.Clear();
   context.reset(llama_init_from_model(model, parameters));
   if (!context) {
     context_capacity = 0;
@@ -893,7 +1096,18 @@ void PrepareContext(llama_model* model, llmcc::BackendLogCapture& backend_log,
     throw std::runtime_error("could not create inference context" +
                              (detail.empty() ? std::string() : ": " + detail));
   }
-  context_capacity = capacity;
+  if (placement.cpu_attention) {
+    ThrowCpuAttentionFallback();
+  }
+  ReportBackendLog(backend_log, options.backend_diagnostics);
+  context_capacity = llama_n_ctx(context.get());
+  llmcc::ReportPhase(
+      "inference context ready requested=" + std::to_string(capacity) +
+      " allocated=" + std::to_string(context_capacity) + " flash_attn=" +
+      std::string(llmcc::FlashAttentionName(options.flash_attention)) +
+      " kv_cache_type=" +
+      std::string(llmcc::KvCacheTypeName(options.kv_cache_type)) +
+      " kv_offload=" + (options.kv_offload ? "on" : "off"));
 }
 
 std::vector<llmcc::TokenScore> ScoreHostBatch(
@@ -953,7 +1167,8 @@ void ScoreInput(llama_model* model, llmcc::BackendLogCapture& backend_log,
                 std::ostream* diagnostics, Context& context,
                 std::uint32_t& context_capacity, Sampler& sampler,
                 DeviceEntropyState& device_state,
-                HostReductionPool* host_reduction) {
+                HostReductionPool* host_reduction,
+                PlacementDiagnostics& placement) {
   CheckBatchSize(options.batch_size);
   if (!options.device_reduction && host_reduction == nullptr) {
     throw std::logic_error("host reduction requires a worker pool");
@@ -1009,7 +1224,9 @@ void ScoreInput(llama_model* model, llmcc::BackendLogCapture& backend_log,
       std::min<std::size_t>(options.batch_size, tokens.size() - 1);
   PrepareContext(model, backend_log, options,
                  static_cast<std::uint32_t>(tokens.size()), context,
-                 context_capacity, sampler, device_state);
+                 context_capacity, sampler, device_state, placement);
+
+  llmcc::ReportPhase("decoding and entropy reduction");
 
   const std::int32_t vocabulary_size = llama_vocab_n_tokens(vocabulary);
   double negative_log_likelihood = 0.0;
@@ -1039,6 +1256,9 @@ void ScoreInput(llama_model* model, llmcc::BackendLogCapture& backend_log,
           std::span<const llama_token>(tokens.data() + source + 1, count);
     }
     const int decode_result = llama_decode(context.get(), batch);
+    if (placement.cpu_attention) {
+      ThrowCpuAttentionFallback();
+    }
     if (decode_result != 0) {
       throw std::runtime_error("llama_decode failed at token " +
                                std::to_string(source) + " with code " +
@@ -1079,6 +1299,7 @@ void ScoreInput(llama_model* model, llmcc::BackendLogCapture& backend_log,
   }
   WriteSummary(diagnostics, tokens.size() - first_observed, scored,
                negative_log_likelihood, options.device_reduction);
+  ReportPlacements(placement);
 }
 
 int Run(const Arguments& arguments, std::string_view input,
@@ -1086,6 +1307,7 @@ int Run(const Arguments& arguments, std::string_view input,
         llmcc::BackendLogCapture& backend_log, std::ostream& output,
         std::ostream& diagnostics) {
   llmcc::InferenceGuard inference_guard(llmcc::BackendName(backend.selected()));
+  ReportBackendLog(backend_log, arguments.backend_diagnostics);
   const bool use_gpu = arguments.gpu_layers != 0;
   const std::optional<std::uint64_t> gpu_available =
       use_gpu ? GpuAvailableMemory() : std::nullopt;
@@ -1122,11 +1344,14 @@ int Run(const Arguments& arguments, std::string_view input,
     }
     throw std::runtime_error(message);
   }
+  ReportBackendLog(backend_log, arguments.backend_diagnostics);
   backend_log.Clear();
   DeviceEntropyState device_state;
   Sampler sampler(nullptr, llama_sampler_free);
   Context context(nullptr, llama_free);
   std::uint32_t context_capacity = 0;
+  PlacementDiagnostics placement;
+  ReportBackendInventory(arguments.backend_diagnostics);
   std::optional<HostReductionPool> host_reduction;
   if (!device_reduction) {
     host_reduction.emplace(
@@ -1141,12 +1366,18 @@ int Run(const Arguments& arguments, std::string_view input,
                 .entropy = arguments.entropy,
                 .batch_size = arguments.batch_size,
                 .device_reduction = device_reduction,
+                .flash_attention = arguments.flash_attention,
+                .kv_cache_type = arguments.kv_cache_type,
+                .kv_offload = arguments.kv_offload,
+                .backend_diagnostics = arguments.backend_diagnostics,
+                .require_gpu_attention = arguments.gpu_layers == -1,
                 .context_option = "--context-size",
                 .progress = nullptr,
                 .inference_started = &inference_started},
                &output, nullptr, &diagnostics, context, context_capacity,
                sampler, device_state,
-               host_reduction.has_value() ? &*host_reduction : nullptr);
+               host_reduction.has_value() ? &*host_reduction : nullptr,
+               placement);
   } catch (const std::exception& error) {
     if (use_gpu && inference_started)
       throw llmcc::GpuRecoverableError(error.what());
@@ -1179,16 +1410,24 @@ class EntropyScorer::Impl {
  public:
   Impl(const std::filesystem::path& model_path,
        const InferenceOptions& inference_options)
-      : backend_(CreateBackendRuntime(inference_options)),
+      : backend_log_(inference_options.backend_diagnostics),
+        backend_(CreateBackendRuntime(inference_options)),
         inference_guard_(BackendName(backend_->selected())),
         model_(nullptr, llama_model_free),
         context_(nullptr, llama_free),
         context_limit_(inference_options.context_size),
         batch_size_(inference_options.batch_size),
+        flash_attention_(inference_options.flash_attention),
+        kv_cache_type_(inference_options.kv_cache_type),
+        kv_offload_(inference_options.kv_offload),
+        backend_diagnostics_(inference_options.backend_diagnostics),
+        require_gpu_attention_(inference_options.gpu_layers == -1),
         progress_(inference_options.progress),
         use_gpu_(inference_options.gpu_layers != 0),
         threads_(static_cast<std::int32_t>(
             std::max(1U, std::thread::hardware_concurrency()))) {
+    ReportBackendLog(backend_log_, backend_diagnostics_);
+    ReportBackendInventory(backend_diagnostics_);
     Arguments arguments;
     arguments.model = model_path;
     arguments.context_size = context_limit_;
@@ -1230,6 +1469,7 @@ class EntropyScorer::Impl {
       }
       throw std::runtime_error(message);
     }
+    ReportBackendLog(backend_log_, backend_diagnostics_);
     backend_log_.Clear();
     if (!device_reduction_) {
       host_reduction_.emplace(HostReductionWorkerCount(batch_size_, threads_));
@@ -1246,11 +1486,17 @@ class EntropyScorer::Impl {
                   .entropy = true,
                   .batch_size = batch_size_,
                   .device_reduction = device_reduction_,
+                  .flash_attention = flash_attention_,
+                  .kv_cache_type = kv_cache_type_,
+                  .kv_offload = kv_offload_,
+                  .backend_diagnostics = backend_diagnostics_,
+                  .require_gpu_attention = require_gpu_attention_,
                   .context_option = "--context",
                   .progress = &progress_},
                  &output, nullptr, nullptr, context_, context_capacity_,
                  sampler_, device_state_,
-                 host_reduction_.has_value() ? &*host_reduction_ : nullptr);
+                 host_reduction_.has_value() ? &*host_reduction_ : nullptr,
+                 placement_);
     } catch (...) {
       context_.reset();
       sampler_.reset();
@@ -1271,12 +1517,18 @@ class EntropyScorer::Impl {
                   .entropy = true,
                   .batch_size = batch_size_,
                   .device_reduction = device_reduction_,
+                  .flash_attention = flash_attention_,
+                  .kv_cache_type = kv_cache_type_,
+                  .kv_offload = kv_offload_,
+                  .backend_diagnostics = backend_diagnostics_,
+                  .require_gpu_attention = require_gpu_attention_,
                   .context_option = "--context",
                   .progress = &progress_,
                   .inference_started = &inference_started},
                  nullptr, &records, nullptr, context_, context_capacity_,
                  sampler_, device_state_,
-                 host_reduction_.has_value() ? &*host_reduction_ : nullptr);
+                 host_reduction_.has_value() ? &*host_reduction_ : nullptr,
+                 placement_);
     } catch (const std::exception& error) {
       context_.reset();
       sampler_.reset();
@@ -1295,11 +1547,17 @@ class EntropyScorer::Impl {
   InferenceGuard inference_guard_;
   Model model_;
   DeviceEntropyState device_state_;
+  PlacementDiagnostics placement_;
   Sampler sampler_{nullptr, llama_sampler_free};
   Context context_;
   std::optional<HostReductionPool> host_reduction_;
   std::uint32_t context_limit_;
   std::uint32_t batch_size_;
+  FlashAttention flash_attention_;
+  KvCacheType kv_cache_type_;
+  bool kv_offload_;
+  bool backend_diagnostics_;
+  bool require_gpu_attention_;
   std::function<void(std::size_t, std::size_t)> progress_;
   std::uint32_t context_capacity_ = 0;
   bool device_reduction_ = false;
@@ -1309,7 +1567,7 @@ class EntropyScorer::Impl {
 
 EntropyScorer::EntropyScorer(const std::filesystem::path& model,
                              const InferenceOptions& options) {
-  CheckBatchSize(options.batch_size);
+  CheckInferenceOptions(options);
   implementation_ = std::make_unique<Impl>(model, options);
 }
 
@@ -1337,8 +1595,42 @@ std::string_view EntropyReductionName(EntropyReduction reduction) {
   return "unknown";
 }
 
+std::string_view FlashAttentionName(FlashAttention setting) {
+  switch (setting) {
+    case FlashAttention::kAuto:
+      return "auto";
+    case FlashAttention::kOn:
+      return "on";
+    case FlashAttention::kOff:
+      return "off";
+  }
+  return "unknown";
+}
+
+std::string_view KvCacheTypeName(KvCacheType type) {
+  switch (type) {
+    case KvCacheType::kF16:
+      return "f16";
+    case KvCacheType::kQ8_0:
+      return "q8_0";
+    case KvCacheType::kQ4_0:
+      return "q4_0";
+  }
+  return "unknown";
+}
+
+std::uint32_t ContextRequestCapacity(std::uint32_t context_limit,
+                                     std::uint32_t batch_size,
+                                     std::uint32_t required_tokens) {
+  if (context_limit == 0 || batch_size == 0 || required_tokens == 0 ||
+      required_tokens > context_limit) {
+    throw std::invalid_argument("invalid inference context capacity request");
+  }
+  return std::min(context_limit, std::max(required_tokens, batch_size));
+}
+
 std::string_view InferenceAbi() {
-  return "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v2";
+  return "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v3";
 }
 
 std::string_view CompiledBackend() {
@@ -1371,7 +1663,7 @@ int RunScoreCommand(int argc, char** argv) {
     progress.Phase("reading scoring input");
     const std::string input = ReadInput(arguments);
     progress.Phase("resolving inference backend");
-    BackendLogCapture capture;
+    BackendLogCapture capture(arguments.backend_diagnostics);
     // Keep the preflight backend alive through model loading and inference.
     // Unloading it here would force another device probe and plugin load.
     BackendRuntime backend = [&] {

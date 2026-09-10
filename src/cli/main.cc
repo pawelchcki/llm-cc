@@ -86,6 +86,10 @@ struct AnalyzeArguments {
   std::uint32_t context = llmcc::kDefaultContextSize;
   std::uint32_t batch_size = llmcc::kDefaultBatchSize;
   llmcc::EntropyReduction entropy_reduction = llmcc::EntropyReduction::kAuto;
+  llmcc::FlashAttention flash_attention = llmcc::FlashAttention::kOn;
+  llmcc::KvCacheType kv_cache_type = llmcc::KvCacheType::kQ8_0;
+  bool kv_offload = true;
+  bool backend_diagnostics = false;
   llmcc::HierarchyMode hierarchy_mode = llmcc::HierarchyMode::kStructural;
   std::optional<double> tau;
   std::optional<double> tau_percentile;
@@ -131,6 +135,11 @@ constexpr std::string_view kUsageBeforeContext =
     "  --backend NAME        auto, cpu, cuda, or rocm (default: auto)\n"
     "  --batch-size N        decode rows per batch (default: 64)\n"
     "  --entropy-reduction M auto, host, or device (default: auto)\n"
+    "  --flash-attn M       auto, on, or off (default: on)\n"
+    "  --kv-cache-type T    f16, q8_0, or q4_0 for K and V (default: q8_0)\n"
+    "  --kv-offload M       on or off (default: on)\n"
+    "  --backend-diagnostics  show backend warnings, allocations, and bounded "
+    "operation placement\n"
     "  --backend-dir DIR     GPU backend bundle/shared-library directory\n"
     "  --context N           maximum input tokens (default: ";
 
@@ -254,6 +263,40 @@ bool SetExecutionOption(AnalyzeArguments& arguments, std::string_view option,
     }
     return true;
   }
+  if (option == "--flash-attn") {
+    if (value == "auto") {
+      arguments.flash_attention = llmcc::FlashAttention::kAuto;
+    } else if (value == "on") {
+      arguments.flash_attention = llmcc::FlashAttention::kOn;
+    } else if (value == "off") {
+      arguments.flash_attention = llmcc::FlashAttention::kOff;
+    } else {
+      Usage("--flash-attn expects auto, on, or off");
+    }
+    return true;
+  }
+  if (option == "--kv-cache-type") {
+    if (value == "f16") {
+      arguments.kv_cache_type = llmcc::KvCacheType::kF16;
+    } else if (value == "q8_0") {
+      arguments.kv_cache_type = llmcc::KvCacheType::kQ8_0;
+    } else if (value == "q4_0") {
+      arguments.kv_cache_type = llmcc::KvCacheType::kQ4_0;
+    } else {
+      Usage("--kv-cache-type expects f16, q8_0, or q4_0");
+    }
+    return true;
+  }
+  if (option == "--kv-offload") {
+    if (value == "on") {
+      arguments.kv_offload = true;
+    } else if (value == "off") {
+      arguments.kv_offload = false;
+    } else {
+      Usage("--kv-offload expects on or off");
+    }
+    return true;
+  }
   return false;
 }
 
@@ -373,6 +416,10 @@ AnalyzeArguments ParseAnalyzeArguments(int argc, char** argv) {
       arguments.no_cache = true;
       continue;
     }
+    if (option == "--backend-diagnostics") {
+      arguments.backend_diagnostics = true;
+      continue;
+    }
     if (!option.starts_with('-')) {
       arguments.sources.emplace_back(std::filesystem::u8path(option));
       continue;
@@ -412,6 +459,10 @@ AnalyzeArguments ParseAnalyzeArguments(int argc, char** argv) {
   }
   if (arguments.tau.has_value() && arguments.tau_percentile.has_value()) {
     Usage("--tau and --tau-percentile are mutually exclusive");
+  }
+  if (arguments.kv_cache_type != llmcc::KvCacheType::kF16 &&
+      arguments.flash_attention == llmcc::FlashAttention::kOff) {
+    Usage("quantized K/V cache requires --flash-attn on or auto");
   }
   if (arguments.tau.has_value() &&
       (!std::isfinite(*arguments.tau) || *arguments.tau < 0.0)) {
@@ -957,6 +1008,18 @@ nlohmann::json ConfigurationJson(
       {"entropy_reduction",
        llmcc::EntropyReductionName(arguments.entropy_reduction)},
       {"effective_entropy_reducer", effective_reducer},
+      {"flash_attn", llmcc::FlashAttentionName(arguments.flash_attention)},
+      {"effective_flash_attn",
+       arguments.flash_attention == llmcc::FlashAttention::kAuto &&
+               arguments.kv_cache_type != llmcc::KvCacheType::kF16
+           ? "on"
+           : llmcc::FlashAttentionName(arguments.flash_attention)},
+      {"kv_cache_type", llmcc::KvCacheTypeName(arguments.kv_cache_type)},
+      {"effective_kv_cache_type",
+       llmcc::KvCacheTypeName(arguments.kv_cache_type)},
+      {"kv_offload", arguments.kv_offload ? "on" : "off"},
+      {"effective_kv_offload", arguments.kv_offload ? "on" : "off"},
+      {"backend_diagnostics", arguments.backend_diagnostics},
       {"score_mode", arguments.score_mode},
       {"tau_rule", percentile ? "percentile" : "absolute"},
       {"tau", percentile ? nlohmann::json()
@@ -997,6 +1060,9 @@ nlohmann::json ConfigurationJson(
     }
     configuration["backend"] = identity->backend;
     configuration["effective_entropy_reducer"] = identity->effective_reducer;
+    configuration["effective_flash_attn"] = identity->flash_attention;
+    configuration["effective_kv_cache_type"] = identity->kv_cache_type;
+    configuration["effective_kv_offload"] = identity->kv_offload ? "on" : "off";
   }
   return configuration;
 }
@@ -1278,7 +1344,12 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       resolved_model, llmcc::InferenceAbi(), backend_identity,
       arguments.context, arguments.batch_size,
       llmcc::EntropyReductionName(arguments.entropy_reduction),
-      device_reduction ? "device" : "host", entropy_cache);
+      device_reduction ? "device" : "host", entropy_cache,
+      arguments.flash_attention == llmcc::FlashAttention::kAuto &&
+              arguments.kv_cache_type != llmcc::KvCacheType::kF16
+          ? "on"
+          : llmcc::FlashAttentionName(arguments.flash_attention),
+      llmcc::KvCacheTypeName(arguments.kv_cache_type), arguments.kv_offload);
   if (!text) {
     Emit(ConfigurationJson(arguments, requested_model, &identity));
   }
@@ -1318,6 +1389,10 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
                 .backend = resolved_backend,
                 .batch_size = arguments.batch_size,
                 .entropy_reduction = arguments.entropy_reduction,
+                .flash_attention = arguments.flash_attention,
+                .kv_cache_type = arguments.kv_cache_type,
+                .kv_offload = arguments.kv_offload,
+                .backend_diagnostics = arguments.backend_diagnostics,
                 .progress =
                     [&](std::size_t completed, std::size_t total) {
                       progress.Tokens(completed, total);
@@ -1344,14 +1419,21 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
             {"language", language}});
     }
     try {
+      progress.Phase("reading source");
       const std::string contents = ReadFile(source.path);
+      if (contents.size() > 1024 * 1024) {
+        progress.Message("notice: scoring full file " + PathUtf8(source.path) +
+                         " (" + std::to_string(contents.size()) +
+                         " bytes) within the configured token limit");
+      }
       auto result = analyzer.AnalyzeFile(source, contents);
-      progress.FinishFile(result.entropy_cache_hit);
+      progress.Phase("writing output");
       if (text) {
         PrintFileText(source, contents, result, arguments.score_mode);
       } else {
         Emit(FileJson(source, result, arguments));
       }
+      progress.FinishFile(result.entropy_cache_hit);
       ++totals.analyzed;
       Accumulate(result.analysis, totals);
       auto& language_totals = languages[language];

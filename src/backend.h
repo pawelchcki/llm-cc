@@ -55,16 +55,20 @@ bool AutomaticBackendFetchAllowed(bool requested);
 // actionable failure messages.
 class BackendLogCapture {
  public:
-  BackendLogCapture();
+  explicit BackendLogCapture(bool diagnostics = false);
   BackendLogCapture(const BackendLogCapture&) = delete;
   BackendLogCapture& operator=(const BackendLogCapture&) = delete;
   ~BackendLogCapture();
 
   [[nodiscard]] std::string Error() const;
+  [[nodiscard]] std::string Diagnostics() const;
   void Clear();
+  void Record(bool error, std::string_view text);
 
  private:
+  bool diagnostics_enabled_;
   std::string errors_;
+  std::string diagnostics_;
 };
 
 enum class BackendPluginSource : std::uint8_t {

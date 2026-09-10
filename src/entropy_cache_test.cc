@@ -74,13 +74,16 @@ int main() {  // NOLINT(bugprone-exception-escape)
   changed.content_digest = "replacement-content-digest";
   llmcc::test::Expect(!llmcc::ReadEntropyCache("a", changed).hit,
                       "model content invalidates entries");
-  for (auto mutation : {0, 1, 2, 3, 4}) {
+  for (auto mutation : {0, 1, 2, 3, 4, 5, 6, 7}) {
     auto different = model;
     if (mutation == 0) ++different.context_limit;
     if (mutation == 1) different.inference_abi = "other-abi";
     if (mutation == 2) different.backend = "metal";
     if (mutation == 3) ++different.batch_size;
     if (mutation == 4) different.reduction_policy = "host";
+    if (mutation == 5) different.flash_attention = "auto";
+    if (mutation == 6) different.kv_cache_type = "f16";
+    if (mutation == 7) different.kv_offload = false;
     llmcc::test::Expect(!llmcc::ReadEntropyCache("a", different).hit,
                         "every inference setting separates entries");
   }
@@ -107,7 +110,10 @@ int main() {  // NOLINT(bugprone-exception-escape)
                       {"context_limit", model.context_limit},
                       {"batch_size", model.batch_size},
                       {"reduction_policy", model.reduction_policy},
-                      {"effective_reducer", model.effective_reducer}}},
+                      {"effective_reducer", model.effective_reducer},
+                      {"flash_attention", model.flash_attention},
+                      {"kv_cache_type", model.kv_cache_type},
+                      {"kv_offload", model.kv_offload}}},
                     {"records", nlohmann::json::array()}});
   llmcc::test::Expect(!llmcc::ReadEntropyCache("a", model).hit,
                       "incomplete token coverage is a miss");

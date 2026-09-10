@@ -477,7 +477,18 @@ cc_library(
         ":jsonl",
         ":sha256",
         "@nlohmann_json//:json",
-    ],
+    ] + select({
+        ":host_macos": [],
+        ":host_windows": [],
+        "//conditions:default": [
+            ":linux_compat",
+            "@boringssl//:crypto",
+        ],
+    }),
+    linkopts = select({
+        ":host_windows": ["bcrypt.lib"],
+        "//conditions:default": [],
+    }),
 )
 
 cc_library(

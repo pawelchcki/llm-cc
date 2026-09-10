@@ -218,6 +218,7 @@ cc_binary(
         ":cublas_static",
         ":ggml_cuda",
         "@cuda//:culibos_a",
+        "@cuda//:cuda",
         "@cuda//:cuda_runtime_static",
         "@cuda_host_toolchain//:libstdcxx_static",
     ],
@@ -326,4 +327,25 @@ cc_library(
         "ggml/src",
     ],
     deps = [":ggml"],
+)
+
+cc_binary(
+    name = "test-backend-ops",
+    srcs = ["tests/test-backend-ops.cpp"],
+    additional_linker_inputs = select({
+        "@platforms//os:linux": ["@//third_party:ggml_backend_abi.list"],
+        "//conditions:default": [],
+    }),
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-ldl",
+            "-lpthread",
+            "-Wl,--dynamic-list=$(location @//third_party:ggml_backend_abi.list)",
+        ],
+        "//conditions:default": [],
+    }),
+    deps = [":ggml"] + select({
+        "@platforms//os:linux": ["@//:linux_compat"],
+        "//conditions:default": [],
+    }),
 )

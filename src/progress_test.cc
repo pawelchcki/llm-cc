@@ -171,6 +171,10 @@ int main() {
     progress.Heartbeat();
     Expect(output.str().find("10/50 tokens stalled_s=5") != std::string::npos,
            "counter advance resets stalled age");
+    Expect(output.str().find("phase_elapsed_s=10") != std::string::npos,
+           "phase elapsed time is reported");
+    Expect(output.str().find("tokens_per_s=1") != std::string::npos,
+           "token throughput is reported");
     Expect(output.str().find("example.rs") != std::string::npos,
            "phase retains current file");
     progress.Phase("downloading");

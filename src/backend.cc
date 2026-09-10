@@ -31,8 +31,9 @@ namespace llmcc {
 namespace {
 
 void RecordBackendLog(ggml_log_level level, const char* text, void* user_data) {
-  if (level == GGML_LOG_LEVEL_ERROR && text != nullptr) {
-    *static_cast<std::string*>(user_data) += text;
+  if (text != nullptr) {
+    static_cast<BackendLogCapture*>(user_data)->Record(
+        level == GGML_LOG_LEVEL_ERROR, text);
   }
 }
 
@@ -497,8 +498,9 @@ bool AutomaticBackendFetchAllowed(bool requested) {
   return requested && AutomaticBackendFetchEnabled();
 }
 
-BackendLogCapture::BackendLogCapture() {
-  llama_log_set(RecordBackendLog, &errors_);
+BackendLogCapture::BackendLogCapture(bool diagnostics)
+    : diagnostics_enabled_(diagnostics) {
+  llama_log_set(RecordBackendLog, this);
 }
 
 BackendLogCapture::~BackendLogCapture() { llama_log_set(nullptr, nullptr); }
@@ -511,7 +513,28 @@ std::string BackendLogCapture::Error() const {
   return result;
 }
 
-void BackendLogCapture::Clear() { errors_.clear(); }
+std::string BackendLogCapture::Diagnostics() const {
+  std::string result = diagnostics_;
+  while (!result.empty() && (result.back() == '\n' || result.back() == '\r')) {
+    result.pop_back();
+  }
+  return result;
+}
+
+void BackendLogCapture::Record(bool error, std::string_view text) {
+  constexpr std::size_t kDiagnosticLimit = std::size_t{16} * 1024;
+  if (error) {
+    errors_.append(text);
+  }
+  if (diagnostics_enabled_ && diagnostics_.size() < kDiagnosticLimit) {
+    diagnostics_.append(text.substr(0, kDiagnosticLimit - diagnostics_.size()));
+  }
+}
+
+void BackendLogCapture::Clear() {
+  errors_.clear();
+  diagnostics_.clear();
+}
 
 ResolvedBackendPlugin ResolveBackendPlugin(
     BackendKind backend,

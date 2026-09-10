@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export an immutable, intentionally small dd-trace-c comparison corpus."""
+"""Export an immutable, intentionally small comparison corpus."""
 import argparse
 import hashlib
 import json
