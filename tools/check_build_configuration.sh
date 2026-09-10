@@ -29,6 +29,30 @@ root = Path(sys.argv[1])
 for name, expected in [('portable', 6), ('a10', 1)]:
     graph = json.loads((root / (name + '.json')).read_text())
     actions = graph['actions']
+    deps = {item['id']: item for item in graph['depSetOfFiles']}
+    artifacts = {item['id']: item for item in graph['artifacts']}
+    fragments = {item['id']: item for item in graph['pathFragments']}
+
+    def path(fragment_id):
+        fragment = fragments[fragment_id]
+        parent = path(fragment['parentId']) + '/' if fragment.get('parentId') else ''
+        return parent + fragment['label']
+
+    seen, inputs = set(), set()
+    pending = list(actions[0]['inputDepSetIds'])
+    while pending:
+        dep_id = pending.pop()
+        if dep_id in seen:
+            continue
+        seen.add(dep_id)
+        dep = deps[dep_id]
+        inputs.update(dep.get('directArtifactIds', []))
+        pending.extend(dep.get('transitiveDepSetIds', []))
+    paths = [path(artifacts[item]['pathFragmentId']) for item in inputs]
+    for suffix in ['tools/cuda_host_compiler.sh', 'tools/cuda_glibc_compat.h',
+                   'usr/include/stdlib.h', 'bin/clang++', 'lib64/libstdc++.a',
+                   'include/c++/12.3.0']:
+        assert any(item.endswith(suffix) for item in paths), suffix
     # aquery includes both PIC and non-PIC declared actions; the build selects 142.
     assert len(actions) == 284, len(actions)
     for action in actions:

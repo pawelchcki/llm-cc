@@ -52,3 +52,8 @@ filegroup(
     name = "gcc_runtime",
     srcs = ["lib/gcc/x86_64-buildroot-linux-gnu/12.3.0"],
 )
+
+filegroup(
+    name = "libstdcxx_files",
+    srcs = ["x86_64-buildroot-linux-gnu/lib64/libstdc++.a"],
+)

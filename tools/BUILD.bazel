@@ -114,6 +114,11 @@ cuda_host_compiler(name = "cuda_host_compiler")
 
 cc_binary(
     name = "generate_provenance",
+    # Execution configurations do not inherit the root's target --cxxopt.
+    copts = select({
+        "//:host_windows": ["/std:c++20"],
+        "//conditions:default": [],
+    }),
     srcs = ["generate_provenance.cc"],
     deps = ["//:sha256", "//:linux_compat"],
 )

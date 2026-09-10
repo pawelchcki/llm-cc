@@ -57,6 +57,7 @@ provenance = rule(
             Label("//third_party:llama_cpp_namespaced_backends.patch"),
             Label("//third_party:backend_module.lds"),
             Label("//third_party:ggml_backend_abi.list"),
+            Label("//third_party:cuda_host_toolchain.BUILD.bazel"),
             Label("//third_party:rules_cuda_explicit_tools.patch"),
             Label("//third_party:rocm_sdk.BUILD.bazel"),
         ]),

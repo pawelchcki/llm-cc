@@ -29,9 +29,9 @@ warm build. The executed sandbox count above excludes those internal actions.
 
 Reproduce with `tools/benchmark_cuda.sh /absolute/results/directory`. The script
 writes JSON profiles, build-event streams, logs and concise summaries. The
-reported runs preceded the final explicit-directory bundle-verification guard
-and whitespace-validation refinements; those do not change the selected CUDA
-sources or compiler architecture arguments.
+reported runs preceded final bundle-verification, whitespace-validation and
+declared-input refinements; those do not change the selected CUDA sources or
+compiler architecture arguments.
 
 | Issue | Regression evidence |
 | --- | --- |

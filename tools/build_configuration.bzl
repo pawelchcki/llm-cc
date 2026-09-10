@@ -48,6 +48,6 @@ cuda_host_compiler = rule(
         "sysroot_anchor": attr.label(default = Label("@linux_glibc_sysroot//:usr/include/stdlib.h"), allow_single_file = True),
         "cxx_anchor": attr.label(default = Label("@cuda_host_toolchain//:x86_64-buildroot-linux-gnu/include/c++/12.3.0/vector"), allow_single_file = True),
         "compat": attr.label(default = Label("//tools:cuda_glibc_compat.h"), allow_single_file = True),
-        "inputs": attr.label_list(default = [Label("@llvm_toolchain_llvm//:clang"), Label("@linux_glibc_sysroot//:sysroot"), Label("@cuda_host_toolchain//:clang_cuda_host_files"), Label("@cuda_host_toolchain//:libstdcxx_static")]),
+        "inputs": attr.label_list(default = [Label("@llvm_toolchain_llvm//:clang"), Label("@linux_glibc_sysroot//:sysroot"), Label("@cuda_host_toolchain//:clang_cuda_host_files"), Label("@cuda_host_toolchain//:libstdcxx_files")]),
     },
 )
