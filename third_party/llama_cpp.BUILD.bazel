@@ -2,8 +2,8 @@ load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_import.bzl", "cc_import")
 load("@rules_cuda//cuda:defs.bzl", "cuda_library")
-load("@//tools:cuda_archive.bzl", "cuda_pruned_archive")
-load("@//tools:hip_library.bzl", "hip_library")
+load("@llm_cc//tools:cuda_archive.bzl", "cuda_pruned_archive")
+load("@llm_cc//tools:hip_library.bzl", "hip_library")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -179,24 +179,10 @@ cuda_library(
     alwayslink = True,
     srcs = CUDA_SOURCES,
     hdrs = glob(["ggml/src/ggml-cuda/*.cuh"]),
-    tools = [
-        "@//tools:cuda_glibc_compat.h",
-        "@//tools:cuda_host_compiler_wrapper.sh",
-        "@cuda_host_toolchain//:clang_cuda_host_files",
-        "@linux_glibc_sysroot//:sysroot",
-        "@llvm_toolchain_llvm//:clang",
-    ],
-    archs = [
-        "compute_75",
-        "compute_80",
-        "compute_86:sm_86",
-        "compute_89:sm_89",
-        "compute_90",
-        "compute_120a:sm_120a",
-    ],
+    host_compiler = "@llm_cc//tools:cuda_host_compiler",
+    archs_setting = "@llm_cc//:cuda_archs",
     copts = [
         "-allow-unsupported-compiler",
-        "-ccbin=tools/cuda_host_compiler_wrapper.sh",
         "--compress-mode=size",
         "-extended-lambda",
         "-use_fast_math",
@@ -216,12 +202,12 @@ cuda_library(
 
 cc_binary(
     name = "libllm-cc-backend-cuda.so",
-    additional_linker_inputs = ["@//third_party:backend_module.lds"],
+    additional_linker_inputs = ["@llm_cc//third_party:backend_module.lds"],
     linkopts = [
         "-Wl,--build-id=none",
         "-Wl,--exclude-libs,ALL",
         "-Wl,--gc-sections",
-        "-Wl,--version-script=$(location @//third_party:backend_module.lds)",
+        "-Wl,--version-script=$(location @llm_cc//third_party:backend_module.lds)",
         "-ldl",
         "-lpthread",
         "-lrt",
@@ -262,7 +248,7 @@ hip_library(
     srcs = CUDA_SOURCES,
     sysroot_anchor = "@linux_glibc_sysroot//:usr/include/stdlib.h",
     sysroot_files = "@linux_glibc_sysroot//:sysroot",
-    version_script = "@//third_party:backend_module.lds",
+    version_script = "@llm_cc//third_party:backend_module.lds",
 )
 
 cc_library(

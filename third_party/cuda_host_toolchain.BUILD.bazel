@@ -2,6 +2,8 @@ load("@rules_cc//cc:cc_import.bzl", "cc_import")
 
 package(default_visibility = ["//visibility:public"])
 
+exports_files(["x86_64-buildroot-linux-gnu/include/c++/12.3.0/vector"])
+
 cc_import(
     name = "libstdcxx_static",
     static_library = "x86_64-buildroot-linux-gnu/lib64/libstdc++.a",
@@ -49,4 +51,9 @@ filegroup(
 filegroup(
     name = "gcc_runtime",
     srcs = ["lib/gcc/x86_64-buildroot-linux-gnu/12.3.0"],
+)
+
+filegroup(
+    name = "libstdcxx_files",
+    srcs = ["x86_64-buildroot-linux-gnu/lib64/libstdc++.a"],
 )

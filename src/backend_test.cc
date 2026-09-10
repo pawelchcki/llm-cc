@@ -25,6 +25,15 @@
 
 namespace {
 
+std::string Manifest(
+    std::string_view commit = "", std::string_view name = "cuda",
+    std::string_view version = "test-version",
+    std::string_view configuration = LLM_CC_BACKEND_CONFIGURATION) {
+  return "{\"name\":\"" + std::string(name) + "\",\"version\":\"" +
+         std::string(version) + "\",\"git_sha\":\"" + std::string(commit) +
+         "\",\"configuration\":\"" + std::string(configuration) + "\"}";
+}
+
 template <typename Exception, typename Function>
 bool ThrowsContaining(Function function, const std::string& needle) {
   try {
@@ -180,15 +189,23 @@ int main() try {
   fs::create_directories(runtime_root / "backends" / "test-version");
   const fs::path explicit_bundle = backend_directory / "cuda.bundle";
   const fs::path cached_bundle =
-      runtime_root / "backends" / "test-version" / "cuda.bundle";
-  WriteFile(explicit_bundle);
+      llmcc::BackendBundlePath({.name = "cuda",
+                                .version = "test-version",
+                                .git_sha = "expected",
+                                .runtime_root = runtime_root});
+  const std::string explicit_contents = Bundle("cuda");
+  WriteFile(explicit_bundle, explicit_contents);
+  WriteFile(explicit_bundle.string() + ".sha256",
+            llmcc::Sha256Hex(explicit_contents));
+  WriteFile(backend_directory / "cuda.manifest.json", Manifest());
   WriteFile(backend_directory / "libllm-cc-backend-cuda.so");
   const std::string cached_contents = Bundle("cuda");
+  fs::create_directories(cached_bundle.parent_path());
   WriteFile(cached_bundle, cached_contents);
   WriteFile(cached_bundle.string() + ".sha256",
             llmcc::Sha256Hex(cached_contents) + "\n");
   WriteFile(cached_bundle.parent_path() / "cuda.manifest.json",
-            R"({"git_sha":"actual"})");
+            Manifest("actual"));
   bool embedded_probed = false;
   bool runtime_probed = false;
   const llmcc::ResolvedBackendPlugin resolved = llmcc::ResolveBackendPlugin(
@@ -209,6 +226,19 @@ int main() try {
   Expect(!embedded_probed && !runtime_probed,
          "later resolution stages are not probed");
 
+  WriteFile(backend_directory / "cuda.manifest.json",
+            Manifest("", "cuda", "test-version", "incompatible"));
+  Expect(ThrowsContaining<std::runtime_error>(
+             [&] {
+               static_cast<void>(llmcc::ResolveBackendPlugin(
+                   BackendKind::kCuda, backend_directory,
+                   std::span<const fs::path>{}, [] { return false; },
+                   [&] { return runtime_root; }, "test-version"));
+             },
+             "configuration"),
+         "explicit bundles must match the executable configuration");
+  WriteFile(backend_directory / "cuda.manifest.json", Manifest());
+
   // A valid bundle installed under the executable prefix wins over development
   // runfiles and the user cache, while retaining normal bundle verification.
   const fs::path installed_root = root / "custom prefix" / "lib" / "llm-cc";
@@ -223,7 +253,7 @@ int main() try {
   WriteFile(installed_bundle.string() + ".sha256",
             llmcc::Sha256Hex(installed_contents) + "\n");
   WriteFile(installed_bundle.parent_path() / "cuda.manifest.json",
-            R"({"git_sha":"expected"})");
+            Manifest("expected"));
   const fs::path runfile_plugin = root / "runfiles" / "cuda.so";
   fs::create_directories(runfile_plugin.parent_path());
   WriteFile(runfile_plugin);
@@ -260,7 +290,7 @@ int main() try {
   WriteFile(installed_bundle.string() + ".sha256",
             llmcc::Sha256Hex(installed_contents) + "\n");
   WriteFile(installed_bundle.parent_path() / "cuda.manifest.json",
-            R"({"git_sha":"different"})");
+            Manifest("different"));
   Expect(ThrowsContaining<std::runtime_error>(
              [&] {
                static_cast<void>(llmcc::ResolveBackendPlugin(
@@ -272,7 +302,7 @@ int main() try {
              "different commit"),
          "wrong installed commit is rejected");
   WriteFile(installed_bundle.parent_path() / "cuda.manifest.json",
-            R"({"git_sha":"expected"})");
+            Manifest("expected"));
   WriteFile(installed_bundle, "bad footer");
   WriteFile(installed_bundle.string() + ".sha256",
             llmcc::Sha256Hex("bad footer") + "\n");
@@ -328,7 +358,7 @@ int main() try {
          "ordinary cache resolution verifies the manifest commit");
 
   WriteFile(cached_bundle.parent_path() / "cuda.manifest.json",
-            R"({"git_sha":"expected"})");
+            Manifest("expected"));
   const llmcc::ResolvedBackendPlugin cached = llmcc::ResolveBackendPlugin(
       BackendKind::kCuda, std::nullopt, std::span<const fs::path>{},
       [] { return false; }, [&] { return runtime_root; }, "test-version",
@@ -336,7 +366,7 @@ int main() try {
   Expect(cached.payload_verified,
          "validated runtime cache carries its payload verification");
   WriteFile(cached_bundle.parent_path() / "cuda.manifest.json",
-            R"({"git_sha":"actual"})");
+            Manifest("actual"));
 
   const fs::path alternate_bundle = root / "alternate.bundle";
   const llmcc::ResolvedBackendPlugin cache_skipped =

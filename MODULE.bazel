@@ -3,6 +3,8 @@ module(
     version = "0.1.0",
 )
 
+bazel_dep(name = "boringssl", version = "0.20260813.0")
+
 bazel_dep(name = "rules_cc", version = "0.2.22")
 bazel_dep(name = "rules_cuda", version = "0.3.0")
 bazel_dep(name = "rules_shell", version = "0.6.1")
@@ -25,59 +27,18 @@ single_version_override(
     version = "0.3.0",
 )
 
-llvm = use_extension("@toolchains_llvm//toolchain/extensions:llvm.bzl", "llvm")
-llvm.toolchain(
-    name = "llvm_toolchain",
-    cxx_standard = {"": "c++20"},
-    # LLVM 22 has no official Intel macOS distribution.
-    llvm_versions = {
-        "": "22.1.7",
-        "darwin-x86_64": "20.1.7",
-    },
-)
-use_repo(llvm, "llvm_toolchain", "llvm_toolchain_llvm")
+# Shared repository APIs work both here and in consuming modules. Registration
+# and overrides intentionally remain the responsibility of the consuming root.
+llm_toolchains = use_extension("//:extensions.bzl", "toolchains")
+use_repo(llm_toolchains, "llvm_toolchain", "llvm_toolchain_llvm", "llvm_toolchain_portable", "cuda", "cuda_sdk", "cuda_host_toolchain", "linux_glibc_sysroot")
+register_toolchains("@llvm_toolchain//:all", "@cuda//toolchain:nvcc-local-toolchain")
 
-# A second toolchain shares the pinned LLVM distribution but links Linux
-# x86_64 targets against the checksum-pinned portable glibc sysroot.
-llvm.toolchain(
-    name = "llvm_toolchain_portable",
-    cxx_standard = {"": "c++20"},
-    # LLVM 22 has no official Intel macOS distribution.
-    llvm_versions = {
-        "": "22.1.7",
-        "darwin-x86_64": "20.1.7",
-    },
-)
-llvm.toolchain_root(
-    name = "llvm_toolchain_portable",
-    label = "@llvm_toolchain_llvm//:BUILD",
-)
-llvm.sysroot(
-    name = "llvm_toolchain_portable",
-    label = "@linux_glibc_sysroot//:sysroot",
-    targets = ["linux-x86_64"],
-)
-use_repo(llvm, "llvm_toolchain_portable")
-
-register_toolchains("@llvm_toolchain//:all")
-
-# rules_cuda's redist integration downloads the compiler and static runtime
-# closure from NVIDIA's checksum-pinned CUDA 13.0.2 manifest. The toolchain is
-# independent of the host installation and produces one action per .cu file.
 cuda = use_extension("@rules_cuda//cuda:extensions.bzl", "toolchain")
-cuda.redist_json(
-    name = "rules_cuda_redist_json",
-    version = "13.0.2",
-)
-cuda.toolkit(name = "cuda")
-use_repo(cuda, "cuda")
+override_repo(cuda, cuda = "cuda")
 
-register_toolchains("@cuda//toolchain:nvcc-local-toolchain")
-
-# llama.cpp uses pinned CMake and Ninja. OpenSSL genuinely needs GNU Make, while
-# M4 and pkg-config are only declared toolchain slots and must remain unused.
+# Foreign builds use pinned CMake and Ninja; the other tool slots stay unused.
 register_toolchains(
-    "@rules_foreign_cc//toolchains:built_make_toolchain",
+    "//tools:unused_make_toolchain",
     "//tools:linux_arm64_ninja_toolchain",
     "//tools:unused_m4_toolchain",
     "//tools:unused_pkgconfig_toolchain",
@@ -103,42 +64,12 @@ http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "ht
 
 http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
 
-cuda_sdk_repository = use_repo_rule("//tools:gpu_sdk_repositories.bzl", "cuda_sdk_repository")
-
-cuda_sdk_repository(name = "cuda_sdk")
-
 # Optional 397,808,128-byte model used only by //:model_smoke_test.
 http_file(
     name = "qwen2_5_coder_0_5b_q4_k_m",
     downloaded_file_path = "Qwen2.5-Coder-0.5B-Q4_K_M.gguf",
     sha256 = "fefe9d34df79d3ad3db33519d81112be76096626a5fdb87a98092035dc79ad68",
     urls = ["https://huggingface.co/bartowski/Qwen2.5-Coder-0.5B-GGUF/resolve/main/Qwen2.5-Coder-0.5B-Q4_K_M.gguf"],
-)
-
-# Pinned GCC bundle used only for its libstdc++ headers and libraries. CUDA's
-# x86 headers reject libc++, but NVCC still delegates every host compile to
-# pinned Clang.
-http_archive(
-    name = "cuda_host_toolchain",
-    build_file = "//third_party:cuda_host_toolchain.BUILD.bazel",
-    patch_strip = 1,
-    patches = ["//third_party:cuda_host_sysroot_package.patch"],
-    sha256 = "d6eca7f1ea736ef6f868a027a9d0baa875f9513755026aed2badc04a2b9cd7bd",
-    strip_prefix = "x86-64--glibc--stable-2023.08-1",
-    urls = ["https://toolchains.bootlin.com/downloads/releases/toolchains/x86-64/tarballs/x86-64--glibc--stable-2023.08-1.tar.bz2"],
-)
-
-# Chromium's checksum-addressed Debian Stretch sysroot supplies glibc 2.24,
-# keeping the release ABI below the documented glibc 2.28 ceiling.
-http_archive(
-    name = "linux_glibc_sysroot",
-    build_file_content = """
-package(default_visibility = ["//visibility:public"])
-filegroup(name = "sysroot", srcs = glob(["**"]))
-exports_files(["usr/include/stdlib.h"])
-""",
-    sha256 = "73d828bf653f8f8548be704ce1ded4d195bf2bf937fc5426dd5636a9940d1969",
-    urls = ["https://commondatastorage.googleapis.com/chrome-linux-sysroot/toolchain/3c248ba4290a5ad07085b7af07e6785bf1ae5b66/debian_stretch_amd64_sysroot.tar.xz"],
 )
 
 http_archive(
@@ -237,18 +168,10 @@ http_archive(
 
 http_archive(
     name = "curl",
+    patch_strip = 1,
+    patches = ["//third_party:curl_boringssl_runtime.patch"],
     build_file = "//third_party:all.BUILD.bazel",
     sha256 = "f4619a1e2474c4bbfedc88a7c2191209c8334b48fa1f4e53fd584cc12e9120dd",
     strip_prefix = "curl-8.14.1",
     urls = ["https://curl.se/download/curl-8.14.1.tar.xz"],
-)
-
-http_archive(
-    name = "openssl",
-    build_file = "//third_party:all.BUILD.bazel",
-    patch_strip = 1,
-    patches = ["//third_party:openssl_reproducible_buildinfo.patch"],
-    sha256 = "a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2",
-    strip_prefix = "openssl-3.5.8",
-    urls = ["https://github.com/openssl/openssl/releases/download/openssl-3.5.8/openssl-3.5.8.tar.gz"],
 )

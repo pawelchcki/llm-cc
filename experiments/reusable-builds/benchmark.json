@@ -1,0 +1,156 @@
+{
+  "portable-cold": {
+    "elapsed_seconds": 508.167,
+    "critical_path_seconds": 189.33,
+    "expensive_cuda_actions": [
+      {
+        "name": "Compiling external/+http_archive+llama_cpp/ggml/src/ggml-cuda/template-instances/fattn-tile-instance-dkq256-dv256.cu",
+        "seconds": 180.532953
+      },
+      {
+        "name": "Compiling external/+http_archive+llama_cpp/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_8-ncols2_1.cu",
+        "seconds": 165.820872
+      },
+      {
+        "name": "Compiling external/+http_archive+llama_cpp/ggml/src/ggml-cuda/mmvq.cu",
+        "seconds": 143.458617
+      },
+      {
+        "name": "Compiling external/+http_archive+llama_cpp/ggml/src/ggml-cuda/template-instances/fattn-tile-instance-dkq512-dv512.cu",
+        "seconds": 131.988
+      },
+      {
+        "name": "Compiling external/+http_archive+llama_cpp/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_64-ncols2_1.cu",
+        "seconds": 128.134276
+      },
+      {
+        "name": "Compiling external/+http_archive+llama_cpp/ggml/src/ggml-cuda/template-instances/mmq-instance-q2_k.cu",
+        "seconds": 118.829112
+      },
+      {
+        "name": "Compiling external/+http_archive+llama_cpp/ggml/src/ggml-cuda/template-instances/mmq-instance-q6_k.cu",
+        "seconds": 118.586145
+      },
+      {
+        "name": "Compiling external/+http_archive+llama_cpp/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_32-ncols2_1.cu",
+        "seconds": 114.511467
+      },
+      {
+        "name": "Compiling external/+http_archive+llama_cpp/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_16-ncols2_1.cu",
+        "seconds": 112.078199
+      },
+      {
+        "name": "Compiling external/+http_archive+llama_cpp/ggml/src/ggml-cuda/mmvf.cu",
+        "seconds": 104.939784
+      }
+    ],
+    "actions": {
+      "CppCompile": 1057,
+      "CudaCompile": 142,
+      "CppModuleMap": 52,
+      "CppLink": 6,
+      "FileWrite": 5,
+      "CppArchive": 4,
+      "RepoMappingManifest": 3,
+      "TemplateExpand": 3,
+      "SymlinkTree": 3,
+      "SourceSymlinkManifest": 3,
+      "RunfilesTree": 3,
+      "CudaArchivePrune": 2,
+      "SolibSymlink": 2,
+      "Genrule": 1,
+      "LlmCcBackendBundle": 1,
+      "CcCmakeMakeRule": 1,
+      "BazelWorkspaceStatusAction": 1,
+      "LlmCcProvenance": 1,
+      "BoringSslCmakeTree": 1
+    },
+    "bazel_actions_executed": 1291
+  },
+  "portable-warm": {
+    "elapsed_seconds": 4.617,
+    "critical_path_seconds": 0.22,
+    "expensive_cuda_actions": [],
+    "actions": {
+      "BazelWorkspaceStatusAction": 1
+    },
+    "bazel_actions_executed": 1
+  },
+  "a10-cold": {
+    "elapsed_seconds": 207.879,
+    "critical_path_seconds": 53.95,
+    "expensive_cuda_actions": [
+      {
+        "name": "Compiling external/+http_archive+llama_cpp/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-q4_0-q4_0.cu",
+        "seconds": 46.378983
+      },
+      {
+        "name": "Compiling external/+http_archive+llama_cpp/ggml/src/ggml-cuda/template-instances/fattn-tile-instance-dkq256-dv256.cu",
+        "seconds": 37.646319
+      },
+      {
+        "name": "Compiling external/+http_archive+llama_cpp/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-q8_0-q8_0.cu",
+        "seconds": 35.930994
+      },
+      {
+        "name": "Compiling external/+http_archive+llama_cpp/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_8-ncols2_1.cu",
+        "seconds": 34.572265
+      },
+      {
+        "name": "Compiling external/+http_archive+llama_cpp/ggml/src/ggml-cuda/mmvq.cu",
+        "seconds": 32.803577
+      },
+      {
+        "name": "Compiling external/+http_archive+llama_cpp/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_64-ncols2_1.cu",
+        "seconds": 32.684134
+      },
+      {
+        "name": "Compiling external/+http_archive+llama_cpp/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_32-ncols2_1.cu",
+        "seconds": 26.157201
+      },
+      {
+        "name": "Compiling external/+http_archive+llama_cpp/ggml/src/ggml-cuda/mmvf.cu",
+        "seconds": 25.767904
+      },
+      {
+        "name": "Compiling external/+http_archive+llama_cpp/ggml/src/ggml-cuda/template-instances/fattn-tile-instance-dkq512-dv512.cu",
+        "seconds": 24.950953
+      },
+      {
+        "name": "Compiling external/+http_archive+llama_cpp/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_16-ncols2_4.cu",
+        "seconds": 24.679557
+      }
+    ],
+    "actions": {
+      "CppCompile": 1057,
+      "CudaCompile": 142,
+      "CppModuleMap": 52,
+      "CppLink": 6,
+      "FileWrite": 5,
+      "CppArchive": 4,
+      "RepoMappingManifest": 3,
+      "TemplateExpand": 3,
+      "SymlinkTree": 3,
+      "SourceSymlinkManifest": 3,
+      "RunfilesTree": 3,
+      "CudaArchivePrune": 2,
+      "SolibSymlink": 2,
+      "Genrule": 1,
+      "LlmCcBackendBundle": 1,
+      "CcCmakeMakeRule": 1,
+      "BazelWorkspaceStatusAction": 1,
+      "LlmCcProvenance": 1,
+      "BoringSslCmakeTree": 1
+    },
+    "bazel_actions_executed": 1291
+  },
+  "a10-warm": {
+    "elapsed_seconds": 0.293,
+    "critical_path_seconds": 0.03,
+    "expensive_cuda_actions": [],
+    "actions": {
+      "BazelWorkspaceStatusAction": 1
+    },
+    "bazel_actions_executed": 1
+  }
+}

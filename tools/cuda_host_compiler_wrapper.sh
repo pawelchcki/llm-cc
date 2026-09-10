@@ -5,16 +5,11 @@ set -euo pipefail
 # explicitly reject libc++, so this one frontend uses the compact bundle's
 # pinned libstdc++ headers/runtime in addition to the portable glibc sysroot. No
 # GCC executable participates in the build.
-script_path="${BASH_SOURCE[0]}"
-if [[ "${script_path}" != /* ]]; then
-  script_path="${PWD}/${script_path}"
-fi
-script_dir="${script_path%/*}"
-exec_root="${script_dir%/tools}"
-clang_root="${exec_root}/external/toolchains_llvm++llvm+llvm_toolchain_llvm"
-clangxx="${clang_root}/bin/clang++"
-sysroot_root="${exec_root}/external/+http_archive+linux_glibc_sysroot"
-gcc_root="${exec_root}/external/+http_archive+cuda_host_toolchain"
+# Bazel runs NVCC in the execution root; these paths come from declared Files.
+exec_root="${PWD}"
+clangxx="${exec_root}/@CLANG@"
+sysroot_root="${exec_root}/@SYSROOT@"
+gcc_root="${exec_root}/@GCC_ROOT@"
 
 is_link=1
 skip_next=0
@@ -45,7 +40,7 @@ filtered+=(
   "--sysroot=${sysroot_root}"
   "-nostdinc++"
   "-w"
-  "-include" "${exec_root}/tools/cuda_glibc_compat.h"
+  "-include" "${exec_root}/@COMPAT@"
   "-isystem" "${gcc_root}/x86_64-buildroot-linux-gnu/include/c++/12.3.0"
   "-isystem" "${gcc_root}/x86_64-buildroot-linux-gnu/include/c++/12.3.0/x86_64-buildroot-linux-gnu"
   "-isystem" "${gcc_root}/x86_64-buildroot-linux-gnu/include/c++/12.3.0/backward"

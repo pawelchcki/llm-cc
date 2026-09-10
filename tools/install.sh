@@ -62,8 +62,23 @@ if ((${#bundle_sources[@]} != ${#checksum_sources[@]} ||
   exit 2
 fi
 
+# Only newly created ancestors and known installer-owned directories get modes.
+# Existing unrelated prefix contents and ancestors are left alone.
+make_install_dir() {
+  local directory="$1"
+  if [[ ! -d "$directory" ]]; then
+    local parent
+    parent="$(dirname -- "$directory")"
+    if [[ "$parent" != "$directory" ]]; then
+      make_install_dir "$parent"
+    fi
+    mkdir -p -- "$directory"
+    chmod 0755 "$directory"
+  fi
+}
+make_install_dir "$prefix"
 bin_dir="$prefix/bin"
-mkdir -p "$bin_dir"
+make_install_dir "$bin_dir"
 physical_bin_dir="$(cd -P -- "$bin_dir" && pwd)"
 install_prefix="$(dirname -- "$physical_bin_dir")"
 install_root="$install_prefix/lib/llm-cc"
@@ -95,7 +110,8 @@ else
   exit 1
 fi
 
-mkdir -p "$install_root"
+make_install_dir "$install_root"
+chmod 0755 "$install_root"
 work_dir="$(mktemp -d "$physical_bin_dir/.llm-cc-install.XXXXXXXX")"
 stage_dir=""
 staged_bundle_dir=""
@@ -188,7 +204,8 @@ if [[ -z "$backend_path" || "$(dirname -- "$backend_path")" == "." ]]; then
 fi
 bundle_dir="$(dirname -- "$backend_path")"
 bundle_parent="$(dirname -- "$bundle_dir")"
-mkdir -p "$bundle_parent"
+make_install_dir "$bundle_parent"
+chmod 0755 "$bundle_parent"
 stage_dir="$(mktemp -d "$bundle_parent/.${bundle_dir##*/}.incoming.XXXXXXXX")"
 staged_bundle_dir="$stage_dir"
 
@@ -213,6 +230,8 @@ for index in "${!bundle_sources[@]}"; do
   install -m 0644 "$source_checksum" "$stage_dir/$backend.bundle.sha256"
   install -m 0644 "$source_manifest" "$stage_dir/$backend.manifest.json"
 done
+
+chmod 0755 "$stage_dir"
 
 # Swap a complete set, including an empty CPU/Metal set, so a backend change
 # cannot leave a stale same-build GPU bundle active.

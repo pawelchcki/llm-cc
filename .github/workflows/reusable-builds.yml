@@ -1,0 +1,118 @@
+name: Reusable builds
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  platform:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, backend: cpu, platform: linux-x86_64 }
+          - { runner: ubuntu-22.04-arm, backend: cpu, platform: linux-arm64 }
+          - { runner: macos-15, backend: metal, platform: macos-arm64 }
+          - { runner: windows-2025, backend: cpu, platform: windows-x86_64 }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-cache: true
+          disk-cache: reusable-builds-${{ runner.os }}-${{ runner.arch }}
+          repository-cache: true
+      - name: Install LLVM runtime dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxml2
+      - name: Configure Windows Bash
+        if: runner.os == 'Windows'
+        run: echo 'BAZEL_SH=C:/PROGRA~1/Git/bin/bash.exe' >> "$GITHUB_ENV"
+      - name: Unit, integration and TLS regression tests
+        run: bazel test --config=release --config=${{ matrix.backend }} --jobs=4 --test_output=errors //:unit //:integration //:tls_integration_test
+      - name: Link distribution executable
+        run: bazel build --config=release --config=${{ matrix.backend }} --jobs=4 //:llm-cc
+      - name: Check Linux ABI
+        if: runner.os == 'Linux'
+        run: |
+          maximum=2.28
+          if [[ '${{ matrix.platform }}' == linux-arm64 ]]; then maximum=2.35; fi
+          tools/check_glibc_version.sh bazel-bin/llm-cc "$maximum"
+          if readelf -d bazel-bin/llm-cc | grep -E 'NEEDED.*(libcrypto|libssl|libstdc\+\+|libc\+\+)'; then exit 1; fi
+      - name: Resolve macOS CUDA lock entries
+        if: runner.os == 'macOS'
+        run: |
+          bazel mod deps
+          # Force the downstream Linux job to resolve its own components, even
+          # when the checkout already contains Linux entries from development.
+          python3 - <<'PYLOCK'
+          import json
+          from pathlib import Path
+          path = Path("MODULE.bazel.lock")
+          lock = json.loads(path.read_text())
+          for name, results in lock["moduleExtensions"].items():
+              if name.endswith("%toolchains") or name.endswith("cuda:extensions.bzl%toolchain"):
+                  for key in list(results):
+                      if "os:linux" in key:
+                          del results[key]
+          path.write_text(json.dumps(lock, indent=2) + "\n")
+          PYLOCK
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'macOS'
+        with:
+          name: macos-module-lock
+          path: MODULE.bazel.lock
+
+  consumer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-cache: true
+          disk-cache: reusable-builds-${{ runner.os }}-${{ runner.arch }}
+          repository-cache: true
+      - run: sudo apt-get update && sudo apt-get install -y libxml2
+      - run: tools/check_build_configuration.sh
+      - run: BACKEND=cpu tools/check_consumer.sh
+      - run: BACKEND=cuda CUDA_ARCHS=compute_86:sm_86 tools/check_consumer.sh
+
+  transferred-lock:
+    needs: platform
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-cache: true
+          disk-cache: reusable-builds-${{ runner.os }}-${{ runner.arch }}
+          repository-cache: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-module-lock
+      - run: sudo apt-get update && sudo apt-get install -y libxml2
+      - run: bazel mod deps
+      - run: bazel build --config=cuda --config=release --nobuild //:install @cuda//:cublas_headers
+      - name: Keep both host results
+        run: |
+          python3 - <<'PY'
+          import json
+          lock = json.load(open("MODULE.bazel.lock"))
+          for name, results in lock["moduleExtensions"].items():
+              if name.endswith("%toolchains") or name.endswith("cuda:extensions.bzl%toolchain"):
+                  assert "general" not in results, name
+                  assert any("os:linux" in key for key in results), (name, results.keys())
+                  assert any("os:osx" in key for key in results), (name, results.keys())
+          PY

@@ -79,6 +79,22 @@ SDK is unnecessary. Drivers and device access remain host prerequisites. Follow
 and [NVIDIA's driver compatibility guidance](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html)
 for your system. macOS builds use the selected Xcode and Apple SDK.
 
+For a clean Ubuntu build container, install `ca-certificates`, `libxml2`,
+`libstdc++6`, `zlib1g`, `python3`, `git`, `perl`, `xz-utils`, `bzip2`, and `unzip`,
+plus Bazel/Bazelisk. The pinned LLVM linker needs `libxml2.so.2` at build time.
+GNU Make is unnecessary: Linux TLS and payload hashes use native Bazel BoringSSL
+`0.20260813.0`, and curl uses pinned CMake/Ninja. macOS uses Secure Transport;
+Windows uses Schannel. BoringSSL updates must pass the local TLS fixture because
+upstream does not promise API/ABI stability.
+
+To consume llm-cc from another Bazel module, use the complete
+[consumer example](examples/consumer/README.md), including root-owned patches,
+toolchain registration, toolkit overrides, and explicit llm-cc provenance.
+For A10-only builds, add `--//:cuda_archs=compute_86:sm_86` in this checkout or
+`--@llm_cc//:cuda_archs=compute_86:sm_86` in the consumer. The default preserves
+portable release architecture coverage. Bundles and caches carry a configuration
+fingerprint, so narrower builds cannot reuse incompatible portable bundles.
+
 For a CPU installation:
 
 ```sh

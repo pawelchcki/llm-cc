@@ -1,5 +1,7 @@
 """Small build helpers for project targets."""
 
+load("//tools:provenance.bzl", "ProvenanceInfo")
+
 # Single source of truth for both llama.cpp's GPU_TARGETS CMake option and the
 # generated runtime topology filter in generated/rocm_gpu_targets.h.
 ROCM_GPU_TARGETS = [
@@ -37,8 +39,8 @@ backend_configuration_probe = rule(
 
 def _backend_configuration_transition_impl(_settings, attr):
     return {
-        "//:backend": attr.backend,
-        "//:auto_fetch_backends": attr.auto_fetch,
+        str(Label("//:backend")): attr.backend,
+        str(Label("//:auto_fetch_backends")): attr.auto_fetch,
         "//command_line_option:platforms": [attr.platform],
     }
 
@@ -46,8 +48,8 @@ _backend_configuration_transition = transition(
     implementation = _backend_configuration_transition_impl,
     inputs = [],
     outputs = [
-        "//:backend",
-        "//:auto_fetch_backends",
+        str(Label("//:backend")),
+        str(Label("//:auto_fetch_backends")),
         "//command_line_option:platforms",
     ],
 )
@@ -148,6 +150,11 @@ def curl_cmake_options(**tls):
     options.update(tls)
     return options
 
+def _runfiles_path(ctx, file):
+    if file.short_path.startswith("../"):
+        return file.short_path[3:]
+    return ctx.workspace_name + "/" + file.short_path
+
 def _install_launcher_impl(ctx):
     launcher = ctx.actions.declare_file(ctx.label.name)
     workspace = ctx.workspace_name
@@ -162,25 +169,25 @@ def _install_launcher_impl(ctx):
             fail("each install backend bundle must provide one bundle, checksum, and manifest")
         for file in bundles + checksums + manifests:
             bundle_files.append(file)
-        bundle_arguments += " \\\n  --bundle \"$runfiles_dir/{workspace}/{bundle}\" \\\n  --checksum \"$runfiles_dir/{workspace}/{checksum}\" \\\n  --manifest \"$runfiles_dir/{workspace}/{manifest}\"".format(
+        bundle_arguments += " \\\n  --bundle \"$runfiles_dir/{bundle}\" \\\n  --checksum \"$runfiles_dir/{checksum}\" \\\n  --manifest \"$runfiles_dir/{manifest}\"".format(
             workspace = workspace,
-            bundle = bundles[0].short_path,
-            checksum = checksums[0].short_path,
-            manifest = manifests[0].short_path,
+            bundle = _runfiles_path(ctx, bundles[0]),
+            checksum = _runfiles_path(ctx, checksums[0]),
+            manifest = _runfiles_path(ctx, manifests[0]),
         )
     ctx.actions.write(
         output = launcher,
         content = """#!/usr/bin/env bash
 set -euo pipefail
 runfiles_dir="${{RUNFILES_DIR:-$0.runfiles}}"
-exec "$runfiles_dir/{workspace}/{script}" \\
-  "$runfiles_dir/{workspace}/{binary}"{bundle_arguments} \\
+exec "$runfiles_dir/{script}" \\
+  "$runfiles_dir/{binary}"{bundle_arguments} \\
   -- \\
   "$@"
 """.format(
             workspace = workspace,
-            script = ctx.file.script.short_path,
-            binary = ctx.file.binary.short_path,
+            script = _runfiles_path(ctx, ctx.file.script),
+            binary = _runfiles_path(ctx, ctx.file.binary),
             bundle_arguments = bundle_arguments,
         ),
         is_executable = True,
@@ -208,11 +215,10 @@ def _file_short_path(file):
     return file.short_path
 
 def _rocm_runtime_destination(source):
-    marker = "rocm_sdk/"
-    index = source.short_path.find(marker)
-    if index < 0:
-        fail("ROCm runtime input is outside the pinned SDK tree: %s" % source.short_path)
-    return source.short_path[index + len(marker):]
+    root = source.owner.workspace_root + "/"
+    if not source.path.startswith(root):
+        fail("ROCm runtime input is outside its repository: %s" % source.path)
+    return source.path[len(root):]
 
 def _embedded_linux_binary_impl(ctx):
     binary_files = ctx.attr.binary[DefaultInfo].files.to_list()
@@ -298,12 +304,9 @@ def _backend_bundle_impl(ctx):
                 source.path + "=" + _rocm_runtime_destination(source),
             )
 
-    # TODO: Pass the pinned llama.cpp commit and GGML backend ABI when those
-    # values are exposed to this Bazel graph without duplicating them.
     ctx.actions.run_shell(
         arguments = [
-            ctx.version_file.path,
-            ctx.info_file.path,
+            ctx.attr._provenance[ProvenanceInfo].metadata.path,
             ctx.executable._packager.path,
             output.path,
             checksum.path,
@@ -313,26 +316,13 @@ def _backend_bundle_impl(ctx):
         ],
         command = """
 set -euo pipefail
-version_status="$1"
-info_status="$2"
-packager="$3"
-output="$4"
-checksum="$5"
-manifest="$6"
-backend="$7"
-shift 7
-version=""
-git_sha=""
-read_status() {
-  while IFS=' ' read -r key value; do
-    case "$key" in
-      STABLE_LLM_CC_VERSION) version="$value" ;;
-      STABLE_LLM_CC_GIT_SHA) git_sha="$value" ;;
-    esac
-  done < "$1"
-}
-read_status "$version_status"
-read_status "$info_status"
+source "$1"
+packager="$2"
+output="$3"
+checksum="$4"
+manifest="$5"
+backend="$6"
+shift 6
 exec "$packager" \
   --write-bundle "$output" \
   --name "$backend" \
@@ -340,12 +330,13 @@ exec "$packager" \
   --checksum-output "$checksum" \
   --version "$version" \
   --git-sha "$git_sha" \
+  --configuration "$configuration" \
   --llama-commit "" \
   --ggml-abi "" \
   "$@"
 """,
         inputs = depset(
-            direct = module_files + [ctx.version_file, ctx.info_file],
+            direct = module_files + [ctx.attr._provenance[ProvenanceInfo].metadata],
             transitive = [ctx.attr.runtime[DefaultInfo].files] if ctx.attr.runtime else [],
         ),
         outputs = [output, checksum, manifest],
@@ -365,6 +356,7 @@ exec "$packager" \
 backend_bundle = rule(
     implementation = _backend_bundle_impl,
     attrs = {
+        "_provenance": attr.label(default = Label("//:version_header"), providers = [ProvenanceInfo]),
         "backend": attr.string(mandatory = True, values = ["cuda", "rocm"]),
         "module": attr.label(mandatory = True),
         "output_name": attr.string(mandatory = True),
@@ -442,68 +434,24 @@ def llama_cmake_options(**backend):
     options.update(backend)
     return options
 
-def llama_universal_cmake_options():
-    """Configuration for the relocatable Linux CPU + CUDA + ROCm package."""
-    options = llama_rocm_cmake_options()
-    cuda = llama_cuda_cmake_options()
-    for key in [
-        "CMAKE_CUDA_ARCHITECTURES",
-        "CMAKE_CUDA_COMPILER",
-        "CMAKE_CUDA_FLAGS",
-        "CMAKE_CUDA_HOST_COMPILER",
-        "CUDAToolkit_ROOT",
-    ]:
-        options[key] = cuda[key]
-    options.update({
-        "BUILD_SHARED_LIBS": "ON",
-        "CMAKE_BUILD_RPATH_USE_ORIGIN": "ON",
-        "CMAKE_INSTALL_RPATH": "\\$$ORIGIN;\\$$ORIGIN/cuda;\\$$ORIGIN/rocm;\\$$ORIGIN/rocm/llvm/lib;\\$$ORIGIN/rocm/rocm_sysdeps/lib",
-        "GGML_BACKEND_DL": "ON",
-        "GGML_CUDA": "ON",
-        "GGML_HIP": "ON",
-    })
-    return options
+def _backend_locations_impl(ctx):
+    # Labels carry the owning module's repository mapping, including renamed
+    # dependencies. Reading their metadata does not build the GPU target.
+    repo = Label("@llama_cpp//:libllm-cc-backend-cuda.so")
+    ctx.actions.write(ctx.outputs.out, "\n".join([
+        "#ifndef LLM_CC_BACKEND_LOCATIONS_H_",
+        "#define LLM_CC_BACKEND_LOCATIONS_H_",
+        '#define LLM_CC_BACKEND_EXEC_DIR "%s"' % repo.workspace_root,
+        '#define LLM_CC_BACKEND_RUNFILES_DIR "%s"' % repo.repo_name,
+        "#endif",
+        "",
+    ]))
 
-def llama_rocm_cmake_options():
-    rocm_root = "$$EXT_BUILD_ROOT/external/+http_archive+rocm_sdk"
-    llvm_root = "$$EXT_BUILD_ROOT/external/toolchains_llvm++llvm+llvm_toolchain_llvm"
-    gcc_root = "$$EXT_BUILD_ROOT/external/+http_archive+cuda_host_toolchain"
-    host_cxx_flags = " ".join([
-        "--sysroot=%s/x86_64-buildroot-linux-gnu/sysroot" % gcc_root,
-        "-stdlib=libc++",
-        "-nostdinc++",
-        "-isystem %s/include/c++/v1" % llvm_root,
-        "-isystem %s/include/x86_64-unknown-linux-gnu/c++/v1" % llvm_root,
-        "-L%s/lib/gcc/x86_64-buildroot-linux-gnu/12.3.0" % gcc_root,
-    ])
-    return llama_cmake_options(
-        BUILD_SHARED_LIBS = "ON",
-        CMAKE_HIP_COMPILER = "$(execpath @rocm_sdk//:clang)",
-        CMAKE_HIP_COMPILER_ID = "Clang",
-        CMAKE_HIP_COMPILER_ID_RUN = "ON",
-        CMAKE_HIP_COMPILER_ROCM_ROOT = rocm_root,
-        CMAKE_HIP_COMPILER_VERSION = "23.0.0",
-        CMAKE_HIP_FLAGS = "--rocm-path=%s -frandom-seed=llm-cc -fuse-cuid=none -ffile-prefix-map=$$EXT_BUILD_ROOT=. -fdebug-prefix-map=$$EXT_BUILD_ROOT=. %s" % (rocm_root, host_cxx_flags),
-        CMAKE_HIP_PLATFORM = "amd",
-        CMAKE_PREFIX_PATH = rocm_root,
-        CMAKE_BUILD_RPATH_USE_ORIGIN = "ON",
-        CMAKE_INSTALL_RPATH = "\\$$ORIGIN;\\$$ORIGIN/rocm;\\$$ORIGIN/rocm/llvm/lib;\\$$ORIGIN/rocm/rocm_sysdeps/lib",
-        GGML_BACKEND_DL = "ON",
-        GGML_HIP = "ON",
-        GPU_TARGETS = ";".join(ROCM_GPU_TARGETS),
-    )
+backend_locations = rule(
+    implementation = _backend_locations_impl,
+    attrs = {"out": attr.output(mandatory = True)},
+)
 
-def llama_cuda_cmake_options():
-    cuda_root = "$$EXT_BUILD_ROOT/external/+cuda_sdk_repository+cuda_sdk/sdk"
-    return llama_cmake_options(
-        BUILD_SHARED_LIBS = "ON",
-        CMAKE_CUDA_ARCHITECTURES = "75-virtual;80-virtual;86-real;89-real;90-virtual;120a-real",
-        CMAKE_CUDA_COMPILER = "$(execpath @cuda_sdk//:nvcc)",
-        CMAKE_CUDA_FLAGS = "--allow-unsupported-compiler --frandom-seed=llm-cc -Xcompiler=-ffile-prefix-map=$$EXT_BUILD_ROOT=. -Xcompiler=-fdebug-prefix-map=$$EXT_BUILD_ROOT=.",
-        CMAKE_CUDA_HOST_COMPILER = "$(execpath //tools:cuda_host_compiler_wrapper.sh)",
-        CUDAToolkit_ROOT = cuda_root,
-        CMAKE_BUILD_RPATH_USE_ORIGIN = "ON",
-        CMAKE_INSTALL_RPATH = "\\$$ORIGIN;\\$$ORIGIN/cuda",
-        GGML_BACKEND_DL = "ON",
-        GGML_CUDA = "ON",
-    )
+def rocm_runfiles_linkopts():
+    root = Label("@rocm_sdk//:sdk").repo_name
+    return ["-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/%s/%s" % (root, subdir) for subdir in ["lib", "lib/llvm/lib", "lib/rocm_sysdeps/lib"]]

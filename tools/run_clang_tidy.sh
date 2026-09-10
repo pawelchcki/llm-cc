@@ -17,11 +17,17 @@ fi
 
 output_base="$(bazel info output_base 2>/dev/null)"
 bazel_bin="$(bazel info bazel-bin 2>/dev/null)"
-llama_root="$output_base/external/+http_archive+llama_cpp"
-json_root="$output_base/external/+http_archive+nlohmann_json"
-tree_sitter_root="$output_base/external/+http_archive+tree_sitter"
-curl_root="$output_base/external/+http_archive+curl"
-llvm_root="$output_base/external/toolchains_llvm++llvm+llvm_toolchain_llvm"
+# Resolve apparent repository names through Bazel's module mapping.
+repo_mapping="$(bazel mod dump_repo_mapping '')"
+repo_path() {
+  python3 -c 'import json,sys; print(sys.argv[2] + "/external/" + json.loads(sys.argv[3])[sys.argv[1]])' "$1" "$output_base" "$repo_mapping"
+}
+llama_root="$(repo_path llama_cpp)"
+json_root="$(repo_path nlohmann_json)"
+tree_sitter_root="$(repo_path tree_sitter)"
+curl_root="$(repo_path curl)"
+llvm_root="$(repo_path llvm_toolchain_llvm)"
+boringssl_root="$(repo_path boringssl)"
 fixes_file="$(mktemp "${TMPDIR:-/tmp}/llm-cc-clang-tidy.XXXXXX")"
 trap 'rm -f "$fixes_file"' EXIT
 
@@ -29,7 +35,7 @@ platform_args=()
 if [[ "$(uname -s)" == Darwin ]]; then
   platform_args=(-isysroot "$(xcrun --sdk macosx --show-sdk-path)")
 elif [[ "$(uname -s)" == Linux ]]; then
-  sysroot="$output_base/external/+http_archive+linux_glibc_sysroot"
+  sysroot="$(repo_path linux_glibc_sysroot)"
   platform_args=(
     --target=x86_64-unknown-linux-gnu
     -resource-dir "$llvm_root/lib/clang/22"
@@ -48,7 +54,7 @@ bazel run @llvm_toolchain_llvm//:bin/clang-tidy -- \
   -I"$bazel_bin" -isystem "$llama_root/include" \
   -isystem "$llama_root/ggml/include" \
   -isystem "$json_root/single_include" \
-  -isystem "$tree_sitter_root/lib/include" -isystem "$curl_root/include"
+  -isystem "$tree_sitter_root/lib/include" -isystem "$curl_root/include" -isystem "$boringssl_root/include"
 
 if [[ -s "$fixes_file" ]] && ! grep -q '^Diagnostics: \[\]$' "$fixes_file"; then
   echo "clang-tidy reported diagnostics." >&2

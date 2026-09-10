@@ -259,12 +259,14 @@ void WriteChecksum(
 void WriteManifest(const fs::path& manifest_path, std::string_view name,
                    std::string_view version, std::string_view git_sha,
                    std::string_view llama_commit, std::string_view ggml_abi,
-                   std::string_view sha256, std::uint64_t size) {
+                   std::string_view configuration, std::string_view sha256,
+                   std::uint64_t size) {
   std::ofstream manifest(manifest_path, std::ios::trunc);
   manifest << "{\n"
            << "  \"name\": " << JsonString(name) << ",\n"
            << "  \"version\": " << JsonString(version) << ",\n"
            << "  \"git_sha\": " << JsonString(git_sha) << ",\n"
+           << "  \"configuration\": " << JsonString(configuration) << ",\n"
            << "  \"llama_cpp_commit\": " << JsonString(llama_commit) << ",\n"
            << "  \"ggml_backend_api_version\": " << JsonString(ggml_abi)
            << ",\n"
@@ -292,6 +294,7 @@ int main(int argc, char** argv) {
     std::string git_sha;
     std::string llama_commit;
     std::string ggml_abi;
+    std::string configuration;
     std::vector<BundleEntry> rocm_entries;
     std::vector<BundleEntry> bundle_entries;
     bool has_binary = false;
@@ -335,6 +338,8 @@ int main(int argc, char** argv) {
         git_sha = value();
       } else if (argument == "--llama-commit") {
         llama_commit = value();
+      } else if (argument == "--configuration") {
+        configuration = value();
       } else if (argument == "--ggml-abi") {
         ggml_abi = value();
       } else {
@@ -382,7 +387,7 @@ int main(int argc, char** argv) {
       }
       if (!manifest_output.empty()) {
         WriteManifest(manifest_output, name, version, git_sha, llama_commit,
-                      ggml_abi, Hex(bundle_hash),
+                      ggml_abi, configuration, Hex(bundle_hash),
                       static_cast<std::uint64_t>(fs::file_size(bundle_output)));
       }
       return 0;
@@ -390,7 +395,7 @@ int main(int argc, char** argv) {
 
     if (!name.empty() || !bundle_entries.empty() || !manifest_output.empty() ||
         !version.empty() || !git_sha.empty() || !llama_commit.empty() ||
-        !ggml_abi.empty()) {
+        !ggml_abi.empty() || !configuration.empty()) {
       throw std::runtime_error(
           "standalone bundle arguments require --write-bundle");
     }

@@ -405,6 +405,7 @@ void ValidateOptions(const BackendFetchOptions& options) {
     throw std::invalid_argument("backend name must be cuda or rocm");
   }
   ValidateComponent(options.version, "version");
+  ValidateComponent(options.configuration, "configuration");
   if (options.runtime_root.empty() ||
       options.runtime_root.native().find('\0') != std::string::npos) {
     throw std::invalid_argument("invalid backend runtime root");
@@ -594,7 +595,8 @@ std::optional<fs::path> DownloadManifest(const BundleDownloader& download,
   return std::nullopt;
 }
 
-void VerifyManifest(const fs::path& manifest, std::string_view expected_sha) {
+void VerifyManifest(const fs::path& manifest,
+                    const BackendFetchOptions& options) {
   std::ifstream input(manifest);
   nlohmann::json contents;
   try {
@@ -607,11 +609,22 @@ void VerifyManifest(const fs::path& manifest, std::string_view expected_sha) {
       !contents["git_sha"].is_string()) {
     throw std::runtime_error("invalid backend manifest: missing git_sha");
   }
+  for (const auto& [field, expected] :
+       {std::pair<std::string_view, std::string_view>{"version",
+                                                      options.version},
+        {"configuration", options.configuration},
+        {"name", options.name}}) {
+    if (!contents.contains(field) || !contents[field].is_string() ||
+        contents[field].get<std::string>() != expected) {
+      throw std::runtime_error("backend manifest " + std::string(field) +
+                               " does not match this build");
+    }
+  }
   const std::string actual_sha = contents["git_sha"].get<std::string>();
-  if (actual_sha != expected_sha) {
+  if (actual_sha != options.git_sha) {
     throw std::runtime_error(
         "backend bundle was built from a different commit: expected " +
-        std::string(expected_sha) + ", got " + actual_sha);
+        std::string(options.git_sha) + ", got " + actual_sha);
   }
 }
 
@@ -635,17 +648,30 @@ fs::path BackendBundlePath(const BackendFetchOptions& options) {
                                      : std::string(options.build_identity);
     ValidateComponent(identity, "build identity");
     cache_version += ".build." + identity;
+  } else {
+    ValidateComponent(options.git_sha, "commit");
+    cache_version += ".commit." + std::string(options.git_sha);
   }
+  cache_version += ".config." + std::string(options.configuration);
   return options.runtime_root / "backends" / cache_version /
          (std::string(options.name) + ".bundle");
 }
 
 void VerifyBackendBundle(const BackendFetchOptions& options) {
+  VerifyBackendBundle(options, BackendBundlePath(options));
+}
+
+void VerifyBackendBundle(const BackendFetchOptions& options,
+                         const fs::path& bundle) {
+  ValidateOptions(options);
   ReportPhase("verifying backend checksum and build commit");
-  const fs::path bundle = BackendBundlePath(options);
   const fs::path checksum = ChecksumPath(bundle);
-  const fs::path manifest =
-      bundle.parent_path() / (std::string(options.name) + ".manifest.json");
+  fs::path manifest = bundle;
+  manifest.replace_extension(".manifest.json");
+  if (!fs::exists(manifest) &&
+      bundle.filename() != std::string(options.name) + ".bundle") {
+    manifest = bundle.parent_path() / "manifest.json";
+  }
   CheckNotSymlink(bundle);
   CheckNotSymlink(checksum);
   CheckNotSymlink(manifest);
@@ -661,12 +687,12 @@ void VerifyBackendBundle(const BackendFetchOptions& options) {
   if (hashes.body != footer.body_hash) {
     throw std::runtime_error("backend bundle footer SHA-256 mismatch");
   }
-  if (!options.git_sha.empty()) {
+  {
     if (!fs::is_regular_file(manifest)) {
       throw std::runtime_error(
-          "backend manifest is required for a stamped build");
+          "backend manifest is required for build verification");
     }
-    VerifyManifest(manifest, options.git_sha);
+    VerifyManifest(manifest, options);
   }
 }
 
@@ -732,12 +758,12 @@ fs::path FetchBackendBundle(const BackendFetchOptions& options,
   try {
     download(bundle_url, bundle, download_options);
     download(checksum_url, checksum, download_options);
-    const std::optional<fs::path> downloaded_manifest = DownloadManifest(
-        download, manifest_base, artifact, manifest, !options.git_sha.empty());
-    if (!options.git_sha.empty()) {
+    const std::optional<fs::path> downloaded_manifest =
+        DownloadManifest(download, manifest_base, artifact, manifest, true);
+    {
       if (!downloaded_manifest.has_value()) {
         throw std::runtime_error(
-            "backend manifest is required for a stamped build");
+            "backend manifest is required for build verification");
       }
     }
     VerifyBackendBundle(options);
