@@ -12,6 +12,14 @@ PAYLOAD = b"resumable TLS fixture\n" * 1024
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path == "/ca.crl":
+            payload = self.server.crl
+            self.send_response(200)
+            self.send_header("Content-Type", "application/pkix-crl")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         if self.path == "/redirect":
             self.send_response(302)
             self.send_header("Location", "/data")
@@ -30,12 +38,38 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 def main():
-    probe, fixtures = map(Path, sys.argv[1:])
+    # Windows CreateProcess needs the actual executable behind Bazel runfiles.
+    probe, fixtures = (Path(value).resolve(strict=True) for value in sys.argv[1:])
+    assert probe.is_file(), probe
     root = Path(os.environ["TEST_TMPDIR"])
     # A short-lived leaf with serverAuth works with Apple SecTrust as well as
     # BoringSSL and Schannel. Generate it at test time so fixtures do not expire.
+    # Schannel checks revocation by default. Serve a signed, empty CRL locally
+    # so the fixture preserves production certificate-verification settings.
+    crl_server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    database = root / "ca.index"
+    database.write_text("")
+    ca_config = root / "ca.conf"
+    ca_config.write_text(f"""[ca]
+default_ca = fixture
+[fixture]
+database = {database.as_posix()}
+certificate = {(fixtures / 'ca.pem').as_posix()}
+private_key = {(fixtures / 'ca.key').as_posix()}
+default_md = sha256
+default_crl_days = 1
+crl_extensions = crl
+[crl]
+authorityKeyIdentifier = keyid:always
+""")
+    subprocess.run(["openssl", "ca", "-gencrl", "-config", str(ca_config),
+                    "-out", str(root / "ca.crl.pem")], check=True, capture_output=True)
+    subprocess.run(["openssl", "crl", "-in", str(root / "ca.crl.pem"),
+                    "-outform", "DER", "-out", str(root / "ca.crl")], check=True, capture_output=True)
+    crl_server.crl = (root / "ca.crl").read_bytes()
     extensions = root / "server.ext"
-    extensions.write_text("basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:localhost\n")
+    extensions.write_text("basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:localhost\n"
+                          f"crlDistributionPoints=URI:http://127.0.0.1:{crl_server.server_port}/ca.crl\n")
     subprocess.run(["openssl", "req", "-new", "-newkey", "rsa:2048", "-nodes",
                     "-keyout", str(root / "server.key"), "-out", str(root / "server.csr"),
                     "-subj", "/CN=localhost"], check=True, capture_output=True)
@@ -49,6 +83,8 @@ def main():
     server.socket = context.wrap_socket(server.socket, server_side=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+    crl_thread = threading.Thread(target=crl_server.serve_forever, daemon=True)
+    crl_thread.start()
     try:
         for name, host, endpoint, ca, success in [
             ("trusted", "localhost", "data", "ca.pem", True),
@@ -72,6 +108,9 @@ def main():
         server.shutdown()
         server.server_close()
         thread.join()
+        crl_server.shutdown()
+        crl_server.server_close()
+        crl_thread.join()
 
 
 if __name__ == "__main__":
