@@ -206,3 +206,25 @@ root = pathlib.Path(sys.argv[1])
 assert stat.S_IMODE(root.stat().st_mode) == 0o700
 assert stat.S_IMODE((root / "private").stat().st_mode) == 0o600
 PYUNCHANGED
+
+# Shared prefix directories may contain unrelated private data. Installing into
+# them must not widen their modes, while the installer-owned subtree stays
+# traversable when a restrictive umask is active.
+private_prefix="$TEST_TMPDIR/private prefix"
+mkdir -p "$private_prefix/bin" "$private_prefix/lib"
+printf private > "$private_prefix/lib/unrelated"
+chmod 0700 "$private_prefix/bin" "$private_prefix/lib"
+chmod 0600 "$private_prefix/lib/unrelated"
+umask 077
+BUILD_KEY=private-build bash "$script" "$source_binary" \
+  -- --prefix "$private_prefix"
+python3 - "$private_prefix" <<'PYPRIVATE'
+import pathlib, stat, sys
+root = pathlib.Path(sys.argv[1])
+assert stat.S_IMODE((root / "bin").stat().st_mode) == 0o700
+assert stat.S_IMODE((root / "lib").stat().st_mode) == 0o700
+assert stat.S_IMODE((root / "lib/unrelated").stat().st_mode) == 0o600
+for path in [root / "lib/llm-cc", *list((root / "lib/llm-cc").rglob("*"))]:
+    if path.is_dir():
+        assert stat.S_IMODE(path.stat().st_mode) == 0o755, (path, oct(path.stat().st_mode))
+PYPRIVATE

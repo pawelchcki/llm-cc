@@ -79,7 +79,6 @@ make_install_dir() {
 make_install_dir "$prefix"
 bin_dir="$prefix/bin"
 make_install_dir "$bin_dir"
-chmod 0755 "$bin_dir"
 physical_bin_dir="$(cd -P -- "$bin_dir" && pwd)"
 install_prefix="$(dirname -- "$physical_bin_dir")"
 install_root="$install_prefix/lib/llm-cc"
@@ -112,7 +111,7 @@ else
 fi
 
 make_install_dir "$install_root"
-chmod 0755 "$install_prefix/lib" "$install_root"
+chmod 0755 "$install_root"
 work_dir="$(mktemp -d "$physical_bin_dir/.llm-cc-install.XXXXXXXX")"
 stage_dir=""
 staged_bundle_dir=""
