@@ -5,6 +5,8 @@ set -euo pipefail
 
 binary="${1:?usage: check_glibc_version.sh <binary> [max-version, default 2.28]}"
 max_version="${2:-2.28}"
+readelf="${READELF:-readelf}"
+objdump="${OBJDUMP:-objdump}"
 
 if [[ ! -f "$binary" ]]; then
   echo "binary not found: $binary" >&2
@@ -15,13 +17,13 @@ if [[ ! "$max_version" =~ ^[0-9]+([.][0-9]+)*$ ]]; then
   exit 1
 fi
 
-if readelf -h "$binary" >/dev/null 2>&1 \
-  && ! readelf -l "$binary" 2>/dev/null | grep -E '^[[:space:]]*DYNAMIC[[:space:]]' >/dev/null; then
+if "$readelf" -h "$binary" >/dev/null 2>&1 \
+  && ! "$readelf" -l "$binary" 2>/dev/null | grep -E '^[[:space:]]*DYNAMIC[[:space:]]' >/dev/null; then
   echo "$binary is a fully static executable; no dynamic glibc references"
   exit 0
 fi
 
-versions=$(objdump -T "$binary" \
+versions=$("$objdump" -T "$binary" \
   | sed -nE 's/.*GLIBC_([0-9]+([.][0-9]+)*).*/\1/p' \
   | sort -Vu)
 

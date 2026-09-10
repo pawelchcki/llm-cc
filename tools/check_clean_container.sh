@@ -3,7 +3,7 @@
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y --no-install-recommends ca-certificates libxml2 libstdc++6 zlib1g python3 git perl xz-utils bzip2 unzip binutils
+apt-get install -y --no-install-recommends ca-certificates libxml2 libstdc++6 zlib1g python3 git perl xz-utils bzip2 unzip
 if command -v make; then
   echo 'This regression requires a container without Make' >&2
   exit 1
@@ -18,7 +18,8 @@ for link in bazel-*; do
   if [[ -L "$link" ]]; then rm "$link"; fi
 done
 backend="${BACKEND:-cpu}"
-bazel --nohome_rc --output_user_root=/build/bazel run --config=release --config="$backend" \
+bazel_command=(bazel --nohome_rc --output_user_root=/build/bazel)
+"${bazel_command[@]}" run --config=release --config="$backend" \
   --jobs="${JOBS:-16}" --repository_cache=/repository-cache \
   --//:source_version=0.2.0-container-fixture \
   --//:source_commit=a300b37b912a06f79869582b7f870eace005b329 \
@@ -26,7 +27,7 @@ bazel --nohome_rc --output_user_root=/build/bazel run --config=release --config=
 # Reinstall with a restrictive process umask.
 # The normal installer copies assets with explicit portable modes.
 umask 077
-bazel --nohome_rc --output_user_root=/build/bazel run --config=release --config="$backend" \
+"${bazel_command[@]}" run --config=release --config="$backend" \
   --jobs="${JOBS:-16}" --repository_cache=/repository-cache \
   --//:source_version=0.2.0-container-fixture \
   --//:source_commit=a300b37b912a06f79869582b7f870eace005b329 \
@@ -54,5 +55,12 @@ if sys.argv[1] == 'cuda':
 if Path('/model.gguf').exists():
     subprocess.run([binary, 'score', '--model', '/model.gguf', '--file', '/workspace/testdata/lang/functions.cc', '--force-cpu', '--no-download', '--progress', 'never'], check=True, env=dict(os.environ, HOME='/tmp'))
 PY
-readelf -d /opt/llm-cc/bin/llm-cc
-bash tools/check_glibc_version.sh /opt/llm-cc/bin/llm-cc 2.28
+
+# Keep binutils out of the host package closure: inspect the installed ELF with
+# the same checksum-pinned LLVM distribution that compiled it.
+execution_root="$("${bazel_command[@]}" info execution_root)"
+llvm_readelf="$execution_root/$("${bazel_command[@]}" cquery --output=files @llvm_toolchain_llvm//:readelf)"
+llvm_objdump="$execution_root/$("${bazel_command[@]}" cquery --output=files @llvm_toolchain_llvm//:objdump)"
+"$llvm_readelf" -d /opt/llm-cc/bin/llm-cc
+READELF="$llvm_readelf" OBJDUMP="$llvm_objdump" \
+  bash tools/check_glibc_version.sh /opt/llm-cc/bin/llm-cc 2.28
