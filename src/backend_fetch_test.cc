@@ -24,6 +24,15 @@ namespace fs = std::filesystem;
 
 namespace {
 
+std::string Manifest(
+    std::string_view commit = "", std::string_view name = "cuda",
+    std::string_view version = "1.2.3",
+    std::string_view configuration = LLM_CC_BACKEND_CONFIGURATION) {
+  return "{\"name\":\"" + std::string(name) + "\",\"version\":\"" +
+         std::string(version) + "\",\"git_sha\":\"" + std::string(commit) +
+         "\",\"configuration\":\"" + std::string(configuration) + "\"}";
+}
+
 using llmcc::test::Expect;
 using llmcc::test::ExpectEq;
 
@@ -123,6 +132,9 @@ llmcc::BackendFetchOptions Options(const fs::path& root,
 
 void AddValidBundle(FakeDownloads& downloads, std::string_view url,
                     std::string_view name = "cuda") {
+  const std::string manifest_url =
+      std::string(url.substr(0, url.size() - 7)) + ".manifest.json";
+  downloads.files[manifest_url] = Manifest("", name);
   const std::string bundle = Bundle(name);
   downloads.files.emplace(std::string(url), bundle);
   downloads.files.emplace(std::string(url) + ".sha256",
@@ -148,7 +160,7 @@ void TestStampedDefaults(const fs::path& root) {
     FakeDownloads downloads;
     AddValidBundle(downloads, url, name);
     downloads.files[base + "/" + *artifact + ".manifest.json"] =
-        "{\"git_sha\":\"" + std::string(options.git_sha) + "\"}";
+        Manifest(options.git_sha, name, options.version);
     const auto cached =
         llmcc::FetchBackendBundle(options, downloads.Downloader());
     ExpectEq(downloads.requests.front().url, url,
@@ -232,6 +244,7 @@ void TestWholeFileMismatch(const fs::path& root) {
   const std::string base = "https://artifacts.example/release";
   const std::string url = base + "/llm-cc-backend-cuda-linux-x86_64.bundle";
   FakeDownloads downloads;
+  AddValidBundle(downloads, url);
   downloads.files[url] = Bundle("cuda");
   downloads.files[url + ".sha256"] = std::string(64, '0') + "\n";
   auto options = Options(root);
@@ -252,6 +265,7 @@ void TestFooterMismatch(const fs::path& root) {
   const std::string url = base + "/llm-cc-backend-cuda-linux-x86_64.bundle";
   const std::string bundle = Bundle("cuda", false);
   FakeDownloads downloads;
+  AddValidBundle(downloads, url);
   downloads.files[url] = bundle;
   downloads.files[url + ".sha256"] = llmcc::Sha256Hex(bundle) + "\n";
   auto options = Options(root);
@@ -274,7 +288,7 @@ void TestManifestMismatch(const fs::path& root) {
   FakeDownloads downloads;
   AddValidBundle(downloads, url);
   downloads.files[base + "/" + artifact + ".manifest.json"] =
-      R"({"name":"cuda","git_sha":"actual"})";
+      Manifest("actual");
   auto options = Options(root);
   options.base_url = base;
   options.explicit_url = url;
@@ -300,6 +314,7 @@ void TestCachedBundle(const fs::path& root) {
   const std::string bundle = Bundle("cuda");
   Write(path, bundle);
   Write(path.string() + ".sha256", llmcc::Sha256Hex(bundle) + "\n");
+  Write(path.parent_path() / "cuda.manifest.json", Manifest());
   bool called = false;
   const fs::path result = llmcc::FetchBackendBundle(
       options,
@@ -320,13 +335,13 @@ void TestStampedCachedBundle(const fs::path& root) {
   const std::string bundle = Bundle("cuda");
   Write(path, bundle);
   Write(path.string() + ".sha256", llmcc::Sha256Hex(bundle) + "\n");
-  Write(manifest, R"({"git_sha":"actual"})");
+  Write(manifest, Manifest("actual"));
   const std::string mismatch =
       ExceptionMessage([&] { llmcc::VerifyBackendBundle(options); });
   Expect(mismatch.find("built from a different commit") != std::string::npos,
          "cache hit verifies the manifest commit");
 
-  Write(manifest, R"({"git_sha":"expected"})");
+  Write(manifest, Manifest("expected"));
   bool called = false;
   ExpectEq(llmcc::FetchBackendBundle(
                options, [&](std::string_view, const fs::path&,
@@ -361,7 +376,7 @@ void TestInvalidCacheRepair(const fs::path& root) {
   FakeDownloads downloads;
   AddValidBundle(downloads, url);
   downloads.files[base + "/" + artifact + ".manifest.json"] =
-      R"({"git_sha":"expected"})";
+      Manifest("expected");
 
   auto options = Options(root);
   options.base_url = base;
@@ -371,7 +386,7 @@ void TestInvalidCacheRepair(const fs::path& root) {
   const std::string cached = Bundle("cuda");
   Write(path, cached);
   Write(path.string() + ".sha256", llmcc::Sha256Hex(cached) + "\n");
-  Write(path.parent_path() / "cuda.manifest.json", R"({"git_sha":"wrong"})");
+  Write(path.parent_path() / "cuda.manifest.json", Manifest("wrong"));
 
   ExpectEq(llmcc::FetchBackendBundle(options, downloads.Downloader()), path,
            "invalid stamped cache is repaired");
@@ -395,7 +410,7 @@ void TestConcurrentFetch(const fs::path& root) {
         } else if (url == bundle_url + ".sha256") {
           Write(target, llmcc::Sha256Hex(bundle) + "\n");
         } else if (url == base + "/" + artifact + ".manifest.json") {
-          Write(target, R"({"git_sha":"expected"})");
+          Write(target, Manifest("expected"));
         } else {
           throw std::runtime_error("unexpected concurrent test URL");
         }
@@ -437,13 +452,51 @@ void TestConcurrentFetch(const fs::path& root) {
   llmcc::VerifyBackendBundle(options);
 }
 
+void TestConfigurationIdentity(const fs::path& root) {
+  auto portable = Options(root);
+  portable.git_sha = "expected";
+  auto a10 = portable;
+  a10.configuration = "a10-configuration";
+  Expect(llmcc::BackendBundlePath(portable) != llmcc::BackendBundlePath(a10),
+         "architectures have distinct cache entries");
+  auto other_commit = portable;
+  other_commit.git_sha = "other-commit";
+  Expect(
+      llmcc::BackendBundlePath(portable) !=
+          llmcc::BackendBundlePath(other_commit),
+      "explicit versions from different commits have distinct cache entries");
+  const fs::path legacy = root / "backends" / "1.2.3" / "cuda.bundle";
+  Write(legacy, "legacy cache remains untouched");
+  const fs::path bundle = llmcc::BackendBundlePath(a10);
+  const std::string contents = Bundle("cuda");
+  Write(bundle, contents);
+  Write(bundle.string() + ".sha256", llmcc::Sha256Hex(contents));
+  Write(bundle.parent_path() / "cuda.manifest.json", Manifest("expected"));
+  Expect(ExceptionMessage([&] {
+           llmcc::VerifyBackendBundle(a10);
+           Expect(fs::exists(legacy),
+                  "configuration-aware lookup preserves old cache entries");
+         }).find("configuration") != std::string::npos,
+         "same-commit bundle with a different configuration is rejected");
+  Write(bundle.parent_path() / "cuda.manifest.json",
+        Manifest("expected", "cuda", "1.2.3", a10.configuration));
+  llmcc::VerifyBackendBundle(a10);
+  Write(bundle.parent_path() / "cuda.manifest.json",
+        Manifest("expected", "cuda", "9.9.9", a10.configuration));
+  Expect(ExceptionMessage([&] {
+           llmcc::VerifyBackendBundle(a10);
+         }).find("version") != std::string::npos,
+         "same-commit bundle with a different source version is rejected");
+}
+
 void TestDownloadSemantics(const fs::path& root) {
   const std::string base = "https://artifacts.example/release";
   const std::string artifact = "llm-cc-backend-cuda-linux-x86_64";
   const std::string url = base + "/" + artifact + ".bundle";
   FakeDownloads downloads;
   AddValidBundle(downloads, url);
-  downloads.files[base + "/manifest.json"] = R"({"git_sha":"expected"})";
+  downloads.files.erase(base + "/" + artifact + ".manifest.json");
+  downloads.files[base + "/manifest.json"] = Manifest("expected");
   auto options = Options(root);
   options.base_url = base;
   options.explicit_url = url;
@@ -524,6 +577,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
   TestCachedFooter(root / "cached-footer");
   TestInvalidCacheRepair(root / "invalid-cache-repair");
   TestConcurrentFetch(root / "concurrent");
+  TestConfigurationIdentity(root / "configuration");
   TestDownloadSemantics(root / "download-semantics");
   return 0;
 }

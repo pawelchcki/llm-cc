@@ -1,0 +1,55 @@
+module(name = "llm_cc_consumer")
+
+bazel_dep(name = "llm_cc", version = "0.1.0")
+# For a published/pinned dependency, replace this with git_override (see README).
+local_path_override(module_name = "llm_cc", path = "../..")
+bazel_dep(name = "rules_cuda", version = "0.3.0")
+bazel_dep(name = "rules_foreign_cc", version = "0.15.1")
+
+single_version_override(
+    module_name = "rules_foreign_cc",
+    patch_strip = 1,
+    patches = ["//patches:rules_foreign_cc_reproducible_logs.patch"],
+    version = "0.15.1",
+)
+
+single_version_override(
+    module_name = "rules_cuda",
+    patch_strip = 1,
+    patches = ["//patches:rules_cuda_explicit_tools.patch"],
+    version = "0.3.0",
+)
+
+# Shared repository APIs work both here and in consuming modules. Registration
+# and overrides intentionally remain the responsibility of the consuming root.
+llm_toolchains = use_extension("@llm_cc//:extensions.bzl", "toolchains")
+use_repo(llm_toolchains, "llvm_toolchain", "llvm_toolchain_llvm", "llvm_toolchain_portable", "cuda", "cuda_sdk", "cuda_host_toolchain", "linux_glibc_sysroot")
+register_toolchains("@llvm_toolchain//:all", "@cuda//toolchain:nvcc-local-toolchain")
+
+cuda = use_extension("@rules_cuda//cuda:extensions.bzl", "toolchain")
+override_repo(cuda, cuda = "cuda")
+
+# Foreign builds use pinned CMake and Ninja; the other tool slots stay unused.
+register_toolchains(
+    "@llm_cc//tools:unused_make_toolchain",
+    "@llm_cc//tools:linux_arm64_ninja_toolchain",
+    "@llm_cc//tools:unused_m4_toolchain",
+    "@llm_cc//tools:unused_pkgconfig_toolchain",
+)
+
+foreign_tools = use_extension("@rules_foreign_cc//foreign_cc:extensions.bzl", "tools")
+foreign_tools.cmake(version = "3.31.8")
+foreign_tools.ninja(version = "1.13.0")
+use_repo(
+    foreign_tools,
+    "cmake_3.31.8_toolchains",
+    "ninja_1.13.0_toolchains",
+    "rules_foreign_cc_framework_toolchains",
+)
+
+register_toolchains(
+    "@cmake_3.31.8_toolchains//:all",
+    "@ninja_1.13.0_toolchains//:all",
+    "@rules_foreign_cc_framework_toolchains//:all",
+)
+

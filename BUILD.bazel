@@ -1,3 +1,4 @@
+load("//tools:provenance.bzl", "provenance")
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
@@ -6,72 +7,31 @@ load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
 load("@bazel_skylib//lib:selects.bzl", "selects")
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
-load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make_variant")
+load("//tools:boringssl_adapter.bzl", "boringssl_adapter")
+load("//tools:build_configuration.bzl", "DEFAULT_CUDA_ARCHS", "cuda_archs_flag")
 load(
     "//:build_defs.bzl",
     "ROCM_GPU_TARGETS",
     "backend_configuration_case",
     "backend_configuration_probe",
+    "backend_locations",
+    "rocm_runfiles_linkopts",
     "curl_cmake_options",
     "install_launcher",
     "llama_cmake_options",
-    "llama_cuda_cmake_options",
-    "llama_rocm_cmake_options",
-    "llama_universal_cmake_options",
     "payload_archive",
     "rocm_targets_header",
 )
 
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["version.txt"])
+exports_files(["version.txt", "MODULE.bazel", "extensions.bzl"])
 
-genrule(
-    name = "version_header",
-    srcs = ["version.txt"],
-    outs = ["generated/version.h"],
-    # Follow --stamp: development builds use the VERSION fallback, while
-    # release/install builds receive the workspace status files.
-    stamp = -1,
-    cmd = """
-status_file=bazel-out/stable-status.txt
-version=""
-git_sha=""
-artifact_base_url=""
-if [[ -f "$$status_file" ]]; then
-  version=$$(grep '^STABLE_LLM_CC_VERSION ' "$$status_file" | cut -d' ' -f2- || true)
-  git_sha=$$(grep '^STABLE_LLM_CC_GIT_SHA ' "$$status_file" | cut -d' ' -f2- || true)
-  artifact_base_url=$$(grep '^STABLE_LLM_CC_ARTIFACT_BASE_URL ' "$$status_file" | cut -d' ' -f2- || true)
-fi
-if [[ -z "$$version" ]]; then
-  base=$$(tr -d '[:space:]' < $(location version.txt))
-  version="$$base-dev.0+unknown"
-fi
-case "$$version" in
-  *[!0-9A-Za-z.+-]*|'') echo "invalid VERSION: $$version" >&2; exit 1 ;;
-esac
-if [[ "$$git_sha" == "unknown" ]]; then
-  git_sha=""
-fi
-case "$$git_sha" in
-  *[!0-9a-f]* ) echo "invalid git SHA: $$git_sha" >&2; exit 1 ;;
-esac
-case "$$artifact_base_url" in
-  *[!0-9A-Za-z:/._~-]* ) echo "invalid artifact base URL" >&2; exit 1 ;;
-esac
-if [[ "$$artifact_base_url" == "none" ]]; then
-  artifact_base_url=""
-fi
-cat > "$@" <<EOF
-#ifndef LLM_CC_GENERATED_VERSION_H_
-#define LLM_CC_GENERATED_VERSION_H_
-#define LLM_CC_VERSION "$$version"
-#define LLM_CC_GIT_SHA "$$git_sha"
-#define LLM_CC_ARTIFACT_BASE_URL "$$artifact_base_url"
-#endif
-EOF
-""",
-)
+config_setting(name = "stamping", values = {"stamp": "1"})
+string_flag(name = "source_version", build_setting_default = "")
+string_flag(name = "source_commit", build_setting_default = "")
+string_flag(name = "artifact_base_url", build_setting_default = "")
+provenance(name = "version_header", stamp = select({":stamping": True, "//conditions:default": False}))
 
 genrule(
     name = "build_config_header",
@@ -244,9 +204,6 @@ selects.config_setting_group(
 cmake(
     name = "llama_cpp",
     cache_entries = select({
-        ":backend_universal": llama_universal_cmake_options(),
-        ":backend_cuda": llama_cuda_cmake_options(),
-        ":backend_rocm": llama_rocm_cmake_options(),
         ":backend_metal": llama_cmake_options(
             BUILD_SHARED_LIBS = "OFF",
             GGML_METAL = "ON",
@@ -257,37 +214,11 @@ cmake(
         ),
         "//conditions:default": llama_cmake_options(),
     }),
-    build_data = select({
-        ":backend_universal": [
-            "@cuda_sdk//:nvcc",
-            "@cuda_sdk//:sdk",
-            "@cuda_host_toolchain//:host_toolchain",
-            "@rocm_sdk//:clang",
-            "@rocm_sdk//:sdk",
-            "//tools:cuda_host_compiler_wrapper.sh",
-        ],
-        ":backend_cuda": [
-            "@cuda_sdk//:nvcc",
-            "@cuda_sdk//:sdk",
-            "@cuda_host_toolchain//:gxx",
-            "@cuda_host_toolchain//:host_toolchain",
-            "//tools:cuda_host_compiler_wrapper.sh",
-        ],
-        ":backend_rocm": [
-            "@cuda_host_toolchain//:gcc_runtime",
-            "@rocm_sdk//:clang",
-            "@rocm_sdk//:sdk",
-        ],
-        "//conditions:default": [],
-    }),
     generate_args = ["-GNinja"],
     lib_source = "@llama_cpp//:all",
     set_file_prefix_map = True,
     tags = ["manual"],
     out_static_libs = select({
-        ":backend_universal": [],
-        ":backend_cuda": [],
-        ":backend_rocm": [],
         ":backend_metal": [
             "libllama.a",
             "libggml.a",
@@ -303,41 +234,6 @@ cmake(
             "libggml-cpu.a",
         ],
     }),
-    out_shared_libs = select({
-        ":backend_universal": [
-            "libllama.so",
-            "libggml.so",
-            "libggml-base.so",
-        ],
-        ":backend_cuda": [
-            "libllama.so",
-            "libggml.so",
-            "libggml-base.so",
-        ],
-        ":backend_rocm": [
-            "libllama.so",
-            "libggml.so",
-            "libggml-base.so",
-        ],
-        ":backend_metal": [],
-        "//conditions:default": [],
-    }),
-    out_data_files = select({
-        ":backend_universal": [
-            "lib/libllm-cc-backend-cpu.so",
-            "lib/libllm-cc-backend-cuda.so",
-            "lib/libllm-cc-backend-rocm.so",
-        ],
-        ":backend_cuda": [
-            "lib/libllm-cc-backend-cpu.so",
-            "lib/libllm-cc-backend-cuda.so",
-        ],
-        ":backend_rocm": [
-            "lib/libllm-cc-backend-cpu.so",
-            "lib/libllm-cc-backend-rocm.so",
-        ],
-        "//conditions:default": [],
-    }),
 )
 
 # Linux uses the fine-grained native graph for every backend. The standalone
@@ -351,50 +247,7 @@ alias(
     tags = ["manual"],
 )
 
-configure_make_variant(
-    name = "openssl",
-    args = [
-        # GNU Make exports command-line variables to recipes. OpenSSL's
-        # build-info generator otherwise records the wall-clock time.
-        "SOURCE_DATE_EPOCH=0",
-        # These features are disabled, but OpenSSL still compiles their
-        # default directories into libcrypto unless they are overridden.
-        "ENGINESDIR=lib64/engines-3",
-        "MODULESDIR=lib64/ossl-modules",
-    ],
-    configure_command = "Configure",
-    configure_in_place = True,
-    configure_options = [
-        "--libdir=lib64",
-        "--openssldir=/etc/ssl",
-        "no-apps",
-        "no-dso",
-        "no-engine",
-        "no-module",
-        "no-shared",
-        "no-tests",
-        "no-zlib",
-    ],
-    lib_source = "@openssl//:all",
-    out_lib_dir = "lib64",
-    out_static_libs = [
-        "libcrypto.a",
-        "libssl.a",
-    ],
-    set_file_prefix_map = True,
-    target_compatible_with = select({
-        ":host_macos": ["@platforms//:incompatible"],
-        ":host_windows": ["@platforms//:incompatible"],
-        "//conditions:default": [],
-    }),
-    targets = [
-        "",
-        # Install libraries and headers without populating --openssldir.
-        "install_sw",
-    ],
-    toolchain = "@rules_foreign_cc//toolchains:built_make_toolchain",
-    visibility = ["//visibility:public"],
-)
+boringssl_adapter(name = "boringssl_cmake")
 
 cmake(
     name = "curl",
@@ -411,10 +264,10 @@ cmake(
         "//conditions:default": curl_cmake_options(
             CURL_USE_OPENSSL = "ON",
             CURL_USE_SECTRANSP = "OFF",
-            OPENSSL_CRYPTO_LIBRARY = "$$EXT_BUILD_DEPS/openssl_/lib64/libcrypto.a",
-            OPENSSL_INCLUDE_DIR = "$$EXT_BUILD_DEPS/openssl_/include",
-            OPENSSL_ROOT_DIR = "$$EXT_BUILD_DEPS/openssl_",
-            OPENSSL_SSL_LIBRARY = "$$EXT_BUILD_DEPS/openssl_/lib64/libssl.a",
+            OPENSSL_CRYPTO_LIBRARY = "$$EXT_BUILD_DEPS/boringssl_cmake/lib/libcrypto.a",
+            OPENSSL_INCLUDE_DIR = "$$EXT_BUILD_DEPS/boringssl_cmake/include",
+            OPENSSL_ROOT_DIR = "$$EXT_BUILD_DEPS/boringssl_cmake",
+            OPENSSL_SSL_LIBRARY = "$$EXT_BUILD_DEPS/boringssl_cmake/lib/libssl.a",
             OPENSSL_USE_STATIC_LIBS = "ON",
         ),
     }),
@@ -422,7 +275,7 @@ cmake(
         ":host_macos": [],
         ":host_windows": [],
         "//conditions:default": [
-            ":openssl",
+            ":boringssl_cmake",
         ],
     }),
     generate_args = ["-GNinja"],
@@ -481,6 +334,7 @@ cc_library(
 cc_library(
     name = "backend_runtime",
     srcs = ["src/backend.cc"],
+    textual_hdrs = [":backend_locations"],
     hdrs = ["src/backend.h"],
     defines = select({
         ":backend_dynamic": ["LLM_CC_DYNAMIC_BACKENDS"],
@@ -521,7 +375,7 @@ cc_library(
         ":host_windows": [],
         "//conditions:default": [
             ":linux_compat",
-            ":openssl",
+            "@boringssl//:crypto",
         ],
     }),
 )
@@ -736,10 +590,7 @@ cc_binary(
             "-lpthread",
             "-Wl,--dynamic-list=$(location //third_party:ggml_backend_abi.list)",
             "-Wl,--disable-new-dtags",
-            "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib",
-            "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib/llvm/lib",
-            "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib/rocm_sysdeps/lib",
-        ],
+        ] + rocm_runfiles_linkopts(),
         ":backend_cuda": [
             "-ldl",
             "-lpthread",
@@ -750,10 +601,7 @@ cc_binary(
             "-lpthread",
             "-Wl,--dynamic-list=$(location //third_party:ggml_backend_abi.list)",
             "-Wl,--disable-new-dtags",
-            "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib",
-            "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib/llvm/lib",
-            "-Wl,-rpath,$$ORIGIN/llm-cc.runfiles/+http_archive+rocm_sdk/lib/rocm_sysdeps/lib",
-        ],
+        ] + rocm_runfiles_linkopts(),
         ":backend_metal": [
             "-framework Accelerate",
             "-framework Foundation",
@@ -1360,4 +1208,16 @@ cc_test(
     name = "progress_test",
     srcs = ["src/progress_test.cc"],
     deps = [":progress", ":backend_policy", ":cache", ":test_util"],
+)
+
+cuda_archs_flag(name = "cuda_archs", build_setting_default = DEFAULT_CUDA_ARCHS)
+
+backend_locations(name = "backend_locations", out = "generated/backend_locations.h")
+
+sh_test(
+    name = "tls_integration_test",
+    srcs = ["//tools:tls_integration_test.sh"],
+    args = ["$(location //tools:tls_integration_test.py)", "$(location //tools:tls_download_probe)", "testdata/tls"],
+    data = ["//tools:tls_integration_test.py", "//tools:tls_download_probe"] + glob(["testdata/tls/*"]),
+    tags = ["requires-network"],
 )

@@ -1,4 +1,5 @@
 exports_files([
+    "rocm_sdk.BUILD.bazel",
     "backend_module.lds",
     "ggml_backend_abi.list",
     "all.BUILD.bazel",
@@ -11,7 +12,7 @@ exports_files([
     "llama_cpp_backend_score.patch",
     "llama_cpp_deterministic_hip_cuid.patch",
     "llama_cpp_namespaced_backends.patch",
-    "openssl_reproducible_buildinfo.patch",
+    "curl_boringssl_runtime.patch",
     "rules_foreign_cc_reproducible_logs.patch",
     "rules_cuda_explicit_tools.patch",
 ])

@@ -44,11 +44,30 @@ done
 printf '{"git_sha":"test"}' > "$TEST_TMPDIR/cuda.manifest.json"
 printf '{"git_sha":"test"}' > "$TEST_TMPDIR/rocm.manifest.json"
 
+# Restrictive inputs and process umask must not leak into the published tree.
+chmod 0700 "$source_binary"
+chmod 0600 "$cuda_bundle" "$cuda_bundle.sha256" "$TEST_TMPDIR/cuda.manifest.json"
+umask 077
 BUILD_KEY=first-build bash "$script" "$source_binary" \
   --bundle "$cuda_bundle" --checksum "$cuda_bundle.sha256" \
   --manifest "$TEST_TMPDIR/cuda.manifest.json" -- --prefix "$root"
 bundle_dir="$root/lib/llm-cc/backends/first-build"
 [[ -x "$root/bin/llm-cc" && -f "$bundle_dir/cuda.bundle" ]]
+
+python3 - "$root" <<'PYMODES'
+import pathlib, stat, sys
+root = pathlib.Path(sys.argv[1])
+for path in [root, *root.rglob("*")]:
+    if path.name == ".llm-cc-install.lock":
+        continue
+    expected = 0o755 if path.is_dir() or path.name == "llm-cc" else 0o644
+    assert stat.S_IMODE(path.stat().st_mode) == expected, (path, oct(path.stat().st_mode))
+PYMODES
+umask 022
+mkdir "$root/unrelated"
+printf private > "$root/unrelated/private"
+chmod 0700 "$root/unrelated"
+chmod 0600 "$root/unrelated/private"
 
 # Failure before the replacement executable is staged preserves the active
 # executable and bundle set.
@@ -180,3 +199,10 @@ BUILD_KEY=linked-build bash "$script" "$source_binary" \
 [[ -x "$physical_prefix/bin/llm-cc" &&
    -f "$physical_prefix/lib/llm-cc/backends/linked-build/cuda.bundle" &&
    ! -e "$link_prefix/lib/llm-cc/backends/linked-build/cuda.bundle" ]]
+
+python3 - "$root/unrelated" <<'PYUNCHANGED'
+import pathlib, stat, sys
+root = pathlib.Path(sys.argv[1])
+assert stat.S_IMODE(root.stat().st_mode) == 0o700
+assert stat.S_IMODE((root / "private").stat().st_mode) == 0o600
+PYUNCHANGED

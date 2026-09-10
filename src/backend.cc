@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "generated/backend_locations.h"
 #include "generated/build_config.h"
 #include "src/backend_fetch.h"
 #include "src/payload.h"
@@ -90,7 +91,8 @@ void ValidateBackendDirectory(const std::filesystem::path& directory) {
 }
 
 std::optional<ResolvedBackendPlugin> ResolveConfiguredPlugin(
-    BackendKind backend, const std::filesystem::path& directory) {
+    BackendKind backend, const std::filesystem::path& directory,
+    std::string_view version, std::string_view git_sha) {
   ValidateBackendDirectory(directory);
   std::vector<std::pair<std::filesystem::path, BackendPluginSource>> candidates;
   if (const auto artifact = BackendArtifactName(BackendName(backend));
@@ -104,7 +106,16 @@ std::optional<ResolvedBackendPlugin> ResolveConfiguredPlugin(
                           BackendPluginSource::kSharedLibrary);
   for (const auto& [path, source] : candidates) {
     if (IsRegularFile(path)) {
-      return ResolvedBackendPlugin{.source = source, .path = path};
+      if (source == BackendPluginSource::kBundle) {
+        VerifyBackendBundle({.name = BackendName(backend),
+                             .version = version,
+                             .git_sha = git_sha},
+                            path);
+      }
+      return ResolvedBackendPlugin{
+          .source = source,
+          .path = path,
+          .payload_verified = source == BackendPluginSource::kBundle};
     }
   }
   return std::nullopt;
@@ -219,18 +230,15 @@ std::vector<std::filesystem::path> PluginCandidates(BackendKind backend) {
   std::vector<std::filesystem::path> candidates;
   if (const auto executable = ExecutablePath(); executable.has_value()) {
     candidates.push_back(executable->parent_path() / "lib" / file);
-    candidates.push_back(executable->parent_path() / "external" /
-                         "+http_archive+llama_cpp" / file);
+    candidates.push_back(executable->string() + ".runfiles/" +
+                         LLM_CC_BACKEND_RUNFILES_DIR + "/" + file.string());
+    candidates.push_back(executable->parent_path() / LLM_CC_BACKEND_EXEC_DIR /
+                         file);
   }
   if (const char* runfiles = std::getenv("RUNFILES_DIR");
       runfiles != nullptr && *runfiles != '\0') {
     const std::filesystem::path root(runfiles);
-    candidates.push_back(root / "+http_archive+llama_cpp" / file);
-    candidates.push_back(root / "_main" / "llama_cpp" / "lib" / file);
-    if (const char* workspace = std::getenv("TEST_WORKSPACE");
-        workspace != nullptr && *workspace != '\0') {
-      candidates.push_back(root / workspace / "llama_cpp" / "lib" / file);
-    }
+    candidates.push_back(root / LLM_CC_BACKEND_RUNFILES_DIR / file);
   }
   return candidates;
 }
@@ -527,8 +535,8 @@ ResolvedBackendPlugin ResolveBackendPlugin(
   //   5. the versioned runtime cache,
   //   6. the optional network-fetch seam below.
   if (backend_directory.has_value()) {
-    if (auto configured =
-            ResolveConfiguredPlugin(backend, *backend_directory)) {
+    if (auto configured = ResolveConfiguredPlugin(backend, *backend_directory,
+                                                  version, git_sha)) {
       return *configured;
     }
   }

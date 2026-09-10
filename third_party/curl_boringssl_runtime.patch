@@ -1,0 +1,20 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -805,8 +805,8 @@
+ 
+   if(HAVE_BORINGSSL OR HAVE_AWSLC)
+     if(OPENSSL_USE_STATIC_LIBS AND CMAKE_C_COMPILER_ID MATCHES "Clang")
+-      list(APPEND CURL_LIBS "stdc++")
+-      list(APPEND CMAKE_REQUIRED_LIBRARIES "stdc++")
++      list(APPEND CURL_LIBS ${CMAKE_CXX_IMPLICIT_LINK_LIBRARIES})
++      list(APPEND CMAKE_REQUIRED_LIBRARIES ${CMAKE_CXX_IMPLICIT_LINK_LIBRARIES})
+     endif()
+   endif()
+ 
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -67,1 +67,1 @@
+-  LANGUAGES C)
++  LANGUAGES C CXX)
