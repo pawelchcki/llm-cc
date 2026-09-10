@@ -10,6 +10,26 @@ import threading
 PAYLOAD = b"resumable TLS fixture\n" * 1024
 
 
+def executable_runfile(value):
+    if os.name == "nt":
+        # Native Windows programs cannot traverse every executable junction
+        # created by Bazel's Bash runfiles tree. Use its manifest's real path.
+        manifest = Path(os.environ.get("RUNFILES_MANIFEST_FILE") or
+                        str(Path(os.environ["TEST_SRCDIR"]) / "MANIFEST"))
+        key = os.environ["TEST_WORKSPACE"] + "/" + value.replace("\\", "/")
+        for line in manifest.read_text().splitlines():
+            escaped = line.startswith(" ")
+            logical, physical = line.lstrip(" ").split(" ", 1)
+            if escaped:
+                def unescape(text):
+                    return text.replace("\\s", " ").replace("\\n", "\n").replace("\\b", "\\")
+                logical, physical = unescape(logical), unescape(physical)
+            if logical == key:
+                return Path(physical)
+        raise RuntimeError(f"Executable {key} missing from {manifest}")
+    return Path(value).resolve(strict=True)
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/ca.crl":
@@ -38,8 +58,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 def main():
-    # Windows CreateProcess needs the actual executable behind Bazel runfiles.
-    probe, fixtures = (Path(value).resolve(strict=True) for value in sys.argv[1:])
+    probe = executable_runfile(sys.argv[1])
+    fixtures = Path(sys.argv[2]).resolve(strict=True)
     assert probe.is_file(), probe
     root = Path(os.environ["TEST_TMPDIR"])
     # A short-lived leaf with serverAuth works with Apple SecTrust as well as
