@@ -72,15 +72,38 @@ def failure_class(status, stderr, errors):
     lower = "\n".join(
         [stderr, *(str(event.get("message", "")) for event in errors)]
     ).lower()
+    if "flash_attn_ext@cpu" in lower or "would run on cpu" in lower:
+        return "cpu_attention_fallback"
     if status == 0:
         return None
     if "out of memory" in lower or "allocation" in lower and "failed" in lower:
         return "oom"
     if "exceeds --context" in lower or "token count" in lower and "exceeds" in lower:
         return "token_limit"
-    if "would run on cpu" in lower:
-        return "cpu_attention_fallback"
     return "failed"
+
+
+def configuration_matches(event, args, flash, kv_type):
+    expected = {
+        "context": args.context,
+        "batch_size": args.batch_size,
+        "entropy_reduction": "device",
+        "effective_entropy_reducer": "device",
+        "flash_attn": flash,
+        "effective_flash_attn": flash,
+        "kv_cache_type": kv_type,
+        "effective_kv_cache_type": kv_type,
+        "kv_offload": "on",
+        "effective_kv_offload": "on",
+        "backend_diagnostics": True,
+        "gpu_layers": -1,
+        "no_download": True,
+        "progress": "always",
+        "hotspots": 10,
+    }
+    cache = event.get("cache")
+    return (all(event.get(key) == value for key, value in expected.items())
+            and isinstance(cache, dict) and cache.get("enabled") is False)
 
 
 def backend_hashes(directory, backend):
@@ -173,13 +196,20 @@ def execute(args, root, model, label, repeat, rows, invocation,
     elapsed = time.monotonic() - started
     stderr = stderr_path.read_text(errors="replace")
     expected = {str(root / "corpus" / row["id"]) for row in rows}
+    configuration_valid = (len(configurations) == 1 and
+                           configuration_matches(configurations[0], args, flash, kv_type))
     valid = (status == 0 and not parse_errors and last_type == "totals" and len(totals) == 1
+             and configuration_valid
              and totals[0].get("partial") is False
              and len(files) == len(rows) and {row.get("path") for row in files} == expected
              and all(row.get("entropy_cache_hit") is False for row in files)
              and "FLASH_ATTN_EXT@CPU" not in stderr)
     classification = failure_class(status, stderr, error_events)
-    if parse_errors or status == 0 and not valid:
+    if parse_errors:
+        classification = "incomplete_output"
+    elif status == 0 and classification is None and not configuration_valid:
+        classification = "configuration_mismatch"
+    elif status == 0 and classification is None and not valid:
         classification = "incomplete_output"
     host_rss = [sample["rss_kib"] for sample in samples
                 if sample["rss_kib"] is not None]
