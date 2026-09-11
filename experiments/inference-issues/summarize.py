@@ -145,6 +145,16 @@ def main():
         fingerprints = {run.get("invocation_fingerprint")
                         for runs in configurations.values() for run in runs}
         homogeneous = len(fingerprints) == 1 and None not in fingerprints
+        planned_repetitions = {
+            run.get("invocation", {}).get("repetitions")
+            for runs in configurations.values() for run in runs
+        }
+        repetition_count = (next(iter(planned_repetitions))
+                            if len(planned_repetitions) == 1 else None)
+        if not isinstance(repetition_count, int) or repetition_count < 3:
+            repetition_count = None
+        expected_repeats = (set(range(1, repetition_count + 1))
+                            if repetition_count is not None else set())
         item = {"model": model, "backend": backend, "scope": scope,
                 "invocation_fingerprint": (next(iter(fingerprints))
                                            if homogeneous else None),
@@ -162,17 +172,23 @@ def main():
                                key=lambda row: row["repeat"])
             candidate = sorted(configurations.get(candidate_label, []),
                                key=lambda row: row["repeat"])
-            repeats_are_unique = (len({run["repeat"] for run in reference}) == len(reference)
-                                  and len({run["repeat"] for run in candidate}) == len(candidate))
+            repeats_are_complete = (
+                {run["repeat"] for run in reference} == expected_repeats
+                and len(reference) == len(expected_repeats)
+                and {run["repeat"] for run in candidate} == expected_repeats
+                and len(candidate) == len(expected_repeats)
+            )
             if not homogeneous:
                 item["comparisons"][name] = {
                     "gate_pass": False,
                     "reason": "mixed or missing invocation fingerprints",
                 }
-            elif (len(reference) < 3 or len(candidate) < 3 or not repeats_are_unique or
+            elif (repetition_count is None or not repeats_are_complete or
                     not all(row["valid"] for row in reference + candidate)):
-                item["comparisons"][name] = {"gate_pass": False,
-                                              "reason": "fewer than three distinct complete runs"}
+                item["comparisons"][name] = {
+                    "gate_pass": False,
+                    "reason": "missing requested repetitions, duplicate repeats, or invalid runs",
+                }
             else:
                 item["comparisons"][name] = compare(reference, candidate)
         output.append(item)

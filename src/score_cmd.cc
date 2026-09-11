@@ -1113,6 +1113,7 @@ void PrepareContext(llama_model* model, llmcc::BackendLogCapture& backend_log,
     ThrowCpuAttentionFallback();
   }
   ReportBackendLog(backend_log, options.backend_diagnostics);
+  backend_log.Clear();
   context_capacity = llama_n_ctx(context.get());
   llmcc::ReportPhase(
       "inference context ready requested=" + std::to_string(capacity) +
@@ -1269,13 +1270,18 @@ void ScoreInput(llama_model* model, llmcc::BackendLogCapture& backend_log,
           std::span<const llama_token>(tokens.data() + source + 1, count);
     }
     const int decode_result = llama_decode(context.get(), batch);
+    const std::string decode_error =
+        decode_result == 0 ? std::string() : backend_log.Error();
+    ReportBackendLog(backend_log, options.backend_diagnostics);
+    backend_log.Clear();
     if (placement.cpu_attention) {
       ThrowCpuAttentionFallback();
     }
     if (decode_result != 0) {
-      throw std::runtime_error("llama_decode failed at token " +
-                               std::to_string(source) + " with code " +
-                               std::to_string(decode_result));
+      throw std::runtime_error(
+          "llama_decode failed at token " + std::to_string(source) +
+          " with code " + std::to_string(decode_result) +
+          (decode_error.empty() ? std::string() : ": " + decode_error));
     }
     std::vector<llmcc::TokenScore> host_scores;
     if (!options.device_reduction) {
