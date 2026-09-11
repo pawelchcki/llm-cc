@@ -1345,10 +1345,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       arguments.context, arguments.batch_size,
       llmcc::EntropyReductionName(arguments.entropy_reduction),
       device_reduction ? "device" : "host", entropy_cache,
-      arguments.flash_attention == llmcc::FlashAttention::kAuto &&
-              arguments.kv_cache_type != llmcc::KvCacheType::kF16
-          ? "on"
-          : llmcc::FlashAttentionName(arguments.flash_attention),
+      llmcc::FlashAttentionName(arguments.flash_attention),
       llmcc::KvCacheTypeName(arguments.kv_cache_type), arguments.kv_offload);
   if (!text) {
     Emit(ConfigurationJson(arguments, requested_model, &identity));
@@ -1422,9 +1419,9 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       progress.Phase("reading source");
       const std::string contents = ReadFile(source.path);
       if (contents.size() > 1024 * 1024) {
-        progress.Message("notice: scoring full file " + PathUtf8(source.path) +
-                         " (" + std::to_string(contents.size()) +
-                         " bytes) within the configured token limit");
+        progress.Phase("scoring full file " + PathUtf8(source.path) + " (" +
+                       std::to_string(contents.size()) +
+                       " bytes) within the configured token limit");
       }
       auto result = analyzer.AnalyzeFile(source, contents);
       progress.Phase("writing output");

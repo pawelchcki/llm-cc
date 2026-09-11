@@ -69,7 +69,9 @@ def monitor(stop, pid, backend, samples, started):
 
 
 def failure_class(status, stderr, errors):
-    lower = "\n".join([stderr, *(event.get("message", "") for event in errors)]).lower()
+    lower = "\n".join(
+        [stderr, *(str(event.get("message", "")) for event in errors)]
+    ).lower()
     if status == 0:
         return None
     if "out of memory" in lower or "allocation" in lower and "failed" in lower:
@@ -104,7 +106,8 @@ def select_rows(manifest, scope):
     return manifest
 
 
-def execute(args, root, model, label, repeat, rows):
+def execute(args, root, model, label, repeat, rows, invocation,
+            invocation_fingerprint):
     flash, kv_type = CONFIGS[label]
     stem = f"{model['name']}--{args.backend}--{args.scope}--{label}-r{repeat}"
     prefix = root / "results" / stem
@@ -131,7 +134,7 @@ def execute(args, root, model, label, repeat, rows):
     started = time.monotonic()
     stderr_path = Path(str(prefix) + ".stderr")
     output_path = Path(str(prefix) + ".jsonl.gz")
-    files, configurations, error_events, totals = [], [], [], []
+    files, configurations, error_events, totals, parse_errors = [], [], [], [], []
     events_count, last_type = 0, None
     with stderr_path.open("w") as error_stream, gzip.open(output_path, "wt") as output:
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=error_stream,
@@ -144,7 +147,16 @@ def execute(args, root, model, label, repeat, rows):
             for line in process.stdout:
                 output.write(line)
                 events_count += 1
-                event = json.loads(line)
+                try:
+                    event = json.loads(line)
+                    if not isinstance(event, dict):
+                        raise ValueError("event is not a JSON object")
+                except json.JSONDecodeError as error:
+                    parse_errors.append({"line": events_count, "message": str(error)})
+                    continue
+                except ValueError as error:
+                    parse_errors.append({"line": events_count, "message": str(error)})
+                    continue
                 last_type = event.get("type")
                 if event.get("type") == "configuration":
                     configurations.append(event)
@@ -161,28 +173,37 @@ def execute(args, root, model, label, repeat, rows):
     elapsed = time.monotonic() - started
     stderr = stderr_path.read_text(errors="replace")
     expected = {str(root / "corpus" / row["id"]) for row in rows}
-    valid = (status == 0 and last_type == "totals" and len(totals) == 1
+    valid = (status == 0 and not parse_errors and last_type == "totals" and len(totals) == 1
              and totals[0].get("partial") is False
-             and len(files) == len(rows) and {row["path"] for row in files} == expected
+             and len(files) == len(rows) and {row.get("path") for row in files} == expected
              and all(row.get("entropy_cache_hit") is False for row in files)
              and "FLASH_ATTN_EXT@CPU" not in stderr)
     classification = failure_class(status, stderr, error_events)
-    if status == 0 and not valid:
+    if parse_errors or status == 0 and not valid:
         classification = "incomplete_output"
+    host_rss = [sample["rss_kib"] for sample in samples
+                if sample["rss_kib"] is not None]
+    gpu_memory = [sample["gpu_memory"] for sample in samples
+                  if sample["gpu_memory"] is not None]
+    gpu_utilization = [sample["gpu_utilization"] for sample in samples
+                       if sample["gpu_utilization"] is not None]
     record = {
         "model": model["name"], "backend": args.backend, "scope": args.scope,
         "label": label, "repeat": repeat, "command": command,
         "environment_overrides": visibility,
         "exit_code": status, "failure_class": classification,
         "valid": valid, "wall_seconds": elapsed, "event_count": events_count,
-        "files": files, "errors": error_events, "totals": totals,
+        "files": files, "errors": error_events, "parse_errors": parse_errors,
+        "totals": totals,
         "configuration": configurations,
+        "invocation": invocation,
+        "invocation_fingerprint": invocation_fingerprint,
         "model_sha256": model["sha256"],
         "corpus_sha256": sha256_file(root / "corpus.json"),
-        "peak_host_rss_kib": max((s["rss_kib"] or 0 for s in samples), default=0),
-        "peak_gpu_memory": max((s["gpu_memory"] or 0 for s in samples), default=0),
-        "mean_gpu_utilization": (sum(s["gpu_utilization"] or 0 for s in samples) /
-                                  len(samples) if samples else None),
+        "peak_host_rss_kib": max(host_rss, default=None),
+        "peak_gpu_memory": max(gpu_memory, default=None),
+        "mean_gpu_utilization": (sum(gpu_utilization) / len(gpu_utilization)
+                                  if gpu_utilization else None),
         "gpu_sample_units": "MiB for CUDA and ROCm",
         "samples": samples,
         "phase_lines": [line for line in stderr.splitlines()
@@ -230,17 +251,37 @@ def main():
     model_path = args.root / "models" / model["file"]
     if model_path.stat().st_size != model["bytes"] or sha256_file(model_path) != model["sha256"]:
         raise RuntimeError("model checksum mismatch")
+    labels = args.configuration or list(CONFIGS)
+    corpus_sha256 = sha256_file(args.root / "corpus.json")
     environment = {"platform": platform.platform(),
                    "binary_sha256": sha256_file(args.binary),
                    "binary_version": subprocess.check_output(
                        [str(args.binary), "--version"], text=True).strip(),
                    "backend": args.backend,
                    "backend_sha256": backend_hashes(args.backend_dir, args.backend)}
+    invocation = {
+        **environment,
+        "model": model["name"],
+        "model_sha256": model["sha256"],
+        "corpus_sha256": corpus_sha256,
+        "scope": args.scope,
+        "files": [{"id": row["id"], "sha256": row["sha256"]} for row in rows],
+        "context": args.context,
+        "batch_size": args.batch_size,
+        "repetitions": args.repetitions,
+        "configurations": labels,
+    }
+    invocation_fingerprint = hashlib.sha256(
+        json.dumps(invocation, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    environment["invocation"] = invocation
+    environment["invocation_fingerprint"] = invocation_fingerprint
     (args.root / "results" / f"environment-{args.backend}.json").write_text(
         json.dumps(environment, indent=2) + "\n")
-    for label in args.configuration or CONFIGS:
+    for label in labels:
         for repeat in range(1, args.repetitions + 1):
-            execute(args, args.root, model, label, repeat, rows)
+            execute(args, args.root, model, label, repeat, rows, invocation,
+                    invocation_fingerprint)
 
 
 if __name__ == "__main__":

@@ -777,6 +777,7 @@ struct PlacementDiagnostics {
   bool enabled = false;
   bool reject_cpu_attention = false;
   bool cpu_attention = false;
+  std::map<std::string, std::size_t> attention_placements;
   std::map<std::string, std::size_t> placements;
 };
 
@@ -805,7 +806,9 @@ bool ObservePlacement(ggml_tensor* tensor, bool ask, void* opaque) {
   if (state.enabled) {
     const std::string key =
         std::string(ggml_op_name(tensor->op)) + "@" + device;
-    if (state.placements.contains(key) || state.placements.size() < 32) {
+    if (attention) {
+      ++state.attention_placements[key];
+    } else if (state.placements.contains(key) || state.placements.size() < 32) {
       ++state.placements[key];
     }
   }
@@ -828,10 +831,16 @@ void ReportPlacements(const PlacementDiagnostics& state) {
     return;
   }
   std::size_t emitted = 0;
+  for (const auto& [placement, count] : state.attention_placements) {
+    llmcc::ReportDiagnostic("operation=" + placement +
+                            " count=" + std::to_string(count));
+    ++emitted;
+  }
   for (const auto& [placement, count] : state.placements) {
-    if (emitted++ == 32) {
+    if (emitted >= 32) {
       break;
     }
+    ++emitted;
     llmcc::ReportDiagnostic("operation=" + placement +
                             " count=" + std::to_string(count));
   }
@@ -1046,6 +1055,7 @@ void PrepareContext(llama_model* model, llmcc::BackendLogCapture& backend_log,
         "resetting inference context requested=" + std::to_string(required) +
         " allocated=" + std::to_string(context_capacity));
     placement.cpu_attention = false;
+    placement.attention_placements.clear();
     placement.placements.clear();
     llama_memory_clear(llama_get_memory(context.get()), true);
     return;
@@ -1074,6 +1084,7 @@ void PrepareContext(llama_model* model, llmcc::BackendLogCapture& backend_log,
       options.flash_attention == llmcc::FlashAttention::kOn &&
       options.kv_offload && options.require_gpu_attention;
   placement.cpu_attention = false;
+  placement.attention_placements.clear();
   placement.placements.clear();
   if (placement.enabled || placement.reject_cpu_attention) {
     parameters.cb_eval = ObservePlacement;

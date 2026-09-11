@@ -66,9 +66,12 @@ scoring options held constant:
 
 The harness preserves the command, binary/model/corpus hashes, configuration
 events, host and GPU samples, stderr, phase lines, compressed JSONL, exit code,
-and explicit failure class. Run hashing separately with a fresh runtime cache
-after warming the entropy entries; the model-hash completion phase reports
-bytes and duration without changing the digest contract.
+and explicit failure class. Each record also carries a canonical invocation
+fingerprint covering the executable, backend artifacts, selected corpus,
+settings, configurations, and repetition count. The summary rejects mixed or
+unbound fingerprints. Run hashing separately with a fresh runtime cache after
+warming the entropy entries; the model-hash completion phase reports bytes and
+duration without changing the digest contract.
 
 CUDA and ROCm builds must additionally run a direct ggml backend-ops test for
 Flash Attention with `DKQ=192`, `DV=128`, equal Q/KV heads, short and remainder

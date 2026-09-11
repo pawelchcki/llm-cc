@@ -135,14 +135,19 @@ def main():
     parser.add_argument("--root", type=Path, required=True)
     args = parser.parse_args()
     records = [json.loads(path.read_text()) for path in (args.root / "results").glob("*.json")
-               if not path.name.startswith("environment-")]
+               if not path.name.startswith("environment-") and path.name != "summary.json"]
     grouped = {}
     for record in records:
         key = (record["model"], record["backend"], record["scope"])
         grouped.setdefault(key, {}).setdefault(record["label"], []).append(record)
     output = []
     for (model, backend, scope), configurations in sorted(grouped.items()):
+        fingerprints = {run.get("invocation_fingerprint")
+                        for runs in configurations.values() for run in runs}
+        homogeneous = len(fingerprints) == 1 and None not in fingerprints
         item = {"model": model, "backend": backend, "scope": scope,
+                "invocation_fingerprint": (next(iter(fingerprints))
+                                           if homogeneous else None),
                 "complete": {name: sum(run["valid"] for run in runs)
                              for name, runs in configurations.items()},
                 "failures": [{"label": name, "repeat": run["repeat"],
@@ -157,10 +162,17 @@ def main():
                                key=lambda row: row["repeat"])
             candidate = sorted(configurations.get(candidate_label, []),
                                key=lambda row: row["repeat"])
-            if (len(reference) < 3 or len(candidate) < 3 or
+            repeats_are_unique = (len({run["repeat"] for run in reference}) == len(reference)
+                                  and len({run["repeat"] for run in candidate}) == len(candidate))
+            if not homogeneous:
+                item["comparisons"][name] = {
+                    "gate_pass": False,
+                    "reason": "mixed or missing invocation fingerprints",
+                }
+            elif (len(reference) < 3 or len(candidate) < 3 or not repeats_are_unique or
                     not all(row["valid"] for row in reference + candidate)):
                 item["comparisons"][name] = {"gate_pass": False,
-                                              "reason": "fewer than three complete runs"}
+                                              "reason": "fewer than three distinct complete runs"}
             else:
                 item["comparisons"][name] = compare(reference, candidate)
         output.append(item)
