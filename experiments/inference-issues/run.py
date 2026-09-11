@@ -20,6 +20,53 @@ CONFIGS = {
 }
 
 
+def gpu_identity(backend, environment):
+    if backend == "cuda":
+        identity = {}
+        for key in ("uuid", "name", "driver_version"):
+            command = [
+                "nvidia-smi", "--id=0", f"--query-gpu={key}",
+                "--format=csv,noheader",
+            ]
+            result = subprocess.run(
+                command, capture_output=True, text=True, env=environment
+            )
+            values = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+            if result.returncode != 0 or len(values) != 1 or values[0] in ("N/A", "[N/A]"):
+                detail = result.stderr.strip() or f"missing {key}"
+                raise RuntimeError(f"unable to identify cuda device 0: {detail}")
+            identity[key] = values[0]
+        return identity
+    command = [
+        "rocm-smi", "--device", "0", "--showproductname", "--showuniqueid",
+        "--showdriverversion", "--json",
+    ]
+    result = subprocess.run(command, capture_output=True, text=True, env=environment)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"unable to identify {backend} device 0: {result.stderr.strip()}"
+        )
+    try:
+        json_start = result.stdout.index("{")
+        identity, _ = json.JSONDecoder().raw_decode(result.stdout[json_start:])
+    except ValueError as error:
+        raise RuntimeError("rocm-smi returned malformed GPU identity") from error
+    if not isinstance(identity, dict):
+        raise RuntimeError("rocm-smi returned incomplete GPU identity")
+    system = identity.get("system", {})
+    devices = [value for key, value in identity.items()
+               if key.startswith("card") and isinstance(value, dict)]
+    driver = system.get("Driver version") if isinstance(system, dict) else None
+    identifying_keys = ("Unique ID", "Card Series", "Card Model", "Card SKU", "GFX Version")
+    identified = devices and any(
+        device.get(key) not in (None, "", "N/A", "[N/A]")
+        for device in devices for key in identifying_keys
+    )
+    if not identified or not driver or driver in ("N/A", "[N/A]"):
+        raise RuntimeError("rocm-smi returned incomplete GPU identity")
+    return identity
+
+
 def sha256_file(path):
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -292,7 +339,13 @@ def main():
         raise RuntimeError("model checksum mismatch")
     labels = args.configuration or list(CONFIGS)
     corpus_sha256 = sha256_file(args.root / "corpus.json")
+    tool_environment = os.environ.copy()
+    if args.backend == "cuda":
+        tool_environment["CUDA_VISIBLE_DEVICES"] = "0"
+    else:
+        tool_environment["ROCR_VISIBLE_DEVICES"] = "0"
     environment = {"platform": platform.platform(),
+                   "gpu_identity": gpu_identity(args.backend, tool_environment),
                    "binary_sha256": sha256_file(args.binary),
                    "binary_version": subprocess.check_output(
                        [str(args.binary), "--version"], text=True).strip(),
