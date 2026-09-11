@@ -28,28 +28,33 @@ def sha256_file(path):
     return digest.hexdigest()
 
 
-def gpu_sample(backend):
+def gpu_sample(backend, environment):
     if backend == "cuda":
         result = subprocess.run(
             ["nvidia-smi", "--id=0", "--query-gpu=memory.used,utilization.gpu",
-             "--format=csv,noheader,nounits"], capture_output=True, text=True)
+             "--format=csv,noheader,nounits"], capture_output=True, text=True,
+            env=environment)
         match = re.search(r"(\d+)\s*,\s*(\d+)", result.stdout)
         return tuple(map(int, match.groups())) if match else None
     result = subprocess.run(
-        ["rocm-smi", "--showmeminfo", "vram", "--showuse", "--json"],
+        ["rocm-smi", "--device", "0", "--showmeminfo", "vram",
+         "--showuse", "--json"],
         capture_output=True,
         text=True,
+        env=environment,
     )
     if result.returncode != 0:
         return None
     devices = json.loads(result.stdout).values()
-    device = max(devices, key=lambda row: int(row["VRAM Total Memory (B)"]))
+    device = next(iter(devices), None)
+    if device is None:
+        return None
     used_mib = int(device["VRAM Total Used Memory (B)"]) // (1024 * 1024)
     utilization = int(device["GPU use (%)"])
     return used_mib, utilization
 
 
-def monitor(stop, pid, backend, samples, started):
+def monitor(stop, pid, backend, samples, started, environment):
     while not stop.is_set():
         rss_kib = None
         try:
@@ -59,7 +64,7 @@ def monitor(stop, pid, backend, samples, started):
         except (FileNotFoundError, ProcessLookupError):
             pass
         try:
-            gpu = gpu_sample(backend)
+            gpu = gpu_sample(backend, environment)
         except FileNotFoundError:
             gpu = None
         samples.append({"elapsed": time.monotonic() - started, "rss_kib": rss_kib,
@@ -164,7 +169,8 @@ def execute(args, root, model, label, repeat, rows, invocation,
                                    text=True, env=environment)
         stop, samples = threading.Event(), []
         watcher = threading.Thread(target=monitor,
-                                   args=(stop, process.pid, args.backend, samples, started), daemon=True)
+                                   args=(stop, process.pid, args.backend, samples, started,
+                                         environment), daemon=True)
         watcher.start()
         try:
             for line in process.stdout:
