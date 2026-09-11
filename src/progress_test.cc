@@ -114,6 +114,17 @@ int main() {
           "'--force-cpu' 'source'\\''s file.cc' '-y' --force-cpu"),
 #endif
       "CPU recovery preserves model paths, source quoting and analysis flags");
+  llmcc::test::ExpectEq(
+      recovery({"llm-cc", "source.cc", "--backend-diagnostics", "--backend",
+                "cuda", "--entropy-reduction", "device"}),
+#ifdef _WIN32
+      std::string("CPU rerun: llm-cc \"source.cc\" "
+                  "\"--backend-diagnostics\" --force-cpu"),
+#else
+      std::string("CPU rerun: llm-cc 'source.cc' '--backend-diagnostics' "
+                  "--force-cpu"),
+#endif
+      "CPU recovery treats backend diagnostics as a flag");
 
   std::ostringstream consent;
   for (auto answer : {"y\n", "Y\n", "yes\n"}) {
@@ -171,6 +182,10 @@ int main() {
     progress.Heartbeat();
     Expect(output.str().find("10/50 tokens stalled_s=5") != std::string::npos,
            "counter advance resets stalled age");
+    Expect(output.str().find("phase_elapsed_s=10") != std::string::npos,
+           "phase elapsed time is reported");
+    Expect(output.str().find("tokens_per_s=1") != std::string::npos,
+           "token throughput is reported");
     Expect(output.str().find("example.rs") != std::string::npos,
            "phase retains current file");
     progress.Phase("downloading");

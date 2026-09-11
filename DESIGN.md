@@ -21,10 +21,12 @@ has three entry points:
 2. `src/score_cmd.cc` loads a GGUF with llama.cpp and teacher-forces the
    preprocessed source through configurable batches. Analysis consumes native
    records through an in-process sink; `llm-cc score` exposes the byte-exact
-   JSONL form for interoperability and debugging. Contexts are reused, grow
-   geometrically, and are discarded after inference failures.
-   Optional throttled progress callbacks report completed batches without
-   changing inference or stdout JSONL.
+   JSONL form for interoperability and debugging. A context request is the
+   smaller of the configured limit and the larger of the input and batch size;
+   the actual llama.cpp-padded capacity is retained and reused when sufficient.
+   Its K/V state is cleared between files, and the context is discarded after
+   inference failures. Optional throttled progress callbacks report completed
+   batches without changing inference or stdout JSONL.
 3. `src/jsonl.cc` parses entropy records, reconstructs token bytes from
    `bytes_hex`, verifies contiguous positions and exact source coverage, and
    aligns entropy to preprocessed byte ranges.

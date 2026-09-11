@@ -125,6 +125,7 @@ ProgressReporter::ProgressReporter(std::string_view mode, std::ostream& output,
       now_(std::move(now)),
       interval_(interval),
       started_(now_()),
+      phase_started_(started_),
       advanced_(started_),
       rendered_(started_) {
   if (interval_ <= std::chrono::milliseconds::zero()) {
@@ -163,12 +164,21 @@ void ProgressReporter::Render(Clock::time_point now) {
   output_ << " elapsed_s="
           << std::chrono::duration_cast<std::chrono::seconds>(now - started_)
                  .count();
+  const auto phase_elapsed = now - phase_started_;
+  output_ << " phase_elapsed_s="
+          << std::chrono::duration_cast<std::chrono::seconds>(phase_elapsed)
+                 .count();
   if (!unit_.empty()) {
     output_ << ' ' << completed_ << '/'
             << (total_ == 0 ? "?" : std::to_string(total_)) << ' ' << unit_
             << " stalled_s="
             << std::chrono::duration_cast<std::chrono::seconds>(now - advanced_)
                    .count();
+    const double seconds = std::chrono::duration<double>(phase_elapsed).count();
+    if (completed_ != 0 && seconds > 0.0) {
+      output_ << ' ' << unit_
+              << "_per_s=" << static_cast<double>(completed_) / seconds;
+    }
   }
   output_ << '\n' << std::flush;
 }
@@ -177,7 +187,8 @@ void ProgressReporter::Phase(std::string_view message) {
   phase_ = TerminalSafe(message);
   unit_.clear();
   completed_ = total_ = 0;
-  advanced_ = now_();
+  phase_started_ = now_();
+  advanced_ = phase_started_;
   if (enabled_ && !paused_) Render(advanced_);
 }
 void ProgressReporter::StartFile(std::size_t index, std::size_t total,
@@ -245,6 +256,13 @@ void ReportWarning(std::string_view message) {
     session->progress.Message("warning: " + std::string(message));
   else
     std::cerr << "warning: " << message << '\n';
+}
+void ReportDiagnostic(std::string_view message) {
+  if (session) {
+    session->progress.Message("diagnostic: " + std::string(message));
+  } else {
+    std::cerr << "diagnostic: " << message << '\n';
+  }
 }
 void CheckDownloadAllowed() {
   if (session && session->no_download) {

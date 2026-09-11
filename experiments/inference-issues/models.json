@@ -1,0 +1,20 @@
+[
+  {
+    "name": "qwen-0.5b-q4",
+    "repo": "bartowski/Qwen2.5-Coder-0.5B-GGUF",
+    "revision": "01c1b8072277dfbfd0d051ec95b7a43bb23d2f6a",
+    "file": "Qwen2.5-Coder-0.5B-Q4_K_M.gguf",
+    "bytes": 397808128,
+    "sha256": "fefe9d34df79d3ad3db33519d81112be76096626a5fdb87a98092035dc79ad68",
+    "url": "https://huggingface.co/bartowski/Qwen2.5-Coder-0.5B-GGUF/resolve/01c1b8072277dfbfd0d051ec95b7a43bb23d2f6a/Qwen2.5-Coder-0.5B-Q4_K_M.gguf"
+  },
+  {
+    "name": "deepseek-v2-lite-q6",
+    "repo": "bartowski/DeepSeek-Coder-V2-Lite-Base-GGUF",
+    "revision": "babc004c32d74af2553661d912673f1d22dcb3f1",
+    "file": "DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf",
+    "bytes": 14066972416,
+    "sha256": "5a2e25280075d769abdb111de8211d9d3367f2ae0d0e6166a288ee6e8ed0345d",
+    "url": "https://huggingface.co/bartowski/DeepSeek-Coder-V2-Lite-Base-GGUF/resolve/babc004c32d74af2553661d912673f1d22dcb3f1/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf"
+  }
+]

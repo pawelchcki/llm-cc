@@ -8,6 +8,7 @@
 
 #include "src/backend.h"
 #include "src/lang.h"
+#include "src/progress.h"
 
 namespace llmcc {
 
@@ -203,6 +204,7 @@ EntropyProvider& ProjectAnalyzer::Provider() {
 
 EntropyCacheLookup ProjectAnalyzer::ReadRecords(std::string_view source) {
   if (options_.cache) {
+    ReportPhase("entropy cache lookup");
     auto cached = ReadEntropyCache(source, options_.model);
     if (cached.hit) {
       return cached;
@@ -210,6 +212,7 @@ EntropyCacheLookup ProjectAnalyzer::ReadRecords(std::string_view source) {
   }
   auto records = Provider().Score(source);
   if (options_.cache) {
+    ReportPhase("entropy cache publication");
     try {
       WriteEntropyCache(source, options_.model, records);
     } catch (const std::exception&) {
@@ -221,6 +224,7 @@ EntropyCacheLookup ProjectAnalyzer::ReadRecords(std::string_view source) {
 
 FileAnalysisResult ProjectAnalyzer::AnalyzeFile(const DiscoveredSource& source,
                                                 std::string_view contents) {
+  ReportPhase("preprocessing source");
   PreparedSource prepared = PrepareSource(contents, source.language);
   const std::string& preprocessed = prepared.cleaned;
   assert(std::ranges::count(preprocessed, '\n') ==
@@ -233,12 +237,16 @@ FileAnalysisResult ProjectAnalyzer::AnalyzeFile(const DiscoveredSource& source,
     return {.analysis = std::move(analysis), .entropy_cache_hit = false};
   }
   const auto cached = ReadRecords(preprocessed);
+  ReportPhase("aligning tokens");
   const auto tokens = AlignTokens(preprocessed, cached.records);
+  ReportPhase("building score hierarchy");
   Analysis analysis =
       llmcc::Analyze(tokens, prepared.structural_events, prepared.line_starts,
                      options_.tau_rule, options_.alpha,
                      prepared.meaningful_ranges, options_.hierarchy_mode);
+  ReportPhase("scoring functions");
   auto functions = ScoreFunctions(prepared, tokens, analysis.tau, options_);
+  ReportPhase("reducing file hotspots");
   auto hotspots = FindHotspots(tokens, prepared.line_starts, analysis.tau,
                                options_.hotspots);
 

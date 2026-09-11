@@ -44,6 +44,18 @@ int main() {  // NOLINT(bugprone-exception-escape)
                                     "b00361a396177a9cb410ff61f20015ad"),
                         "SHA-256 abc vector");
 
+  const fs::path boundary_model = root / "boundary.gguf";
+  std::string boundary_bytes(64 * 1024 + 17, '\0');
+  for (std::size_t index = 0; index < boundary_bytes.size(); ++index) {
+    boundary_bytes[index] = static_cast<char>((index * 131 + 17) & 0xff);
+  }
+  Write(boundary_model, boundary_bytes);
+  const auto boundary = llmcc::InspectModel(boundary_model, "abi", "cpu", 32);
+  llmcc::test::ExpectEq(boundary.content_digest,
+                        llmcc::Sha256Hex(boundary_bytes),
+                        "native streaming hash matches portable SHA-256 across "
+                        "buffer boundaries");
+
   const fs::path model = root / "model.gguf";
   Write(model, "first model bytes");
   const auto first = llmcc::InspectModel(model, "abi", "cpu", 32);
@@ -140,7 +152,8 @@ int main() {  // NOLINT(bugprone-exception-escape)
 
 #if !defined(_WIN32)
   const fs::path racing = root / "racing.gguf";
-  Write(racing, std::string(8 * 1024 * 1024, 'a'));
+  constexpr std::size_t kRacingBytes = std::size_t{64} * 1024 * 1024;
+  Write(racing, std::string(kRacingBytes, 'a'));
   setenv("LLM_CC_ENTROPY_CACHE_DIR", root.c_str(), 1);
   int ready[2]{};
   llmcc::test::Expect(pipe(ready) == 0, "create mutation handshake pipe");
@@ -149,15 +162,24 @@ int main() {  // NOLINT(bugprone-exception-escape)
   if (writer == 0) {
     close(ready[0]);
     const int descriptor = open(racing.c_str(), O_WRONLY);
+    if (descriptor < 0) {
+      const char failed = 'e';
+      static_cast<void>(write(ready[1], &failed, 1));
+      _exit(1);
+    }
+    const char first_byte = 'b';
+    if (pwrite(descriptor, &first_byte, 1, 0) != 1) {
+      const char failed = 'e';
+      static_cast<void>(write(ready[1], &failed, 1));
+      _exit(1);
+    }
     const char started = 's';
     static_cast<void>(write(ready[1], &started, 1));
-    if (descriptor < 0) _exit(1);
-    for (std::uint64_t value = 0;; ++value) {
+    for (std::uint64_t value = 1;; ++value) {
       const char byte = static_cast<char>('a' + value % 26);
       static_cast<void>(
           pwrite(descriptor, &byte, 1,
-                 static_cast<off_t>((value * 4099) % (8 * 1024 * 1024))));
-      static_cast<void>(fsync(descriptor));
+                 static_cast<off_t>((value * 4099) % kRacingBytes)));
     }
     _exit(1);
   }

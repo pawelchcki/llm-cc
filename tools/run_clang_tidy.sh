@@ -5,20 +5,27 @@ script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 repo_root="$(dirname -- "$script_dir")"
 cd "$repo_root"
 
-files=()
-while IFS= read -r -d '' file; do
-  files+=("$file")
-done < <(find src -type f \( -name '*.cc' -o -name '*.h' \) -print0)
+bazel_startup=()
+if [[ -n "${LLM_CC_BAZEL_OUTPUT_USER_ROOT:-}" ]]; then
+  bazel_startup=(--output_user_root="$LLM_CC_BAZEL_OUTPUT_USER_ROOT")
+fi
+
+files=("$@")
+if ((${#files[@]} == 0)); then
+  while IFS= read -r -d '' file; do
+    files+=("$file")
+  done < <(find src -type f \( -name '*.cc' -o -name '*.h' \) -print0)
+fi
 
 if ((${#files[@]} == 0)); then
   echo "No C++ source files found under src/." >&2
   exit 1
 fi
 
-output_base="$(bazel info output_base 2>/dev/null)"
-bazel_bin="$(bazel info bazel-bin 2>/dev/null)"
+output_base="$(bazel "${bazel_startup[@]}" info output_base 2>/dev/null)"
+bazel_bin="$(bazel "${bazel_startup[@]}" info bazel-bin 2>/dev/null)"
 # Resolve apparent repository names through Bazel's module mapping.
-repo_mapping="$(bazel mod dump_repo_mapping '')"
+repo_mapping="$(bazel "${bazel_startup[@]}" mod dump_repo_mapping '')"
 repo_path() {
   python3 -c 'import json,sys; print(sys.argv[2] + "/external/" + json.loads(sys.argv[3])[sys.argv[1]])' "$1" "$output_base" "$repo_mapping"
 }
@@ -48,7 +55,7 @@ elif [[ "$(uname -s)" == Linux ]]; then
   )
 fi
 
-bazel run @llvm_toolchain_llvm//:bin/clang-tidy -- \
+bazel "${bazel_startup[@]}" run @llvm_toolchain_llvm//:bin/clang-tidy -- \
   --export-fixes="$fixes_file" "${files[@]}" -- -x c++ -std=c++20 \
   "${platform_args[@]}" -iquote . \
   -I"$bazel_bin" -isystem "$llama_root/include" \

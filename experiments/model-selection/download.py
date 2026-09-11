@@ -17,6 +17,11 @@ MODELS = [
     ("deepseek-v2-lite-q6", "bartowski/DeepSeek-Coder-V2-Lite-Base-GGUF", "DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf"),
 ]
 
+
+def selected_models(names):
+    return [row for row in MODELS if not names or row[0] in names]
+
+
 def fetch_ranges(url, target, size, connections):
     """Resume independent byte ranges; the full LFS digest verifies their assembly."""
     width = (size + connections - 1) // connections
@@ -41,13 +46,14 @@ def fetch_ranges(url, target, size, connections):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--connections", type=int, choices=range(1, 17), default=1)
+    parser.add_argument("--model", action="append", choices=[row[0] for row in MODELS])
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parent)
     args = parser.parse_args()
     root = args.root.resolve()
     (root / "models").mkdir(parents=True, exist_ok=True)
     pinned = {row["name"]: row for row in json.loads((root / "models.json").read_text())} if (root / "models.json").exists() else {}
     records = dict(pinned)
-    for name, repo, filename in MODELS:
+    for name, repo, filename in selected_models(args.model):
         revision = pinned.get(name, {}).get("revision", "main")
         with urllib.request.urlopen(f"https://huggingface.co/api/models/{repo}/revision/{revision}?blobs=true") as response:
             info = json.load(response)

@@ -147,7 +147,10 @@ nlohmann::json Provenance(std::string_view s, const ModelIdentity& m) {
           {"context_limit", m.context_limit},
           {"batch_size", m.batch_size},
           {"reduction_policy", m.reduction_policy},
-          {"effective_reducer", m.effective_reducer}};
+          {"effective_reducer", m.effective_reducer},
+          {"flash_attention", m.flash_attention},
+          {"kv_cache_type", m.kv_cache_type},
+          {"kv_offload", m.kv_offload}};
 }
 std::filesystem::path EntryPath(const CacheLocation& l, std::string_view k) {
   return l.directory / (std::string(k) + ".cbor");
@@ -378,6 +381,12 @@ std::string EntropyCacheKey(std::string_view s, const ModelIdentity& m) {
   x += m.reduction_policy;
   x += '\0';
   x += m.effective_reducer;
+  x += '\0';
+  x += m.flash_attention;
+  x += '\0';
+  x += m.kv_cache_type;
+  x += '\0';
+  x += m.kv_offload ? "1" : "0";
   return Sha256Hex(x);
 }
 void CheckEntropyCacheAvailability() {

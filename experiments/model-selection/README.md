@@ -1,7 +1,7 @@
 # Smaller entropy models for llm-cc
 
 An exploratory comparison on 2026-09-05 using real, checksum-verified Hugging
-Face GGUFs and `dd-trace-c` source history. This evaluates an **entropy model
+Face GGUFs and a pinned source history. This evaluates an **entropy model
 for code scoring**, not an assistant that generates or edits code.
 
 ## Findings and recommendation
@@ -170,7 +170,7 @@ score, quantized weights, or the current C-heavy corpus.
 - `summary.json`, `file-scores.csv`, `edit-deltas.csv`: derived comparisons.
 
 Model weights, generated source snapshots, and entropy caches are ignored by
-Git. The source snapshots can be reconstructed from an existing `dd-trace-c`
+Git. The source snapshots can be reconstructed from the original source
 checkout; they are not vendored into this repository.
 
 ## Reproduce
@@ -187,6 +187,9 @@ python3 experiments/model-selection/download.py --root /tmp/llmcc-study --connec
 python3 experiments/model-selection/run.py --root /tmp/llmcc-study --binary /absolute/path/to/llm-cc --repetitions 3
 python3 experiments/model-selection/summarize.py --root /tmp/llmcc-study
 ```
+
+The source argument must be a checkout of Datadog's `dd-trace-c` repository
+containing commits `11133357` and `a417106c`.
 
 The runner uses only Python's standard library, `curl`, `git`, and
 `nvidia-smi`; it does not load remote Python model code. Downloads resume;

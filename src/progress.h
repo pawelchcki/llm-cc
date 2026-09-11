@@ -61,6 +61,7 @@ class ProgressReporter {
   std::uint64_t completed_ = 0;
   std::uint64_t total_ = 0;
   Clock::time_point started_;
+  Clock::time_point phase_started_;
   Clock::time_point advanced_;
   Clock::time_point rendered_;
   std::thread worker_;
@@ -85,6 +86,7 @@ void ReportPhase(std::string_view phase);
 void ReportCounter(std::uint64_t completed, std::uint64_t total,
                    std::string_view unit);
 void ReportWarning(std::string_view message);
+void ReportDiagnostic(std::string_view message);
 // The seam deliberately accepts a separate terminal stream, never scoring
 // stdin.
 void RequireDownloadConsent(bool assume_yes, bool no_download,

@@ -177,6 +177,24 @@ execution, including after a CPU installation:
 llm-cc src --force-cpu --model-name qwen2.5-coder-3b-q6_k --assume-yes --format text
 ```
 
+Inference memory is configurable with `--flash-attn auto|on|off`,
+`--kv-cache-type f16|q8_0|q4_0` (the same type is used for K and V), and
+`--kv-offload on|off`. Quantized V requires Flash Attention, so combining a
+quantized cache with `--flash-attn off` is rejected. `--backend-diagnostics`
+adds bounded backend logs, device allocation information, and operation
+placement to stderr. These settings are part of the entropy-cache identity.
+
+The retained A10G measurement for the 14.07 GB DeepSeek Q6_K artifact peaked
+at 17.55 GiB of GPU memory for the 26-file, 32K-context experiment. This is a
+measurement, not a universal requirement: context length, batch size, K/V
+type, backend, and driver all affect the total. The dedicated
+[inference validation experiment](experiments/inference-issues/README.md)
+records the corresponding Radeon and CUDA measurements. On a 24 GiB Radeon RX
+7900 XTX, a 74,496-token DeepSeek context completed with Q4_0 K/V at a measured
+20,232 MiB peak, while Q8_0 and F16 did not fit. The independent 26-file score
+agreement gates pass for Flash Attention and Q8_0, so the defaults are
+`--flash-attn on --kv-cache-type q8_0`. Q4_0 remains opt-in.
+
 CPU inference can be slow. The registered Qwen 3B model is about 2.5 GB;
 `qwen2.5-coder-1.5b-q6_k` needs about 1.3 GB of weights. Allow additional memory
 for inference. The [model-selection experiment](experiments/model-selection/README.md)
@@ -194,6 +212,12 @@ both exit status **0** and a terminal `totals` event with `partial == false`.
 A truncated stream or `file_start` is incomplete. Exit **1** indicates partial
 results; **2** indicates configuration or model failure. Individual file errors
 do not prevent later files from being analyzed.
+
+Files larger than 1 MiB produce an informational stderr notice. They are still
+scored in full when they fit the configured token limit: llm-cc does not add
+windows, truncation, or an inference timeout for large inputs. Long phases keep
+emitting five-second heartbeats with phase time and stalled time; decoding also
+reports token throughput. `--progress never` suppresses this status output.
 
 ## Interpreting scores
 
