@@ -1060,7 +1060,6 @@ nlohmann::json ConfigurationJson(
     }
     configuration["backend"] = identity->backend;
     configuration["effective_entropy_reducer"] = identity->effective_reducer;
-    configuration["effective_flash_attn"] = identity->flash_attention;
     configuration["effective_kv_cache_type"] = identity->kv_cache_type;
     configuration["effective_kv_offload"] = identity->kv_offload ? "on" : "off";
   }

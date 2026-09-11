@@ -114,6 +114,17 @@ int main() {
           "'--force-cpu' 'source'\\''s file.cc' '-y' --force-cpu"),
 #endif
       "CPU recovery preserves model paths, source quoting and analysis flags");
+  llmcc::test::ExpectEq(
+      recovery({"llm-cc", "source.cc", "--backend-diagnostics", "--backend",
+                "cuda", "--entropy-reduction", "device"}),
+#ifdef _WIN32
+      std::string("CPU rerun: llm-cc \"source.cc\" "
+                  "\"--backend-diagnostics\" --force-cpu"),
+#else
+      std::string("CPU rerun: llm-cc 'source.cc' '--backend-diagnostics' "
+                  "--force-cpu"),
+#endif
+      "CPU recovery treats backend diagnostics as a flag");
 
   std::ostringstream consent;
   for (auto answer : {"y\n", "Y\n", "yes\n"}) {

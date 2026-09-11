@@ -45,12 +45,15 @@ def gpu_sample(backend, environment):
     )
     if result.returncode != 0:
         return None
-    devices = json.loads(result.stdout).values()
-    device = next(iter(devices), None)
-    if device is None:
+    try:
+        devices = json.loads(result.stdout).values()
+        device = next(iter(devices), None)
+        if device is None:
+            return None
+        used_mib = int(device["VRAM Total Used Memory (B)"]) // (1024 * 1024)
+        utilization = int(device["GPU use (%)"])
+    except (AttributeError, KeyError, TypeError, ValueError):
         return None
-    used_mib = int(device["VRAM Total Used Memory (B)"]) // (1024 * 1024)
-    utilization = int(device["GPU use (%)"])
     return used_mib, utilization
 
 

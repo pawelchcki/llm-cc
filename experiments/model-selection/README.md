@@ -181,12 +181,15 @@ fresh output directory to preserve the recorded experiment. Completed valid runs
 commands are resumable; a changed binary/environment is rejected.
 
 ```sh
-python3 experiments/model-selection/prepare.py /path/to/source-repository --output /tmp/llmcc-study
+python3 experiments/model-selection/prepare.py /path/to/dd-trace-c --output /tmp/llmcc-study
 cp experiments/model-selection/models.json /tmp/llmcc-study/models.json
 python3 experiments/model-selection/download.py --root /tmp/llmcc-study --connections 8
 python3 experiments/model-selection/run.py --root /tmp/llmcc-study --binary /absolute/path/to/llm-cc --repetitions 3
 python3 experiments/model-selection/summarize.py --root /tmp/llmcc-study
 ```
+
+The source argument must be a checkout of Datadog's `dd-trace-c` repository
+containing commits `11133357` and `a417106c`.
 
 The runner uses only Python's standard library, `curl`, `git`, and
 `nvidia-smi`; it does not load remote Python model code. Downloads resume;

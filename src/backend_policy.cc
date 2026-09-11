@@ -81,7 +81,8 @@ std::string CpuRecoveryCommand(int argc, char** argv, bool score) {
     const bool flag = arg == "--assume-yes" || arg == "-y" ||
                       arg == "--no-download" || arg == "--include-headers" ||
                       arg == "--no-ignore" || arg == "--no-cache" ||
-                      arg == "--entropy" || arg == "--override-memory-check";
+                      arg == "--entropy" || arg == "--override-memory-check" ||
+                      arg == "--backend-diagnostics";
     // Option values are data even when they spell an execution option, e.g.
     // score --prompt --backend or analyze --model --force-cpu.
     if (arg.starts_with('-') && !flag && i + 1 < argc) {

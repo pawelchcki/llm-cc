@@ -548,26 +548,30 @@ int main() {  // NOLINT(bugprone-exception-escape)
       128U * 1024U);
   const std::size_t first_newline = preprocessed.find('\n');
   const std::size_t second_newline = preprocessed.find('\n', first_newline + 1);
-  llmcc::WriteEntropyCache(
-      preprocessed, identity,
-      std::vector<llmcc::EntropyRecord>{
-          {.position = 0,
-           .bytes = preprocessed.substr(0, 1),
-           .entropy = std::nullopt},
-          {.position = 1,
-           .bytes = preprocessed.substr(1, first_newline),
-           .entropy = 0.2},
-          {.position = 2,
-           .bytes = preprocessed.substr(first_newline + 1,
-                                        second_newline - first_newline),
-           .entropy = 1.2},
-          {.position = 3,
-           .bytes = preprocessed.substr(second_newline + 1),
-           .entropy = 0.4}});
+  const std::vector<llmcc::EntropyRecord> cached_records = {
+      {.position = 0,
+       .bytes = preprocessed.substr(0, 1),
+       .entropy = std::nullopt},
+      {.position = 1,
+       .bytes = preprocessed.substr(1, first_newline),
+       .entropy = 0.2},
+      {.position = 2,
+       .bytes = preprocessed.substr(first_newline + 1,
+                                    second_newline - first_newline),
+       .entropy = 1.2},
+      {.position = 3,
+       .bytes = preprocessed.substr(second_newline + 1),
+       .entropy = 0.4}};
+  llmcc::WriteEntropyCache(preprocessed, identity, cached_records);
+  const auto auto_flash_identity = llmcc::InspectModel(
+      fake_model,
+      "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v3", backend,
+      128U * 1024U, 64, "auto", "host", true, "auto", "q8_0", true);
+  llmcc::WriteEntropyCache(preprocessed, auto_flash_identity, cached_records);
   const fs::path analysis_output = fs::path(test_tmpdir) / "analysis.jsonl";
   const std::string analysis_command =
       Quote(binary) + " --force-cpu " + Quote(source) + " --model " +
-      Quote(fake_model) + " >" + Quote(analysis_output);
+      Quote(fake_model) + " --flash-attn auto >" + Quote(analysis_output);
   llmcc::test::ExpectEq(Run(analysis_command), 0,
                         "cache-only analysis succeeds without model load");
   const std::vector<nlohmann::json> events = ReadEvents(analysis_output);
@@ -580,6 +584,10 @@ int main() {  // NOLINT(bugprone-exception-escape)
       "analysis events are ordered");
   llmcc::test::Expect(events[3]["entropy_cache_hit"].get<bool>(),
                       "file reports entropy cache hit");
+  llmcc::test::Expect(events[1]["flash_attn"] == "auto" &&
+                          events[1]["effective_flash_attn"] == "on",
+                      "configuration distinguishes requested and effective "
+                      "automatic flash attention");
   llmcc::test::Expect(events[3]["hierarchy_mode"] == "structural" &&
                           events[3]["analysis_version"] == 2 &&
                           events[4]["hierarchy_mode"] == "structural" &&
@@ -833,6 +841,9 @@ int main() {  // NOLINT(bugprone-exception-escape)
       WIFEXITED(conflicting_tau) && WEXITSTATUS(conflicting_tau) == 2,
       "conflicting tau options exit 2");
 
+  fs::remove(
+      llmcc::GlobalEntropyCacheDirectory() /
+      (llmcc::EntropyCacheKey(preprocessed, auto_flash_identity) + ".cbor"));
   const fs::path status_output = fs::path(test_tmpdir) / "status.json";
   llmcc::test::ExpectEq(
       Run(Quote(binary) + " cache status " + Quote(repository) +
