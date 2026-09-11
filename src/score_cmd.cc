@@ -822,8 +822,8 @@ bool AbortCpuAttention(void* opaque) {
 [[noreturn]] void ThrowCpuAttentionFallback() {
   throw std::runtime_error(
       "FLASH_ATTN_EXT would run on CPU while full GPU offload, GPU K/V "
-      "placement, and --flash-attn on were requested; use --flash-attn "
-      "auto|off or --kv-offload off");
+      "placement, and --flash-attn on were requested; use --flash-attn auto, "
+      "--kv-offload off, or --flash-attn off with --kv-cache-type f16");
 }
 
 void ReportPlacements(const PlacementDiagnostics& state) {
@@ -1103,17 +1103,17 @@ void PrepareContext(llama_model* model, llmcc::BackendLogCapture& backend_log,
   }
   backend_log.Clear();
   context.reset(llama_init_from_model(model, parameters));
+  const std::string detail = context ? std::string() : backend_log.Error();
+  ReportBackendLog(backend_log, options.backend_diagnostics);
+  backend_log.Clear();
   if (!context) {
     context_capacity = 0;
-    const std::string detail = backend_log.Error();
     throw std::runtime_error("could not create inference context" +
                              (detail.empty() ? std::string() : ": " + detail));
   }
   if (placement.cpu_attention) {
     ThrowCpuAttentionFallback();
   }
-  ReportBackendLog(backend_log, options.backend_diagnostics);
-  backend_log.Clear();
   context_capacity = llama_n_ctx(context.get());
   llmcc::ReportPhase(
       "inference context ready requested=" + std::to_string(capacity) +
@@ -1353,18 +1353,18 @@ int Run(const Arguments& arguments, std::string_view input,
   backend_log.Clear();
   Model model(llama_model_load_from_file(model_path.c_str(), model_parameters),
               llama_model_free);
+  const std::string model_error = model ? std::string() : backend_log.Error();
+  ReportBackendLog(backend_log, arguments.backend_diagnostics);
+  backend_log.Clear();
   if (!model) {
-    const std::string detail = backend_log.Error();
     const std::string message =
         "could not load model: " + arguments.model.string() +
-        (detail.empty() ? std::string() : ": " + detail);
-    if (use_gpu && llmcc::IsGpuAllocationFailure(detail)) {
+        (model_error.empty() ? std::string() : ": " + model_error);
+    if (use_gpu && llmcc::IsGpuAllocationFailure(model_error)) {
       throw llmcc::GpuRecoverableError(message);
     }
     throw std::runtime_error(message);
   }
-  ReportBackendLog(backend_log, arguments.backend_diagnostics);
-  backend_log.Clear();
   DeviceEntropyState device_state;
   Sampler sampler(nullptr, llama_sampler_free);
   Context context(nullptr, llama_free);
@@ -1478,18 +1478,19 @@ class EntropyScorer::Impl {
     backend_log_.Clear();
     model_.reset(
         llama_model_load_from_file(utf8_model_path.c_str(), parameters));
+    const std::string model_error =
+        model_ ? std::string() : backend_log_.Error();
+    ReportBackendLog(backend_log_, backend_diagnostics_);
+    backend_log_.Clear();
     if (!model_) {
-      const std::string detail = backend_log_.Error();
       const std::string message =
           "could not load model: " + model_path.string() +
-          (detail.empty() ? std::string() : ": " + detail);
-      if (use_gpu_ && IsGpuAllocationFailure(detail)) {
+          (model_error.empty() ? std::string() : ": " + model_error);
+      if (use_gpu_ && IsGpuAllocationFailure(model_error)) {
         throw GpuRecoverableError(message);
       }
       throw std::runtime_error(message);
     }
-    ReportBackendLog(backend_log_, backend_diagnostics_);
-    backend_log_.Clear();
     if (!device_reduction_) {
       host_reduction_.emplace(HostReductionWorkerCount(batch_size_, threads_));
     }
