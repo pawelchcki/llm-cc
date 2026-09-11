@@ -1045,6 +1045,8 @@ void PrepareContext(llama_model* model, llmcc::BackendLogCapture& backend_log,
     llmcc::ReportPhase(
         "resetting inference context requested=" + std::to_string(required) +
         " allocated=" + std::to_string(context_capacity));
+    placement.cpu_attention = false;
+    placement.placements.clear();
     llama_memory_clear(llama_get_memory(context.get()), true);
     return;
   }

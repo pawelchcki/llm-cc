@@ -42,11 +42,13 @@ directory on each machine. On Bluefin use
 ```sh
 python3 experiments/inference-issues/run.py \
   --root /data/llmcc-inference --binary /absolute/path/llm-cc \
+  --backend-dir /absolute/path/backends \
   --model deepseek-v2-lite-q6 --backend rocm --repetitions 3
 
 python3 experiments/inference-issues/run.py \
   --root /var/home/pawel/.cache/llm-cc-validation \
   --binary /absolute/path/llm-cc --model qwen-0.5b-q4 \
+  --backend-dir /absolute/path/backends \
   --backend cuda --repetitions 3
 
 python3 experiments/inference-issues/summarize.py --root /data/llmcc-inference

@@ -84,6 +84,8 @@ int main() {  // NOLINT(bugprone-exception-escape)
     if (mutation == 5) different.flash_attention = "auto";
     if (mutation == 6) different.kv_cache_type = "f16";
     if (mutation == 7) different.kv_offload = false;
+    llmcc::test::Expect(Entry("a", model) != Entry("a", different),
+                        "every inference setting has a distinct cache key");
     llmcc::test::Expect(!llmcc::ReadEntropyCache("a", different).hit,
                         "every inference setting separates entries");
   }

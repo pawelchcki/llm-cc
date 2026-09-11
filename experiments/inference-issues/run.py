@@ -82,13 +82,16 @@ def failure_class(status, stderr, errors):
 
 
 def backend_hashes(directory, backend):
-    if directory is None:
-        return {}
-    return {
+    hashes = {
         path.name: sha256_file(path)
         for path in sorted(directory.iterdir())
-        if path.is_file() and backend in path.name and path.suffix in (".so", ".dylib", ".dll")
+        if path.is_file()
+        and backend in path.name
+        and path.suffix in (".bundle", ".so", ".dylib", ".dll")
     }
+    if not hashes:
+        raise RuntimeError(f"no {backend} backend artifact in {directory}")
+    return hashes
 
 
 def select_rows(manifest, scope):
@@ -194,7 +197,7 @@ def main():
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--backend", choices=("cuda", "rocm"), required=True)
-    parser.add_argument("--backend-dir", type=Path)
+    parser.add_argument("--backend-dir", type=Path, required=True)
     parser.add_argument("--model", required=True)
     parser.add_argument("--repetitions", type=int, default=3)
     parser.add_argument("--context", type=int, default=32768)
@@ -211,6 +214,11 @@ def main():
     (args.root / "results").mkdir(exist_ok=True)
     manifest = json.loads((args.root / "corpus.json").read_text())["files"]
     rows = select_rows(manifest, args.scope)
+    if not rows:
+        parser.error(
+            f"--scope {args.scope} selects no files from corpus.json; "
+            "choose --scope fixtures or --scope all for a fixtures-only corpus"
+        )
     for row in rows:
         path = args.root / "corpus" / row["id"]
         if path.stat().st_size != row["bytes"] or sha256_file(path) != row["sha256"]:

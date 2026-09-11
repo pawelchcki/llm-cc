@@ -381,6 +381,12 @@ std::string EntropyCacheKey(std::string_view s, const ModelIdentity& m) {
   x += m.reduction_policy;
   x += '\0';
   x += m.effective_reducer;
+  x += '\0';
+  x += m.flash_attention;
+  x += '\0';
+  x += m.kv_cache_type;
+  x += '\0';
+  x += m.kv_offload ? "1" : "0";
   return Sha256Hex(x);
 }
 void CheckEntropyCacheAvailability() {
