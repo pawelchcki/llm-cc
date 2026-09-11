@@ -7,8 +7,9 @@ remain immutable. It validates the changes for issues 29, 30, and 32 on the
 No result is implied by this directory. A run is recorded as complete only
 when the process exits zero, emits exactly one final non-partial `totals`
 event, covers every manifest entry, and does not report CPU Flash Attention
-placement. OOM, token-limit, and other incomplete runs remain in the results
-with their exit code and classification.
+placement. Explicit Flash Attention runs must also report a positive placement
+count on the selected GPU. OOM, token-limit, and other incomplete runs remain
+in the results with their exit code and classification.
 
 ## Corpus and models
 
@@ -27,7 +28,8 @@ Use the checksum-pinned DeepSeek Q6_K and Qwen 0.5B Q4_K_M entries in
 python3 experiments/inference-issues/prepare.py \
   --repository /path/to/llm-cc --output /data/llmcc-inference
 python3 experiments/model-selection/download.py \
-  --root /data/llmcc-inference --connections 8
+  --root /data/llmcc-inference --connections 8 \
+  --model qwen-0.5b-q4 --model deepseek-v2-lite-q6
 ```
 
 If only the deterministic large-file regressions are needed, add
@@ -98,11 +100,11 @@ deterministic bootstrap intervals, complete top-five retention, hotspot
 overlap, relative score drift, repetition spread, and historical edit signs.
 Q8 is promoted only if file and eligible-function rho are both at least 0.98,
 all baseline top-five files remain present, and no edit whose baseline change
-is at least 5% reverses sign. The same test is applied independently to
+is at least 5% reverses sign. Repeated scores within each configuration must
+also differ by no more than `1e-6`. The same test is applied independently to
 `flash-f16`. If a run is missing or incomplete, the corresponding candidate
 default is not promoted. The recorded Radeon runs passed both gates, promoting
-Flash Attention `on` and Q8_0 K/V; Q4_0 remains an explicit large-context
-option.
+Flash Attention `on` and Q8_0 K/V; Q4_0 remains an explicit large-context option.
 
 The earlier A10G run measured 17,973 MiB above idle (17.55 GiB) for the
 14,066,972,416-byte DeepSeek artifact at context 32,768 and batch 256. Record

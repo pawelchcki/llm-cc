@@ -7,6 +7,8 @@ from pathlib import Path
 import random
 import statistics
 
+MAX_REPEAT_SCORE_DIFFERENCE = 1e-6
+
 
 def ranks(values):
     order = sorted(range(len(values)), key=values.__getitem__)
@@ -123,10 +125,12 @@ def compare(reference_runs, candidate_runs):
         "median_relative_score_drift": statistics.median(
             abs(y - x) / abs(x) for x, y in zip(left, right) if x) if left else None,
         "max_repeat_score_difference": repeatability,
+        "max_repeat_score_difference_allowed": MAX_REPEAT_SCORE_DIFFERENCE,
         "historical_edit_sign_reversals": reversals,
         "gate_pass": (file_rho is not None and file_rho >= 0.98 and
                       function_rho is not None and function_rho >= 0.98 and
-                      len(left_top & right_top) == top and not reversals),
+                      len(left_top & right_top) == top and not reversals and
+                      repeatability <= MAX_REPEAT_SCORE_DIFFERENCE),
     }
 
 

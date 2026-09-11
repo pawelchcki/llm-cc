@@ -138,6 +138,12 @@ def failure_class(status, stderr, errors):
     return "failed"
 
 
+def gpu_attention_placement_count(backend, stderr):
+    device = "CUDA0" if backend == "cuda" else "ROCm0"
+    match = re.search(rf"operation=FLASH_ATTN_EXT@{device} count=([1-9]\d*)", stderr)
+    return int(match.group(1)) if match else 0
+
+
 def configuration_matches(event, args, flash, kv_type):
     expected = {
         "context": args.context,
@@ -252,6 +258,8 @@ def execute(args, root, model, label, repeat, rows, invocation,
     elapsed = time.monotonic() - started
     stderr = stderr_path.read_text(errors="replace")
     expected = {str(root / "corpus" / row["id"]) for row in rows}
+    attention_count = gpu_attention_placement_count(args.backend, stderr)
+    attention_placement_valid = flash != "on" or attention_count > 0
     configuration_valid = (len(configurations) == 1 and
                            configuration_matches(configurations[0], args, flash, kv_type))
     valid = (status == 0 and not parse_errors and last_type == "totals" and len(totals) == 1
@@ -259,12 +267,15 @@ def execute(args, root, model, label, repeat, rows, invocation,
              and totals[0].get("partial") is False
              and len(files) == len(rows) and {row.get("path") for row in files} == expected
              and all(row.get("entropy_cache_hit") is False for row in files)
-             and "FLASH_ATTN_EXT@CPU" not in stderr)
+             and "FLASH_ATTN_EXT@CPU" not in stderr
+             and attention_placement_valid)
     classification = failure_class(status, stderr, error_events)
     if parse_errors:
         classification = "incomplete_output"
     elif status == 0 and classification is None and not configuration_valid:
         classification = "configuration_mismatch"
+    elif status == 0 and classification is None and not attention_placement_valid:
+        classification = "gpu_attention_missing"
     elif status == 0 and classification is None and not valid:
         classification = "incomplete_output"
     host_rss = [sample["rss_kib"] for sample in samples
@@ -291,6 +302,7 @@ def execute(args, root, model, label, repeat, rows, invocation,
         "mean_gpu_utilization": (sum(gpu_utilization) / len(gpu_utilization)
                                   if gpu_utilization else None),
         "gpu_sample_units": "MiB for CUDA and ROCm",
+        "flash_attention_gpu_placement_count": attention_count,
         "samples": samples,
         "phase_lines": [line for line in stderr.splitlines()
                         if line.startswith("llm-cc: ")],
