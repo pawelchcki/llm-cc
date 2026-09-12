@@ -50,3 +50,43 @@ automations:
             <!-- ci-toolkit:gpu-backends -->
             ### GPU backends for `{{ commit.sha | markdown_escape }}`
             {{ actions.publish.outputs.file_table }}
+  - id: complexity
+    triggers:
+      - id: comparison
+        uses: github.commit-status@v1
+        with:
+          event: github.commit_status
+          states: [success, failure, error]
+          targets:
+            - default_branch: {}
+            - pull_request: { state: open, base_branches: ["*"] }
+          status:
+            context: Complexity comparison
+            creator: { login: "buildbuddy-io[bot]", id: 130678843 }
+            target_url: { scheme: https, host: pawel.buildbuddy.io, path_pattern: "/invocation/{uuid}" }
+            require_target_head_sha: true
+    sources:
+      - id: comparison-files
+        uses: buildbuddy.workflow-artifacts@v1
+        with:
+          invocation_url: "{{ event.target_url }}"
+          artifacts:
+            - { name: comment.md, media_type: text/plain, max_bytes: 24576 }
+            - { name: publication.json, media_type: application/json, max_bytes: 4096 }
+            - { name: report.json, media_type: application/json, max_bytes: 16777216 }
+            - { name: report.md, media_type: text/plain, max_bytes: 16777216 }
+    actions:
+      - id: publish
+        uses: toolkit.public-folder@v1
+        with: { source: comparison-files, security_profile: untrusted-data, retention: 14d, keep_default_branch_sets: 5 }
+      - id: comment
+        uses: github.pull-request-comment@v1
+        needs: [publish]
+        when: { target: pull_request }
+        with:
+          operation: upsert
+          generated:
+            source: comparison-files
+            comment: comment.md
+            publication: publication.json
+            max_bytes: 24576
