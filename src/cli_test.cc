@@ -63,20 +63,18 @@ const nlohmann::json& FileEvent(const std::vector<nlohmann::json>& events) {
 
 }  // namespace
 
-int main() {  // NOLINT(bugprone-exception-escape)
+int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
   using llmcc::test::Expect;
   namespace fs = std::filesystem;
   const char* test_srcdir = std::getenv("TEST_SRCDIR");
-  const char* test_workspace = std::getenv("TEST_WORKSPACE");
   const char* test_tmpdir = std::getenv("TEST_TMPDIR");
-  llmcc::test::Expect(test_srcdir != nullptr && test_workspace != nullptr &&
-                          test_tmpdir != nullptr,
-                      "Bazel test environment");
+  llmcc::test::Expect(
+      argc == 3 && test_srcdir != nullptr && test_tmpdir != nullptr,
+      "Bazel test environment");
   const fs::path entropy_root = fs::path(test_tmpdir) / "entropy-cache";
   setenv("LLM_CC_ENTROPY_CACHE_DIR", entropy_root.c_str(), 1);
-  const fs::path root = fs::path(test_srcdir) / test_workspace;
-  const fs::path binary = root / "llm-cc";
-  const fs::path fixtures = root / "testdata/cli";
+  const fs::path binary = fs::path(test_srcdir) / argv[1];
+  const fs::path fixtures = (fs::path(test_srcdir) / argv[2]).parent_path();
 
   const fs::path analyze_help = fs::path(test_tmpdir) / "analyze-help.txt";
   llmcc::test::ExpectEq(Run(Quote(binary) + " --help 2>" + Quote(analyze_help)),
@@ -268,8 +266,10 @@ int main() {  // NOLINT(bugprone-exception-escape)
     for (const std::string& prefix :
          {" " + Quote(empty_repository),
           std::string(" score --model missing.gguf --prompt x")}) {
-      Expect(Run(Quote(binary) + prefix + " " + options + " >/dev/null 2>" +
-                 Quote(invalid_options_error)) != 0,
+      std::string command = Quote(binary);
+      command.append(prefix).append(" ").append(options);
+      command.append(" >/dev/null 2>").append(Quote(invalid_options_error));
+      Expect(Run(command) != 0,
              "contradictory execution options fail in either order");
       Expect(Read(invalid_options_error).find("contradictory CPU") !=
                  std::string::npos,
@@ -520,7 +520,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
   // early backend probe, whose diagnostics this test covers, actually runs.
   constexpr std::string_view probe_gpu_layers = " --gpu-layers 1";
 #else
-  constexpr std::string_view probe_gpu_layers = "";
+  constexpr std::string_view probe_gpu_layers;
 #endif
   const std::string uncached_command =
       Quote(binary) + " " + Quote(source) + " --model " + Quote(fake_model) +

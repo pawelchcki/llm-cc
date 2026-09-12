@@ -16,7 +16,7 @@ def executable_runfile(value):
         # created by Bazel's Bash runfiles tree. Use its manifest's real path.
         manifest = Path(os.environ.get("RUNFILES_MANIFEST_FILE") or
                         str(Path(os.environ["TEST_SRCDIR"]) / "MANIFEST"))
-        key = os.environ["TEST_WORKSPACE"] + "/" + value.replace("\\", "/")
+        key = value.replace("\\", "/")
         for line in manifest.read_text().splitlines():
             escaped = line.startswith(" ")
             logical, physical = line.lstrip(" ").split(" ", 1)
@@ -27,7 +27,7 @@ def executable_runfile(value):
             if logical == key:
                 return Path(physical)
         raise RuntimeError(f"Executable {key} missing from {manifest}")
-    return Path(value).resolve(strict=True)
+    return (Path(os.environ["TEST_SRCDIR"]) / value).resolve(strict=True)
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -59,7 +59,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 def main():
     probe = executable_runfile(sys.argv[1])
-    fixtures = Path(sys.argv[2]).resolve(strict=True)
+    fixtures = Path(sys.argv[2]).resolve(strict=True).parent
     assert probe.is_file(), probe
     root = Path(os.environ["TEST_TMPDIR"])
     # A short-lived leaf with serverAuth works with Apple SecTrust as well as

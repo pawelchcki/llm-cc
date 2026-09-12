@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-script="$TEST_SRCDIR/$TEST_WORKSPACE/tools/install.sh"
+script="$TEST_SRCDIR/${1:?missing installer runfile key}"
 root="$TEST_TMPDIR/prefix with spaces"
 source_binary="$TEST_TMPDIR/source-llm-cc"
 cuda_bundle="$TEST_TMPDIR/llm-cc-backend-cuda-linux-x86_64.bundle"
