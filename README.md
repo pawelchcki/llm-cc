@@ -248,6 +248,12 @@ bazel test //:integration
 tools/run_clang_tidy.sh
 ```
 
+Ordinary pull requests use BuildBuddy's CPU regression and GPU backend checks.
+The full GitHub Actions platform matrix, CPU/CUDA consumer installation checks,
+and cross-platform lockfile check run on `main` pushes and same-repository
+release-please PRs, such as `release-please--branches--main`. Manual full runs
+also require `main` or a release-please branch. Superseded runs are canceled.
+
 The optional `bazel test //:model_smoke_test` downloads a pinned 398 MB model
 for a real CPU inference check. See [DESIGN.md](DESIGN.md) for implementation
 background and [CHANGELOG.md](CHANGELOG.md) for changes. `llm-cc --help` lists

@@ -1,14 +1,30 @@
 name: Reusable builds
 
 on:
+  push:
+    branches: [main]
   pull_request:
+    branches: [main]
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
   platform:
+    # Ordinary PRs use BuildBuddy; full platform and consumer builds run for
+    # main and same-repository release-please branches before release.
+    if: >-
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       startsWith(github.head_ref, 'release-please--branches--')) ||
+      (github.event_name != 'pull_request' &&
+       (github.ref == 'refs/heads/main' ||
+        startsWith(github.ref, 'refs/heads/release-please--branches--')))
     strategy:
       fail-fast: false
       matrix:
@@ -74,6 +90,15 @@ jobs:
           path: MODULE.bazel.lock
 
   consumer:
+    # Ordinary PRs use BuildBuddy; full platform and consumer builds run for
+    # main and same-repository release-please branches before release.
+    if: >-
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       startsWith(github.head_ref, 'release-please--branches--')) ||
+      (github.event_name != 'pull_request' &&
+       (github.ref == 'refs/heads/main' ||
+        startsWith(github.ref, 'refs/heads/release-please--branches--')))
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
