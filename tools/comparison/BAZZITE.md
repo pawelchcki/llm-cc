@@ -59,7 +59,7 @@ A wrong host fails with an explicit worker artifact. Only actual cache misses
 create GPU worker requests.
 
 To submit a manual **CPU coordinator** from the implementation checkout, export
-`BUILDBUDDY_API_KEY` and optionally `GITHUB_TOKEN` through your existing credential
+`BUILDBUDDY_API_KEY` through your existing credential
 mechanism, then run:
 
 ```sh
@@ -69,8 +69,12 @@ python3 -m tools.comparison.submit_bazzite submit \
   --head "$(git rev-parse HEAD)" --branch "$(git branch --show-current)"
 ```
 
-The command prints the new parent invocation URL. It passes credentials through
-BuildBuddy's sensitive remote headers and checks out the requested application
+The command prints the new parent invocation URL. The local API key authenticates
+the submission; local credentials are never copied into the job request.
+BuildBuddy's [Run implementation](https://github.com/buildbuddy-io/buildbuddy/blob/master/enterprise/server/hostedrunner/hostedrunner.go)
+injects its own group credential into the runner. Public GitHub PR discovery needs
+no token. For private repositories, configure access through trusted BuildBuddy
+runner or secret settings. The command checks out the requested application
 revision into the runner's own checkout. Do not point remote jobs at another user's
 working tree; Git correctly rejects that ownership mismatch. The parent verifies
 and imports the installed package ZIP before running

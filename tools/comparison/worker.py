@@ -702,6 +702,9 @@ def _run_assignments(
                     "HOME": str(entropy_root),
                 }
                 environment.update(gpu_environment)
+            # Explicit backend directories take precedence over the verified
+            # installed bundle, even when their payload is absent from its identity.
+            environment.pop("LLM_CC_BACKEND_DIR", None)
             environment["LLM_CC_ENTROPY_CACHE_DIR"] = str(entropy_root)
             environment["LLM_CC_CACHE_DIR"] = str(entropy_root / "models")
             environment["LLM_CC_RUNTIME_DIR"] = str(installed_root / "lib" / "llm-cc")

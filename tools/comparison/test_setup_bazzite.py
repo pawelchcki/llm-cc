@@ -1,5 +1,6 @@
 import hashlib
 import io
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -8,10 +9,54 @@ from unittest import mock
 import zipfile
 
 from .setup_bazzite import atomic_publish, package_bundle, verify_assets
-from .submit_bazzite import coordinator_request, parent_invocation_id, runner_metadata
+from .submit_bazzite import (
+    coordinator_request,
+    main,
+    parent_invocation_id,
+    runner_metadata,
+)
 
 
 class BazziteSetupTest(unittest.TestCase):
+    def test_remote_coordinator_binds_custom_auth_name_to_server_credential(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config = Path(temporary) / "comparison.json"
+            config.write_text(json.dumps({"api_key_env": "CUSTOM_BUILD_KEY"}))
+            environment = {
+                "BUILDBUDDY_API_KEY": "server-injected",
+                "CUSTOM_BUILD_KEY": "unrelated-runner-value",
+                "BUILDBUDDY_INVOCATION_ID": "01234567-89ab-cdef-0123-456789abcdef",
+                "BUILDBUDDY_ARTIFACTS_DIRECTORY": temporary,
+            }
+
+            def coordinate(args):
+                self.assertEqual(os.environ["CUSTOM_BUILD_KEY"], "server-injected")
+                self.assertEqual(
+                    args.pipeline_id, environment["BUILDBUDDY_INVOCATION_ID"]
+                )
+                return 0
+
+            with (
+                mock.patch.dict(os.environ, environment, clear=True),
+                mock.patch(
+                    "tools.comparison.submit_bazzite.coordinate", side_effect=coordinate
+                ),
+            ):
+                self.assertEqual(
+                    main(
+                        [
+                            "run-coordinator",
+                            "--config",
+                            str(config),
+                            "--head",
+                            "a" * 40,
+                            "--branch",
+                            "main",
+                        ]
+                    ),
+                    0,
+                )
+
     def test_runner_metadata_restricts_fields_and_handles_detached_checkout(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -92,7 +137,7 @@ class BazziteSetupTest(unittest.TestCase):
                 parent_invocation_id(artifacts, {})
 
     @unittest.skipUnless(os.name == "posix", "host paths require POSIX")
-    def test_cpu_submission_pins_code_and_keeps_credentials_in_remote_headers(self):
+    def test_cpu_submission_pins_code_without_forwarding_local_credentials(self):
         config = {
             "execution_image": "none",
             "execution_bundle": "/var/lib/llm-cc/packages/code.zip",
@@ -120,9 +165,10 @@ class BazziteSetupTest(unittest.TestCase):
         self.assertNotIn("synthetic-secret", request["steps"][0]["run"])
         self.assertNotIn("gpu-resource", str(request["platform_properties"]))
         self.assertIn("tools.comparison.submit_bazzite", request["steps"][0]["run"])
-        self.assertIn(
-            "BUILDBUDDY_API_KEY=synthetic-secret", request["remote_headers"][0]
-        )
+        self.assertNotIn("remote_headers", request)
+        self.assertNotIn("env", request)
+        self.assertNotIn("synthetic-secret", str(request))
+        self.assertNotIn("synthetic-github", str(request))
 
     def test_bundle_is_deterministic_and_excludes_unrelated_files(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -92,22 +92,9 @@ def coordinator_request(config, config_path, repository, head, branch):
         config["execution_bundle"],
         config["execution_bundle_sha256"],
     )
-    overrides = []
-    for name in dict.fromkeys(
-        [
-            config.get("api_key_env", "BUILDBUDDY_API_KEY"),
-            config.get("github_token_env", "GITHUB_TOKEN"),
-        ]
-    ):
-        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
-            raise ValueError("invalid credential environment variable name")
-        value = os.environ.get(name)
-        if value:
-            if any(character in value for character in ",\n\r"):
-                raise ValueError(
-                    "credential environment values cannot contain commas or newlines"
-                )
-            overrides.append(name + "=" + value)
+    # Run already injects a group-scoped BUILDBUDDY_API_KEY into its runner.
+    # Local API credentials authenticate the submission only. Public GitHub PR
+    # discovery needs no token; private access belongs in trusted runner secrets.
     return {
         "repo": "https://github.com/" + repository + ".git",
         "commit_sha": head,
@@ -122,11 +109,6 @@ def coordinator_request(config, config_path, repository, head, branch):
             "container-image": "none",
             "EstimatedComputeUnits": "1",
         },
-        "remote_headers": [
-            "x-buildbuddy-platform.secret-env-overrides=" + ",".join(overrides)
-        ]
-        if overrides
-        else [],
     }
 
 
@@ -139,6 +121,14 @@ def main(argv=None):
     parser.add_argument("--branch", required=True)
     args = parser.parse_args(argv)
     if args.action == "run-coordinator":
+        config = read_json(args.config)
+        api_key_env = config.get("api_key_env", "BUILDBUDDY_API_KEY")
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", api_key_env):
+            raise ValueError("invalid API credential environment variable name")
+        if api_key_env != "BUILDBUDDY_API_KEY":
+            # The submitting machine may use a custom variable name. Bind it
+            # here to the server's runner credential, never the local API key.
+            os.environ[api_key_env] = os.environ["BUILDBUDDY_API_KEY"]
         args.repo = os.getcwd()
         args.default_branch = "main"
         args.output_dir = os.environ["BUILDBUDDY_ARTIFACTS_DIRECTORY"]

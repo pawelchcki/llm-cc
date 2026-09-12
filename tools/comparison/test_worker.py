@@ -134,8 +134,17 @@ class WorkerTest(unittest.TestCase):
                 def wait(self, timeout=None):
                     return 0
 
-            with patch(
-                "tools.comparison.worker.subprocess.Popen", return_value=Process()
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "LLM_CC_BACKEND_DIR": "/unverified/backend",
+                        "CUDA_VISIBLE_DEVICES": "2",
+                    },
+                ),
+                patch(
+                    "tools.comparison.worker.subprocess.Popen", return_value=Process()
+                ) as popen,
             ):
                 result = run_worker(
                     plan,
@@ -147,6 +156,9 @@ class WorkerTest(unittest.TestCase):
                     directory,
                 )
             self.assertEqual(result["status"], "complete")
+            environment = popen.call_args.kwargs["env"]
+            self.assertNotIn("LLM_CC_BACKEND_DIR", environment)
+            self.assertEqual(environment["CUDA_VISIBLE_DEVICES"], "2")
             self.assertIn(key, result["results"])
             self.assertTrue((Path(directory) / "out" / "worker-0.json").exists())
 
