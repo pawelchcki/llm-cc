@@ -1,0 +1,22 @@
+{
+  "profile": "/etc/llm-cc/profile.json",
+  "rules": "tools/comparison/dogfood-rules.json",
+  "cache": "s3://YOUR_BUCKET/llm-cc",
+  "store_options": {"endpoint_url": "https://YOUR_S3_ENDPOINT", "region_name": "auto"},
+  "endpoint": "https://pawel.buildbuddy.io",
+  "api_key_env": "BUILDBUDDY_API_KEY",
+  "github_token_env": "GITHUB_TOKEN",
+  "pool": "YOUR_GPU_POOL",
+  "execution_repository": "https://github.com/pawelchcki/llm-cc.git",
+  "execution_commit": "FULL_COMMIT_CONTAINING_THE_COMPARISON_PACKAGE",
+  "execution_image": "YOUR_SCORER_IMAGE@sha256:IMMUTABLE_IMAGE_DIGEST",
+  "scorer": "/opt/llm-cc/bin/llm-cc",
+  "installed_root": "/opt/llm-cc",
+  "model": "/opt/models/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf",
+  "worker_secret_env": ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
+  "worker_env": {},
+  "platform_properties": {"EstimatedFreeDiskBytes": "40000000000"},
+  "max_workers": 4,
+  "refresh_days": 20,
+  "expire_days": 30
+}

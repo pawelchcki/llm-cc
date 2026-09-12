@@ -1,5 +1,8 @@
 # llm-cc
 
+For advisory base/head complexity reports with reusable filesystem or S3 results
+and CPU-only cache hits, see [the comparison stage guide](tools/comparison/README.md).
+
 `llm-cc` measures entropy-guided language-model code complexity (LM-CC) in Rust,
 C, C++, Java, Python, Go, Node.js JavaScript, and C#. It helps identify files,
 functions, and source lines to inspect when planning refactoring, using a local

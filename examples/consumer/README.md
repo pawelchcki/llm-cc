@@ -16,6 +16,10 @@ Copy the two files in `patches/` from that same llm-cc revision. Bazel requires
 `single_version_override` patches to belong to the consuming root; dependency
 module overrides are ignored. `tools/check_consumer.sh` checks these copies
 against the source and exercises a renamed dependency in a separate Git repository.
+Use `tools/check_consumer.sh --tests-only` to run installer, CLI, language, TLS,
+and comparison regressions without building an installation. The harness cleans
+up its own Bazel output directory; `CONSUMER_OUTPUT_BASE` optionally supplies a
+reusable directory. Universal payload validation remains a separate GPU build.
 
 Toolchain registration is explicit. The public `toolchains` extension creates
 LLVM, the portable sysroot, and pinned CUDA repositories. `override_repo` routes

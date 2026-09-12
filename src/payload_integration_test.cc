@@ -18,16 +18,14 @@
 #define F_SEAL_WRITE 0x0008
 #endif
 
-int main() {  // NOLINT(bugprone-exception-escape)
+int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
   namespace fs = std::filesystem;
   const char* test_srcdir = std::getenv("TEST_SRCDIR");
-  const char* test_workspace = std::getenv("TEST_WORKSPACE");
   const char* test_tmpdir = std::getenv("TEST_TMPDIR");
-  llmcc::test::Expect(test_srcdir != nullptr && test_workspace != nullptr &&
-                          test_tmpdir != nullptr,
-                      "Bazel test environment");
-  const fs::path executable =
-      fs::path(test_srcdir) / test_workspace / "dist" / "llm-cc-linux-x86_64";
+  llmcc::test::Expect(
+      argc == 2 && test_srcdir != nullptr && test_tmpdir != nullptr,
+      "Bazel test environment");
+  const fs::path executable = fs::path(test_srcdir) / argv[1];
   llmcc::test::Expect(fs::is_regular_file(executable),
                       "embedded executable fixture exists");
   const fs::path runtime = fs::path(test_tmpdir) / "runtime";

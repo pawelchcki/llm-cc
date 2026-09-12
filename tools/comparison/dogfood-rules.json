@@ -1,0 +1,6 @@
+{
+  "exclude": ["third_party/**", "bazel-*/**", "vendor/**", "**/vendor/**", "**/generated/**", "**/*.pb.*"],
+  "tests": ["testdata/**", "tests/**", "test/**", "**/tests/**", "**/test/**", "**/fixtures/**", "**/fuzz/**", "**/fuzzers/**", "**/benchmarks/**", "benchmarks/**", "*_test.*", "test_*.*", "**/*_test.*", "**/test_*.*", "**/*_test_*.h", "**/test_util.h"],
+  "tooling": ["tools/**", "examples/**", "experiments/**", "scripts/**", ".github/**"],
+  "extensions": {".h": "cpp"}
+}
