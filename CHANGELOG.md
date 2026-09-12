@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.0](https://github.com/pawelchcki/llm-cc/compare/v0.2.0...v0.3.0) (2026-09-12)
+
+
+### Features
+
+* add cached complexity comparisons and Radeon dogfooding ([#39](https://github.com/pawelchcki/llm-cc/issues/39)) ([08d0f79](https://github.com/pawelchcki/llm-cc/commit/08d0f79aa59807a7ba48543703eed0ba3bb9341a))
+
+### Bug Fixes
+
+* scale large-model inference and hashing ([#36](https://github.com/pawelchcki/llm-cc/issues/36)) ([4646123](https://github.com/pawelchcki/llm-cc/commit/4646123b274005c587dfeb614f17ddf5fd36aef6))
+
 ## [0.2.0](https://github.com/pawelchcki/llm-cc/compare/v0.1.0...v0.2.0) (2026-09-07)
 
 
