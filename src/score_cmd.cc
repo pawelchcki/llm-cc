@@ -5,6 +5,7 @@
 #include <llama.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <charconv>
@@ -17,7 +18,6 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
-#include <iterator>
 #include <limits>
 #include <map>
 #include <memory>
@@ -50,6 +50,7 @@
 #include "src/cache.h"
 #include "src/download.h"
 #include "src/inference_guard.h"
+#include "src/input_limits.h"
 #include "src/models.h"
 #include "src/progress.h"
 #include "src/scoring.h"
@@ -106,7 +107,7 @@ constexpr std::string_view kUsageBeforeContext =
     "  --model-name NAME      registered model name\n"
     "  --no-download          do not fetch the model or backend bundle\n"
     "  --bos auto|always|never  beginning-of-stream policy (default: auto)\n"
-    "  --context-size N       maximum tokens in the input (default: ";
+    "  --context-size N       tokens per inference window (default: ";
 
 constexpr std::string_view kUsageAfterContext =
     ")\n"
@@ -410,22 +411,13 @@ Arguments ParseArguments(int argc, char** argv) {
   return arguments;
 }
 
-std::string ReadStream(std::istream& stream) {
-  return {std::istreambuf_iterator<char>(stream),
-          std::istreambuf_iterator<char>()};
-}
-
 std::string ReadInput(const Arguments& arguments) {
   if (arguments.prompt.has_value()) {
+    llmcc::CheckSourceSize(arguments.prompt->size());
     return *arguments.prompt;
   }
   if (arguments.file.has_value()) {
-    std::ifstream input(*arguments.file, std::ios::binary);
-    if (!input) {
-      throw std::runtime_error("cannot open input file: " +
-                               arguments.file->string());
-    }
-    return ReadStream(input);
+    return llmcc::ReadBoundedFile(*arguments.file);
   }
 #if defined(_WIN32)
   DWORD console_mode = 0;
@@ -435,16 +427,19 @@ std::string ReadInput(const Arguments& arguments) {
                             "cannot set stdin to binary mode");
   }
 #endif
-  return ReadStream(std::cin);
+  return llmcc::ReadBoundedStream(std::cin);
 }
 
 std::vector<llama_token> Tokenize(const llama_vocab* vocab,
-                                  const std::string& text) {
+                                  std::string_view text,
+                                  std::optional<llama_token> prefix) {
   if (text.size() >
       static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) {
     throw std::runtime_error("input is too large for the tokenizer");
   }
   const auto text_size = static_cast<std::int32_t>(text.size());
+  // llama_tokenize consumes exactly text_size bytes and does not require NUL.
+  // NOLINTBEGIN(bugprone-suspicious-stringview-data-usage)
   std::int32_t count =
       llama_tokenize(vocab, text.data(), text_size, nullptr, 0, false, true);
   if (count == std::numeric_limits<std::int32_t>::min()) {
@@ -453,27 +448,37 @@ std::vector<llama_token> Tokenize(const llama_vocab* vocab,
   if (count > 0) {
     throw std::runtime_error("tokenizer returned an unexpected size probe");
   }
-  std::vector<llama_token> tokens(static_cast<std::size_t>(-count));
-  count = llama_tokenize(vocab, text.data(), text_size, tokens.data(),
-                         static_cast<std::int32_t>(tokens.size()), false, true);
+  const std::size_t prefix_size = prefix.has_value() ? 1 : 0;
+  const auto token_capacity = static_cast<std::size_t>(-count);
+  std::vector<llama_token> tokens(prefix_size + token_capacity);
+  if (prefix.has_value()) {
+    tokens.front() = *prefix;
+  }
+  count =
+      llama_tokenize(vocab, text.data(), text_size, tokens.data() + prefix_size,
+                     static_cast<std::int32_t>(token_capacity), false, true);
+  // NOLINTEND(bugprone-suspicious-stringview-data-usage)
   if (count < 0) {
     throw std::runtime_error("tokenization failed");
   }
-  tokens.resize(static_cast<std::size_t>(count));
+  tokens.resize(prefix_size + static_cast<std::size_t>(count));
   return tokens;
 }
 
 std::string TokenPiece(const llama_vocab* vocab, llama_token token) {
-  std::string piece(32, '\0');
-  std::int32_t size =
-      llama_token_to_piece(vocab, token, piece.data(),
-                           static_cast<std::int32_t>(piece.size()), 0, true);
-  if (size < 0) {
-    piece.resize(static_cast<std::size_t>(-size));
-    size =
-        llama_token_to_piece(vocab, token, piece.data(),
-                             static_cast<std::int32_t>(piece.size()), 0, true);
+  std::array<char, 32> inline_piece{};
+  std::int32_t size = llama_token_to_piece(
+      vocab, token, inline_piece.data(),
+      static_cast<std::int32_t>(inline_piece.size()), 0, true);
+  if (size >= 0) {
+    return {inline_piece.data(), static_cast<std::size_t>(size)};
   }
+  if (size == std::numeric_limits<std::int32_t>::min()) {
+    throw std::runtime_error("token piece size overflow");
+  }
+  std::string piece(static_cast<std::size_t>(-size), '\0');
+  size = llama_token_to_piece(vocab, token, piece.data(),
+                              static_cast<std::int32_t>(piece.size()), 0, true);
   if (size < 0) {
     throw std::runtime_error("could not decode token piece");
   }
@@ -744,7 +749,6 @@ struct ScoreOptions {
   bool kv_offload;
   bool backend_diagnostics;
   bool require_gpu_attention;
-  std::string_view context_option;
   const std::function<void(std::size_t, std::size_t)>* progress = nullptr;
   bool* inference_started = nullptr;
 };
@@ -1178,34 +1182,45 @@ void ScoreInput(llama_model* model, llmcc::BackendLogCapture& backend_log,
                 std::string_view input, const ScoreOptions& options,
                 std::ostream* output,
                 std::vector<llmcc::EntropyRecord>* records,
-                std::ostream* diagnostics, Context& context,
-                std::uint32_t& context_capacity, Sampler& sampler,
-                DeviceEntropyState& device_state,
+                llmcc::ScoreMetadata* metadata, std::ostream* diagnostics,
+                Context& context, std::uint32_t& context_capacity,
+                Sampler& sampler, DeviceEntropyState& device_state,
                 HostReductionPool* host_reduction,
                 PlacementDiagnostics& placement) {
   CheckBatchSize(options.batch_size);
   if (!options.device_reduction && host_reduction == nullptr) {
     throw std::logic_error("host reduction requires a worker pool");
   }
+  llmcc::CheckSourceSize(input.size());
   const llama_vocab* vocabulary = llama_model_get_vocab(model);
   const bool prepend_bos =
       options.bos == BosMode::kAlways ||
       (options.bos == BosMode::kAuto && llama_vocab_get_add_bos(vocabulary));
-  llmcc::ReportPhase("tokenizing input");
-  std::vector<llama_token> tokens = Tokenize(vocabulary, std::string(input));
+  std::optional<llama_token> bos_token;
   if (prepend_bos) {
-    const llama_token bos_token = llama_vocab_bos(vocabulary);
-    if (bos_token < 0) {
+    bos_token = llama_vocab_bos(vocabulary);
+    if (*bos_token < 0) {
       throw std::runtime_error("the model vocabulary has no BOS token");
     }
-    tokens.insert(tokens.begin(), bos_token);
   }
+  llmcc::ReportPhase("tokenizing input");
+  std::vector<llama_token> tokens = Tokenize(vocabulary, input, bos_token);
+  const std::size_t source_token_count = tokens.size() - bos_token.has_value();
   const std::size_t first_observed = prepend_bos ? 1 : 0;
-  if (tokens.size() > options.context_size) {
-    throw std::runtime_error("input token count " +
-                             std::to_string(tokens.size()) + " exceeds " +
-                             std::string(options.context_option) + " " +
-                             std::to_string(options.context_size));
+  const llmcc::ScoreWindowPlan window_plan =
+      llmcc::PlanScoreWindows(tokens.size(), options.context_size);
+  if (records != nullptr) {
+    if (source_token_count >
+        std::numeric_limits<std::size_t>::max() - records->size()) {
+      throw std::length_error("entropy record count overflow");
+    }
+    records->reserve(records->size() + source_token_count);
+  }
+  if (metadata != nullptr) {
+    *metadata = {.source_tokens = source_token_count,
+                 .context_size = options.context_size,
+                 .window_stride = window_plan.stride,
+                 .window_count = window_plan.window_count};
   }
   if (tokens.empty()) {
     WriteSummary(diagnostics, 0, 0, 0.0, options.device_reduction);
@@ -1234,87 +1249,108 @@ void ScoreInput(llama_model* model, llmcc::BackendLogCapture& backend_log,
   llmcc::ReportPhase("inference");
   ReportScoringProgress(options, 0, total_scored_tokens);
 
-  const std::size_t batch_size =
-      std::min<std::size_t>(options.batch_size, tokens.size() - 1);
-  PrepareContext(model, backend_log, options,
-                 static_cast<std::uint32_t>(tokens.size()), context,
-                 context_capacity, sampler, device_state, placement);
-
   llmcc::ReportPhase("decoding and entropy reduction");
 
   const std::int32_t vocabulary_size = llama_vocab_n_tokens(vocabulary);
   double negative_log_likelihood = 0.0;
   std::size_t scored = 0;
-  std::vector<llama_pos> positions(batch_size);
-  std::vector<std::int32_t> sequence_counts(batch_size, 1);
-  llama_seq_id sequence = 0;
-  std::vector<llama_seq_id*> sequences(batch_size, &sequence);
-  std::vector<std::int8_t> output_logits(batch_size, 1);
-  for (std::size_t source = 0; source + 1 < tokens.size();
-       source += batch_size) {
-    const std::size_t count = std::min(batch_size, tokens.size() - 1 - source);
-    for (std::size_t index = 0; index < count; ++index) {
-      positions[index] = static_cast<llama_pos>(source + index);
-    }
-    llama_batch batch = {
-        .n_tokens = static_cast<std::int32_t>(count),
-        .token = tokens.data() + source,
-        .embd = nullptr,
-        .pos = positions.data(),
-        .n_seq_id = sequence_counts.data(),
-        .seq_id = sequences.data(),
-        .logits = output_logits.data(),
-    };
-    if (options.device_reduction) {
-      device_state.targets =
-          std::span<const llama_token>(tokens.data() + source + 1, count);
-    }
-    const int decode_result = llama_decode(context.get(), batch);
-    const std::string decode_error =
-        decode_result == 0 ? std::string() : backend_log.Error();
-    ReportBackendLog(backend_log, options.backend_diagnostics);
-    backend_log.Clear();
-    if (placement.cpu_attention) {
-      ThrowCpuAttentionFallback();
-    }
-    if (decode_result != 0) {
-      throw std::runtime_error(
-          "llama_decode failed at token " + std::to_string(source) +
-          " with code " + std::to_string(decode_result) +
-          (decode_error.empty() ? std::string() : ": " + decode_error));
-    }
-    std::vector<llmcc::TokenScore> host_scores;
-    if (!options.device_reduction) {
-      host_scores = ScoreHostBatch(
-          context.get(),
-          std::span<const llama_token>(tokens.data() + source + 1, count),
-          vocabulary_size, options.entropy, *host_reduction);
-    }
-    for (std::size_t index = 0; index < count; ++index) {
-      const std::size_t target_index = source + index + 1;
-      const llama_token target = tokens[target_index];
-      if (target < 0 || target >= vocabulary_size) {
+  for (std::size_t window_index = 0; window_index < window_plan.window_count;
+       ++window_index) {
+    const llmcc::ScoreWindow window =
+        llmcc::ScoreWindowAt(window_plan, window_index);
+    const std::size_t window_tokens = window.token_end - window.token_begin;
+    const std::size_t batch_size =
+        std::min<std::size_t>(options.batch_size, window_tokens - 1);
+    PrepareContext(model, backend_log, options,
+                   static_cast<std::uint32_t>(window_tokens), context,
+                   context_capacity, sampler, device_state, placement);
+
+    std::vector<llama_pos> positions(batch_size);
+    std::vector<std::int32_t> sequence_counts(batch_size, 1);
+    llama_seq_id sequence = 0;
+    std::vector<llama_seq_id*> sequences(batch_size, &sequence);
+    std::vector<std::int8_t> output_logits(batch_size);
+    const std::size_t first_scored_source =
+        window.scored_target_begin - window.token_begin - 1;
+    for (std::size_t local_source = 0; local_source + 1 < window_tokens;) {
+      const bool score_batch = local_source >= first_scored_source;
+      const std::size_t available = window_tokens - 1 - local_source;
+      const std::size_t count = std::min(
+          batch_size, score_batch ? available
+                                  : std::min(available, first_scored_source -
+                                                            local_source));
+      for (std::size_t index = 0; index < count; ++index) {
+        positions[index] = static_cast<llama_pos>(local_source + index);
+        output_logits[index] = score_batch ? 1 : 0;
+      }
+      const std::size_t source = window.token_begin + local_source;
+      llama_batch batch = {
+          .n_tokens = static_cast<std::int32_t>(count),
+          .token = tokens.data() + source,
+          .embd = nullptr,
+          .pos = positions.data(),
+          .n_seq_id = sequence_counts.data(),
+          .seq_id = sequences.data(),
+          .logits = output_logits.data(),
+      };
+      if (options.device_reduction) {
+        device_state.targets = score_batch
+                                   ? std::span<const llama_token>(
+                                         tokens.data() + source + 1, count)
+                                   : std::span<const llama_token>();
+      }
+      const int decode_result = llama_decode(context.get(), batch);
+      const std::string decode_error =
+          decode_result == 0 ? std::string() : backend_log.Error();
+      ReportBackendLog(backend_log, options.backend_diagnostics);
+      backend_log.Clear();
+      if (placement.cpu_attention) {
+        ThrowCpuAttentionFallback();
+      }
+      if (decode_result != 0) {
         throw std::runtime_error(
-            "tokenizer produced a token outside the vocabulary");
+            "llama_decode failed at token " + std::to_string(source) +
+            " with code " + std::to_string(decode_result) +
+            (decode_error.empty() ? std::string() : ": " + decode_error));
       }
-      const llmcc::TokenScore score =
-          options.device_reduction
-              ? ReadDeviceScore(context.get(), index, options.entropy)
-              : host_scores[index];
-      const std::string piece = TokenPiece(vocabulary, target);
-      if (output != nullptr) {
-        WriteScore(*output, target_index - first_observed, target, piece, score,
-                   options.entropy);
+      if (!score_batch) {
+        local_source += count;
+        continue;
       }
-      if (records != nullptr) {
-        records->push_back({.position = target_index - first_observed,
-                            .bytes = piece,
-                            .entropy = score.entropy});
+      std::vector<llmcc::TokenScore> host_scores;
+      if (!options.device_reduction) {
+        host_scores = ScoreHostBatch(
+            context.get(),
+            std::span<const llama_token>(tokens.data() + source + 1, count),
+            vocabulary_size, options.entropy, *host_reduction);
       }
-      negative_log_likelihood -= score.log_probability;
-      ++scored;
+      for (std::size_t index = 0; index < count; ++index) {
+        const std::size_t target_index = source + index + 1;
+        const llama_token target = tokens[target_index];
+        if (target < 0 || target >= vocabulary_size) {
+          throw std::runtime_error(
+              "tokenizer produced a token outside the vocabulary");
+        }
+        const llmcc::TokenScore score =
+            options.device_reduction
+                ? ReadDeviceScore(context.get(), index, options.entropy)
+                : host_scores[index];
+        const std::string piece = TokenPiece(vocabulary, target);
+        if (output != nullptr) {
+          WriteScore(*output, target_index - first_observed, target, piece,
+                     score, options.entropy);
+        }
+        if (records != nullptr) {
+          records->push_back({.position = target_index - first_observed,
+                              .bytes = piece,
+                              .entropy = score.entropy});
+        }
+        negative_log_likelihood -= score.log_probability;
+        ++scored;
+      }
+      ReportScoringProgress(options, scored, total_scored_tokens);
+      local_source += count;
     }
-    ReportScoringProgress(options, scored, total_scored_tokens);
   }
   WriteSummary(diagnostics, tokens.size() - first_observed, scored,
                negative_log_likelihood, options.device_reduction);
@@ -1390,11 +1426,10 @@ int Run(const Arguments& arguments, std::string_view input,
                 .kv_offload = arguments.kv_offload,
                 .backend_diagnostics = arguments.backend_diagnostics,
                 .require_gpu_attention = arguments.gpu_layers == -1,
-                .context_option = "--context-size",
                 .progress = nullptr,
                 .inference_started = &inference_started},
-               &output, nullptr, &diagnostics, context, context_capacity,
-               sampler, device_state,
+               &output, nullptr, nullptr, &diagnostics, context,
+               context_capacity, sampler, device_state,
                host_reduction.has_value() ? &*host_reduction : nullptr,
                placement);
   } catch (const std::exception& error) {
@@ -1511,10 +1546,9 @@ class EntropyScorer::Impl {
                   .kv_offload = kv_offload_,
                   .backend_diagnostics = backend_diagnostics_,
                   .require_gpu_attention = require_gpu_attention_,
-                  .context_option = "--context",
                   .progress = &progress_},
-                 &output, nullptr, nullptr, context_, context_capacity_,
-                 sampler_, device_state_,
+                 &output, nullptr, nullptr, nullptr, context_,
+                 context_capacity_, sampler_, device_state_,
                  host_reduction_.has_value() ? &*host_reduction_ : nullptr,
                  placement_);
     } catch (...) {
@@ -1527,7 +1561,11 @@ class EntropyScorer::Impl {
   }
 
   std::vector<EntropyRecord> ScoreRecords(std::string_view input) {
-    std::vector<EntropyRecord> records;
+    return ScoreRecordsWithMetadata(input).records;
+  }
+
+  EntropyScoreResult ScoreRecordsWithMetadata(std::string_view input) {
+    EntropyScoreResult result;
     bool inference_started = false;
     try {
       ScoreInput(model_.get(), backend_log_, input,
@@ -1542,11 +1580,10 @@ class EntropyScorer::Impl {
                   .kv_offload = kv_offload_,
                   .backend_diagnostics = backend_diagnostics_,
                   .require_gpu_attention = require_gpu_attention_,
-                  .context_option = "--context",
                   .progress = &progress_,
                   .inference_started = &inference_started},
-                 nullptr, &records, nullptr, context_, context_capacity_,
-                 sampler_, device_state_,
+                 nullptr, &result.records, &result.metadata, nullptr, context_,
+                 context_capacity_, sampler_, device_state_,
                  host_reduction_.has_value() ? &*host_reduction_ : nullptr,
                  placement_);
     } catch (const std::exception& error) {
@@ -1558,7 +1595,7 @@ class EntropyScorer::Impl {
       }
       throw;
     }
-    return records;
+    return result;
   }
 
  private:
@@ -1601,6 +1638,11 @@ std::string EntropyScorer::Score(std::string_view input) {
 
 std::vector<EntropyRecord> EntropyScorer::ScoreRecords(std::string_view input) {
   return implementation_->ScoreRecords(input);
+}
+
+EntropyScoreResult EntropyScorer::ScoreRecordsWithMetadata(
+    std::string_view input) {
+  return implementation_->ScoreRecordsWithMetadata(input);
 }
 
 std::string_view EntropyReductionName(EntropyReduction reduction) {
@@ -1649,8 +1691,62 @@ std::uint32_t ContextRequestCapacity(std::uint32_t context_limit,
   return std::min(context_limit, std::max(required_tokens, batch_size));
 }
 
+ScoreWindowPlan PlanScoreWindows(std::size_t token_count,
+                                 std::uint32_t context_size) {
+  if (context_size == 0) {
+    throw std::invalid_argument("context size must be positive");
+  }
+  if (token_count < 2) {
+    return {.token_count = token_count,
+            .context_size = context_size,
+            .stride = context_size / 2,
+            .window_count = 0};
+  }
+  if (context_size < 2) {
+    throw std::invalid_argument(
+        "context size must be at least 2 tokens to score this input");
+  }
+  const std::size_t capacity = context_size;
+  if (token_count <= capacity) {
+    return {.token_count = token_count,
+            .context_size = context_size,
+            .stride = context_size / 2,
+            .window_count = 1};
+  }
+
+  const std::size_t stride = capacity / 2;
+  const std::size_t remaining = token_count - capacity;
+  return {.token_count = token_count,
+          .context_size = context_size,
+          .stride = static_cast<std::uint32_t>(stride),
+          .window_count = 2 + ((remaining - 1) / stride)};
+}
+
+ScoreWindow ScoreWindowAt(const ScoreWindowPlan& plan,
+                          std::size_t window_index) {
+  if (window_index >= plan.window_count) {
+    throw std::out_of_range("score window index is outside the plan");
+  }
+  const std::size_t capacity = plan.context_size;
+  const std::size_t token_begin = window_index * plan.stride;
+  const std::size_t remaining = plan.token_count - token_begin;
+  const std::size_t token_end =
+      remaining < capacity ? plan.token_count : token_begin + capacity;
+  if (window_index == 0) {
+    return {.token_begin = 0, .token_end = token_end, .scored_target_begin = 1};
+  }
+  const std::size_t previous_begin = (window_index - 1) * plan.stride;
+  const std::size_t previous_remaining = plan.token_count - previous_begin;
+  const std::size_t previous_end = previous_remaining < capacity
+                                       ? plan.token_count
+                                       : previous_begin + capacity;
+  return {.token_begin = token_begin,
+          .token_end = token_end,
+          .scored_target_begin = previous_end};
+}
+
 std::string_view InferenceAbi() {
-  return "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v3";
+  return "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v4";
 }
 
 std::string_view CompiledBackend() {

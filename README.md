@@ -216,11 +216,33 @@ A truncated stream or `file_start` is incomplete. Exit **1** indicates partial
 results; **2** indicates configuration or model failure. Individual file errors
 do not prevent later files from being analyzed.
 
-Files larger than 1 MiB produce an informational stderr notice. They are still
-scored in full when they fit the configured token limit: llm-cc does not add
-windows, truncation, or an inference timeout for large inputs. Long phases keep
-emitting five-second heartbeats with phase time and stalled time; decoding also
-reports token throughput. `--progress never` suppresses this status output.
+Files larger than 1 MiB produce an informational stderr notice. Inputs larger
+than 1 GiB (1,073,741,824 bytes) are rejected, including raw scoring input.
+Files exceeding the configured context are scored with overlapping windows:
+the first window is scored normally, then each subsequent window advances by
+half the context size. Overlapping tokens supply context; each source token is
+reported once. Syntax scopes and the complexity hierarchy still cover the
+complete file. Files that fit retain their existing scoring behavior.
+
+Windowed scores use bounded preceding context, so they can differ from scores
+computed with enough context for the entire file. Changing the context changes
+the measurement; use consistent settings when comparing revisions. The report
+exposes overflow relative to a fixed 128K-token reference independently of the
+inference context. Overflow is a separate policy signal and does not change raw
+LM-CC or the default normalized score.
+
+Syntax preprocessing has a five-minute cooperative time budget and a maximum
+syntax depth of 1,024. Inputs exceeding either budget fail explicitly; no
+truncated analysis is reported. This budget covers parsing and preprocessing,
+not model loading, tokenization, or inference. Full neural scoring of tens of
+megabytes can take much longer, depending on hardware, model, and context.
+Long phases keep emitting five-second heartbeats with phase time and stalled
+time; decoding also reports token throughput. `--progress never` suppresses
+this status output.
+
+The [large-file experiment](experiments/large-files/README.md) records dense
+10 MiB fixtures across all supported languages and 100 MiB C++/Python runs,
+including elapsed preprocessing time and peak host memory.
 
 ## Interpreting scores
 

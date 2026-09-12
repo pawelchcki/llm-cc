@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <nlohmann/json.hpp>
+#include <stdexcept>
 
 #include "src/sha256.h"
 #include "src/test_util.h"
@@ -63,6 +64,17 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::WriteEntropyCache("a", model, records);
   llmcc::test::Expect(llmcc::ReadEntropyCache("a", model).hit,
                       "global v2 entry round trips");
+  bool empty_record_rejected = false;
+  try {
+    llmcc::WriteEntropyCache(
+        "a", model,
+        std::vector<llmcc::EntropyRecord>{
+            {.position = 0, .bytes = "", .entropy = std::nullopt}});
+  } catch (const std::invalid_argument&) {
+    empty_record_rejected = true;
+  }
+  llmcc::test::Expect(empty_record_rejected,
+                      "cache rejects an empty token record before storage");
   const auto status = llmcc::GetEntropyCacheStatus();
   llmcc::test::ExpectEq(status.entries, uint64_t{1}, "one global entry exists");
   llmcc::test::Expect(status.directory == root / "v2/entropy",

@@ -1,6 +1,7 @@
 #ifndef LLM_CC_LANG_H_
 #define LLM_CC_LANG_H_
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -9,6 +10,7 @@
 #include <vector>
 
 #include "src/core.h"
+#include "src/offset_map.h"
 
 namespace llmcc {
 
@@ -22,7 +24,10 @@ enum class Language : std::uint8_t {
   kJavaScript,
   kCSharp,
 };
-using OffsetMap = std::vector<std::size_t>;
+struct PreprocessOptions {
+  std::chrono::milliseconds time_budget = std::chrono::seconds(300);
+  std::size_t max_syntax_depth = 1024;
+};
 
 struct FunctionSpan {
   std::string name;
@@ -43,15 +48,19 @@ struct PreparedSource {
   std::vector<FunctionSpan> functions;
 };
 
-PreparedSource PrepareSource(std::string_view source, Language language);
+PreparedSource PrepareSource(std::string_view source, Language language,
+                             PreprocessOptions options = {});
 
 std::pair<std::string, OffsetMap> StripComments(std::string_view source,
-                                                Language language);
+                                                Language language,
+                                                PreprocessOptions options = {});
 std::vector<std::size_t> LineStarts(std::string_view source);
 std::vector<StructuralEvent> StructuralEvents(std::string_view source,
-                                              Language language);
+                                              Language language,
+                                              PreprocessOptions options = {});
 std::vector<FunctionSpan> Functions(std::string_view preprocessed,
-                                    Language language);
+                                    Language language,
+                                    PreprocessOptions options = {});
 Language ParseLanguage(std::string_view name);
 Language InferLanguage(std::string_view path);
 std::string_view LanguageName(Language language);

@@ -23,6 +23,34 @@ int main() {  // NOLINT(bugprone-exception-escape)
   }
   llmcc::test::Expect(mismatch, "byte mismatch rejected");
 
+  llmcc::OffsetMap compact_map;
+  compact_map.AppendRun(5, 2);
+  compact_map.Append(20);
+  llmcc::Analysis mapped{.llm_cc = 0,
+                         .total_branch = 0,
+                         .total_comp_level = 0,
+                         .alpha = 0.8,
+                         .tau = 0.67,
+                         .metrics = {},
+                         .tau_rule = {},
+                         .units = {{.start_byte = 0,
+                                    .end_byte = 2,
+                                    .level = 0,
+                                    .branching = 0,
+                                    .children = {{.start_byte = 1,
+                                                  .end_byte = 2,
+                                                  .level = 0,
+                                                  .branching = 0,
+                                                  .children = {}}}}}};
+  llmcc::MapAnalysisOffsets(mapped, compact_map);
+  llmcc::test::ExpectEq(mapped.units.front().start_byte, std::size_t{5},
+                        "compact map remaps unit starts");
+  llmcc::test::ExpectEq(mapped.units.front().end_byte, std::size_t{20},
+                        "compact map remaps unit ends");
+  llmcc::test::ExpectEq(mapped.units.front().children.front().start_byte,
+                        std::size_t{6},
+                        "compact map remaps nested units iteratively");
+
   llmcc::Analysis analysis = llmcc::Analyze(
       tokens, {}, {},
       {.kind = llmcc::TauRule::Kind::kPercentile, .value = 67.0}, 0.8);

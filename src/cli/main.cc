@@ -38,6 +38,7 @@
 #include "src/cache.h"
 #include "src/download.h"
 #include "src/entropy_cache.h"
+#include "src/input_limits.h"
 #include "src/jsonl.h"
 #include "src/lang.h"
 #include "src/models.h"
@@ -141,7 +142,7 @@ constexpr std::string_view kUsageBeforeContext =
     "  --backend-diagnostics  show backend warnings, allocations, and bounded "
     "operation placement\n"
     "  --backend-dir DIR     GPU backend bundle/shared-library directory\n"
-    "  --context N           maximum input tokens (default: ";
+    "  --context N           tokens per inference window (default: ";
 
 constexpr std::string_view kUsageAfterContext =
     ")\n"
@@ -489,30 +490,7 @@ AnalyzeArguments ParseAnalyzeArguments(int argc, char** argv) {
 }
 
 std::string ReadFile(const std::filesystem::path& path) {
-  using File = std::unique_ptr<std::FILE, decltype(&std::fclose)>;
-#if defined(_WIN32)
-  File input(_wfopen(path.c_str(), L"rb"), std::fclose);
-#else
-  File input(std::fopen(path.c_str(), "rb"), std::fclose);
-#endif
-  if (!input) {
-    throw std::runtime_error("failed to read " + PathUtf8(path));
-  }
-  std::string contents;
-  std::array<char, std::size_t{64} * 1024> buffer{};
-  for (;;) {
-    const std::size_t count =
-        std::fread(buffer.data(), 1, buffer.size(), input.get());
-    contents.append(buffer.data(), count);
-    if (count == buffer.size()) {
-      continue;
-    }
-    if (std::ferror(input.get()) != 0) {
-      throw std::runtime_error("failed while reading " + PathUtf8(path));
-    }
-    break;
-  }
-  return contents;
+  return llmcc::ReadBoundedFile(path);
 }
 
 void Emit(const nlohmann::json& event) {
@@ -871,8 +849,14 @@ class LlamaEntropyProvider : public llmcc::EntropyProvider {
       : scorer_((llmcc::MarkCachedModelUsed(cache_dir, model), model),
                 options) {}
 
-  std::vector<llmcc::EntropyRecord> Score(std::string_view source) override {
-    return scorer_.ScoreRecords(source);
+  llmcc::EntropyProviderResult Score(std::string_view source) override {
+    auto result = scorer_.ScoreRecordsWithMetadata(source);
+    return {
+        .records = std::move(result.records),
+        .metadata = {.source_tokens = result.metadata.source_tokens,
+                     .inference_context_tokens = result.metadata.context_size,
+                     .window_stride_tokens = result.metadata.window_stride,
+                     .window_count = result.metadata.window_count}};
   }
 
  private:
@@ -1004,6 +988,8 @@ nlohmann::json ConfigurationJson(
       {"no_download", arguments.no_download},
       {"model", requested_model},
       {"context", arguments.context},
+      {"window_policy", "fixed-half-overlap"},
+      {"reference_context_tokens", llmcc::kDefaultContextSize},
       {"batch_size", arguments.batch_size},
       {"entropy_reduction",
        llmcc::EntropyReductionName(arguments.entropy_reduction)},
@@ -1153,6 +1139,18 @@ void PrintFileText(const llmcc::DiscoveredSource& source,
               << FormatNumber(metrics.mean_entropy);
   }
   std::cout << "   tokens " << metrics.token_count << '\n';
+  const auto& scoring = result.scoring;
+  const double source_context_ratio =
+      static_cast<double>(scoring.source_tokens) / llmcc::kDefaultContextSize;
+  if (source_context_ratio > 1.0) {
+    std::cout << "  context: " << scoring.source_tokens
+              << " source tokens; fixed half-overlap inference windows "
+              << scoring.window_count << " x "
+              << scoring.inference_context_tokens << " (stride "
+              << scoring.window_stride_tokens << "); default "
+              << llmcc::kDefaultContextSize << "-token context overflow "
+              << FormatNumber(source_context_ratio - 1.0) << '\n';
+  }
   for (const llmcc::FunctionScore& function : result.functions) {
     std::cout << "  fn " << std::left << std::setw(18)
               << TerminalSafe(function.name) << std::right << " L"
@@ -1190,6 +1188,22 @@ nlohmann::json FileJson(const llmcc::DiscoveredSource& source,
   event["entropy_cache_hit"] = result.entropy_cache_hit;
   event["score"] = ScoreJson(result.analysis.metrics, arguments.score_mode);
   event["score_mode"] = arguments.score_mode;
+  const auto& scoring = result.scoring;
+  const double source_context_ratio =
+      static_cast<double>(scoring.source_tokens) / llmcc::kDefaultContextSize;
+  event["source_token_count"] = scoring.source_tokens;
+  event["inference_context_tokens"] = scoring.inference_context_tokens;
+  event["window_policy"] = "fixed-half-overlap";
+  event["window_stride_tokens"] = scoring.window_stride_tokens;
+  event["inference_window_count"] = scoring.window_count;
+  event["reference_context_tokens"] = llmcc::kDefaultContextSize;
+  event["source_context_ratio"] = source_context_ratio;
+  event["reference_context_overflow"] =
+      std::max(0.0, source_context_ratio - 1.0);
+  event["context_overflow_tokens"] =
+      scoring.source_tokens > llmcc::kDefaultContextSize
+          ? scoring.source_tokens - llmcc::kDefaultContextSize
+          : 0;
   event["functions"] = nlohmann::json::array();
   for (const llmcc::FunctionScore& function : result.functions) {
     event["functions"].push_back(FunctionJson(function, arguments.score_mode));
@@ -1308,6 +1322,58 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
     return 0;
   }
 
+  // Preflight known-oversize regular files before resolving a model. Keep
+  // failures per file so one pathological input cannot hide later results;
+  // the bounded read below remains authoritative for growing streams.
+  std::map<std::filesystem::path, std::string> preflight_errors;
+  for (const auto& source : discovery.sources) {
+    try {
+      llmcc::CheckSourceFileSize(source.path);
+    } catch (const std::length_error& error) {
+      preflight_errors.emplace(source.path, error.what());
+    }
+  }
+
+  // Do not resolve a model when every discovered input has already been
+  // refused. This retains the regular per-file error/totals contract while
+  // making an oversize-only invocation prompt and independent of model state.
+  if (preflight_errors.size() == discovery.sources.size()) {
+    if (!text) {
+      Emit(ConfigurationJson(arguments, requested_model));
+    }
+    for (const auto& message : discovery.warnings) {
+      warning(message);
+    }
+    MetricTotals totals;
+    totals.discovered = discovery.sources.size();
+    std::map<std::string, MetricTotals> languages;
+    std::size_t file_index = 0;
+    for (const auto& source : discovery.sources) {
+      const std::string language(llmcc::LanguageName(source.language));
+      auto& language_totals = languages[language];
+      ++language_totals.discovered;
+      progress.StartFile(++file_index, discovery.sources.size(), source.path);
+      if (!text) {
+        Emit({{"type", "file_start"},
+              {"path", PathUtf8(source.path)},
+              {"language", language}});
+      }
+      progress.FailFile();
+      ++totals.failed;
+      ++language_totals.failed;
+      ReportFileError(source,
+                      std::runtime_error(preflight_errors.at(source.path)),
+                      text, false);
+    }
+    if (text) {
+      PrintTotalsText(totals, arguments.score_mode);
+    } else {
+      Emit(TotalsJson(totals, languages, false, arguments.score_mode,
+                      arguments.hierarchy_mode));
+    }
+    return 1;
+  }
+
   const bool fetch_backend =
       ShouldFetchBackend(arguments.backend, arguments.gpu_layers);
   progress.Phase("selecting inference backend");
@@ -1374,7 +1440,8 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
        .alpha = arguments.alpha,
        .cache = entropy_cache,
        .hotspots = arguments.hotspots,
-       .hierarchy_mode = arguments.hierarchy_mode},
+       .hierarchy_mode = arguments.hierarchy_mode,
+       .inference_context_tokens = arguments.context},
       [&]() {
         progress.Phase("loading model after entropy cache miss");
         return std::make_unique<LlamaEntropyProvider>(
@@ -1415,12 +1482,16 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
             {"language", language}});
     }
     try {
+      if (const auto preflight = preflight_errors.find(source.path);
+          preflight != preflight_errors.end()) {
+        throw std::runtime_error(preflight->second);
+      }
       progress.Phase("reading source");
       const std::string contents = ReadFile(source.path);
       if (contents.size() > 1024 * 1024) {
         progress.Phase("scoring full file " + PathUtf8(source.path) + " (" +
                        std::to_string(contents.size()) +
-                       " bytes) within the configured token limit");
+                       " bytes) with overlapping inference windows");
       }
       auto result = analyzer.AnalyzeFile(source, contents);
       progress.Phase("writing output");

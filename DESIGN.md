@@ -16,8 +16,13 @@ has three entry points:
    nodes, and callable kinds. One parse collects comments, Python docstrings,
    callable spans, meaningful lines, and structural scopes. Removal preserves
    newlines and an original-byte map; metadata is remapped instead of reparsing
-   potentially invalid empty Python suites. JavaScript covers Node.js `.js`,
-   `.mjs`, and `.cjs` files, not JSX or TypeScript.
+   potentially invalid empty Python suites. The byte map stores contiguous
+   spans instead of one machine word per source byte. Iterative cursor walks
+   avoid recursive application traversal and repeated indexed sibling scans.
+   A five-minute cooperative preprocessing deadline and a 1,024-level syntax
+   depth limit produce explicit file errors when exceeded. Original inputs
+   larger than 1 GiB are rejected before parsing. JavaScript covers Node.js
+   `.js`, `.mjs`, and `.cjs` files, not JSX or TypeScript.
 2. `src/score_cmd.cc` loads a GGUF with llama.cpp and teacher-forces the
    preprocessed source through configurable batches. Analysis consumes native
    records through an in-process sink; `llm-cc score` exposes the byte-exact
@@ -25,8 +30,15 @@ has three entry points:
    smaller of the configured limit and the larger of the input and batch size;
    the actual llama.cpp-padded capacity is retained and reused when sufficient.
    Its K/V state is cleared between files, and the context is discarded after
-   inference failures. Optional throttled progress callbacks report completed
-   batches without changing inference or stdout JSONL.
+   inference failures. Oversized token sequences use overlapping windows with
+   half-context strides. Each window rebuilds its K/V state with local
+   positions; overlap is prefilling context, and only previously unreported
+   targets produce records. The source is tokenized once and record positions
+   remain global. Window boundaries do not create syntax or complexity
+   boundaries. The inference ABI versions this fixed window policy, with
+   context size already included in the entropy-cache identity. Optional
+   throttled progress callbacks report unique scored tokens without changing
+   inference or stdout JSONL.
 3. `src/jsonl.cc` parses entropy records, reconstructs token bytes from
    `bytes_hex`, verifies contiguous positions and exact source coverage, and
    aligns entropy to preprocessed byte ranges.
@@ -87,6 +99,13 @@ accounting share a cross-process lock; scoring, model hashing, and downloads do
 not hold it. Old repository-scoped v1 caches remain inspectable and explicitly
 clearable, but are deliberately cold because their model provenance lacks a
 content digest.
+
+Individual entropy entries are capped at 16 MiB. Before constructing cache
+serialization objects, source bytes plus 256 bytes per record must fit a
+64 MiB admission budget. This accounting is a work estimate, not a hard memory
+limit. Larger results remain fully analyzed but bypass cache publication.
+Cache reads enforce the entry limit before decoding, including an incremental
+read limit for files that grow after their size is inspected.
 
 The permanent `v2/.lock` survives clearing. Atomically replaced accounting is
 marked dirty before changing committed entries and rebuilt after interrupted
