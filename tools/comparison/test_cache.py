@@ -1,5 +1,7 @@
 import hashlib
 import json
+import os
+import stat
 import tempfile
 import threading
 import unittest
@@ -112,6 +114,25 @@ class CacheTest(unittest.TestCase):
             for thread in threads:
                 thread.join()
             self.assertEqual(cache.get(value, fingerprint), result)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX shared-cache permissions")
+    def test_atomic_writes_honor_shared_group_and_private_umasks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o2770)
+            store = FilesystemStore(root)
+            for mask, mode in ((0o007, 0o660), (0o077, 0o600), (0o022, 0o640)):
+                with self.subTest(umask=oct(mask)):
+                    previous = os.umask(mask)
+                    try:
+                        store.put("pipelines/plan.json", b"first")
+                        store.put("pipelines/plan.json", b"replaced")
+                    finally:
+                        os.umask(previous)
+                    target = root / "pipelines/plan.json"
+                    self.assertEqual(stat.S_IMODE(target.stat().st_mode), mode)
+                    self.assertEqual(target.stat().st_gid, root.stat().st_gid)
+                    self.assertEqual(store.get("pipelines/plan.json"), b"replaced")
 
     def test_native_entries_are_individually_enveloped(self):
         with tempfile.TemporaryDirectory() as directory:

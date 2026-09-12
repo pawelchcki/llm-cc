@@ -213,6 +213,61 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(warm["workers"], [])
         self.assertEqual(warm["cache_stats"]["misses"], 0)
 
+    def test_repeated_preparation_repairs_truncated_input_blobs(self):
+        output = Path(self.temp.name) / "reused-preparation"
+        arguments = (
+            self.repo,
+            self.head,
+            self.base,
+            self.identity,
+            self.profile,
+            {},
+            MemoryCache(),
+            output,
+            1,
+        )
+        first = prepare(*arguments)
+        expected = {
+            item["blob"]: (output / item["blob"]).read_bytes()
+            for item in first["items"].values()
+        }
+        corrupted = next(iter(expected))
+        (output / corrupted).write_bytes(expected[corrupted][:-1])
+        repeated = prepare(*arguments)
+        self.assertEqual(repeated, first)
+        for relative, content in expected.items():
+            self.assertEqual((output / relative).read_bytes(), content)
+
+    def test_legacy_container_profile_cannot_reuse_cached_results(self):
+        profile = dict(
+            self.profile,
+            build=dict(
+                self.profile["build"],
+                execution_image="registry.example/scorer@sha256:" + "a" * 64,
+            ),
+        )
+        cache = mock.Mock()
+        cache.get.side_effect = lambda item, fingerprint: dict(
+            item,
+            schema_version=1,
+            fingerprint=fingerprint,
+            llm_cc=1.0,
+            token_count=1,
+        )
+        with self.assertRaises(ValueError):
+            prepare(
+                self.repo,
+                self.head,
+                self.base,
+                self.identity,
+                profile,
+                {},
+                cache,
+                Path(self.temp.name) / "legacy",
+                1,
+            )
+        cache.get.assert_not_called()
+
     def test_worker_partition_is_stable_across_counts_and_reversed_sides(self):
         one = prepare(
             self.repo,
@@ -473,6 +528,7 @@ print(json.dumps({'type':'totals','discovered':len(paths),'analyzed':len(paths),
                 "source_commit": "4646123",
                 "inference_abi": "test",
                 "execution_image": "sha256:test",
+                "container_environment_policy": "sanitized-v1",
                 "model_sha256": __import__("hashlib").sha256(b"model").hexdigest(),
                 "model_bytes": 5,
             },

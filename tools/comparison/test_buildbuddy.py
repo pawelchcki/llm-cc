@@ -21,7 +21,7 @@ from .buildbuddy import (
     worker_request,
 )
 from .cache import FilesystemStore
-from .common import digest, write_json
+from .common import CONTAINER_ENVIRONMENT_POLICY, digest, write_json
 from .pipeline import failure_report
 
 
@@ -62,7 +62,13 @@ class BuildBuddyTest(unittest.TestCase):
             "started_at": "2026-09-11T00:00:00Z",
         }
         self.image = "registry.example/scorer@sha256:" + "1" * 64
-        profile = {"scoring": {"tau": 0.67}, "build": {"execution_image": self.image}}
+        profile = {
+            "scoring": {"tau": 0.67},
+            "build": {
+                "execution_image": self.image,
+                "container_environment_policy": CONTAINER_ENVIRONMENT_POLICY,
+            },
+        }
         self.plan = {
             "schema_version": 1,
             "identity": self.identity,

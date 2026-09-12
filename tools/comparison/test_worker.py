@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tools.comparison.cache import FilesystemStore, ResultCache
+from tools.comparison.common import CONTAINER_ENVIRONMENT_POLICY
 from tools.comparison.worker import (
     WorkerError,
     _gpu_lease,
@@ -39,6 +40,7 @@ class WorkerTest(unittest.TestCase):
                 "source_commit": "4646123",
                 "inference_abi": "test",
                 "execution_image": "test-image",
+                "container_environment_policy": CONTAINER_ENVIRONMENT_POLICY,
             },
         }
         fp = hashlib.sha256(
@@ -140,6 +142,18 @@ class WorkerTest(unittest.TestCase):
                     {
                         "LLM_CC_BACKEND_DIR": "/unverified/backend",
                         "CUDA_VISIBLE_DEVICES": "2",
+                        "ROCR_VISIBLE_DEVICES": "GPU-allocated",
+                        "HIP_VISIBLE_DEVICES": "0",
+                        "GPU_DEVICE_ORDINAL": "0",
+                        "NVIDIA_VISIBLE_DEVICES": "GPU-allocated",
+                        "LD_LIBRARY_PATH": "/unverified/runtime",
+                        "LD_PRELOAD": "/unverified/preload.so",
+                        "LD_AUDIT": "/unverified/audit.so",
+                        "HSA_OVERRIDE_GFX_VERSION": "9.0.0",
+                        "HIP_FORCE_DEV_KERNARG": "1",
+                        "GGML_CUDA_FORCE_MMQ": "1",
+                        "ROCBLAS_LAYER": "4",
+                        "SECRET_TOKEN": "worker-transport-secret",
                     },
                 ),
                 patch(
@@ -159,6 +173,25 @@ class WorkerTest(unittest.TestCase):
             environment = popen.call_args.kwargs["env"]
             self.assertNotIn("LLM_CC_BACKEND_DIR", environment)
             self.assertEqual(environment["CUDA_VISIBLE_DEVICES"], "2")
+            for name, value in {
+                "ROCR_VISIBLE_DEVICES": "GPU-allocated",
+                "HIP_VISIBLE_DEVICES": "0",
+                "GPU_DEVICE_ORDINAL": "0",
+                "NVIDIA_VISIBLE_DEVICES": "GPU-allocated",
+            }.items():
+                self.assertEqual(environment[name], value)
+            for name in (
+                "LD_LIBRARY_PATH",
+                "LD_PRELOAD",
+                "LD_AUDIT",
+                "HSA_OVERRIDE_GFX_VERSION",
+                "HIP_FORCE_DEV_KERNARG",
+                "GGML_CUDA_FORCE_MMQ",
+                "ROCBLAS_LAYER",
+                "SECRET_TOKEN",
+            ):
+                self.assertNotIn(name, environment)
+
             self.assertIn(key, result["results"])
             self.assertTrue((Path(directory) / "out" / "worker-0.json").exists())
 
@@ -466,6 +499,23 @@ class HostGpuTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(WorkerError, "UUID"):
             self.verify()
+
+    def test_hexadecimal_architecture_stepping_matches_kfd_encoding(self):
+        original = self.properties.read_text()
+        self.host["gpu_arch"] = "gfx90a"
+        self.properties.write_text(
+            original.replace("gfx_target_version 110000", "gfx_target_version 90010")
+        )
+        self.assertEqual(self.verify()["ROCR_VISIBLE_DEVICES"], "GPU-216c94b62386c013")
+        for target in (90016, 91600, 0):
+            with self.subTest(target=target):
+                self.properties.write_text(
+                    original.replace(
+                        "gfx_target_version 110000", f"gfx_target_version {target}"
+                    )
+                )
+                with self.assertRaisesRegex(WorkerError, "invalid KFD architecture"):
+                    self.verify()
 
     def test_runtime_change_or_device_permission_fails_before_inference(self):
         with patch("tools.comparison.worker.os.access", return_value=False):

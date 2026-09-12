@@ -4,7 +4,15 @@ import os
 import unicodedata
 from pathlib import Path
 
-from .common import SCHEMA_VERSION, digest, read_json, valid_result, write_json
+from .cache import FilesystemStore
+from .common import (
+    SCHEMA_VERSION,
+    digest,
+    read_json,
+    valid_result,
+    validate_execution_policy,
+    write_json,
+)
 from .inventory import changes, inventory, merge_base, resolve_commit
 
 
@@ -17,6 +25,7 @@ def _utc_now():
 def prepare(
     repo, head, target, identity, profile, rules, cache, output_dir, max_workers=4
 ):
+    validate_execution_policy(profile)
     if not 1 <= max_workers <= 4:
         raise ValueError("max_workers must be between 1 and 4")
     output = Path(output_dir)
@@ -71,11 +80,11 @@ def prepare(
             hits[key] = cached
         else:
             misses.append(item)
+    blob_store = FilesystemStore(output)
     for item in misses:
-        blob_path = output / item["blob"]
-        blob_path.parent.mkdir(parents=True, exist_ok=True)
-        if not blob_path.exists():
-            blob_path.write_bytes(all_blobs[item["content_sha256"]])
+        # A previous preparation may have stopped halfway through a write.
+        # Re-publish authoritative Git bytes atomically before exposing the plan.
+        blob_store.put(item["blob"], all_blobs[item["content_sha256"]])
     workers = []
     if misses:
         workers = [
@@ -197,6 +206,7 @@ def _side(inventory, results):
 def _validate_plan(plan):
     if plan.get("schema_version") != SCHEMA_VERSION:
         raise ValueError("unsupported plan schema version")
+    validate_execution_policy(plan["profile"])
     expected_fingerprint = digest(
         {"scoring": plan["profile"]["scoring"], "build": plan["profile"]["build"]}
     )

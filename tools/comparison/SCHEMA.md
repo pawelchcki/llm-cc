@@ -8,6 +8,16 @@ Profile: `{scoring: {...}, build: {...}, max_file_bytes: 65536}`.
 `expected_configuration` (the scorer's requested/effective JSONL fields);
 `build` includes source_commit, inference_abi, installed_files (relative path to
 SHA256), model_sha256, model_bytes, and immutable execution image identity.
+Container profiles also require `container_environment_policy: "sanitized-v1"`;
+regenerate older profiles before preparing or reusing their cached results.
+Scorer processes receive a clean environment with private cache/runtime paths.
+Container workers preserve only scheduler device selectors (`CUDA_VISIBLE_DEVICES`,
+`ROCR_VISIBLE_DEVICES`, `HIP_VISIBLE_DEVICES`, `GPU_DEVICE_ORDINAL`, and
+`NVIDIA_VISIBLE_DEVICES`); loader overrides and inference tuning from `worker_env`
+or the parent process do not reach the scorer. Container images must resolve their
+runtime libraries through their normal loader configuration, without inherited
+`LD_LIBRARY_PATH` overrides. Device allocation IDs do not affect cache identity.
+Pools must supply the hardware supported by the scoring profile.
 Bare ROCm profiles instead set `execution_image: "none"` and include
 `execution_host: {gpu_vendor: "amd", gpu_arch, gpu_pci_address,
 gpu_vram_bytes_min, resource_id, runtime_files: {absolute_path: sha256}}`.

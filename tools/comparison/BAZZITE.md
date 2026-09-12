@@ -19,6 +19,11 @@ GPU PCI address, architecture, minimum VRAM, shared resource ID
 `bazzite-radeon-0`, and hashes of the actual host ROCm runtime libraries.
 The profile records all inference settings and installed scorer checksums.
 
+For different executor accounts, provision the cache root with their shared group
+and mode `2770`, and configure both executor services with umask `0007`. Cache
+objects follow the process umask/default ACL; existing objects must also be
+readable by that group. Host setup does not change cache permissions.
+
 Publish a reproducible package and configuration from the implementation checkout:
 
 ```sh

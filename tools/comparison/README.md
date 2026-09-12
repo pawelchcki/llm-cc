@@ -103,7 +103,12 @@ keys. Identical contents in one language share inference but each path counts
 toward reporting. The repository/category score is `sum(llm_cc) / sum(tokens)`.
 Zero-token scores and zero-baseline percentages are unavailable.
 
-Filesystem writes use atomic replacement. S3 requires the optional `boto3`
+Filesystem writes use atomic replacement with owner/group permissions (`0660`)
+restricted by the writer's umask/default ACL. For executor accounts sharing a
+filesystem cache, provision its root with their shared group and mode `2770`,
+and run each stage with umask `0007` so new
+directories and objects remain accessible to that group. An owner-only deployment
+can use umask `0077`. S3 requires the optional `boto3`
 dependency in coordinator and worker environments. A `--store-options` JSON file
 can contain `endpoint_url` and `region_name`; provide credentials through the AWS
 environment/provider chain, never in plan artifacts. Read/authentication/transport

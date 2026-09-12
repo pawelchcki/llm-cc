@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .cache import ResultCache
+from .common import validate_execution_policy
 from .deadline import Deadline, DeadlineExceeded
 
 
@@ -60,7 +61,7 @@ def _host_gpu_environment(host, deadline, sysfs=Path("/sys"), devices=Path("/dev
             r"[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]",
             host.get("gpu_pci_address", ""),
         )
-        or not re.fullmatch(r"gfx[0-9]+", host.get("gpu_arch", ""))
+        or not re.fullmatch(r"gfx[0-9a-f]+", host.get("gpu_arch", ""))
         or type(host.get("gpu_vram_bytes_min")) is not int
         or host["gpu_vram_bytes_min"] <= 0
         or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", host.get("resource_id", ""))
@@ -101,7 +102,12 @@ def _host_gpu_environment(host, deadline, sysfs=Path("/sys"), devices=Path("/dev
         raise WorkerError("selected GPU must match exactly one accessible KFD node")
     gpu = matches[0]
     target = int(gpu["gfx_target_version"])
-    arch = "gfx%d%d%d" % (target // 10000, target // 100 % 100, target % 100)
+    major, minor, stepping = target // 10000, target // 100 % 100, target % 100
+    if major <= 0 or minor > 15 or stepping > 15:
+        raise WorkerError("selected GPU has an invalid KFD architecture version")
+    # Same KFD encoding as src/rocm_topology.cc and ROCm's agent enumerator:
+    # major is decimal; minor and stepping are hexadecimal nibbles.
+    arch = "gfx%d%x%x" % (major, minor, stepping)
     if arch != host["gpu_arch"]:
         raise WorkerError("selected GPU architecture differs from profile")
     unique_id = int(gpu.get("unique_id", "0"))
@@ -468,6 +474,7 @@ def _run_worker(
         )
         if assignment is None:
             raise WorkerError("worker is absent from plan")
+        validate_execution_policy(plan["profile"])
         build = plan["profile"]["build"]
         root, model_path = Path(installed_root).resolve(), Path(model)
         execution_host = build.get("execution_host")
@@ -692,19 +699,26 @@ def _run_assignments(
         }
         artifact["invocations"].append(invocation)
         try:
-            environment = os.environ.copy()
+            # Loader paths and inference tuning must not vary independently of
+            # the profile. Preserve scheduler visibility restrictions, which
+            # select the allocated devices rather than override kernel behavior.
+            environment = {
+                "PATH": "/usr/bin:/bin",
+                "LANG": "C.UTF-8",
+                "HOME": str(entropy_root),
+            }
             if gpu_environment:
-                # A clean environment prevents inherited loader injections and
-                # HIP/HSA tuning overrides from defeating the pinned profile.
-                environment = {
-                    "PATH": "/usr/bin:/bin",
-                    "LANG": "C.UTF-8",
-                    "HOME": str(entropy_root),
-                }
                 environment.update(gpu_environment)
-            # Explicit backend directories take precedence over the verified
-            # installed bundle, even when their payload is absent from its identity.
-            environment.pop("LLM_CC_BACKEND_DIR", None)
+            else:
+                for name in (
+                    "CUDA_VISIBLE_DEVICES",
+                    "ROCR_VISIBLE_DEVICES",
+                    "HIP_VISIBLE_DEVICES",
+                    "GPU_DEVICE_ORDINAL",
+                    "NVIDIA_VISIBLE_DEVICES",
+                ):
+                    if name in os.environ:
+                        environment[name] = os.environ[name]
             environment["LLM_CC_ENTROPY_CACHE_DIR"] = str(entropy_root)
             environment["LLM_CC_CACHE_DIR"] = str(entropy_root / "models")
             environment["LLM_CC_RUNTIME_DIR"] = str(installed_root / "lib" / "llm-cc")

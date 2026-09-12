@@ -71,7 +71,9 @@ class FilesystemStore:
             )
             # O_EXCL avoids two writers mistaking the same temporary file for
             # their own. replace is atomic on the same filesystem.
-            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            # Honor the deployment's umask/default ACL so a provisioned shared
+            # group can read objects published by another executor account.
+            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o660)
             with os.fdopen(fd, "wb") as stream:
                 stream.write(value)
                 stream.flush()

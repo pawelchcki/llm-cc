@@ -5,6 +5,21 @@ import os
 from pathlib import Path
 
 SCHEMA_VERSION = 1
+CONTAINER_ENVIRONMENT_POLICY = "sanitized-v1"
+
+
+def validate_execution_policy(profile):
+    """Reject old container cache identities before any result can be reused."""
+    build = profile["build"]
+    if (
+        build.get("execution_image") not in (None, "none")
+        and build.get("container_environment_policy") != CONTAINER_ENVIRONMENT_POLICY
+    ):
+        raise ValueError(
+            "container profile requires container_environment_policy="
+            + CONTAINER_ENVIRONMENT_POLICY
+            + "; regenerate the scoring profile to invalidate inherited-environment results"
+        )
 
 
 def canonical_bytes(value):

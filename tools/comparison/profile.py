@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 import re
 
+from .common import CONTAINER_ENVIRONMENT_POLICY
+
 SOURCE_COMMIT = "4646123b274005c587dfeb614f17ddf5fd36aef6"
 MODEL_SHA256 = "5a2e25280075d769abdb111de8211d9d3367f2ae0d0e6166a288ee6e8ed0345d"
 MODEL_BYTES = 14066972416
@@ -188,6 +190,8 @@ def dogfood_profile(
     if execution_host is not None:
         # Copy through JSON so caller mutations cannot change a prepared contract.
         profile["build"]["execution_host"] = json.loads(json.dumps(execution_host))
+    else:
+        profile["build"]["container_environment_policy"] = CONTAINER_ENVIRONMENT_POLICY
     return profile
 
 

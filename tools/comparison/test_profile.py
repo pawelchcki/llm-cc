@@ -8,7 +8,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from .common import digest
+from .common import CONTAINER_ENVIRONMENT_POLICY, digest
 from .profile import dogfood_profile, SOURCE_COMMIT
 
 
@@ -59,6 +59,13 @@ class ProfileTest(unittest.TestCase):
         self.assertEqual(profile["max_file_bytes"], 65536)
         self.assertNotIn("execution_host", profile["build"])
         self.assertEqual(
+            profile["build"]["container_environment_policy"],
+            CONTAINER_ENVIRONMENT_POLICY,
+        )
+        old_profile = copy.deepcopy(profile)
+        del old_profile["build"]["container_environment_policy"]
+        self.assertNotEqual(digest(profile), digest(old_profile))
+        self.assertEqual(
             profile["build"]["installed_files"]["bin/llm-cc"],
             hashlib.sha256(b"pinned scorer").hexdigest(),
         )
@@ -70,6 +77,7 @@ class ProfileTest(unittest.TestCase):
         self.assertEqual(config["context"], 32768)
         self.assertEqual(profile["build"]["execution_image"], "none")
         self.assertEqual(profile["build"]["execution_host"], self.host)
+        self.assertNotIn("container_environment_policy", profile["build"])
         custom = self.rocm(context=65536, batch_size=64, kv_cache_type="q4_0")
         config = custom["scoring"]["expected_configuration"]
         self.assertEqual(config["context"], 65536)

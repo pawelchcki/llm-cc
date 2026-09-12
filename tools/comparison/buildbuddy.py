@@ -22,7 +22,13 @@ import urllib.parse
 import urllib.request
 
 from .cache import ResultCache, open_store
-from .common import canonical_bytes, digest, read_json, write_json
+from .common import (
+    canonical_bytes,
+    digest,
+    read_json,
+    validate_execution_policy,
+    write_json,
+)
 from .deadline import Deadline, DeadlineExceeded
 from .pipeline import aggregate, prepare
 
@@ -227,6 +233,7 @@ def bundle_command(command, bundle, bundle_sha):
 
 
 def worker_request(config, plan, worker, prefix, plan_digest):
+    validate_execution_policy(plan["profile"])
     image = config["execution_image"]
     build = plan["profile"]["build"]
     bare_host = image == "none" and bool(build.get("execution_host"))
