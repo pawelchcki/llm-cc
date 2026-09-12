@@ -186,6 +186,86 @@ class BuildBuddyTest(unittest.TestCase):
         self.assertEqual(report["status"], "failed")
         self.assertEqual(len(api.cancelled), 1)
 
+    def test_long_worker_freshness_checks_fit_anonymous_quota(self):
+        self.miss()
+        now = [0]
+        checks = []
+        polls = []
+        api = FakeAPI()
+
+        def complete(_):
+            polls.append(now[0])
+            return True if now[0] >= 6600 else None
+
+        def current():
+            checks.append(now[0])
+            return True
+
+        def sleep(seconds):
+            now[0] += seconds
+
+        api.complete = complete
+        with (
+            patch(
+                "tools.comparison.buildbuddy.time.monotonic",
+                side_effect=lambda: now[0],
+            ),
+            patch("tools.comparison.buildbuddy.time.sleep", side_effect=sleep),
+            patch("builtins.print"),
+        ):
+            self.run_plan(api, current=current, current_check_seconds=180)
+        self.assertEqual(len(polls), 661)
+        self.assertEqual(checks[0], 0)
+        self.assertEqual(checks[-1], 6600)
+        self.assertEqual(len(checks), 38)
+        self.assertLess(sum(value < 3600 for value in checks) + 2, 60)
+
+    def test_periodic_freshness_check_cancels_superseded_worker(self):
+        self.miss()
+        now = [0]
+        api = FakeAPI(complete=None)
+
+        def sleep(seconds):
+            now[0] += seconds
+
+        with (
+            patch(
+                "tools.comparison.buildbuddy.time.monotonic",
+                side_effect=lambda: now[0],
+            ),
+            patch("tools.comparison.buildbuddy.time.sleep", side_effect=sleep),
+            patch("builtins.print"),
+        ):
+            report = self.run_plan(
+                api, current=lambda: now[0] < 180, current_check_seconds=180
+            )
+        self.assertEqual(now[0], 180)
+        self.assertEqual(report["status"], "failed")
+        self.assertEqual(len(api.cancelled), 1)
+
+    def test_final_freshness_check_rejects_change_between_periodic_checks(self):
+        self.miss()
+        api = FakeAPI()
+        with patch("tools.comparison.buildbuddy.time.monotonic", return_value=0):
+            state = iter([True, False])
+            report = self.run_plan(
+                api, current=lambda: next(state), current_check_seconds=180
+            )
+        self.assertEqual(report["status"], "failed")
+        self.assertIn(
+            "comparison superseded before report publication", report["errors"]
+        )
+
+    def test_final_freshness_check_runs_for_fully_cached_comparison(self):
+        state = iter([True, False])
+        report = self.run_plan(
+            FakeAPI(), current=lambda: next(state), current_check_seconds=180
+        )
+        self.assertEqual(report["status"], "failed")
+        self.assertIn(
+            "comparison superseded before report publication", report["errors"]
+        )
+
     def test_mutable_or_mismatched_execution_is_rejected_before_submit(self):
         self.miss()
         for field, value in (

@@ -332,6 +332,7 @@ def run_prepared(
     current=lambda: True,
     poll_seconds=10,
     timeout_seconds=7200,
+    current_check_seconds=0,
 ):
     """Schedule exactly the miss plan, retain failures, and always aggregate."""
     from .pipeline import failure_report
@@ -353,6 +354,7 @@ def run_prepared(
     try:
         if not current():
             raise RuntimeError("comparison superseded before worker submission")
+        checked_at = time.monotonic()
         if plan["workers"]:
             prefix, plan_digest = upload_plan(store, plan_path)
             for worker in plan["workers"]:
@@ -366,10 +368,12 @@ def run_prepared(
                     raise TimeoutError(
                         "comparison workers exceeded the two-hour coordinator deadline"
                     )
-                if not current():
-                    raise RuntimeError(
-                        "comparison superseded: PR head or target changed or PR closed"
-                    )
+                if time.monotonic() - checked_at >= current_check_seconds:
+                    if not current():
+                        raise RuntimeError(
+                            "comparison superseded: PR head or target changed or PR closed"
+                        )
+                    checked_at = time.monotonic()
                 for invocation, worker_id in list(pending.items()):
                     complete = api.complete(invocation)
                     if complete is None:
@@ -393,6 +397,10 @@ def run_prepared(
                 if pending:
                     print(f"Waiting for {len(pending)} GPU workers", flush=True)
                     time.sleep(poll_seconds)
+        # Completion can occur between periodic checks, including on a fully
+        # cached run. Never publish a success based on a cached freshness check.
+        if not current():
+            raise RuntimeError("comparison superseded before report publication")
     except Exception as error:
         errors.append(str(error))
     finally:
@@ -583,6 +591,10 @@ def coordinate(args):
             api,
             output,
             current=lambda: github.current(plan["identity"]),
+            # Anonymous GitHub REST reads share a 60/hour IP quota. Poll PR
+            # freshness separately (20/hour), leaving room for discovery and
+            # final checks while BuildBuddy completion remains responsive.
+            current_check_seconds=10 if github.token else 180,
         )
         return 1 if report["status"] == "failed" else 0
     except Exception as error:

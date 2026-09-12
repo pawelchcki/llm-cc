@@ -131,3 +131,48 @@ Before opening the PR, independent review added cache-corruption, Git submodule,
 case-sensitive path classification, malformed-worker-artifact and rendered-path
 regressions. The final **64-test** comparison suite and installer/CLI/language/TLS
 targets pass through Bazel. Repository formatting and Ruff checks also pass.
+
+## Real PR comparison acceptance, 2026-09-12
+
+Manual production comparisons exercised [PR #39](https://github.com/pawelchcki/llm-cc/pull/39)
+at head `574f2c330158d8844d1a96cc47bbed809fc572e8`, targeting actual `main` SHA
+`4646123b274005c587dfeb614f17ddf5fd36aef6`. The resolved merge base is that same
+target commit. These measurements apply to this recorded head; later PR updates
+require another comparison. The installed comparison ZIP was pinned by SHA-256
+`83ebbf2ea24ddfe1d918c3a018bd40c309bd34c23274c72622567348e19ffa6a`.
+
+The [cold PR parent](https://pawel.buildbuddy.io/invocation/0dbc59cd-813f-4b82-a717-b60c30bc6e91)
+passed on Bazzite in **119.627 seconds**. It reused **109** baseline cache entries
+and submitted **25** unique misses to
+[one GPU worker](https://pawel.buildbuddy.io/invocation/6d407e58-42af-4cff-9061-d78c7c17e78c),
+which completed in **105.053 seconds**. Supported-file coverage was **100%** on
+both revisions: **109/109** base paths and **130/130** head paths measured.
+
+| Repository metric | Base | PR head |
+|---|---:|---:|
+| Raw LLM-CC total | 24,718.8 | 32,368.4 |
+| Tokens | 236,259 | 296,833 |
+| Score | 0.1046258555 | 0.1090458271 |
+
+The repository score increased **4.22455%**; the invocation still passed, as
+required for advisory reporting. Runtime score was unchanged. Tests and tooling
+scores increased **6.42962%** and **9.90908%**, respectively.
+
+The [warm PR parent](https://pawel.buildbuddy.io/invocation/d53eddc4-98b3-40fe-a1f8-2852262a259b)
+passed in **4.304 seconds**, with **134 cache hits, zero misses and an empty GPU
+worker plan**. Its artifacts contain no worker submissions or worker result file.
+Every per-file result and category/repository comparison exactly matches the
+cold report. Parent durations above use BuildBuddy's invocation creation/update
+timestamps; worker duration comes from its validated result artifact.
+
+Both publication envelopes match PR #39, the recorded head and target, and their
+actual parent invocation IDs. Comment byte counts and SHA-256 checksums validate.
+Local credentials were used only for normal BuildBuddy API authentication;
+requests forwarded no local credentials into jobs. BuildBuddy supplied its own
+runner credential, and public GitHub PR discovery required no local GitHub token.
+
+These runs validate manual report generation and retention, including the real
+PR-target lookup and fully cached CPU path. They do **not** establish publication
+of a generated PR comment. Automatic comparison triggers remain disabled;
+ci-toolkit deployment, one-comment update acceptance, delayed/failed publication,
+and retargeted/closed PR publication checks remain the separate live rollout.
