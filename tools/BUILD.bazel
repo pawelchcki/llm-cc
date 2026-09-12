@@ -50,6 +50,7 @@ sh_binary(
 )
 
 exports_files([
+    "__init__.py",
     "tls_integration_test.py",
     "tls_integration_test.sh",
     "gpu_sdk_repositories.bzl",

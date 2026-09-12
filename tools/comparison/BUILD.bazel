@@ -1,0 +1,27 @@
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "sources",
+    srcs = glob(["*.py"]) + ["//tools:__init__.py"],
+)
+
+[
+    sh_binary(
+        name = stage,
+        srcs = ["launcher.sh"],
+        args = ["$(rlocationpath :__main__.py)", stage],
+        data = [":sources", ":__main__.py"],
+    )
+    for stage in ["prepare", "worker", "aggregate", "compare"]
+]
+
+sh_test(
+    name = "comparison_test",
+    srcs = ["launcher.sh"],
+    args = ["$(rlocationpath :__main__.py)", "test"],
+    data = [":sources", ":__main__.py"],
+    env_inherit = ["PATH"],
+)

@@ -333,19 +333,19 @@ cc_binary(
     name = "test-backend-ops",
     srcs = ["tests/test-backend-ops.cpp"],
     additional_linker_inputs = select({
-        "@platforms//os:linux": ["@//third_party:ggml_backend_abi.list"],
+        "@platforms//os:linux": ["@llm_cc//third_party:ggml_backend_abi.list"],
         "//conditions:default": [],
     }),
     linkopts = select({
         "@platforms//os:linux": [
             "-ldl",
             "-lpthread",
-            "-Wl,--dynamic-list=$(location @//third_party:ggml_backend_abi.list)",
+            "-Wl,--dynamic-list=$(location @llm_cc//third_party:ggml_backend_abi.list)",
         ],
         "//conditions:default": [],
     }),
     deps = [":ggml"] + select({
-        "@platforms//os:linux": ["@//:linux_compat"],
+        "@platforms//os:linux": ["@llm_cc//:linux_compat"],
         "//conditions:default": [],
     }),
 )

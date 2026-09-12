@@ -903,6 +903,7 @@ install_launcher(
 sh_test(
     name = "install_test",
     srcs = ["//tools:install_test.sh"],
+    args = ["$(rlocationpath //tools:install.sh)"],
     data = ["//tools:install.sh"],
     # This tests the Unix source installer, which uses flock/shlock.
     target_compatible_with = select({
@@ -1035,6 +1036,10 @@ cc_test(
 cc_test(
     name = "cli_test",
     srcs = ["src/cli_test.cc"],
+    args = [
+        "$(rlocationpath :llm-cc)",
+        "$(rlocationpath testdata/cli/sample.cpp)",
+    ],
     # This harness uses POSIX shell quoting and wait status. Native Windows
     # release execution is covered by the packaged-executable smoke test.
     target_compatible_with = select({
@@ -1105,6 +1110,7 @@ cc_test(
 cc_test(
     name = "lang_test",
     srcs = ["src/lang_test.cc"],
+    args = ["$(rlocationpath testdata/lang/comments.rs)"],
     data = glob(["testdata/lang/*"]),
     deps = [
         ":lang",
@@ -1124,6 +1130,7 @@ cc_test(
 cc_test(
     name = "payload_integration_test",
     srcs = ["src/payload_integration_test.cc"],
+    args = ["$(rlocationpath //dist:linux_x86_64_executable)"],
     data = ["//dist:linux_x86_64_executable"],
     deps = [
         ":payload",
@@ -1231,7 +1238,11 @@ sh_test(
     # The local TLS fixture uses the developer/CI Python and OpenSSL tools.
     # Windows test actions otherwise discard setup-python's PATH entries.
     env_inherit = ["PATH"],
-    args = ["$(location //tools:tls_integration_test.py)", "$(location //tools:tls_download_probe)", "testdata/tls"],
+    args = [
+        "$(rlocationpath //tools:tls_integration_test.py)",
+        "$(rlocationpath //tools:tls_download_probe)",
+        "$(rlocationpath testdata/tls/README.md)",
+    ],
     data = ["//tools:tls_integration_test.py", "//tools:tls_download_probe"] + glob(["testdata/tls/*"]),
     tags = ["requires-network"],
 )

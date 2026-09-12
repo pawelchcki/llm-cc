@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
@@ -12,8 +13,12 @@
 
 namespace {
 
+std::filesystem::path fixture_root;
+
 std::string Read(std::string_view path) {
-  std::ifstream input(std::string(path), std::ios::binary);
+  std::ifstream input(fixture_root / std::filesystem::path(path).filename(),
+                      std::ios::binary);
+  llmcc::test::Expect(input.is_open(), "language fixture exists");
   return {std::istreambuf_iterator<char>(input),
           std::istreambuf_iterator<char>()};
 }
@@ -88,7 +93,11 @@ void CheckFunctionSpan(std::string_view path, llmcc::Language language,
 
 }  // namespace
 
-int main() {  // NOLINT(bugprone-exception-escape)
+int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
+  const char* test_srcdir = std::getenv("TEST_SRCDIR");
+  llmcc::test::Expect(argc == 2 && test_srcdir != nullptr,
+                      "Bazel supplies the language fixture runfile key");
+  fixture_root = (std::filesystem::path(test_srcdir) / argv[1]).parent_path();
   CheckComments("testdata/lang/comments.rs", llmcc::Language::kRust);
   CheckComments("testdata/lang/comments.c", llmcc::Language::kC);
   CheckComments("testdata/lang/comments.cc", llmcc::Language::kCpp);
