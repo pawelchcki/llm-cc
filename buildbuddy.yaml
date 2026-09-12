@@ -75,7 +75,7 @@ actions:
             "$artifacts/llm-cc-backend-rocm-linux-x86_64.manifest.json"
   # Bazzite hosts the CPU coordinator and its shared filesystem cache.
   # GPU workers are submitted only for misses and serialize the shared Radeon.
-  # Keep manual until live inference acceptance and publisher deployment pass.
+  # Seed main's baseline and compare pull requests using the same pinned scorer.
   - name: "Complexity comparison"
     self_hosted: true
     pool: "linux-amd64-rocm"
@@ -88,5 +88,12 @@ actions:
     resource_requests: { disk: 10GB }
     timeout: 130m
     allow_concurrent_runs: false
+    triggers:
+      push:
+        branches:
+          - "main"
+      pull_request:
+        branches:
+          - "main"
     steps:
       - run: "tools/comparison/dogfood.sh"

@@ -142,16 +142,18 @@ reports under a key derived from the **parent invocation** identity. Default-bra
 pushes compare the head to itself and populate the baseline cache. A branch with
 no current PR skips inference.
 
-The `Complexity comparison` BuildBuddy action has no automatic triggers until its
-runner/store configuration is available. After configuring it, seed the baseline,
-exercise the two largest eligible dogfood files, run two PR updates, and verify
-cache reuse. Then deploy the my-infra `feat/generated-comparison-comments`
-companion through its normal release process and add
-[ci-toolkit.example.yml](ci-toolkit.example.yml) to `.ci-toolkit.yml`. ci-toolkit
-owns comment markers, serialization, ordering, and PR-state rechecks; these
-comparison stages never post comments. Validate delayed/failed publications and
-one updated comment before enabling push/PR triggers. Existing Linux GitHub
-Actions coverage remains until its BuildBuddy replacement passes.
+The `Complexity comparison` BuildBuddy action runs on pull requests targeting
+`main` and on `main` pushes. PR updates compare committed source against the
+merge base of the actual target; `main` pushes populate the baseline cache.
+The installed Bazzite runner, store, and pinned scorer provide the execution
+configuration. ci-toolkit consumes the completed BuildBuddy status and publishes
+the generated table and report links using `.ci-toolkit.yml` from the PR's
+target commit. The publication policy must land on the target branch before a
+fresh PR comparison can publish automatically.
+
+ci-toolkit owns comment markers, serialization, ordering, and PR-state rechecks;
+these comparison stages never post comments. See
+[ci-toolkit.example.yml](ci-toolkit.example.yml) for the publication policy.
 
 Local acceptance is `bazel test //tools/comparison:comparison_test` and
 `BACKEND=cpu tools/check_consumer.sh --tests-only`. Tests use synthetic scorers,
