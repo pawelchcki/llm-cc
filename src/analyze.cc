@@ -7,6 +7,7 @@
 #include <stdexcept>
 
 #include "src/backend.h"
+#include "src/input_limits.h"
 #include "src/lang.h"
 #include "src/progress.h"
 
@@ -174,6 +175,31 @@ std::vector<Hotspot> FindHotspots(std::span<const Token> tokens,
   return hotspots;
 }
 
+ScoringMetadata MetadataFromRecords(std::span<const EntropyRecord> records,
+                                    std::uint32_t context_tokens) {
+  ScoringMetadata metadata{.source_tokens = records.size(),
+                           .inference_context_tokens = context_tokens};
+  // A leading scored record means inference prepended a synthetic BOS; an
+  // original no-BOS first token is represented by the null-entropy record.
+  const std::size_t inferred_tokens =
+      records.size() + (!records.empty() && records.front().entropy ? 1 : 0);
+  if (context_tokens < 2) {
+    return metadata;
+  }
+  metadata.window_stride_tokens = context_tokens / 2;
+  if (inferred_tokens < 2) {
+    return metadata;
+  }
+  if (inferred_tokens <= context_tokens) {
+    metadata.window_count = 1;
+    return metadata;
+  }
+  const std::uint32_t stride = metadata.window_stride_tokens;
+  metadata.window_count =
+      1 + ((inferred_tokens - context_tokens + stride - 1) / stride);
+  return metadata;
+}
+
 }  // namespace
 
 ProjectAnalyzer::ProjectAnalyzer(ProjectAnalysisOptions options,
@@ -202,28 +228,40 @@ EntropyProvider& ProjectAnalyzer::Provider() {
   return *provider_;
 }
 
-EntropyCacheLookup ProjectAnalyzer::ReadRecords(std::string_view source) {
+EntropyProviderResult ProjectAnalyzer::ReadRecords(std::string_view source) {
   if (options_.cache) {
     ReportPhase("entropy cache lookup");
     auto cached = ReadEntropyCache(source, options_.model);
     if (cached.hit) {
-      return cached;
+      const ScoringMetadata metadata = MetadataFromRecords(
+          cached.records, options_.inference_context_tokens);
+      return {.records = std::move(cached.records),
+              .metadata = metadata,
+              .entropy_cache_hit = true};
     }
   }
-  auto records = Provider().Score(source);
+  EntropyProviderResult scored = Provider().Score(source);
+  if (scored.metadata.source_tokens == 0 && !scored.records.empty()) {
+    scored.metadata.source_tokens = scored.records.size();
+  }
+  if (scored.metadata.inference_context_tokens == 0) {
+    scored.metadata =
+        MetadataFromRecords(scored.records, options_.inference_context_tokens);
+  }
   if (options_.cache) {
     ReportPhase("entropy cache publication");
     try {
-      WriteEntropyCache(source, options_.model, records);
+      WriteEntropyCache(source, options_.model, scored.records);
     } catch (const std::exception&) {
       // Entropy caching is advisory and must not lose an analysis.
     }
   }
-  return {.hit = false, .records = std::move(records)};
+  return scored;
 }
 
 FileAnalysisResult ProjectAnalyzer::AnalyzeFile(const DiscoveredSource& source,
                                                 std::string_view contents) {
+  CheckSourceSize(contents.size());
   ReportPhase("preprocessing source");
   PreparedSource prepared = PrepareSource(contents, source.language);
   const std::string& preprocessed = prepared.cleaned;
@@ -234,11 +272,17 @@ FileAnalysisResult ProjectAnalyzer::AnalyzeFile(const DiscoveredSource& source,
         llmcc::Analyze({}, {}, {}, options_.tau_rule, options_.alpha, {},
                        options_.hierarchy_mode);
     MapAnalysisOffsets(analysis, prepared.original_offsets);
-    return {.analysis = std::move(analysis), .entropy_cache_hit = false};
+    return {.analysis = std::move(analysis),
+            .entropy_cache_hit = false,
+            .scoring = {.inference_context_tokens =
+                            options_.inference_context_tokens}};
   }
-  const auto cached = ReadRecords(preprocessed);
+  auto scored = ReadRecords(preprocessed);
   ReportPhase("aligning tokens");
-  const auto tokens = AlignTokens(preprocessed, cached.records);
+  const auto tokens = AlignTokens(preprocessed, scored.records);
+  // Alignment owns compact token offsets; entropy-record strings are no
+  // longer needed for hierarchy, function, or hotspot reduction.
+  std::vector<EntropyRecord>().swap(scored.records);
   ReportPhase("building score hierarchy");
   Analysis analysis =
       llmcc::Analyze(tokens, prepared.structural_events, prepared.line_starts,
@@ -252,7 +296,8 @@ FileAnalysisResult ProjectAnalyzer::AnalyzeFile(const DiscoveredSource& source,
 
   MapAnalysisOffsets(analysis, prepared.original_offsets);
   return {.analysis = std::move(analysis),
-          .entropy_cache_hit = cached.hit,
+          .entropy_cache_hit = scored.entropy_cache_hit,
+          .scoring = scored.metadata,
           .functions = std::move(functions),
           .hotspots = std::move(hotspots)};
 }

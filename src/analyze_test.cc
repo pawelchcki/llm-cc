@@ -5,10 +5,12 @@
 #include <fstream>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
+#include "src/input_limits.h"
 #include "src/test_util.h"
 
 namespace {
@@ -17,13 +19,14 @@ class FakeProvider : public llmcc::EntropyProvider {
  public:
   explicit FakeProvider(int& calls) : calls_(calls) {}
 
-  std::vector<llmcc::EntropyRecord> Score(std::string_view source) override {
+  llmcc::EntropyProviderResult Score(std::string_view source) override {
     ++calls_;
     if (source.empty()) {
       return {};
     }
-    return {
-        {.position = 0, .bytes = std::string(source), .entropy = std::nullopt}};
+    return {.records = {{.position = 0,
+                         .bytes = std::string(source),
+                         .entropy = std::nullopt}}};
   }
 
  private:
@@ -35,7 +38,7 @@ class LineEntropyProvider : public llmcc::EntropyProvider {
   explicit LineEntropyProvider(std::vector<double> entropies)
       : entropies_(std::move(entropies)) {}
 
-  std::vector<llmcc::EntropyRecord> Score(std::string_view source) override {
+  llmcc::EntropyProviderResult Score(std::string_view source) override {
     std::vector<llmcc::EntropyRecord> records;
     std::size_t line = 0;
     for (std::size_t i = 0; i < source.size(); ++i) {
@@ -48,7 +51,7 @@ class LineEntropyProvider : public llmcc::EntropyProvider {
         ++line;
       }
     }
-    return records;
+    return {.records = std::move(records)};
   }
 
  private:
@@ -60,7 +63,7 @@ class FunctionBoundaryProvider : public llmcc::EntropyProvider {
   FunctionBoundaryProvider(bool overlap_start, bool overlap_end)
       : overlap_start_(overlap_start), overlap_end_(overlap_end) {}
 
-  std::vector<llmcc::EntropyRecord> Score(std::string_view source) override {
+  llmcc::EntropyProviderResult Score(std::string_view source) override {
     constexpr std::string_view kExpected =
         "struct S {\n"
         "  int\n"
@@ -98,7 +101,7 @@ class FunctionBoundaryProvider : public llmcc::EntropyProvider {
                          .bytes = std::string(source.substr(function_end)),
                          .entropy = 0.1});
     }
-    return records;
+    return {.records = std::move(records)};
   }
 
  private:
@@ -123,6 +126,21 @@ int main() {  // NOLINT(bugprone-exception-escape)
   fs::create_directories(repository);
   std::ofstream(model) << "model";
   const auto identity = llmcc::InspectModel(model, "abi", "cpu", 100);
+  {
+    std::istringstream exact_cap_stream("1234");
+    llmcc::test::ExpectEq(llmcc::ReadBoundedStream(exact_cap_stream, 4),
+                          std::string("1234"),
+                          "bounded input read accepts its exact cap");
+    std::istringstream growing_stream("12345");
+    bool rejected = false;
+    try {
+      static_cast<void>(llmcc::ReadBoundedStream(growing_stream, 4));
+    } catch (const std::length_error&) {
+      rejected = true;
+    }
+    llmcc::test::Expect(
+        rejected, "bounded input read rejects a stream exceeding its cap");
+  }
   const auto uncached_identity =
       llmcc::InspectModel(model, "abi", "cpu", 100, 64, "auto", "host", false);
   llmcc::test::Expect(uncached_identity.content_digest.empty(),
@@ -314,5 +332,42 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::ExpectEq(boundary_result.functions[0].metrics,
                         bounded_boundary_result.functions[0].metrics,
                         "trailing token excludes adjacent function structure");
+  const llmcc::DiscoveredSource windowed_source{
+      .path = repository / "windowed.rs",
+      .language = llmcc::Language::kRust,
+      .repository = std::nullopt};
+  llmcc::ProjectAnalyzer windowed_analyzer(
+      {.model = identity, .cache = false, .inference_context_tokens = 4}, []() {
+        return std::make_unique<LineEntropyProvider>(
+            std::vector<double>{1.0, 1.0, 1.0, 1.0, 1.0});
+      });
+  const auto windowed_result =
+      windowed_analyzer.AnalyzeFile(windowed_source, "abcde");
+  llmcc::test::Expect(
+      windowed_result.scoring.source_tokens == 5 &&
+          windowed_result.scoring.inference_context_tokens == 4 &&
+          windowed_result.scoring.window_stride_tokens == 2 &&
+          windowed_result.scoring.window_count == 2,
+      "synthetic provider reports fixed half-overlap window metadata");
+
+  const std::vector<llmcc::EntropyRecord> bos_records = {
+      {.position = 0, .bytes = "a", .entropy = 1.0},
+      {.position = 1, .bytes = "b", .entropy = 1.0},
+      {.position = 2, .bytes = "c", .entropy = 1.0},
+      {.position = 3, .bytes = "d", .entropy = 1.0}};
+  llmcc::WriteEntropyCache("abcd", identity, bos_records);
+  llmcc::ProjectAnalyzer cached_windowed_analyzer(
+      {.model = identity, .inference_context_tokens = 4}, []() {
+        throw std::runtime_error("cache hit loaded scorer");
+        return std::unique_ptr<llmcc::EntropyProvider>();
+      });
+  const auto cached_windowed_result =
+      cached_windowed_analyzer.AnalyzeFile(windowed_source, "abcd");
+  llmcc::test::Expect(
+      cached_windowed_result.entropy_cache_hit &&
+          cached_windowed_result.scoring.source_tokens == 4 &&
+          cached_windowed_result.scoring.window_stride_tokens == 2 &&
+          cached_windowed_result.scoring.window_count == 2,
+      "cache metadata counts a synthetic BOS at the context boundary");
   return 0;
 }

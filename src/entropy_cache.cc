@@ -12,12 +12,34 @@
 #include <system_error>
 
 #include "src/cache_io.h"
+#include "src/input_limits.h"
 #include "src/sha256.h"
 
 namespace llmcc {
 namespace {
 std::atomic<uint64_t> g_now{0}, g_limit{0};
 std::atomic<bool> g_delete_failure{false};
+// CBOR is deliberately not produced for large sources. The JSON encoder
+// temporarily materializes every record and its byte string in addition to
+// the scorer and aligned-token data already resident for analysis. This is a
+// cache policy, not an input limit: large sources remain fully analyzable.
+// The admission accounting is deliberately loose; it bounds the work we hand
+// to the DOM encoder but is not a claim about nlohmann::json memory use.
+constexpr std::uint64_t kCacheSerializationAdmissionLimit = 64ULL * 1024 * 1024;
+constexpr std::uint64_t kAdmissionBytesPerRecord = 256;
+constexpr std::uint64_t kMaxEntropyCacheEntryBytes = 16ULL * 1024 * 1024;
+
+bool CanSerializeCacheEntry(std::string_view source,
+                            std::span<const EntropyRecord> records) {
+  const auto source_bytes = static_cast<std::uintmax_t>(source.size());
+  if (source_bytes > kMaxEntropyCacheEntryBytes ||
+      source_bytes > kCacheSerializationAdmissionLimit) {
+    return false;
+  }
+  const auto remaining = kCacheSerializationAdmissionLimit - source_bytes;
+  return records.size() <= remaining / kAdmissionBytesPerRecord;
+}
+
 struct CacheLocation {
   std::filesystem::path base, directory;
 };
@@ -126,18 +148,24 @@ std::vector<EntryInfo> Entries(const CacheLocation& l) {
   }
   return v;
 }
-bool IsComplete(std::string_view s, const std::vector<EntropyRecord>& r) {
-  try {
-    static_cast<void>(AlignTokens(s, r));
-    for (size_t i = 0; i < r.size(); ++i)
-      if ((!r[i].entropy && i) ||
-          (r[i].entropy &&
-           (!std::isfinite(*r[i].entropy) || *r[i].entropy < 0)))
-        return false;
-    return true;
-  } catch (...) {
+bool IsComplete(std::string_view s, std::span<const EntropyRecord> r) {
+  std::size_t offset = 0;
+  for (std::size_t i = 0; i < r.size(); ++i) {
+    const EntropyRecord& record = r[i];
+    if (record.position != i || record.bytes.empty() ||
+        ((!record.entropy && i) ||
+         (record.entropy &&
+          (!std::isfinite(*record.entropy) || *record.entropy < 0))) ||
+        record.bytes.size() > s.size() - offset ||
+        s.substr(offset, record.bytes.size()) != record.bytes) {
+      return false;
+    }
+    offset += record.bytes.size();
+  }
+  if (offset != s.size()) {
     return false;
   }
+  return true;
 }
 nlohmann::json Provenance(std::string_view s, const ModelIdentity& m) {
   return {{"source_sha256", Sha256Hex(s)},
@@ -167,8 +195,13 @@ std::optional<std::vector<EntropyRecord>> ReadEntry(const CacheLocation& l,
   if (!e && std::filesystem::is_symlink(st))
     throw std::runtime_error("refusing entropy entry symlink");
   if (e || !std::filesystem::is_regular_file(st)) return {};
+  const auto entry_size = std::filesystem::file_size(p, e);
+  if (e || entry_size > kMaxEntropyCacheEntryBytes) {
+    return {};
+  }
   std::ifstream in(p, std::ios::binary);
-  std::vector<uint8_t> b{std::istreambuf_iterator<char>(in), {}};
+  const std::string binary = ReadBoundedStream(in, kMaxEntropyCacheEntryBytes);
+  std::vector<uint8_t> b(binary.begin(), binary.end());
   auto j = nlohmann::json::from_cbor(b);
   if (!j.is_object() || j.value("version", 0) != 2 ||
       j.value("source_size", uint64_t{}) != s.size() ||
@@ -399,6 +432,9 @@ void CheckEntropyCacheAvailability() {
 }
 EntropyCacheLookup ReadEntropyCache(std::string_view source,
                                     const ModelIdentity& model) {
+  if (source.size() > kMaxEntropyCacheEntryBytes) {
+    return {};
+  }
   try {
     const auto location = GlobalLocation();
     const auto key = EntropyCacheKey(source, model);
@@ -431,8 +467,12 @@ EntropyCacheLookup ReadEntropyCache(std::string_view source,
 
 void WriteEntropyCache(std::string_view source, const ModelIdentity& model,
                        std::span<const EntropyRecord> records) {
-  const std::vector<EntropyRecord> copy(records.begin(), records.end());
-  if (!IsComplete(source, copy)) {
+  // Do this before validation: entries beyond the bounded cache-work policy
+  // should not spend additional CPU checking records that will not be stored.
+  if (!CanSerializeCacheEntry(source, records)) {
+    return;
+  }
+  if (!IsComplete(source, records)) {
     throw std::invalid_argument("refusing incomplete entropy records");
   }
   nlohmann::json encoded = {{"version", 2},
@@ -447,7 +487,9 @@ void WriteEntropyCache(std::string_view source, const ModelIdentity& model,
                                               : nlohmann::json(nullptr)}));
   }
   const auto bytes = nlohmann::json::to_cbor(encoded);
-  if (bytes.size() > Limit()) return;
+  if (bytes.size() > kMaxEntropyCacheEntryBytes || bytes.size() > Limit()) {
+    return;
+  }
   const auto location = GlobalLocation();
   const auto target = EntryPath(location, EntropyCacheKey(source, model));
   EnsureCacheDirectory(location);

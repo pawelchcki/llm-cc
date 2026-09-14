@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "src/entropy_cache.h"
+#include "src/input_limits.h"
 #include "src/lang.h"
 #include "src/test_util.h"
 
@@ -170,6 +171,22 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
       Read(backend_error).find("cannot open input file") != std::string::npos &&
           Read(backend_error).find("CPU rerun:") == std::string::npos,
       "GPU-independent input failures do not suggest a CPU rerun");
+  const fs::path oversized_source = fs::path(test_tmpdir) / "oversized.rs";
+  {
+    std::ofstream output(oversized_source, std::ios::binary);
+    output.seekp(static_cast<std::streamoff>(llmcc::kMaxSourceBytes));
+    output.put('\n');
+  }
+  Expect(Run(Quote(binary) + " " + Quote(oversized_source) + " --model " +
+             Quote(missing_score_model) +
+             " --force-cpu --no-download --progress never --format text "
+             ">/dev/null 2>" +
+             Quote(backend_error)) != 0,
+         "analysis rejects a sparse source larger than one GiB");
+  Expect(
+      Read(backend_error).find("maximum supported size") != std::string::npos &&
+          Read(backend_error).find("could not stat model") == std::string::npos,
+      "oversize analysis fails before model resolution");
 #ifdef LLMCC_TEST_BACKEND_METAL
   Expect(Run(Quote(binary) + " score --model " + Quote(missing_score_model) +
              " --prompt x --gpu-layers -1 --progress never >/dev/null 2>" +
@@ -544,7 +561,7 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
   constexpr std::string_view backend = "cpu";
   const auto identity = llmcc::InspectModel(
       fake_model,
-      "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v3", backend,
+      "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v4", backend,
       128U * 1024U);
   const std::size_t first_newline = preprocessed.find('\n');
   const std::size_t second_newline = preprocessed.find('\n', first_newline + 1);
@@ -565,7 +582,7 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
   llmcc::WriteEntropyCache(preprocessed, identity, cached_records);
   const auto auto_flash_identity = llmcc::InspectModel(
       fake_model,
-      "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v3", backend,
+      "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v4", backend,
       128U * 1024U, 64, "auto", "host", true, "auto", "q8_0", true);
   llmcc::WriteEntropyCache(preprocessed, auto_flash_identity, cached_records);
   const fs::path analysis_output = fs::path(test_tmpdir) / "analysis.jsonl";
@@ -607,6 +624,72 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
                       "file includes hotspot scores");
   llmcc::test::ExpectEq(events[4]["analyzed"].get<std::uint64_t>(),
                         std::uint64_t{1}, "totals report analyzed file");
+
+  const fs::path mixed_limit_output =
+      fs::path(test_tmpdir) / "mixed-input-limit.jsonl";
+  llmcc::test::Expect(
+      Run(Quote(binary) + " --force-cpu " + Quote(oversized_source) + " " +
+          Quote(source) + " --model " + Quote(fake_model) +
+          " --flash-attn auto >" + Quote(mixed_limit_output)) != 0,
+      "a refused oversized file does not prevent cached files from scoring");
+  const auto mixed_limit_events = ReadEvents(mixed_limit_output);
+  const auto mixed_limit_error = std::ranges::find_if(
+      mixed_limit_events, [&](const nlohmann::json& event) {
+        return event.value("type", "") == "error" &&
+               event.value("path", "") == oversized_source.string();
+      });
+  const auto mixed_limit_file =
+      std::ranges::find_if(mixed_limit_events, [](const nlohmann::json& event) {
+        return event.value("type", "") == "file";
+      });
+  const nlohmann::json& mixed_limit_totals = mixed_limit_events.back();
+  llmcc::test::Expect(
+      mixed_limit_error != mixed_limit_events.end() &&
+          mixed_limit_file != mixed_limit_events.end() &&
+          mixed_limit_totals["analyzed"] == 1 &&
+          mixed_limit_totals["failed"] == 1 &&
+          mixed_limit_totals["partial"].get<bool>(),
+      "mixed input limit failures retain successful file output and totals");
+
+  const fs::path windowed_source = repository / "windowed.rs";
+  Write(windowed_source, "abcde");
+  const auto [windowed_preprocessed, windowed_offsets] =
+      llmcc::StripComments("abcde", llmcc::Language::kRust);
+  static_cast<void>(windowed_offsets);
+  const auto windowed_identity = llmcc::InspectModel(
+      fake_model,
+      "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v4", backend,
+      4);
+  std::vector<llmcc::EntropyRecord> windowed_records;
+  windowed_records.reserve(windowed_preprocessed.size());
+  for (std::size_t index = 0; index < windowed_preprocessed.size(); ++index) {
+    windowed_records.push_back(
+        {.position = index,
+         .bytes = windowed_preprocessed.substr(index, 1),
+         .entropy = index == 0 ? std::nullopt : std::optional<double>(0.5)});
+  }
+  llmcc::WriteEntropyCache(windowed_preprocessed, windowed_identity,
+                           windowed_records);
+  const fs::path windowed_output = fs::path(test_tmpdir) / "windowed.jsonl";
+  llmcc::test::ExpectEq(
+      Run(Quote(binary) + " --force-cpu " + Quote(windowed_source) +
+          " --model " + Quote(fake_model) + " --context 4 >" +
+          Quote(windowed_output)),
+      0, "cache-only windowed analysis succeeds");
+  const auto windowed_events = ReadEvents(windowed_output);
+  const nlohmann::json& windowed_file = FileEvent(windowed_events);
+  llmcc::test::Expect(
+      windowed_file["source_token_count"] == 5 &&
+          windowed_file["inference_context_tokens"] == 4 &&
+          windowed_file["window_policy"] == "fixed-half-overlap" &&
+          windowed_file["window_stride_tokens"] == 2 &&
+          windowed_file["inference_window_count"] == 2 &&
+          windowed_file["reference_context_tokens"] == 131072 &&
+          windowed_file["reference_context_overflow"] == 0.0,
+      "file output reports fixed-window and default-context metadata");
+  fs::remove(llmcc::GlobalEntropyCacheDirectory() /
+             (llmcc::EntropyCacheKey(windowed_preprocessed, windowed_identity) +
+              ".cbor"));
 
   const fs::path progress_output = fs::path(test_tmpdir) / "progress.txt";
   llmcc::test::ExpectEq(
@@ -854,7 +937,7 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
                         std::uint64_t{8}, "cache status counts entries");
   llmcc::test::Expect(
       status["scope"] == "user" && status["storage_version"] == 2 &&
-          status["inference_abi"].get<std::string>().ends_with("/entropy-v3") &&
+          status["inference_abi"].get<std::string>().ends_with("/entropy-v4") &&
           status["limit_bytes"] == llmcc::kEntropyCacheLimit &&
           status["retention_seconds"] == llmcc::kEntropyCacheMaxAgeSeconds &&
           status.contains("entries_by_inference_abi") &&
@@ -901,7 +984,7 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
 
   const auto deferred_backend_identity = llmcc::InspectModel(
       fake_model,
-      "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v3",
+      "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v4",
       "cuda/gpu-layers=-1", 128U * 1024U, 64, "auto", "device");
   llmcc::WriteEntropyCache(
       preprocessed, deferred_backend_identity,

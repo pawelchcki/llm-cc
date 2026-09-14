@@ -7,6 +7,7 @@
 #include <iterator>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "src/test_util.h"
@@ -43,7 +44,9 @@ void CheckComments(std::string_view path, llmcc::Language language,
   llmcc::test::ExpectEq(std::ranges::count(stripped, '\n'),
                         std::ranges::count(source, '\n'),
                         "comment removal preserves newlines");
-  llmcc::test::Expect(std::ranges::is_sorted(map), "offset map is monotonic");
+  for (std::size_t i = 1; i < map.size(); ++i) {
+    llmcc::test::Expect(map.at(i - 1) <= map.at(i), "offset map is monotonic");
+  }
   if (check_literals) {
     llmcc::test::Expect(stripped.find("not a comment") != std::string::npos &&
                             stripped.find("still text") != std::string::npos,
@@ -91,6 +94,36 @@ void CheckFunctionSpan(std::string_view path, llmcc::Language language,
                         "callable span matches its exact declaration");
 }
 
+void CheckPreparedParity(std::string_view path, llmcc::Language language) {
+  const std::string source = Read(path);
+  const llmcc::PreparedSource prepared = llmcc::PrepareSource(source, language);
+
+  auto prepared_events = prepared.structural_events;
+  for (auto& event : prepared_events) {
+    event.scope_start =
+        prepared.original_offsets.OriginalOffset(event.scope_start);
+    event.byte_offset =
+        prepared.original_offsets.OriginalOffset(event.byte_offset);
+  }
+  const auto event_order = [](const llmcc::StructuralEvent& event) {
+    return std::tuple(event.byte_offset, event.depth, event.scope_start);
+  };
+  std::ranges::sort(prepared_events, {}, event_order);
+  llmcc::test::ExpectEq(prepared_events,
+                        llmcc::StructuralEvents(source, language),
+                        "combined traversal preserves structural events");
+
+  auto prepared_functions = prepared.functions;
+  for (auto& function : prepared_functions) {
+    function.start_byte =
+        prepared.original_offsets.OriginalOffset(function.start_byte);
+    function.end_byte =
+        prepared.original_offsets.OriginalOffset(function.end_byte);
+  }
+  llmcc::test::ExpectEq(prepared_functions, llmcc::Functions(source, language),
+                        "combined traversal preserves callable extraction");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
@@ -107,6 +140,101 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
   CheckComments("testdata/lang/comments.js", llmcc::Language::kJavaScript,
                 true);
   CheckComments("testdata/lang/comments.cs", llmcc::Language::kCSharp, true);
+  for (const auto& [path, language] :
+       std::vector<std::pair<std::string_view, llmcc::Language>>{
+           {"testdata/lang/structure.rs", llmcc::Language::kRust},
+           {"testdata/lang/structure.c", llmcc::Language::kC},
+           {"testdata/lang/structure.cc", llmcc::Language::kCpp},
+           {"testdata/lang/structure.java", llmcc::Language::kJava},
+           {"testdata/lang/structure.py", llmcc::Language::kPython},
+           {"testdata/lang/structure.go", llmcc::Language::kGo},
+           {"testdata/lang/structure.js", llmcc::Language::kJavaScript},
+           {"testdata/lang/structure.cs", llmcc::Language::kCSharp}}) {
+    CheckPreparedParity(path, language);
+  }
+
+  const auto [compact_source, compact_map] =
+      llmcc::StripComments("a/* removed */b\n", llmcc::Language::kCpp);
+  llmcc::test::ExpectEq(compact_source, std::string("a b\n"),
+                        "inline comment separation is retained");
+  llmcc::test::ExpectEq(compact_map.size(), compact_source.size() + 1,
+                        "compact map contains all logical boundaries");
+  llmcc::test::Expect(compact_map.span_count() < compact_map.size(),
+                      "retained byte runs are compacted");
+  llmcc::test::ExpectEq(compact_map.OriginalOffset(compact_source.find('b')),
+                        std::string_view("a/* removed */b\n").find('b'),
+                        "compact map resolves cleaned offsets");
+  llmcc::test::ExpectEq(
+      compact_map.CleanedOffset(
+          std::string_view("a/* removed */b\n").find("removed")),
+      compact_source.find('b'),
+      "inverse map preserves dense lower-bound semantics");
+
+  bool timed_out = false;
+  try {
+    static_cast<void>(
+        llmcc::PrepareSource("int f() { return 1; }", llmcc::Language::kCpp,
+                             {.time_budget = std::chrono::milliseconds(0)}));
+  } catch (const std::runtime_error& error) {
+    timed_out = std::string_view(error.what()).find("time budget") !=
+                std::string_view::npos;
+  }
+  llmcc::test::Expect(timed_out,
+                      "an injectable preprocessing deadline is enforced");
+
+  std::string wide_timeout_source = "int values[]={";
+  constexpr std::size_t kTimeoutFixtureBytes = 1024ULL * 1024ULL;
+  wide_timeout_source.reserve(kTimeoutFixtureBytes + 4);
+  while (wide_timeout_source.size() < kTimeoutFixtureBytes) {
+    wide_timeout_source += "0,";
+  }
+  wide_timeout_source += "0};\n";
+  const auto timeout_start = std::chrono::steady_clock::now();
+  bool parser_timed_out = false;
+  try {
+    static_cast<void>(
+        llmcc::PrepareSource(wide_timeout_source, llmcc::Language::kCpp,
+                             {.time_budget = std::chrono::milliseconds(10)}));
+  } catch (const std::runtime_error& error) {
+    parser_timed_out =
+        std::string_view(error.what()).find("during tree-sitter parsing") !=
+        std::string_view::npos;
+  }
+  const auto timeout_elapsed = std::chrono::steady_clock::now() - timeout_start;
+  llmcc::test::Expect(
+      parser_timed_out && timeout_elapsed < std::chrono::seconds(5),
+      "tree-sitter cooperatively cancels a large parse within its deadline");
+
+  bool too_deep = false;
+  try {
+    static_cast<void>(llmcc::PrepareSource("int f() { if (1) { return 1; } }",
+                                           llmcc::Language::kCpp,
+                                           {.max_syntax_depth = 2}));
+  } catch (const std::runtime_error& error) {
+    too_deep = std::string_view(error.what()).find("depth limit") !=
+               std::string_view::npos;
+  }
+  llmcc::test::Expect(too_deep,
+                      "syntax traversal has an explicit depth budget");
+
+  std::string wide_comprehension = "[x";
+  for (std::size_t clause = 0; clause < 65; ++clause) {
+    wide_comprehension += " for x" + std::to_string(clause) + " in xs";
+  }
+  wide_comprehension += "]";
+  bool structurally_too_deep = false;
+  try {
+    static_cast<void>(llmcc::PrepareSource(wide_comprehension,
+                                           llmcc::Language::kPython,
+                                           {.max_syntax_depth = 64}));
+  } catch (const std::runtime_error& error) {
+    structurally_too_deep =
+        std::string_view(error.what()).find("structural depth") !=
+        std::string_view::npos;
+  }
+  llmcc::test::Expect(
+      structurally_too_deep,
+      "wide comprehensions cannot create an unsafe output hierarchy depth");
 
   const std::string rust = Read("testdata/lang/structure.rs");
   const auto rust_events =

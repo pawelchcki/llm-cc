@@ -1,6 +1,7 @@
 #ifndef LLM_CC_SCORE_CMD_H_
 #define LLM_CC_SCORE_CMD_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -45,6 +46,39 @@ struct InferenceOptions {
   bool fetch_backend = true;
 };
 
+struct ScoreWindow {
+  std::size_t token_begin;
+  std::size_t token_end;
+  std::size_t scored_target_begin;
+};
+
+struct ScoreWindowPlan {
+  std::size_t token_count;
+  std::uint32_t context_size;
+  std::uint32_t stride;
+  std::size_t window_count;
+};
+
+// Plans independent, overlapping inference windows in constant space.
+ScoreWindowPlan PlanScoreWindows(std::size_t token_count,
+                                 std::uint32_t context_size);
+// token_end is exclusive; scored_target_begin is the first target emitted by
+// this window. Throws std::out_of_range for an invalid window index.
+ScoreWindow ScoreWindowAt(const ScoreWindowPlan& plan,
+                          std::size_t window_index);
+
+struct ScoreMetadata {
+  std::size_t source_tokens = 0;
+  std::uint32_t context_size = 0;
+  std::uint32_t window_stride = 0;
+  std::size_t window_count = 0;
+};
+
+struct EntropyScoreResult {
+  std::vector<EntropyRecord> records;
+  ScoreMetadata metadata;
+};
+
 class EntropyScorer {
  public:
   EntropyScorer(const std::filesystem::path& model,
@@ -57,6 +91,7 @@ class EntropyScorer {
 
   std::string Score(std::string_view input);
   std::vector<EntropyRecord> ScoreRecords(std::string_view input);
+  EntropyScoreResult ScoreRecordsWithMetadata(std::string_view input);
 
  private:
   class Impl;

@@ -1,6 +1,7 @@
 #ifndef LLM_CC_ANALYZE_H_
 #define LLM_CC_ANALYZE_H_
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -14,10 +15,24 @@
 
 namespace llmcc {
 
+struct ScoringMetadata {
+  // Counts original source tokens, excluding a synthetic BOS token.
+  std::size_t source_tokens = 0;
+  std::uint32_t inference_context_tokens = 0;
+  std::uint32_t window_stride_tokens = 0;
+  std::size_t window_count = 0;
+};
+
+struct EntropyProviderResult {
+  std::vector<EntropyRecord> records;
+  ScoringMetadata metadata;
+  bool entropy_cache_hit = false;
+};
+
 class EntropyProvider {
  public:
   virtual ~EntropyProvider() = default;
-  virtual std::vector<EntropyRecord> Score(std::string_view source) = 0;
+  virtual EntropyProviderResult Score(std::string_view source) = 0;
 };
 
 class ScorerInitializationError : public std::runtime_error {
@@ -32,6 +47,7 @@ struct ProjectAnalysisOptions {
   bool cache = true;
   std::size_t hotspots = 10;
   HierarchyMode hierarchy_mode = HierarchyMode::kStructural;
+  std::uint32_t inference_context_tokens = 128U * 1024U;
 };
 
 struct FunctionScore {
@@ -51,6 +67,7 @@ struct Hotspot {
 struct FileAnalysisResult {
   Analysis analysis;
   bool entropy_cache_hit;
+  ScoringMetadata scoring;
   std::vector<FunctionScore> functions;
   std::vector<Hotspot> hotspots;
 };
@@ -66,7 +83,7 @@ class ProjectAnalyzer {
 
  private:
   EntropyProvider& Provider();
-  EntropyCacheLookup ReadRecords(std::string_view source);
+  EntropyProviderResult ReadRecords(std::string_view source);
 
   ProjectAnalysisOptions options_;
   ProviderFactory factory_;

@@ -23,7 +23,7 @@ struct EntropyRecord {
 std::vector<EntropyRecord> ParseEntropyJsonl(std::string_view input);
 std::vector<Token> AlignTokens(std::string_view source,
                                std::span<const EntropyRecord> records);
-void MapAnalysisOffsets(Analysis& analysis, std::span<const std::size_t> map);
+void MapAnalysisOffsets(Analysis& analysis, const OffsetMap& map);
 nlohmann::json AnalysisJson(const Analysis& analysis);
 std::string PrettyAnalysisJson(const Analysis& analysis);
 

@@ -48,7 +48,7 @@ nlohmann::json UnitJson(const Unit& unit) {
           {"children", std::move(children)}};
 }
 
-void MapUnit(Unit& unit, std::span<const std::size_t> map) {
+void MapUnit(Unit& unit, const OffsetMap& map) {
   std::vector<Unit*> pending = {&unit};
   while (!pending.empty()) {
     Unit& current = *pending.back();
@@ -56,8 +56,8 @@ void MapUnit(Unit& unit, std::span<const std::size_t> map) {
     if (current.start_byte >= map.size() || current.end_byte >= map.size()) {
       throw std::out_of_range("unit is outside the preprocessing offset map");
     }
-    current.start_byte = map[current.start_byte];
-    current.end_byte = map[current.end_byte];
+    current.start_byte = map.OriginalOffset(current.start_byte);
+    current.end_byte = map.OriginalOffset(current.end_byte);
     for (Unit& child : current.children) {
       pending.push_back(&child);
     }
@@ -178,7 +178,7 @@ std::vector<Token> AlignTokens(std::string_view source,
   return tokens;
 }
 
-void MapAnalysisOffsets(Analysis& analysis, std::span<const std::size_t> map) {
+void MapAnalysisOffsets(Analysis& analysis, const OffsetMap& map) {
   for (Unit& unit : analysis.units) {
     MapUnit(unit, map);
   }

@@ -394,6 +394,7 @@ cc_library(
         ":backend_policy",
         ":core",
         ":entropy_cache",
+        ":input_limits",
         ":jsonl",
         ":lang",
         ":project",
@@ -474,6 +475,7 @@ cc_library(
     deps = [
         ":progress",
         ":cache_io",
+        ":input_limits",
         ":jsonl",
         ":sha256",
         "@nlohmann_json//:json",
@@ -503,11 +505,17 @@ cc_library(
 )
 
 cc_library(
+    name = "input_limits",
+    hdrs = ["src/input_limits.h"],
+)
+
+cc_library(
     name = "lang",
     srcs = ["src/lang.cc"],
-    hdrs = ["src/lang.h"],
+    hdrs = ["src/lang.h", "src/offset_map.h"],
     deps = [
         ":core",
+        ":input_limits",
         "@tree_sitter//:tree_sitter",
         "@tree_sitter_c//:grammar",
         "@tree_sitter_c_sharp//:grammar",
@@ -552,6 +560,7 @@ cc_library(
         ":cache",
         ":download",
         ":inference_guard",
+        ":input_limits",
         ":jsonl",
         ":llama",
         ":models",
@@ -636,6 +645,7 @@ cc_binary(
         ":core",
         ":download",
         ":entropy_cache",
+        ":input_limits",
         ":jsonl",
         ":lang",
         ":models",
@@ -1015,6 +1025,7 @@ cc_test(
     srcs = ["src/analyze_test.cc"],
     deps = [
         ":analyze",
+        ":input_limits",
         ":test_util",
     ],
 )
@@ -1057,6 +1068,7 @@ cc_test(
     }),
     deps = [
         ":entropy_cache",
+        ":input_limits",
         ":lang",
         ":test_util",
         "@nlohmann_json//:json",
@@ -1116,6 +1128,22 @@ cc_test(
         ":lang",
         ":test_util",
     ],
+)
+
+cc_binary(
+    name = "lang_stress",
+    srcs = ["src/lang_stress.cc"],
+    deps = [":lang"],
+    tags = ["manual"],
+)
+
+cc_test(
+    name = "large_file_parse_test",
+    srcs = ["src/lang_stress.cc"],
+    args = ["10", "cpp", "representative"],
+    size = "medium",
+    timeout = "moderate",
+    deps = [":lang"],
 )
 
 cc_test(
@@ -1194,6 +1222,7 @@ test_suite(
         ":format_test",
         ":jsonl_test",
         ":lang_test",
+        ":large_file_parse_test",
         ":model_identity_test",
         ":models_test",
         ":project_test",
