@@ -78,7 +78,29 @@ and from CPU for the Qwen models.
 
 Models and checksums are pinned in `models.json`.
 
+## Data
+
+`summary.json` is the checked-in record `src/models.h` is derived from. The
+per-model entropy dumps and analyses behind it live on this repository's
+protected, append-only `data/tau-calibration` branch; the tag
+`data/tau-calibration-v1` marks the commit these results were taken from. They are mounted
+at `results/` as a submodule that is never fetched by default:
+
+```sh
+git submodule update --init --checkout experiments/tau-calibration/results
+```
+
 ## Reproduce
+
+```sh
+LLM_CC_BINARY=bazel-bin/llm-cc LLM_CC_INFERENCE='--backend rocm' \
+  experiments/tau-calibration/regenerate.sh --reference --publish
+```
+
+The script initializes `results/` and runs the steps below. Existing entropy
+dumps are reused, so delete a file to recompute it. `--reference` also reruns
+the authors' pipeline. `--publish` commits the new results to the data branch
+and stages the updated submodule pointer and `summary.json`.
 
 ```sh
 python3 prepare.py
