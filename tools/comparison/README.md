@@ -76,10 +76,26 @@ pull-request comments will link to it.
 `prepare` reads `.llm-cc/comparison-rules.json` from the **target** commit's
 tree. A pull request therefore cannot reclassify its own files, and rules that
 fail validation fail the run instead of silently reverting to the host defaults.
-Accepted keys are `exclude`, `tests`, `tooling` and `extensions`; glob lists hold
-non-empty patterns of at most 256 characters, at most 512 patterns in total, and
-the canonical document must stay under 64 KiB. Repositories without that file use
-the rules the host publishes.
+Accepted keys are `exclude`, `tests`, `tooling`, `extensions` and `paths`; glob
+lists hold non-empty patterns of at most 256 characters, at most 512 patterns in
+total including `paths`, and the canonical document must stay under 64 KiB.
+Repositories without that file use the rules the host publishes.
+
+`paths` is an ordered list of `{"pattern": <glob>, "language": <supported>}`
+objects that choose a language by location rather than by extension, for a
+repository where the same extension means different languages in different
+directories:
+
+```json
+{"paths": [{"pattern": "include/legacy/**/*.h", "language": "c"}]}
+```
+
+Patterns match the full repository path, case-sensitively, like the category
+globs. The first matching `paths` rule wins, then `extensions`, then the
+built-in extension table. The resolved language is part of a file's cache key,
+so the same bytes under two differently overridden directories are scored
+separately. Symlinks and submodules stay unscorable whatever rule matches
+them.
 
 Run without Bazel using `python3 -m tools.comparison prepare` (Python 3.11+ and
 Git). A consuming module can run `@llm_cc//tools/comparison:prepare`, including

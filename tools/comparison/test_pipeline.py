@@ -17,10 +17,12 @@ from tools.comparison.inventory import (
     _classify,
     inventory,
     merge_base,
+    resolve_language,
     validate_rules,
 )
 from tools.comparison.pipeline import (
     _assemble,
+    _changed_files,
     _code,
     _delta,
     _render,
@@ -908,6 +910,199 @@ print(json.dumps({'type':'totals','discovered':len(paths),'analyzed':len(paths),
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PathLanguageRulesTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.repo = Path(self.temp.name) / "repo"
+        (self.repo / "c").mkdir(parents=True)
+        (self.repo / "cpp").mkdir(parents=True)
+        git(self.repo, "init", "-q")
+        (self.repo / "c/x.h").write_text("int shared(void);\n")
+        (self.repo / "cpp/x.h").write_text("int shared(void);\n")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "base")
+        self.base = git(self.repo, "rev-parse", "HEAD")
+        self.head = self.base
+        self.rules = {
+            "paths": [
+                {"pattern": "cpp/**", "language": "cpp"},
+                {"pattern": "c/**", "language": "c"},
+            ]
+        }
+        self.profile = {
+            "scoring": {"tau": 0.67},
+            "build": {"source_commit": "abc"},
+            "max_file_bytes": 1024,
+        }
+        self.identity = {
+            "repository": "o/r",
+            "pipeline_id": "p",
+            "target_branch": "main",
+            "pr_number": 1,
+            "started_at": "2026-01-01T00:00:00Z",
+        }
+
+    def _prepare(self, name, rules=None, head=None, target=None):
+        return prepare(
+            self.repo,
+            head or self.head,
+            target or self.base,
+            self.identity,
+            self.profile,
+            self.rules if rules is None else rules,
+            MemoryCache(),
+            Path(self.temp.name) / name,
+            1,
+        )
+
+    def test_path_rules_select_language_before_keys(self):
+        plan = self._prepare("paths")
+        by_path = {record["path"]: record for record in plan["inventories"]["head"]}
+        self.assertEqual(by_path["c/x.h"]["language"], "c")
+        self.assertEqual(by_path["cpp/x.h"]["language"], "cpp")
+        self.assertEqual(
+            by_path["c/x.h"]["content_sha256"], by_path["cpp/x.h"]["content_sha256"]
+        )
+        self.assertNotEqual(by_path["c/x.h"]["key"], by_path["cpp/x.h"]["key"])
+        self.assertEqual(len(plan["items"]), 2)
+        default = self._prepare("default", rules={})
+        defaults = {record["path"]: record for record in default["inventories"]["head"]}
+        self.assertEqual(defaults["cpp/x.h"]["language"], "c")
+        self.assertEqual(len(default["items"]), 1)
+
+    def test_overlapping_path_rules_first_match_wins_over_extensions(self):
+        rules = {
+            "paths": [
+                {"pattern": "cpp/x.h", "language": "cpp"},
+                {"pattern": "cpp/**", "language": "rust"},
+            ],
+            "extensions": {".h": "python"},
+        }
+        plan = self._prepare("precedence", rules=rules)
+        by_path = {record["path"]: record for record in plan["inventories"]["head"]}
+        self.assertEqual(by_path["cpp/x.h"]["language"], "cpp")
+        self.assertEqual(by_path["c/x.h"]["language"], "python")
+        self.assertEqual(
+            resolve_language("other/x.h", {"extensions": {".h": "python"}}), "python"
+        )
+        self.assertEqual(resolve_language("other/x.h", {}), "c")
+
+    def test_rename_between_language_overridden_directories(self):
+        (self.repo / "c/moved.h").write_text("int moved(void);\n")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "add movable header")
+        base = git(self.repo, "rev-parse", "HEAD")
+        git(self.repo, "mv", "c/moved.h", "cpp/moved.h")
+        git(self.repo, "commit", "-qm", "move header")
+        head = git(self.repo, "rev-parse", "HEAD")
+        plan = self._prepare("rename", head=head, target=base)
+        statuses = {
+            (change["old_path"], change["new_path"]): change["status"]
+            for change in plan["changes"]
+        }
+        self.assertIn(("c/moved.h", "cpp/moved.h"), statuses)
+        self.assertTrue(statuses[("c/moved.h", "cpp/moved.h")].startswith("R"))
+        base_records = {r["path"]: r for r in plan["inventories"]["base"]}
+        head_records = {r["path"]: r for r in plan["inventories"]["head"]}
+        self.assertEqual(base_records["c/moved.h"]["language"], "c")
+        self.assertEqual(head_records["cpp/moved.h"]["language"], "cpp")
+        base_key = base_records["c/moved.h"]["key"]
+        head_key = head_records["cpp/moved.h"]["key"]
+        self.assertNotEqual(base_key, head_key)
+        results = {
+            key: {
+                "schema_version": 1,
+                "key": key,
+                "fingerprint": plan["fingerprint"],
+                "content_sha256": plan["items"][key]["content_sha256"],
+                "language": plan["items"][key]["language"],
+                "llm_cc": 4.0 if key == head_key else 2.0,
+                "token_count": 2,
+            }
+            for key in plan["items"]
+        }
+        rows = _changed_files(
+            plan["changes"],
+            {record["path"]: record for record in plan["inventories"]["base"]},
+            {record["path"]: record for record in plan["inventories"]["head"]},
+            results,
+            [],
+        )
+        moved = [row for row in rows if row["path"] == "cpp/moved.h"]
+        self.assertEqual(len(moved), 1)
+        self.assertEqual(moved[0]["base"]["score"], 1.0)
+        self.assertEqual(moved[0]["head"]["score"], 2.0)
+
+    def test_path_rules_apply_to_both_revisions_from_target_rules(self):
+        (self.repo / ".llm-cc").mkdir()
+        (self.repo / ".llm-cc/comparison-rules.json").write_text(json.dumps(self.rules))
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "target rules")
+        target = git(self.repo, "rev-parse", "HEAD")
+        (self.repo / ".llm-cc/comparison-rules.json").write_text(
+            json.dumps({"paths": [{"pattern": "**", "language": "rust"}]})
+        )
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "head rules")
+        head = git(self.repo, "rev-parse", "HEAD")
+        plan = prepare(
+            self.repo,
+            head,
+            target,
+            self.identity,
+            self.profile,
+            {},
+            MemoryCache(),
+            Path(self.temp.name) / "target-rules",
+            1,
+        )
+        self.assertEqual(plan["rules_source"]["source"], "repository")
+        for side in ("base", "head"):
+            by_path = {record["path"]: record for record in plan["inventories"][side]}
+            self.assertEqual(by_path["c/x.h"]["language"], "c")
+            self.assertEqual(by_path["cpp/x.h"]["language"], "cpp")
+
+    @unittest.skipUnless(os.name == "posix", "symlink creation requires POSIX")
+    def test_path_rules_do_not_follow_symlinks_or_submodules(self):
+        (self.repo / "cpp/link.h").symlink_to("x.h")
+        subprocess.run(
+            ["git", "-C", str(self.repo), "update-index", "--add", "--cacheinfo",
+             "160000,%s,cpp/module" % self.base],
+            check=True,
+        )
+        git(self.repo, "add", "cpp/link.h")
+        git(self.repo, "commit", "-qm", "link and submodule")
+        head = git(self.repo, "rev-parse", "HEAD")
+        plan = self._prepare("symlinks", head=head)
+        by_path = {record["path"]: record for record in plan["inventories"]["head"]}
+        self.assertEqual(by_path["cpp/link.h"]["reason"], "symlink")
+        self.assertFalse(by_path["cpp/link.h"]["scorable"])
+        self.assertEqual(by_path["cpp/module"]["reason"], "submodule")
+        self.assertFalse(by_path["cpp/module"]["scorable"])
+
+    def test_invalid_path_rules_rejected(self):
+        for paths in (
+            {},
+            "cpp/**",
+            [["cpp/**", "cpp"]],
+            [{"pattern": "cpp/**"}],
+            [{"language": "cpp"}],
+            [{"pattern": "cpp/**", "language": "cpp", "extra": 1}],
+            [{"pattern": "", "language": "cpp"}],
+            [{"pattern": "c" * 257, "language": "cpp"}],
+            [{"pattern": "cpp/**", "language": "brainfuck"}],
+            [{"pattern": "cpp/**", "language": None}],
+            [{"pattern": 7, "language": "cpp"}],
+        ):
+            with self.subTest(paths=paths), self.assertRaises(ValueError):
+                validate_rules({"paths": paths})
+        many = [{"pattern": "p%d" % index, "language": "c"} for index in range(500)]
+        validate_rules({"paths": many})
+        with self.assertRaisesRegex(ValueError, "512 glob patterns"):
+            validate_rules({"paths": many, "exclude": ["x"] * 13})
 
 
 class DelayedFailingCache(MemoryCache):

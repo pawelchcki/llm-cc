@@ -66,8 +66,15 @@ Preparation `plan.json`:
  cache_stats: {...}}
 ```
 Classification rules accept only `exclude`, `tests`, `tooling` (glob lists of
-non-empty strings up to 256 characters, 512 patterns in total) and `extensions`
-(lowercase `.<ext>` to a supported language), at most 64 KiB canonical.
+non-empty strings up to 256 characters), `extensions` (lowercase `.<ext>` to a
+supported language) and `paths` (an ordered list of
+`{pattern: <glob>, language: <supported>}` objects), 512 patterns in total
+across the glob lists and `paths`, at most 64 KiB canonical. Language
+resolution takes the first matching `paths` rule, then `extensions`, then the
+built-in extension table; patterns match the full repository path with
+`fnmatchcase`. The resolved language is part of the file key, so the same bytes
+under two overridden directories are separate cache entries. Symlinks and
+submodules keep their unscorable reason whatever rule matches them.
 `prepare` reads `.llm-cc/comparison-rules.json` from the **target** commit's tree
 when present, so a pull request cannot reclassify its own files; invalid
 repository rules fail the run instead of falling back to host rules.
