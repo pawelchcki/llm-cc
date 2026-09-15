@@ -5,8 +5,9 @@
 #     experiments/tau-calibration/regenerate.sh [--reference] [--publish]
 #
 # Results are written to the `results` submodule, which tracks the protected
-# `data/tau-calibration` branch. Existing entropy dumps are reused; delete one
-# to recompute it. --reference reruns the authors' CodeLlama-7b-hf pipeline
+# `data/tau-calibration` branch. An entropy dump is reused only when its
+# recorded inputs match this run; run.py stops on a mismatch, and deleting the
+# dump recomputes it. --reference reruns the authors' CodeLlama-7b-hf pipeline
 # (needs torch, transformers, tree_sitter). --publish commits the results to
 # the data branch and stages the new submodule pointer and summary here.
 set -euo pipefail

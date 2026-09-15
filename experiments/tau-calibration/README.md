@@ -97,8 +97,10 @@ LLM_CC_BINARY=bazel-bin/llm-cc LLM_CC_INFERENCE='--backend rocm' \
   experiments/tau-calibration/regenerate.sh --reference --publish
 ```
 
-The script initializes `results/` and runs the steps below. Existing entropy
-dumps are reused, so delete a file to recompute it. `--reference` also reruns
+The script initializes `results/` and runs the steps below. An existing entropy
+dump is reused only when its recorded model checksum, corpus, llm-cc version,
+and inference flags match the current run; otherwise the run stops, and you
+delete the file to recompute it. `--reference` also reruns
 the authors' pipeline. `--publish` commits the new results to the data branch
 and stages the updated submodule pointer and `summary.json`.
 

@@ -45,9 +45,25 @@ def verified_model(work, model):
     return path
 
 
+def entropy_inputs(args, files, model):
+    """Everything an entropy dump depends on; a dump is reused only on a match."""
+    return dict(model_sha256=model["sha256"],
+                corpus_sha256=hashlib.sha256(
+                    json.dumps(files, sort_keys=True).encode()).hexdigest(),
+                binary_version=subprocess.check_output([str(args.binary), "--version"],
+                                                       text=True).strip(),
+                inference=args.inference)
+
+
 def entropy(args, root, files, model):
     target = root / "results" / f"{model['name']}.entropy.json.gz"
+    inputs = entropy_inputs(args, files, model)
     if target.exists():
+        with gzip.open(target, "rt") as stream:
+            recorded = json.load(stream).get("inputs")
+        if recorded != inputs:
+            raise SystemExit(f"{target} was produced from different or unrecorded inputs "
+                             f"(recorded {recorded}, current {inputs}); delete it to recompute")
         print(f"already complete: {target.name}", flush=True)
         return
     path = verified_model(args.work, model)
@@ -67,8 +83,7 @@ def entropy(args, root, files, model):
         print(f"{model['name']} {index}/{len(files)} {row['id']}", flush=True)
     record = dict(model=model["name"], sha256=model["sha256"], command_template=command[:1] +
                   ["score", "--model", model["file"], "--file", "PROGRAM", *command[6:]],
-                  binary_version=subprocess.check_output([str(args.binary), "--version"],
-                                                         text=True).strip(),
+                  binary_version=inputs["binary_version"], inputs=inputs,
                   wall_seconds=time.monotonic() - started, entropies=rows)
     with gzip.open(target, "wt") as stream:
         json.dump(record, stream)
