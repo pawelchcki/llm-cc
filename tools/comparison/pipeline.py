@@ -2,6 +2,7 @@ import datetime
 import hashlib
 import json
 import os
+import re
 import unicodedata
 from pathlib import Path
 
@@ -374,7 +375,12 @@ def _code(text, table=False):
         value = value[:head] + "…" + value[len(value) - tail :]
     if table:
         # GFM splits table cells on every unescaped pipe, code spans included.
-        value = value.replace("|", "\\|")
+        # Double any backslash run already in front of a pipe: "a\\|b" would
+        # otherwise escape the backslash and leave the pipe splitting the cell.
+        # Backslashes elsewhere are literal and stay as they are.
+        value = re.sub(
+            r"(\\*)\|", lambda match: "\\" * (2 * len(match.group(1))) + r"\|", value
+        )
     longest = run = 0
     for character in value:
         run = run + 1 if character == "`" else 0

@@ -79,7 +79,13 @@ def resolve_checkout(repo=".", environment=None, default_branch=None):
     head = head.lower()
     # BuildBuddy checks pull requests out at a synthetic merge commit whose
     # first parent is the actual PR head. Compare the head the PR proposes.
-    if _git(repo, "show", "-s", "--format=%ce", head) == CI_MERGE_COMMITTER:
+    # The committer email alone is attacker-controlled, so require the merge
+    # shape too: an ordinary commit forged with that email keeps its own SHA
+    # instead of silently unwrapping to its parent and losing PR discovery.
+    committer, parents = (
+        _git(repo, "show", "-s", "--format=%ce%n%P", head).split("\n", 1) + [""]
+    )[:2]
+    if committer == CI_MERGE_COMMITTER and len(parents.split()) >= 2:
         head = _git(repo, "rev-parse", head + "^1")
     branch = environment.get("GIT_BRANCH") or _git(repo, "branch", "--show-current")
     if not branch:

@@ -348,11 +348,17 @@ def validate_report_links(links):
             for character in template
         ):
             raise ValueError("report link %s contains unsupported characters" % name)
-        fields = [
-            field
-            for _, field, _, _ in string.Formatter().parse(template)
-            if field is not None
-        ]
+        fields = []
+        for _, field, specification, conversion in string.Formatter().parse(template):
+            if field is None:
+                continue
+            # A nested spec such as {repository:{secret}} parses as the allowed
+            # field, then fails or pads at format time. Accept plain fields only.
+            if specification or conversion:
+                raise ValueError(
+                    "report link %s must use plain {placeholder} fields" % name
+                )
+            fields.append(field)
         unknown = set(fields) - set(REPORT_LINK_PLACEHOLDERS)
         if unknown:
             raise ValueError(

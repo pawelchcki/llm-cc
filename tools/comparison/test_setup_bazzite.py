@@ -325,6 +325,23 @@ class BazziteSetupTest(unittest.TestCase):
             self.assertEqual(path.read_bytes(), b"new")
             self.assertEqual(list(path.parent.iterdir()), [path])
 
+    @unittest.skipUnless(os.name == "posix", "host publishing requires POSIX")
+    def test_published_directories_stay_traversable_under_a_strict_umask(self):
+        # The non-root executors must traverse every published directory. A
+        # hardened root umask would otherwise leave a fresh 0700 parent and
+        # break the launcher for every consumer workflow.
+        previous = os.umask(0o077)
+        try:
+            with tempfile.TemporaryDirectory() as temporary:
+                path = Path(temporary) / "assets/bin/llm-cc-coordinate"
+                atomic_publish(path, b"#!/bin/sh\n", 0o755)
+                self.assertEqual(path.stat().st_mode & 0o777, 0o755)
+                for parent in (path.parent, path.parent.parent):
+                    with self.subTest(parent=parent.name):
+                        self.assertEqual(parent.stat().st_mode & 0o755, 0o755)
+        finally:
+            os.umask(previous)
+
 
 def git(repo, *args):
     environment = os.environ | {
@@ -374,6 +391,29 @@ class CheckoutResolutionTest(unittest.TestCase):
         self.assertEqual(head, side)
         self.assertEqual(branch, "feature")
         self.assertEqual(default, "main")
+
+    def test_forged_committer_on_a_non_merge_commit_is_not_unwrapped(self):
+        # The committer email is attacker-controlled. Unwrapping an ordinary
+        # commit would substitute its parent and break PR discovery, so the
+        # two-parent merge shape has to agree before the head is replaced.
+        git(self.repo, "checkout", "-q", "-b", "forged")
+        (self.repo / "c.txt").write_text("c\n")
+        git(self.repo, "add", ".")
+        subprocess.check_call(
+            ["git", "-C", str(self.repo), "commit", "-qm", "forged"],
+            env=os.environ
+            | {
+                "GIT_AUTHOR_NAME": "CI",
+                "GIT_AUTHOR_EMAIL": "ci-runner@buildbuddy.io",
+                "GIT_COMMITTER_NAME": "CI",
+                "GIT_COMMITTER_EMAIL": "ci-runner@buildbuddy.io",
+            },
+        )
+        forged = git(self.repo, "rev-parse", "HEAD")
+        head, _, _ = resolve_checkout(
+            self.repo, {"GIT_COMMIT": forged, "GIT_BRANCH": "forged"}
+        )
+        self.assertEqual(head, forged)
 
     def test_default_branch_precedence_and_checkout_fallbacks(self):
         head, branch, default = resolve_checkout(self.repo, {})
@@ -425,6 +465,11 @@ class ReportLinkTest(unittest.TestCase):
             {"baseline": "https://ci.example/<script>"},
             {"BASELINE": "https://ci.example/x"},
             {"baseline": 7},
+            # A nested spec hides an unknown field from the placeholder check
+            # and fails at format time; a width inflates the URL.
+            {"baseline": "https://ci.example/{repository:{secret}}"},
+            {"baseline": "https://ci.example/{repository:100000}"},
+            {"baseline": "https://ci.example/{repository!r}"},
         ):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                 validate_report_links(invalid)

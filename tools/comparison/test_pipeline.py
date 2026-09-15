@@ -222,6 +222,26 @@ class PipelineTest(unittest.TestCase):
         self.assertLessEqual(len(rendered.strip("`")), 121)
         self.assertTrue(rendered.strip("`").startswith("d/xxx"))
 
+    def test_table_cells_escape_pipes_behind_literal_backslashes(self):
+        # A backslash run in front of a pipe must be doubled, or GFM consumes
+        # the escape and the bare pipe ends the cell mid-path.
+        self.assertEqual(_code("a|b", table=True), "`a\\|b`")
+        self.assertEqual(_code("a\\|@team.cc", table=True), "`a\\\\\\|@team.cc`")
+        self.assertEqual(_code("a\\\\|b", table=True), "`a\\\\\\\\\\|b`")
+        # Backslashes not in front of a pipe are literal and stay untouched.
+        self.assertEqual(_code("odd\\u000aname.py", table=True), "`odd\\u000aname.py`")
+        for path in ("a|b", "a\\|b", "a\\\\|b"):
+            with self.subTest(path=path):
+                cell = _code(path, table=True)
+                # Every pipe carries an odd number of preceding backslashes.
+                for index, character in enumerate(cell):
+                    if character != "|":
+                        continue
+                    run = 0
+                    while index - run - 1 >= 0 and cell[index - run - 1] == "\\":
+                        run += 1
+                    self.assertEqual(run % 2, 1, cell)
+
     def test_report_links_and_repository_rules_are_announced(self):
         markdown = _render(
             self._report(

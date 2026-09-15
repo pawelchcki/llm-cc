@@ -63,10 +63,20 @@ def package_bundle(source_root):
     return payload, hashlib.sha256(payload).hexdigest()
 
 
-def atomic_publish(path, payload, mode=0o644):
+def atomic_publish(path, payload, mode=0o644, directory_mode=0o755):
     """Publish complete bytes, preserving any concurrent reader's prior file."""
     path = Path(path)
+    # The non-root executor users must traverse and read every published
+    # directory. mkdir applies the ambient umask, so a hardened root umask such
+    # as 0077 would otherwise leave 0700 here and break every workflow.
+    created = [
+        parent
+        for parent in (path.parent, *path.parent.parents)
+        if not parent.exists()
+    ]
     path.parent.mkdir(parents=True, exist_ok=True)
+    for parent in created:
+        os.chmod(parent, directory_mode)
     descriptor, temporary = tempfile.mkstemp(prefix=".publish-", dir=path.parent)
     try:
         with os.fdopen(descriptor, "wb") as stream:
