@@ -136,6 +136,11 @@ SHA-256 over the complete body. Each bundle is accompanied by a checksum and
 `manifest.json`; the manifest records the backend name, llm-cc version, build
 Git SHA, compatibility fields, bundle SHA-256, and size.
 
+The backend configuration fingerprint (`LLM_CC_BACKEND_CONFIGURATION`) hashes
+every file that can change the produced backend binaries, including every patch
+applied to a pinned backend dependency; `//:provenance_test` fails if a patch is
+applied without joining that list.
+
 Stamped binaries contain an artifact base URL. For development builds it is
 formed from the configured resolver as
 `<resolver>/<owner>/<repo>/<sha>`, and bundle downloads append `<file>`, giving
