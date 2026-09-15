@@ -174,7 +174,11 @@ restricted by the writer's umask/default ACL. For executor accounts sharing a
 filesystem cache, provision its root with their shared group and mode `2770`,
 and run each stage with umask `0007` so new
 directories and objects remain accessible to that group. An owner-only deployment
-can use umask `0077`. S3 requires the optional `boto3`
+can use umask `0077`. Preparation reads cached results in
+parallel, bounded by `--cache-concurrency` (default 8, maximum 64); the bound
+also applies to restoring native entropy entries in a worker. Read or
+authentication errors still fail the run, and the plan does not depend on the
+bound. S3 requires the optional `boto3`
 dependency in coordinator and worker environments. A `--store-options` JSON file
 can contain `endpoint_url` and `region_name`; provide credentials through the AWS
 environment/provider chain, never in plan artifacts. Read/authentication/transport

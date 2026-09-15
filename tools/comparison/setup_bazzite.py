@@ -245,6 +245,7 @@ def configure(args):
         "worker_env": {},
         "platform_properties": {"EstimatedComputeUnits": "1"},
         "max_workers": 1,
+        "cache_concurrency": 8,
         "refresh_days": 20,
         "expire_days": 30,
         "report_links": links,

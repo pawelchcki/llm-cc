@@ -25,6 +25,7 @@ def _common(parser):
     parser.add_argument("--cache", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--max-workers", type=int, default=4)
+    parser.add_argument("--cache-concurrency", type=int, default=8)
     parser.add_argument("--refresh-days", type=int, default=20)
     parser.add_argument("--expire-days", type=int, default=30)
     parser.add_argument("--store-options")
@@ -95,6 +96,7 @@ def _run(args):
         cache=cache,
         output_dir=args.output_dir,
         max_workers=args.max_workers,
+        cache_concurrency=args.cache_concurrency,
     )
     if args.command == "prepare":
         prepare(**kwargs)

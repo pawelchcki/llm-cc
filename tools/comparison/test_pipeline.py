@@ -3,11 +3,14 @@ import html
 import os
 import subprocess
 import tempfile
+import threading
+import time
 import unittest
 from unittest import mock
 from pathlib import Path
 
-from tools.comparison.cache import FilesystemStore, ResultCache
+from tools.comparison.__main__ import parser
+from tools.comparison.cache import CacheError, FilesystemStore, ResultCache
 from tools.comparison.common import write_json
 from tools.comparison.inventory import (
     GitError,
@@ -905,3 +908,195 @@ print(json.dumps({'type':'totals','discovered':len(paths),'analyzed':len(paths),
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DelayedFailingCache(MemoryCache):
+    """Counts concurrent lookups and can fail or corrupt individual keys."""
+
+    def __init__(self, values=None, delay=0.0, failing=(), invalid=()):
+        super().__init__(values)
+        self.delay = delay
+        self.failing = set(failing)
+        self.invalid = set(invalid)
+        self.lock = threading.Lock()
+        self.started = 0
+        self.completed = 0
+        self.in_flight = 0
+        self.max_in_flight = 0
+
+    def get(self, item, fingerprint):
+        key = item["key"]
+        with self.lock:
+            self.started += 1
+            self.in_flight += 1
+            self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        try:
+            time.sleep(self.delay)
+            if key in self.failing:
+                raise CacheError("store unavailable")
+            if key in self.invalid:
+                return {"schema_version": 1, "key": "wrong"}
+            with self.lock:
+                self.completed += 1
+            return self.values.get(key)
+        finally:
+            with self.lock:
+                self.in_flight -= 1
+
+
+class PrepareConcurrencyTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.repo = Path(self.temp.name) / "repo"
+        self.repo.mkdir()
+        git(self.repo, "init", "-q")
+        for index in range(6):
+            (self.repo / ("file%d.cc" % index)).write_text("int v%d;\n" % index)
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "base")
+        self.base = git(self.repo, "rev-parse", "HEAD")
+        (self.repo / "file0.cc").write_text("int changed;\n")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "head")
+        self.head = git(self.repo, "rev-parse", "HEAD")
+        self.profile = {
+            "scoring": {"tau": 0.67},
+            "build": {"source_commit": "abc"},
+            "max_file_bytes": 1024,
+        }
+        self.identity = {
+            "repository": "o/r",
+            "pipeline_id": "p",
+            "target_branch": "main",
+            "pr_number": 1,
+            "started_at": "2026-01-01T00:00:00Z",
+        }
+
+    def _results(self, keys, plan):
+        return {
+            key: {
+                "schema_version": 1,
+                "key": key,
+                "fingerprint": plan["fingerprint"],
+                "content_sha256": plan["items"][key]["content_sha256"],
+                "language": plan["items"][key]["language"],
+                "llm_cc": 1.0,
+                "token_count": 1,
+            }
+            for key in keys
+        }
+
+    def _prepare(self, cache, name, concurrency):
+        return prepare(
+            self.repo,
+            self.head,
+            self.base,
+            self.identity,
+            self.profile,
+            {},
+            cache,
+            Path(self.temp.name) / name,
+            1,
+            cache_concurrency=concurrency,
+        )
+
+    def test_concurrent_plan_equals_sequential_plan(self):
+        cold = self._prepare(MemoryCache(), "cold", 1)
+        values = self._results(cold["items"], cold)
+        sequential = self._prepare(DelayedFailingCache(values), "sequential", 1)
+        concurrent_plan = self._prepare(DelayedFailingCache(values), "concurrent", 8)
+        self.assertEqual(
+            (Path(self.temp.name) / "sequential" / "plan.json").read_bytes(),
+            (Path(self.temp.name) / "concurrent" / "plan.json").read_bytes(),
+        )
+        self.assertEqual(sequential, concurrent_plan)
+        self.assertEqual(concurrent_plan["workers"], [])
+        self.assertEqual(concurrent_plan["cache_stats"]["misses"], 0)
+
+    def test_lookup_concurrency_is_bounded(self):
+        cold = self._prepare(MemoryCache(), "cold", 1)
+        values = self._results(cold["items"], cold)
+        self.assertGreater(len(values), 2)
+        for bound in (1, 2):
+            cache = DelayedFailingCache(values, delay=0.02)
+            self._prepare(cache, "bounded-%d" % bound, bound)
+            self.assertEqual(cache.started, len(values))
+            self.assertLessEqual(cache.max_in_flight, bound)
+
+    def test_store_failure_cancels_queued_lookups(self):
+        cold = self._prepare(MemoryCache(), "cold", 1)
+        values = self._results(cold["items"], cold)
+        failing = sorted(values)[0]
+        cache = DelayedFailingCache(values, delay=0.01, failing=[failing])
+        with self.assertRaises(CacheError):
+            self._prepare(cache, "failing", 2)
+        self.assertLessEqual(cache.started, cache.completed + 2)
+        self.assertLess(cache.started, len(values))
+
+    def test_invalid_entries_remain_misses_under_concurrency(self):
+        cold = self._prepare(MemoryCache(), "cold", 1)
+        values = self._results(cold["items"], cold)
+        invalid = sorted(values)[0]
+        cache = DelayedFailingCache(values, invalid=[invalid])
+        plan = self._prepare(cache, "invalid", 8)
+        self.assertEqual(plan["cache_stats"]["misses"], 1)
+        self.assertNotIn(invalid, plan["hits"])
+        self.assertEqual([invalid], plan["workers"][0]["keys"])
+
+    def test_cache_concurrency_bounds_validated(self):
+        for value in (0, -1, 65, True, 1.0, "8"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self._prepare(MemoryCache(), "invalid-bound", value)
+
+    def test_command_line_exposes_the_bound(self):
+        arguments = parser().parse_args(
+            [
+                "prepare",
+                "--repo",
+                ".",
+                "--head",
+                "h",
+                "--target",
+                "t",
+                "--identity",
+                "i",
+                "--profile",
+                "p",
+                "--rules",
+                "r",
+                "--cache",
+                "c",
+                "--output-dir",
+                "o",
+            ]
+        )
+        self.assertEqual(arguments.cache_concurrency, 8)
+        self.assertEqual(
+            parser()
+            .parse_args(
+                [
+                    "compare",
+                    "--repo",
+                    ".",
+                    "--head",
+                    "h",
+                    "--target",
+                    "t",
+                    "--identity",
+                    "i",
+                    "--profile",
+                    "p",
+                    "--rules",
+                    "r",
+                    "--cache",
+                    "c",
+                    "--output-dir",
+                    "o",
+                    "--cache-concurrency",
+                    "3",
+                ]
+            )
+            .cache_concurrency,
+            3,
+        )

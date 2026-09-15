@@ -4,10 +4,11 @@ import os
 import stat
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 
-from tools.comparison.cache import FilesystemStore, ResultCache
+from tools.comparison.cache import CacheError, FilesystemStore, ResultCache
 
 
 def item():
@@ -142,6 +143,52 @@ class CacheTest(unittest.TestCase):
             path = next(Path(directory).rglob("*.cbor"))
             path.write_text("not-json")
             self.assertEqual(cache.native_entropy("f" * 64), {})
+
+    def test_native_entries_read_concurrently_and_fail_fast(self):
+        class CountingStore(FilesystemStore):
+            def __init__(self, root, failing=None):
+                super().__init__(root)
+                self.failing = failing
+                self.lock = threading.Lock()
+                self.started = 0
+                self.in_flight = 0
+                self.max_in_flight = 0
+
+            def get(self, key):
+                with self.lock:
+                    self.started += 1
+                    self.in_flight += 1
+                    self.max_in_flight = max(self.max_in_flight, self.in_flight)
+                try:
+                    time.sleep(0.01)
+                    if self.failing and key.endswith(self.failing):
+                        raise CacheError("store unavailable")
+                    return super().get(key)
+                finally:
+                    with self.lock:
+                        self.in_flight -= 1
+
+        with tempfile.TemporaryDirectory() as directory:
+            names = ["entry%d.cbor" % index for index in range(6)]
+            writer = ResultCache(FilesystemStore(directory))
+            for name in names:
+                writer.put_native_entropy("f" * 64, name, name.encode())
+            store = CountingStore(directory)
+            cache = ResultCache(store)
+            self.assertEqual(
+                cache.native_entropy("f" * 64, 4),
+                {name: name.encode() for name in names},
+            )
+            self.assertLessEqual(store.max_in_flight, 4)
+            self.assertGreater(store.max_in_flight, 1)
+            failing = ResultCache(CountingStore(directory, failing="entry0.cbor"))
+            with self.assertRaises(CacheError):
+                failing.native_entropy("f" * 64, 4)
+            for concurrency in (0, 65, True, "4"):
+                with self.subTest(concurrency=concurrency):
+                    self.assertRaises(
+                        ValueError, cache.native_entropy, "f" * 64, concurrency
+                    )
 
     def test_malformed_native_timestamp_is_cache_miss(self):
         with tempfile.TemporaryDirectory() as directory:

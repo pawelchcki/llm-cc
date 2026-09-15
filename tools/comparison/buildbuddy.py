@@ -643,6 +643,7 @@ def coordinate(args):
             config.get("max_workers", 4),
             config.get("repository_rules_path", REPOSITORY_RULES_PATH),
             {"report_links": report_links(config, identity)},
+            config.get("cache_concurrency", 8),
         )
         api = BuildBuddy(
             config.get("endpoint", "https://pawel.buildbuddy.io"),

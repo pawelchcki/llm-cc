@@ -23,6 +23,11 @@ from .common import validate_execution_policy
 from .deadline import Deadline, DeadlineExceeded
 
 
+# Restoring a native entropy cache is many small reads; the bound keeps a
+# high-latency object store from serializing them one round trip at a time.
+NATIVE_ENTROPY_CONCURRENCY = 8
+
+
 class WorkerError(RuntimeError):
     pass
 
@@ -576,7 +581,9 @@ def _run_worker(
             entropy_root = Path(entropy_dir)
             native_dir = entropy_root / "v2" / "entropy"
             native_dir.mkdir(parents=True)
-            for name, contents in cache.native_entropy(plan["fingerprint"]).items():
+            for name, contents in cache.native_entropy(
+                plan["fingerprint"], NATIVE_ENTROPY_CONCURRENCY
+            ).items():
                 if time.monotonic() > deadline:
                     raise WorkerError(
                         "worker deadline exceeded during native cache restore"

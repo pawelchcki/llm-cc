@@ -7,6 +7,7 @@ rather than a way to silently contaminate a comparison.
 
 from __future__ import annotations
 
+import concurrent.futures
 import hashlib
 import json
 import math
@@ -20,6 +21,34 @@ from typing import Any
 
 class CacheError(RuntimeError):
     """A store could not be read or written (as opposed to an invalid entry)."""
+
+
+def _read_many(store: Any, keys: list[str], concurrency: int):
+    """Yield (key, bytes) in key order, reading with bounded concurrency.
+
+    The first failure cancels queued reads and propagates, so a broken store
+    fails the run instead of quietly degrading into cache misses.
+    """
+    if concurrency == 1 or len(keys) <= 1:
+        for key in keys:
+            yield key, store.get(key)
+        return
+    executor = concurrent.futures.ThreadPoolExecutor(
+        max_workers=concurrency, thread_name_prefix="cache-read"
+    )
+    try:
+        pending = {executor.submit(store.get, key): key for key in keys}
+        values = {}
+        for future in concurrent.futures.as_completed(pending):
+            try:
+                values[pending[future]] = future.result()
+            except BaseException:
+                executor.shutdown(wait=False, cancel_futures=True)
+                raise
+    finally:
+        executor.shutdown(wait=True)
+    for key in keys:
+        yield key, values[key]
 
 
 def _canonical(value: Any) -> bytes:
@@ -318,16 +347,22 @@ class ResultCache:
     def put_entropy(self, key: str, value: bytes) -> None:
         self.store.put("entropy/" + key, value)
 
-    def native_entropy(self, fingerprint: str) -> dict[str, bytes]:
+    def native_entropy(
+        self, fingerprint: str, concurrency: int = 1
+    ) -> dict[str, bytes]:
         """Return individually checksummed native-cache files for a fingerprint.
 
         llm-cc independently checks its CBOR provenance when it consumes these;
         this layer verifies transport integrity and keeps model configurations
-        isolated before they reach that parser.
+        isolated before they reach that parser. Reads run with bounded
+        concurrency and fail on the first transport error; invalid entries are
+        still skipped.
         """
+        if type(concurrency) is not int or not 1 <= concurrency <= 64:
+            raise ValueError("concurrency must be between 1 and 64")
         output = {}
-        for key in self.store.list("entropy/" + fingerprint + "/"):
-            raw = self.store.get(key)
+        keys = sorted(self.store.list("entropy/" + fingerprint + "/"))
+        for key, raw in _read_many(self.store, keys, concurrency):
             if raw is None:
                 continue
             try:

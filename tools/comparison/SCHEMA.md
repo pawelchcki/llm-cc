@@ -84,8 +84,11 @@ results:{key:result}, errors:[string], elapsed_seconds}`. Always write
 
 Preparation entry `prepare(repo, head, target, identity, profile, rules,
 cache, output_dir, max_workers=4,
-repository_rules_path=".llm-cc/comparison-rules.json", presentation=None)`
-returns plan and writes plan.json/blobs.
+repository_rules_path=".llm-cc/comparison-rules.json", presentation=None,
+cache_concurrency=8)` returns plan and writes plan.json/blobs.
+`cache_concurrency` (1-64) bounds parallel result-cache reads. The plan is
+assembled from sorted keys, so it is byte-identical at any bound; the first
+read error cancels queued reads and fails the run.
 Aggregation entry `aggregate(plan_path, worker_paths, output_dir)` validates
 exact per-worker coverage, writes report.json, report.md, comment.md,
 publication.json, baseline.md and baseline.json, and returns report dict.

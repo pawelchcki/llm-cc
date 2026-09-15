@@ -1,3 +1,4 @@
+import concurrent.futures
 import datetime
 import hashlib
 import json
@@ -57,6 +58,44 @@ def resolve_rules(repo, target, rules, repository_rules_path):
     return validate_rules(rules or {}), {"source": "host"}
 
 
+def _lookup_results(cache, items, fingerprint, concurrency):
+    """Read cached results with bounded concurrency, failing on the first error.
+
+    Results are assembled from the sorted keys rather than completion order, so
+    the plan is byte-identical at any concurrency.
+    """
+    keys = sorted(items)
+    cached = {}
+    if cache:
+        executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=concurrency, thread_name_prefix="cache-lookup"
+        )
+        try:
+            pending = {
+                executor.submit(cache.get, items[key], fingerprint): key
+                for key in keys
+            }
+            for future in concurrent.futures.as_completed(pending):
+                try:
+                    cached[pending[future]] = future.result()
+                except BaseException:
+                    # Authentication and transport errors must fail the run;
+                    # queued reads are pointless once one has failed.
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    raise
+        finally:
+            executor.shutdown(wait=True)
+    hits, misses = {}, []
+    for key in keys:
+        item = items[key]
+        result = cached.get(key)
+        if result is not None and valid_result(result, item, fingerprint):
+            hits[key] = result
+        else:
+            misses.append(item)
+    return hits, misses
+
+
 def prepare(
     repo,
     head,
@@ -69,10 +108,13 @@ def prepare(
     max_workers=4,
     repository_rules_path=REPOSITORY_RULES_PATH,
     presentation=None,
+    cache_concurrency=8,
 ):
     validate_execution_policy(profile)
     if not 1 <= max_workers <= 4:
         raise ValueError("max_workers must be between 1 and 4")
+    if type(cache_concurrency) is not int or not 1 <= cache_concurrency <= 64:
+        raise ValueError("cache_concurrency must be between 1 and 64")
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     fingerprint = digest({"scoring": profile["scoring"], "build": profile["build"]})
@@ -118,14 +160,7 @@ def prepare(
                     "blob": "blobs/" + record["content_sha256"],
                 },
             )
-    hits = {}
-    misses = []
-    for key, item in sorted(items.items()):
-        cached = cache.get(item, fingerprint) if cache else None
-        if cached is not None and valid_result(cached, item, fingerprint):
-            hits[key] = cached
-        else:
-            misses.append(item)
+    hits, misses = _lookup_results(cache, items, fingerprint, cache_concurrency)
     blob_store = FilesystemStore(output)
     for item in misses:
         # A previous preparation may have stopped halfway through a write.
@@ -1218,6 +1253,7 @@ def compare(
     deadline_seconds=6600,
     repository_rules_path=REPOSITORY_RULES_PATH,
     presentation=None,
+    cache_concurrency=8,
 ):
     from .worker import run_worker
 
@@ -1235,6 +1271,7 @@ def compare(
         max_workers,
         repository_rules_path,
         presentation,
+        cache_concurrency,
     )
     if plan["workers"] and not all((scorer, model, installed_root)):
         return failure_report(
