@@ -35,6 +35,18 @@ pool. An optional absolute `execution_bundle` and `execution_bundle_sha256` in
 the BuildBuddy configuration pin the comparison Python package on that host.
 The package identity controls execution, while scorer cache keys remain based
 on the complete scoring/build profile.
+Model digest memo: after verifying the model the worker writes
+`<LLM_CC_ENTROPY_CACHE_DIR>/model-digests/<sha256 of the UTF-8 canonical model
+path>.json` (directory `0700`, file `0600`) containing
+`{format: "llm-cc-model-digest-memo-v1", size, mtime, ctime, device, inode,
+digest}`, where the times are nanoseconds and the identifiers come from
+`stat()`. llm-cc reuses `digest` only while all five stat fields still match,
+and ignores keys it does not know; the contract is documented in
+`src/model_identity.h`. The memo is advisory, is written only from a digest the
+worker itself verified against the profile, sits outside `v2/entropy` so it is
+never published, and dies with the worker's temporary directory. For a split
+GGUF model the worker memoizes only the `--model` file; the scorer hashes the
+companion shards itself.
 Fingerprint = SHA256(canonical JSON of `{scoring, build}`). Eligibility and
 classification do not affect it. File key = SHA256(canonical JSON of
 `[content_sha256, language, fingerprint]`).

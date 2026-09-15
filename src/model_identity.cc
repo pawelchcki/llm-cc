@@ -306,10 +306,14 @@ std::string HashFile(const std::filesystem::path& path) {
 
 void WriteMemo(const std::filesystem::path& path,
                const FileSignature& signature, std::string_view digest) {
-  nlohmann::json value{
-      {"size", signature.size},         {"mtime", signature.modification_time},
-      {"device", signature.device},     {"inode", signature.inode},
-      {"ctime", signature.change_time}, {"digest", digest}};
+  // The documented format tag; readers ignore keys they do not know.
+  nlohmann::json value{{"format", "llm-cc-model-digest-memo-v1"},
+                       {"size", signature.size},
+                       {"mtime", signature.modification_time},
+                       {"device", signature.device},
+                       {"inode", signature.inode},
+                       {"ctime", signature.change_time},
+                       {"digest", digest}};
   cache_io::CheckNotSymlink(path.parent_path());
   cache_io::AtomicWriteFile(path, value.dump());
 }

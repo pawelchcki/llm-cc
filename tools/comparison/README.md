@@ -189,7 +189,12 @@ published individually; locks, accounting, temporary files and model memos stay
 private to each worker.
 
 Workers verify the scorer, model, and source blobs before running one invocation
-per language. Complete JSONL configuration, results, totals and process exit must
+per language. Model verification re-stats the file before and after hashing, and
+the worker then seeds llm-cc's own digest memo with the digest it just verified,
+so the scorer never re-hashes the multi-gigabyte model, not even once, however
+many languages the assignment spans. The memo is written only from a digest that
+matched the profile, lives outside the published namespace, and is deleted with
+the worker's private temporary directory. Complete JSONL configuration, results, totals and process exit must
 validate for every invocation before results are published. Each worker has a
 110-minute deadline within a two-hour job, terminates scorer process groups on
 cancellation, and retains separate JSONL/stderr logs and a structured artifact.

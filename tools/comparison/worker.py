@@ -23,6 +23,10 @@ from .common import validate_execution_policy
 from .deadline import Deadline, DeadlineExceeded
 
 
+# Documented in src/model_identity.h: the memo file format the scorer reads to
+# skip re-hashing a model it has already seen under the same stat signature.
+MODEL_DIGEST_MEMO_FORMAT = "llm-cc-model-digest-memo-v1"
+
 # Restoring a native entropy cache is many small reads; the bound keeps a
 # high-latency object store from serializing them one round trip at a time.
 NATIVE_ENTROPY_CONCURRENCY = 8
@@ -38,7 +42,20 @@ def _json(value: Any) -> bytes:
     ).encode()
 
 
-def _hash(path: Path, deadline: float | None = None) -> str:
+def _file_signature(status: os.stat_result) -> dict[str, int]:
+    """The five fields llm-cc's model digest memo compares, by its own names."""
+    return {
+        "size": status.st_size,
+        "mtime": status.st_mtime_ns,
+        "device": status.st_dev,
+        "inode": status.st_ino,
+        "ctime": status.st_ctime_ns,
+    }
+
+
+def _hash_with_signature(
+    path: Path, deadline: float | None = None
+) -> tuple[str, dict[str, int]]:
     digest = hashlib.sha256()
     with path.open("rb") as source:
         before = os.fstat(source.fileno())
@@ -54,7 +71,42 @@ def _hash(path: Path, deadline: float | None = None) -> str:
         after.st_mtime_ns,
     ):
         raise WorkerError("file changed while being hashed: %s" % path)
-    return digest.hexdigest()
+    return digest.hexdigest(), _file_signature(after)
+
+
+def _hash(path: Path, deadline: float | None = None) -> str:
+    return _hash_with_signature(path, deadline)[0]
+
+
+def _record_model_digest_memo(
+    entropy_root: Path, model_path: Path, signature: dict[str, int], digest: str
+) -> Path | None:
+    """Seed llm-cc's advisory model digest memo from our own verification.
+
+    The worker has just hashed the model under the same identity the scorer
+    would use, so writing the documented memo file lets every language
+    invocation skip re-hashing many gigabytes. The memo lives outside
+    `v2/entropy`, so it is never published to the shared cache, and it dies
+    with the worker's private temporary directory.
+    """
+    canonical = os.path.realpath(model_path)
+    try:
+        key = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    except UnicodeEncodeError:
+        return None  # llm-cc keys memos by UTF-8 path; skip an unencodable one.
+    if _file_signature(os.stat(canonical)) != signature:
+        raise WorkerError("model changed before digest reuse")
+    directory = Path(entropy_root) / "model-digests"
+    directory.mkdir(mode=0o700, exist_ok=False)
+    target = directory / (key + ".json")
+    temporary = directory / (key + ".tmp")
+    handle = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(handle, "wb") as stream:
+        stream.write(
+            _json({"format": MODEL_DIGEST_MEMO_FORMAT, **signature, "digest": digest})
+        )
+    os.replace(temporary, target)
+    return target
 
 
 def _host_gpu_environment(host, deadline, sysfs=Path("/sys"), devices=Path("/dev")):
@@ -508,10 +560,14 @@ def _run_worker(
         if not model_path.is_file():
             raise WorkerError("model file is missing")
         expected_model_bytes = build.get("model_bytes")
+        before_model = _file_signature(os.stat(model_path))
+        model_digest, model_signature = _hash_with_signature(model_path, deadline)
+        after_model = _file_signature(os.stat(model_path))
+        if before_model != model_signature or model_signature != after_model:
+            raise WorkerError("model changed while being verified")
         if (
-            model_path.stat().st_size != expected_model_bytes
-            or _hash(model_path, deadline) != build.get("model_sha256")
-            or model_path.stat().st_size != expected_model_bytes
+            model_signature["size"] != expected_model_bytes
+            or model_digest != build.get("model_sha256")
         ):
             raise WorkerError("model digest or size mismatch")
         items = []
@@ -581,6 +637,11 @@ def _run_worker(
             entropy_root = Path(entropy_dir)
             native_dir = entropy_root / "v2" / "entropy"
             native_dir.mkdir(parents=True)
+            # Only the digest this worker verified against the profile is ever
+            # offered back to the scorer.
+            _record_model_digest_memo(
+                entropy_root, model_path, model_signature, model_digest
+            )
             for name, contents in cache.native_entropy(
                 plan["fingerprint"], NATIVE_ENTROPY_CONCURRENCY
             ).items():

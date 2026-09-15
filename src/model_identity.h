@@ -8,6 +8,34 @@
 
 namespace llmcc {
 
+// Model digest memo, the supported interface for external verifiers.
+//
+// Hashing a multi-gigabyte GGUF model on every invocation is wasteful when a
+// caller has already hashed the very same file. `InspectModel` therefore reads
+// and writes an advisory memo at
+//
+//   <entropy cache directory>/model-digests/<key>.json
+//
+// where <key> is the lowercase hex SHA-256 of the UTF-8 bytes of the model's
+// canonical path in generic form. The directory is private (0700) and files are
+// written atomically. The JSON object is
+//
+//   {"format": "llm-cc-model-digest-memo-v1",
+//    "size": <bytes>, "mtime": <time>, "ctime": <time>,
+//    "device": <st_dev>, "inode": <st_ino>,
+//    "digest": "<64 lowercase hex>"}
+//
+// On POSIX the two times are nanoseconds since the epoch (`st_mtim`/`st_ctim`)
+// and the identifiers come from `st_dev`/`st_ino`; Windows uses its own file
+// time units, volume serial number and file index. All five stat fields must
+// equal the file's current `stat()` both when the memo is read and again
+// afterwards, or the model is hashed as usual. Unknown keys are ignored, so an
+// older reader accepts a memo carrying "format". The memo is advisory: a
+// missing, unreadable or stale memo only costs a hash. A writer must never
+// record a digest it has not itself computed from the file it describes. For a
+// split GGUF model the memo describes one shard file; the companion shards are
+// hashed and memoized individually.
+
 struct ModelIdentity {
   std::filesystem::path canonical_path;
   std::uint64_t size;
