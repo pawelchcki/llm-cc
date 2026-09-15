@@ -11,11 +11,47 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import time
 
 CACHE = Path.home() / ".cache" / "llm-cc-validation"
 HF_REVISION = "6c284d1468fe6c413cf56183e69b194dcfa27fe6"
+MODEL_SUFFIXES = {".bin", ".json", ".model", ".safetensors"}
+
+
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def git_head(path):
+    """The checkout's commit when `path` is the root of a git work tree."""
+    result = subprocess.run(["git", "-C", str(path), "rev-parse", "--show-toplevel", "HEAD"],
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        return None
+    top, head = result.stdout.split()
+    return head if Path(top).resolve() == path.resolve() else None
+
+
+def model_provenance(path):
+    """Verify the checkpoint revision where it is knowable and hash its files."""
+    path = path.resolve()
+    revision = git_head(path) or (path.name if path.parent.name == "snapshots" else None)
+    if revision is not None and revision != HF_REVISION:
+        raise SystemExit(f"{path} is revision {revision}, expected {HF_REVISION}")
+    files = {file.name: sha256_file(file) for file in sorted(path.iterdir())
+             if file.is_file() and file.suffix in MODEL_SUFFIXES}
+    if not files:
+        raise SystemExit(f"no model files found in {path}")
+    # `revision` is null when the directory carries no revision; the file
+    # hashes are then the record of which weights produced the results.
+    return dict(model="codellama/CodeLlama-7b-hf", expected_revision=HF_REVISION,
+                revision=revision, files=files)
 
 
 def main():
@@ -27,6 +63,12 @@ def main():
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parent)
     args = parser.parse_args()
     import torch  # Imported late so --help works without the ML stack.
+    provenance = model_provenance(args.hf_model)
+    manifest = json.loads((args.root / "corpus.json").read_text())
+    inputs = dict(model=provenance, dtype=args.dtype,
+                  reference_commit=git_head(args.repository),
+                  corpus_sha256=hashlib.sha256(
+                      json.dumps(manifest["files"], sort_keys=True).encode()).hexdigest())
     os.chdir(args.repository / "scripts")
     sys.path.insert(0, str(args.repository / "scripts"))
     from lm_cc.lm_cc import (CodeBlockProcessor, TokenEntropyCalculator,
@@ -35,12 +77,14 @@ def main():
     calculator = TokenEntropyCalculator(model_name=str(args.hf_model), device_map="cpu",
                                         float_type=getattr(torch, args.dtype))
     processor = CodeBlockProcessor()
-    manifest = json.loads((args.root / "corpus.json").read_text())
-    # Checkpoint after every program so an interrupted CPU run can resume.
+    # Checkpoint after every program so an interrupted CPU run can resume. A
+    # checkpoint is reused only for the exact model, corpus, and reference code.
     checkpoint = args.work / f"reference-anchor-{args.dtype}.partial.json"
     entropies, scores, started = {}, {}, time.monotonic()
     if checkpoint.exists():
         partial = json.loads(checkpoint.read_text())
+        if partial.get("inputs") != inputs:
+            raise SystemExit(f"{checkpoint} was produced from different inputs; delete it")
         entropies, scores = partial["entropies"], partial["llm_cc"]
     for index, row in enumerate(manifest["files"], 1):
         if row["id"] in scores:
@@ -54,14 +98,16 @@ def main():
         tree = processor.parse_code_blocks(text, tokens=tokens, start_end_tokens=spans)
         entropies[row["id"]] = values
         scores[row["id"]] = get_lmcc(tree)
-        checkpoint.write_text(json.dumps(dict(entropies=entropies, llm_cc=scores)))
+        checkpoint.write_text(json.dumps(dict(inputs=inputs, entropies=entropies,
+                                              llm_cc=scores)))
         print(f"reference {index}/{len(manifest['files'])} {row['id']} "
               f"LM-CC={scores[row['id']]:.1f}", flush=True)
     (args.root / "results").mkdir(exist_ok=True)
     with gzip.open(args.root / "results" / "reference-codellama-7b-hf.entropy.json.gz",
                    "wt") as stream:
-        json.dump(dict(model="codellama/CodeLlama-7b-hf", revision=HF_REVISION,
-                       dtype=args.dtype, torch=torch.__version__,
+        json.dump(dict(**provenance, dtype=args.dtype, torch=torch.__version__,
+                       reference_commit=inputs["reference_commit"],
+                       corpus_sha256=inputs["corpus_sha256"],
                        wall_seconds=time.monotonic() - started,
                        entropies=entropies, llm_cc=scores), stream)
 

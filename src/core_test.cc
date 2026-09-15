@@ -181,6 +181,19 @@ int main() {  // NOLINT(bugprone-exception-escape)
   ExpectEq(scored_first_units.size(), std::size_t{0},
            "first scored token never opens a reference block");
 
+  // Without BOS the first source token is unscored; the second token's entropy
+  // is a real observation and may open a block on its own line.
+  const auto [bosless_tau, bosless_units] = llmcc::DetectSemanticUnits(
+      ByteTokens({std::nullopt, 2.0, 0.0}), {},
+      std::vector<std::size_t>{0, 1, 2},
+      {.kind = llmcc::TauRule::Kind::kAbsolute, .value = 1.0}, {},
+      llmcc::HierarchyMode::kReference);
+  ExpectEq(bosless_tau, 1.0, "BOS-less second-token tau");
+  ExpectEq(bosless_units.size(), std::size_t{1},
+           "BOS-less second token opens a reference block");
+  ExpectEq(bosless_units.front().start_byte, std::size_t{1},
+           "BOS-less block starts at the second token");
+
   const auto [structural_first_tau, structural_first_units] =
       llmcc::DetectSemanticUnits(
           ByteTokens({std::nullopt, 2.0, 0.0, 0.0}), {},

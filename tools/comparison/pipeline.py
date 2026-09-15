@@ -430,6 +430,8 @@ def _percent(value):
 def _path_change(delta):
     if "raw_change" not in delta:  # Reports written before raw headlines.
         return "%+.6g LM-CC/token" % delta["change"]
+    if delta["change"] is None:  # Zero tokens on one side.
+        return "%+.1f LM-CC" % delta["raw_change"]
     return "%+.1f LM-CC (%+.3g per token)" % (delta["raw_change"], delta["change"])
 
 
@@ -1019,21 +1021,25 @@ def _aggregate(plan, worker_paths, output):
         plan["changes"], base_paths, head_paths, results, rankings["head"]
     )
     def raw_llm_cc(paths, path):
-        return results[paths[path]["key"]]["llm_cc"]
+        file = paths.get(path)
+        result = results.get(file["key"]) if file and file.get("key") else None
+        return None if result is None else result["llm_cc"]
 
-    # A delta exists only when both sides were scored. Raw LM-CC is the paper's
-    # quantity and the displayed headline; `change` keeps the per-token delta
-    # for existing report consumers.
-    path_deltas = [
-        {
-            "path": row["path"],
-            "change": row["delta"],
-            "raw_change": raw_llm_cc(head_paths, row["new_path"])
-            - raw_llm_cc(base_paths, row["old_path"]),
-        }
-        for row in changed_files
-        if row["delta"] is not None
-    ]
+    # Raw LM-CC is the paper's quantity and the displayed headline. It stays
+    # defined for zero-token files, whose per-token `change` is null; `change`
+    # keeps the per-token delta for existing report consumers.
+    path_deltas = []
+    for row in changed_files:
+        base_raw = raw_llm_cc(base_paths, row["old_path"])
+        head_raw = raw_llm_cc(head_paths, row["new_path"])
+        if base_raw is not None and head_raw is not None:
+            path_deltas.append(
+                {
+                    "path": row["path"],
+                    "change": row["delta"],
+                    "raw_change": head_raw - base_raw,
+                }
+            )
     regressions = sorted(
         (x for x in path_deltas if x["raw_change"] > 0),
         key=lambda x: (-x["raw_change"], x["path"]),

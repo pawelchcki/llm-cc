@@ -66,7 +66,7 @@ def entropy(args, root, files, model):
         rows[row["id"]] = [r["entropy"] for r in records]
         print(f"{model['name']} {index}/{len(files)} {row['id']}", flush=True)
     record = dict(model=model["name"], sha256=model["sha256"], command_template=command[:1] +
-                  ["score", "--model", model["file"], "--file", "PROGRAM", *command[7:]],
+                  ["score", "--model", model["file"], "--file", "PROGRAM", *command[6:]],
                   binary_version=subprocess.check_output([str(args.binary), "--version"],
                                                          text=True).strip(),
                   wall_seconds=time.monotonic() - started, entropies=rows)
