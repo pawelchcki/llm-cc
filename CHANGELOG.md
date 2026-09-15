@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+* report raw LM-CC, the paper's metric, as the default headline (`--score raw`);
+  per-token scoring stays available with `--score lmcc`, and totals add
+  `mean_llm_cc_per_file`
+* calibrate the default entropy threshold per registered model to the entropy
+  percentile of the paper's CodeLlama-7b threshold (`tau_source` in the
+  configuration event); re-baseline existing scores
+* accept the SentencePiece dummy-prefix space on the first token, so
+  CodeLlama-style models can be analyzed
+* never let the first scored token open an entropy boundary, matching the
+  reference implementation
+* register `codellama-7b-q8_0`, the paper's reference model
+
 ## [0.2.0](https://github.com/pawelchcki/llm-cc/compare/v0.1.0...v0.2.0) (2026-09-07)
 
 

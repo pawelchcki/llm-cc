@@ -177,8 +177,17 @@ std::pair<double, std::vector<SemanticUnit>> DetectSemanticUnits(
   const std::size_t source_end = TokenIndexAt(tokens, meaningful_end);
   std::set<std::size_t> boundaries = {source_start, source_end};
   bool marker_at_source_start = false;
+  bool first_scored_token = true;
   for (std::size_t i = source_start; i < source_end; ++i) {
-    if (tokens[i].entropy.has_value() && *tokens[i].entropy >= tau) {
+    if (!tokens[i].entropy.has_value()) {
+      continue;
+    }
+    // The reference implementation never lets the first code token open a
+    // block (`idx > 0`): its entropy reflects only the empty prefix.
+    if (std::exchange(first_scored_token, false)) {
+      continue;
+    }
+    if (*tokens[i].entropy >= tau) {
       const std::size_t boundary =
           std::max(first_token_on_line[i], source_start);
       if (boundary == source_start) {

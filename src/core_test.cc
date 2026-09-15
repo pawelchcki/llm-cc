@@ -159,7 +159,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
   Expect(std::abs(reference_golden.llm_cc - 2.8) < 1e-12,
          "reference golden raw score");
 
-  const auto first_line_marker_tokens = ByteTokens({std::nullopt, 2.0, 0.0});
+  const auto first_line_marker_tokens = ByteTokens({std::nullopt, 0.0, 2.0});
   const std::vector<std::size_t> first_line = {0};
   const auto [first_line_tau, first_line_units] = llmcc::DetectSemanticUnits(
       first_line_marker_tokens, {}, first_line,
@@ -178,10 +178,17 @@ int main() {  // NOLINT(bugprone-exception-escape)
           {.kind = llmcc::TauRule::Kind::kAbsolute, .value = 1.0}, {},
           llmcc::HierarchyMode::kReference);
   ExpectEq(scored_first_tau, 1.0, "scored first-token reference marker tau");
-  ExpectEq(scored_first_units.size(), std::size_t{1},
-           "scored first token creates a reference block");
-  ExpectEq(scored_first_units.front().start_byte, std::size_t{0},
-           "scored first-token block starts at the source boundary");
+  ExpectEq(scored_first_units.size(), std::size_t{0},
+           "first scored token never opens a reference block");
+
+  const auto [structural_first_tau, structural_first_units] =
+      llmcc::DetectSemanticUnits(
+          ByteTokens({std::nullopt, 2.0, 0.0, 0.0}), {},
+          std::vector<std::size_t>{0, 2},
+          {.kind = llmcc::TauRule::Kind::kAbsolute, .value = 1.0});
+  ExpectEq(structural_first_tau, 1.0, "structural first-token tau");
+  ExpectEq(structural_first_units.size(), std::size_t{1},
+           "first scored token never creates a structural boundary");
 
   const auto whitespace_tokens = ByteTokens({std::nullopt, 0.0, 0.0, 0.0, 0.0});
   const llmcc::Analysis with_trailing_whitespace =

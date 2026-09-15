@@ -166,6 +166,39 @@ class PipelineTest(unittest.TestCase):
         report.update(overrides)
         return report
 
+    def test_raw_lm_cc_is_the_rendered_headline(self):
+        markdown = _render(
+            self._report(
+                leading_regressions=[
+                    {"path": "a.cc", "change": 1.0, "raw_change": 2.5},
+                    {"path": "legacy.cc", "change": 0.5},
+                ]
+            )
+        )
+        self.assertIn("- repository 1.0 → 2.0 LM-CC (+100%)", markdown)
+        self.assertIn("| repository | 1.0 | 2.0 | +1.0 | +100% |", markdown)
+        self.assertIn("- `a.cc`: +2.5 LM-CC (+1 per token)", markdown)
+        self.assertIn("- `legacy.cc`: +0.5 LM-CC/token", markdown)
+
+    def test_leading_paths_rank_by_raw_lm_cc(self):
+        # Admit the modified same.cc on both sides so it carries a delta.
+        self.profile["max_file_bytes"] = 100
+        plan, report = self._scored(Path(self.temp.name) / "raw")
+        leading = report["leading_regressions"] + report["leading_improvements"]
+        entry = next(x for x in leading if x["path"] == "same.cc")
+        base = next(
+            f for f in plan["inventories"]["base"] if f["path"] == "same.cc"
+        )
+        head = next(
+            f for f in plan["inventories"]["head"] if f["path"] == "same.cc"
+        )
+        keys = plan["workers"][0]["keys"]
+        # _scored assigns llm_cc = 2 + worker index over 2 tokens per file.
+        raw_base = 2.0 + keys.index(base["key"])
+        raw_head = 2.0 + keys.index(head["key"])
+        self.assertEqual(entry["raw_change"], raw_head - raw_base)
+        self.assertAlmostEqual(entry["change"], (raw_head - raw_base) / 2)
+
     def test_untrusted_paths_render_as_balanced_code_spans(self):
         path = "src/@team/[file]`name``x`~~$y$|pipe|https://example.com/a.cc"
         markdown = _render(

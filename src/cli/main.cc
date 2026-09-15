@@ -96,7 +96,7 @@ struct AnalyzeArguments {
   std::optional<double> tau_percentile;
   double alpha = 0.8;
   std::size_t hotspots = 10;
-  std::string score_mode = "lmcc";
+  std::string score_mode = "raw";
   std::string format = "jsonl";
   std::string progress = "auto";
 };
@@ -124,11 +124,12 @@ constexpr std::string_view kUsageBeforeContext =
     "  --model GGUF          llama.cpp-compatible model\n"
     "  --model-name NAME     registered model (default: "
     "deepseek-coder-v2-lite-base-q6_k)\n"
-    "  --score lmcc|density|mean  headline score mode (default: lmcc)\n"
+    "  --score raw|lmcc|density|mean  headline score mode (default: raw, the\n"
+    "                       paper's LM-CC; lmcc divides it by scored tokens)\n"
     "  --hierarchy structural|reference  hierarchy contract (default: "
     "structural)\n"
-    "  --tau N               absolute entropy threshold in nats (default: "
-    "0.67)\n"
+    "  --tau N               absolute entropy threshold in nats (default: the\n"
+    "                       registered model's calibrated value, else 0.67)\n"
     "  --gpu-layers N        layers to offload (default: -1, all; 0 opts into "
     "CPU)\n"
     "  --force-cpu           explicitly use CPU with zero offload\n"
@@ -309,9 +310,9 @@ bool SetOutputOption(AnalyzeArguments& arguments, std::string_view option,
   }
   if (option == "--score") {
     arguments.score_mode = value;
-    if (arguments.score_mode != "lmcc" && arguments.score_mode != "density" &&
-        arguments.score_mode != "mean") {
-      Usage("--score expects lmcc, density, or mean");
+    if (arguments.score_mode != "raw" && arguments.score_mode != "lmcc" &&
+        arguments.score_mode != "density" && arguments.score_mode != "mean") {
+      Usage("--score expects raw, lmcc, density, or mean");
     }
     return true;
   }
@@ -896,6 +897,10 @@ struct MetricTotals {
 
 nlohmann::json ScoreJson(const llmcc::Metrics& metrics,
                          std::string_view score_mode) {
+  // Raw LM-CC is defined for every analyzed input, including unscored ones.
+  if (score_mode == "raw") {
+    return metrics.lmcc;
+  }
   if (metrics.token_count == 0) {
     return nullptr;
   }
@@ -909,14 +914,16 @@ nlohmann::json ScoreJson(const llmcc::Metrics& metrics,
 }
 
 llmcc::Metrics TotalMetrics(const MetricTotals& totals) {
+  // `lmcc` carries the raw headline over every analyzed file; the per-token
+  // normalization keeps using only files with scored tokens.
   if (totals.token_count == 0) {
-    return {};
+    return {.lmcc = totals.llm_cc};
   }
   const double tokens = static_cast<double>(totals.token_count);
   return {.token_count = totals.token_count,
           .high_entropy_tokens = totals.high_entropy_tokens,
           .entropy_sum = totals.entropy_sum,
-          .lmcc = totals.lmcc,
+          .lmcc = totals.llm_cc,
           .lmcc_per_token = totals.lmcc / tokens,
           .density = static_cast<double>(totals.high_entropy_tokens) / tokens,
           .mean_entropy = totals.entropy_sum / tokens};
@@ -926,6 +933,11 @@ nlohmann::json TotalsMetricsJson(const MetricTotals& totals,
                                  std::string_view score_mode) {
   const auto metrics = TotalMetrics(totals);
   return {{"score", ScoreJson(metrics, score_mode)},
+          {"mean_llm_cc_per_file",
+           totals.analyzed == 0
+               ? nlohmann::json()
+               : nlohmann::json(totals.llm_cc /
+                                static_cast<double>(totals.analyzed))},
           {"lmcc_per_token", ScoreJson(metrics, "lmcc")},
           {"density", ScoreJson(metrics, "density")},
           {"mean_entropy", ScoreJson(metrics, "mean")},
@@ -967,10 +979,37 @@ nlohmann::json TotalsJson(const MetricTotals& totals,
   return result;
 }
 
+struct EffectiveTau {
+  std::optional<double> value;
+  std::string_view source;
+};
+
+// An explicit --tau or --tau-percentile wins. Otherwise a registered model
+// supplies its calibrated 67th-percentile threshold, and custom GGUFs fall back
+// to the paper's CodeLlama-7b value.
+EffectiveTau ResolveTau(const AnalyzeArguments& arguments) {
+  if (arguments.tau_percentile.has_value()) {
+    return {.value = std::nullopt, .source = "cli"};
+  }
+  if (arguments.tau.has_value()) {
+    return {.value = *arguments.tau, .source = "cli"};
+  }
+  if (!arguments.model.has_value()) {
+    const llmcc::ModelSpec* spec = arguments.model_name.has_value()
+                                       ? llmcc::FindModel(*arguments.model_name)
+                                       : &llmcc::DefaultModel();
+    if (spec != nullptr && spec->default_tau.has_value()) {
+      return {.value = *spec->default_tau, .source = "model-default"};
+    }
+  }
+  return {.value = llmcc::kPaperTau, .source = "paper-default"};
+}
+
 nlohmann::json ConfigurationJson(
     const AnalyzeArguments& arguments, std::string_view requested_model,
     const llmcc::ModelIdentity* identity = nullptr) {
   const bool percentile = arguments.tau_percentile.has_value();
+  const EffectiveTau tau = ResolveTau(arguments);
   const char* effective_reducer =
       arguments.entropy_reduction == llmcc::EntropyReduction::kDevice ? "device"
                                                                       : "host";
@@ -1008,8 +1047,9 @@ nlohmann::json ConfigurationJson(
       {"backend_diagnostics", arguments.backend_diagnostics},
       {"score_mode", arguments.score_mode},
       {"tau_rule", percentile ? "percentile" : "absolute"},
-      {"tau", percentile ? nlohmann::json()
-                         : nlohmann::json(arguments.tau.value_or(0.67))},
+      {"tau",
+       tau.value.has_value() ? nlohmann::json(*tau.value) : nlohmann::json()},
+      {"tau_source", tau.source},
       {"hotspots", arguments.hotspots},
       {"tau_percentile", percentile ? nlohmann::json(*arguments.tau_percentile)
                                     : nlohmann::json()},
@@ -1085,8 +1125,18 @@ std::string FormatNumber(double value) {
   return output.str();
 }
 
+std::string FormatRaw(double value) {
+  std::ostringstream output;
+  output.imbue(std::locale::classic());
+  output << std::fixed << std::setprecision(1) << value;
+  return output.str();
+}
+
 std::string FormatScore(const llmcc::Metrics& metrics,
                         std::string_view score_mode) {
+  if (score_mode == "raw") {
+    return FormatRaw(metrics.lmcc);
+  }
   if (metrics.token_count == 0) {
     return "null";
   }
@@ -1100,6 +1150,9 @@ std::string FormatScore(const llmcc::Metrics& metrics,
 }
 
 std::string_view ScoreLabel(std::string_view score_mode) {
+  if (score_mode == "raw") {
+    return "LM-CC";
+  }
   if (score_mode == "density") {
     return "density";
   }
@@ -1174,7 +1227,13 @@ void PrintTotalsText(const MetricTotals& totals, std::string_view score_mode) {
   std::cout << "totals   score "
             << FormatScore(TotalMetrics(totals), score_mode) << " ("
             << ScoreLabel(score_mode) << ")   files " << totals.analyzed << '/'
-            << totals.discovered << "   tokens " << totals.token_count << '\n';
+            << totals.discovered << "   tokens " << totals.token_count;
+  if (score_mode == "raw" && totals.analyzed != 0) {
+    std::cout << "   mean/file "
+              << FormatRaw(totals.llm_cc /
+                           static_cast<double>(totals.analyzed));
+  }
+  std::cout << '\n';
 }
 
 nlohmann::json FileJson(const llmcc::DiscoveredSource& source,
@@ -1436,7 +1495,8 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
                ? llmcc::TauRule{.kind = llmcc::TauRule::Kind::kPercentile,
                                 .value = *arguments.tau_percentile}
                : llmcc::TauRule{.kind = llmcc::TauRule::Kind::kAbsolute,
-                                .value = arguments.tau.value_or(0.67)},
+                                .value = ResolveTau(arguments).value.value_or(
+                                    llmcc::kPaperTau)},
        .alpha = arguments.alpha,
        .cache = entropy_cache,
        .hotspots = arguments.hotspots,
