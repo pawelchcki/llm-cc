@@ -20,17 +20,28 @@ consuming repository only supplies configuration.
 ## Files to copy
 
 1. [`buildbuddy.yaml`](buildbuddy.yaml) into the repository root. Replace
-   `OWNER/REPO` with the repository's `owner/name`. Keep the action name
+   `OWNER/REPO` with the repository's `owner/name`, and replace both `main`
+   branch filters with the repository's default branch — left as `main` on a
+   `master` or `trunk` repository the action never triggers, so no status is
+   published and nothing downstream reports an error. Keep the action name
    `Complexity comparison`; the ci-toolkit trigger matches that commit-status
    context exactly.
-2. [`.ci-toolkit.yml`](.ci-toolkit.yml) into the repository root, or merge its
-   `automations` entry into an existing policy.
+2. [`.ci-toolkit.yml`](.ci-toolkit.yml) into the repository root, keeping its
+   `api_version` line, or merge only its `automations` entry into an existing
+   policy that already declares one.
 
-Optionally add `.llm-cc/comparison-rules.json`, based on
+Add `.llm-cc/comparison-rules.json`, based on
 [`comparison-rules.json`](comparison-rules.json), to classify paths for the
-language at hand. Rules are read from the **target** commit's tree, so a pull
-request cannot reclassify its own files. Invalid rules fail the run rather than
-silently falling back to the host defaults. Accepted keys are `exclude`, `tests`,
+language at hand. This is strongly recommended rather than optional: a
+repository without that file is scored with the host's own rules, which are
+specific to llm-cc. They map every `.h` to C++, and treat `tools/**`,
+`examples/**`, `experiments/**`, `scripts/**` and `.github/**` as tooling, so a
+C project or a differently laid out repository gets misclassified languages and
+category rankings rather than an error.
+
+Rules are read from the **target** commit's tree, so a pull request cannot
+reclassify its own files. Invalid rules fail the run rather than silently
+falling back to the host defaults. Accepted keys are `exclude`, `tests`,
 `tooling`, and `extensions`.
 
 ## Private repositories and GitHub quota

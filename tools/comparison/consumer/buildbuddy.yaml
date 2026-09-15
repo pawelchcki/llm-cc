@@ -1,4 +1,5 @@
-# Copy to buildbuddy.yaml in the consuming repository and replace OWNER/REPO.
+# Copy to buildbuddy.yaml in the consuming repository, replace OWNER/REPO, and
+# replace both "main" branch filters below with the repository's default branch.
 # The action name must stay "Complexity comparison": the ci-toolkit trigger
 # matches that commit-status context exactly.
 actions:
@@ -13,6 +14,8 @@ actions:
     timeout: 130m
     allow_concurrent_runs: false
     triggers:
+      # Both filters must name the repository's default branch. A stale "main"
+      # here publishes no status at all on a "master" or "trunk" repository.
       push:
         branches:
           - "main"

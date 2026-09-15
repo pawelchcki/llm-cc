@@ -50,8 +50,10 @@ the status and one headline line per category, then the category table, the cach
 line and any errors, a **Changed files** table of the paths this comparison
 touched with their absolute base and head scores and the head's repository rank,
 the leading regressions and improvements, and a collapsed **Top offenders on
-base** section listing the ten worst-scoring files on the target branch with the
-rows this change touches marked. Untrusted text is rendered inside balanced code
+the merge base** section listing the ten worst-scoring files at the merge base
+with the rows this change touches marked. That section is the merge base, not
+the target branch tip, so a branch behind its target reports the scores it is
+actually compared against. Untrusted text is rendered inside balanced code
 spans, so a path can never inject Markdown, a mention, or a link. When the
 comment would exceed its limit, the lowest-priority sections are dropped first
 and only then are whole lines cut; nothing is ever split inside a code span.

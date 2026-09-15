@@ -562,11 +562,14 @@ def _comment_sections(report, full=False):
 
     offenders = (rankings.get("base") or [])[:10]
     if offenders:
-        branch = identity.get("target_branch") or identity.get("base_sha") or "base"
+        # rankings["base"] is the merge base, not the target branch tip. Label
+        # it as such: a branch behind its target would otherwise present stale
+        # scores as the target branch's current state.
+        base = identity.get("base_sha") or "base"
         lines = [
             "",
             "<details>",
-            "<summary>Top offenders on base (%s)</summary>" % _code(branch),
+            "<summary>Top offenders on the merge base (%s)</summary>" % _code(base),
             "",
             "| # | Path | Category | Score | Touched |",
             "|---:|---|---|---:|---|",

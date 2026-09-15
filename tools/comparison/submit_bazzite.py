@@ -103,7 +103,7 @@ def parent_invocation_id(artifact_directory=None, environment=None):
     return invocation.lower()
 
 
-def coordinator_request(config, config_path, repository, head, branch):
+def coordinator_request(config, config_path, repository, head, branch, default_branch):
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
         raise ValueError("repository must be owner/name")
     if not re.fullmatch(r"[0-9a-f]{40}", head):
@@ -126,6 +126,8 @@ def coordinator_request(config, config_path, repository, head, branch):
             head,
             "--branch",
             branch,
+            "--default-branch",
+            default_branch,
         ],
         config["execution_bundle"],
         config["execution_bundle_sha256"],
@@ -190,7 +192,12 @@ def main(argv=None):
             "configuration differs from its published immutable generation"
         )
     request = coordinator_request(
-        config, str(pinned_config), args.repository, args.head, args.branch
+        config,
+        str(pinned_config),
+        args.repository,
+        args.head,
+        args.branch,
+        args.default_branch,
     )
     invocation = BuildBuddy(config["endpoint"], key).submit(request)
     print(config["endpoint"].rstrip("/") + "/invocation/" + invocation)

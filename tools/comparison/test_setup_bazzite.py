@@ -175,9 +175,14 @@ class BazziteSetupTest(unittest.TestCase):
                 "/var/lib/llm-cc/comparison.json",
                 "owner/repo",
                 "b" * 40,
-                "main",
+                "topic",
+                "trunk",
             )
         self.assertEqual(request["commit_sha"], "b" * 40)
+        # The runner re-resolves anything not submitted, falling back to "main".
+        # A non-default default branch must survive the hop.
+        self.assertIn("--branch topic", request["steps"][0]["run"])
+        self.assertIn("--default-branch trunk", request["steps"][0]["run"])
         self.assertEqual(request["platform_properties"]["Pool"], "linux-amd64-rocm")
         self.assertNotIn("skip_auto_checkout", request)
         self.assertNotIn("synthetic-secret", request["steps"][0]["run"])
@@ -439,7 +444,11 @@ class ConsumerTemplateTest(unittest.TestCase):
         self.assertIn(
             "/var/lib/llm-cc/bin/llm-cc-coordinate --repository OWNER/REPO", workflow
         )
+        # A copy used as the whole policy is rejected without the declaration.
+        self.assertIn("pull_request:", workflow)
+        self.assertIn("default branch", workflow)
         policy = self.read(".ci-toolkit.yml")
+        self.assertIn("api_version: ci-toolkit/v1alpha1", policy)
         self.assertIn("context: Complexity comparison", policy)
         for artifact in (
             "comment.md",

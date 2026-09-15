@@ -1,6 +1,11 @@
 # Merge this automation into .ci-toolkit.yml on the default branch before the
 # first pull-request comparison runs. ci-toolkit reads the policy from the
 # pull request's target commit.
+#
+# api_version is required. Keep it when copying this file in as the whole
+# policy; drop it when merging only the automations entry into an existing one.
+api_version: ci-toolkit/v1alpha1
+
 automations:
   - id: complexity
     triggers:
