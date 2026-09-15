@@ -268,13 +268,20 @@ class BazziteSetupTest(unittest.TestCase):
             archive = root / "packages/code.zip"
             archive.parent.mkdir()
             with zipfile.ZipFile(archive, "w") as bundle:
-                bundle.writestr(
-                    zipfile.ZipInfo(
-                        "tools/comparison/submit_bazzite.py",
-                        date_time=(1980, 1, 1, 0, 0, 0),
+                # Mirror the real bundle's package markers. zipimport only
+                # resolves namespace packages from 3.14 on, and the host runs
+                # the distribution's python3.
+                members = {
+                    "tools/__init__.py": "",
+                    "tools/comparison/__init__.py": "",
+                    "tools/comparison/submit_bazzite.py": (
+                        "import sys; print(sys.argv[1:])"
                     ),
-                    "import sys; print(sys.argv[1:])",
-                )
+                }
+                for name, body in members.items():
+                    bundle.writestr(
+                        zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0)), body
+                    )
             checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
             generation = root / "configurations/abc/comparison.json"
             script = launcher_script(archive, checksum, generation)
