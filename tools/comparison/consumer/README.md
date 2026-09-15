@@ -20,10 +20,11 @@ consuming repository only supplies configuration.
 ## Files to copy
 
 1. [`buildbuddy.yaml`](buildbuddy.yaml) into the repository root. Replace
-   `OWNER/REPO` with the repository's `owner/name`, and replace both `main`
-   branch filters with the repository's default branch — left as `main` on a
-   `master` or `trunk` repository the action never triggers, so no status is
-   published and nothing downstream reports an error. Keep the action name
+   `OWNER/REPO` with the repository's `owner/name`, and replace the two `main`
+   branch filters and the `--default-branch main` argument with the
+   repository's default branch — left as `main` on a `master` or `trunk`
+   repository the action never triggers, so no status is published and nothing
+   downstream reports an error. Keep the action name
    `Complexity comparison`; the ci-toolkit trigger matches that commit-status
    context exactly.
 2. [`.ci-toolkit.yml`](.ci-toolkit.yml) into the repository root, keeping its

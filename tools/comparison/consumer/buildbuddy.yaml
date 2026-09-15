@@ -1,5 +1,6 @@
 # Copy to buildbuddy.yaml in the consuming repository, replace OWNER/REPO, and
-# replace both "main" branch filters below with the repository's default branch.
+# replace every "main" below -- the two branch filters and --default-branch --
+# with the repository's default branch.
 # The action name must stay "Complexity comparison": the ci-toolkit trigger
 # matches that commit-status context exactly.
 actions:
@@ -23,4 +24,11 @@ actions:
         branches:
           - "main"
     steps:
-      - run: "/var/lib/llm-cc/bin/llm-cc-coordinate --repository OWNER/REPO"
+      # --default-branch must match the filters above. Without it the runner
+      # falls back to GIT_REPO_DEFAULT_BRANCH and then to "main", which makes a
+      # trunk/master push look like a feature branch with no open pull request,
+      # so it is skipped and no baseline is published.
+      - run: >-
+          /var/lib/llm-cc/bin/llm-cc-coordinate
+          --repository OWNER/REPO
+          --default-branch main

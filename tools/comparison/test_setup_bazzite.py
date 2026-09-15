@@ -441,9 +441,10 @@ class ConsumerTemplateTest(unittest.TestCase):
         self.assertIn('name: "Complexity comparison"', workflow)
         self.assertIn('pool: "linux-amd64-rocm"', workflow)
         self.assertIn("self_hosted: true", workflow)
-        self.assertIn(
-            "/var/lib/llm-cc/bin/llm-cc-coordinate --repository OWNER/REPO", workflow
-        )
+        self.assertIn("/var/lib/llm-cc/bin/llm-cc-coordinate", workflow)
+        self.assertIn("--repository OWNER/REPO", workflow)
+        # The runner otherwise falls back to "main" and skips a trunk push.
+        self.assertIn("--default-branch main", workflow)
         # A copy used as the whole policy is rejected without the declaration.
         self.assertIn("pull_request:", workflow)
         self.assertIn("default branch", workflow)
