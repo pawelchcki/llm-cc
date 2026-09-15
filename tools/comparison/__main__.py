@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .cache import ResultCache, open_store
 from .common import digest
+from .inventory import validate_rules
 from .pipeline import aggregate, compare, failure_report, prepare
 from .worker import run_worker
 
@@ -90,7 +91,7 @@ def _run(args):
         target=args.target,
         identity=_json(args.identity),
         profile=_json(args.profile),
-        rules=_json(args.rules),
+        rules=validate_rules(_json(args.rules)),
         cache=cache,
         output_dir=args.output_dir,
         max_workers=args.max_workers,

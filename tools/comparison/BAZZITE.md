@@ -46,12 +46,24 @@ installed and runtime file digest and the complete model checksum, then creates:
 - `comparison.json`: atomically published current settings.
 - `locks/bazzite-radeon-0.lock`: a root-owned group-writable persistent lock beneath
   root-owned directories. Keep this inode in place while workers may be running.
+- `bin/llm-cc-coordinate`: a mode 0755 launcher that execs the verified package
+  with the immutable generation's `comparison.json`. It is published last, after
+  the package and the generation exist, and forwards its own arguments. Consuming
+  repositories run `/var/lib/llm-cc/bin/llm-cc-coordinate --repository OWNER/REPO`
+  as their only BuildBuddy step, so they never need the comparison source.
+
+Pass `--report-links` a JSON object of https URL templates to publish links in
+pull-request comments, for example
+`--report-links '{"baseline": "https://ci.example/{repository}/baseline.md"}'`.
+Only `{repository}`, `{target_sha}` and `{target_branch}` may appear.
 
 Configuration points at existing host scorer/model/cache paths. The helper never
 downloads model weights, provisions an external store, or copies credentials. The
 cache and model must be accessible to both executor users. Package and configuration
 files are readable by both workers; their parent directories should remain
-root-owned. Re-run setup whenever comparison source or the scoring profile changes.
+root-owned. Re-run setup whenever comparison source, the scoring profile, or the report
+links change, including after merging a comparison change to the default branch;
+the launcher and its pinned generation only move when setup runs.
 The source ZIP hash pins executed comparison code; the Git execution commit is
 repository metadata. Scoring cache identity remains the verified profile.
 
@@ -70,9 +82,15 @@ mechanism, then run:
 ```sh
 python3 -m tools.comparison.submit_bazzite submit \
   --config /var/lib/llm-cc/comparison.json \
-  --repository pawelchcki/llm-cc \
-  --head "$(git rev-parse HEAD)" --branch "$(git branch --show-current)"
+  --repository pawelchcki/llm-cc
 ```
+
+`--head`, `--branch` and `--default-branch` are optional; without them the
+command derives the head from `GIT_COMMIT`, `COMMIT_SHA`, the runner's build
+metadata or `git rev-parse HEAD`, unwraps a BuildBuddy synthetic merge commit to
+its first parent, reads the branch from `GIT_BRANCH`, the current checkout or the
+runner's `BRANCH_NAME`, and takes the default branch from
+`GIT_REPO_DEFAULT_BRANCH`, falling back to `main`. `--repository` is required.
 
 The command prints the new parent invocation URL. The local API key authenticates
 the submission; local credentials are never copied into the job request.

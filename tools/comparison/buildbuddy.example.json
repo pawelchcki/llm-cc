@@ -6,6 +6,7 @@
   "endpoint": "https://pawel.buildbuddy.io",
   "api_key_env": "BUILDBUDDY_API_KEY",
   "github_token_env": "GITHUB_TOKEN",
+  "report_links": {"baseline": "https://ci.example/{repository}/default-branch/baseline.md"},
   "pool": "YOUR_GPU_POOL",
   "execution_repository": "https://github.com/pawelchcki/llm-cc.git",
   "execution_commit": "FULL_COMMIT_CONTAINING_THE_COMPARISON_PACKAGE",

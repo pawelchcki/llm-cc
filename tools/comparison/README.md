@@ -38,9 +38,46 @@ locations may be filesystem paths or `s3://bucket/prefix`. Pass S3 client
 options as a JSON file with `--store-options`. `--refresh-days` and
 `--expire-days` control result retention.
 
-Every aggregation writes `report.json`, `report.md`, `comment.md`, and
-`publication.json`, including on validation failure. An increased score is
-reported but does not make the command fail. Missing or invalid analysis does.
+Every aggregation writes `report.json`, `report.md`, `comment.md`,
+`publication.json`, `baseline.md` and `baseline.json`, including on validation
+failure. An increased score is reported but does not make the command fail.
+Missing or invalid analysis does.
+
+## What the report contains
+
+`comment.md` is the bounded pull-request comment, at most 24 KiB. It opens with
+the status and one headline line per category, then the category table, the cache
+line and any errors, a **Changed files** table of the paths this comparison
+touched with their absolute base and head scores and the head's repository rank,
+the leading regressions and improvements, and a collapsed **Top offenders on
+base** section listing the ten worst-scoring files on the target branch with the
+rows this change touches marked. Untrusted text is rendered inside balanced code
+spans, so a path can never inject Markdown, a mention, or a link. When the
+comment would exceed its limit, the lowest-priority sections are dropped first
+and only then are whole lines cut; nothing is ever split inside a code span.
+
+`report.md` carries the same sections without any truncation, plus the full
+changed-files table, raw totals, coverage details and both inventories.
+`report.json` adds `rankings` and `changed_files` to the existing keys; see
+[SCHEMA.md](SCHEMA.md).
+
+`baseline.md` and `baseline.json` describe the run's head revision on its own:
+category scores, the 50 worst-scoring files overall, the 20 worst per category,
+and the unmeasured paths. On a pull-request run they describe the PR head. The
+copies published from default-branch pushes and retained by the publisher's
+`keep_default_branch_sets` are the repository baseline. Set
+`report_links.baseline` in the BuildBuddy configuration to that published URL and
+pull-request comments will link to it.
+
+## Per-repository classification rules
+
+`prepare` reads `.llm-cc/comparison-rules.json` from the **target** commit's
+tree. A pull request therefore cannot reclassify its own files, and rules that
+fail validation fail the run instead of silently reverting to the host defaults.
+Accepted keys are `exclude`, `tests`, `tooling` and `extensions`; glob lists hold
+non-empty patterns of at most 256 characters, at most 512 patterns in total, and
+the canonical document must stay under 64 KiB. Repositories without that file use
+the rules the host publishes.
 
 Run without Bazel using `python3 -m tools.comparison prepare` (Python 3.11+ and
 Git). A consuming module can run `@llm_cc//tools/comparison:prepare`, including
@@ -69,7 +106,10 @@ merge-base resolution fails. The package reads committed Git objects, including
 headers; it neither scores working-tree changes nor follows symlinks/submodules.
 Classification rules use `exclude`, `tests`, and `tooling` glob arrays plus an
 optional extension-to-language map. Tests take precedence over tooling and
-runtime. See [dogfood-rules.json](dogfood-rules.json).
+runtime. Every rule set is validated before use. See
+[dogfood-rules.json](dogfood-rules.json) for the host rules and
+[consumer/comparison-rules.json](consumer/comparison-rules.json) for a
+per-repository example.
 
 The dogfood scorer is pinned to
 `4646123b274005c587dfeb614f17ddf5fd36aef6` for both revisions. Build and install
@@ -135,7 +175,9 @@ comparison implementation; `execution_image` must exactly match the scoring
 profile. Bare-host profiles use `execution_image: "none"`, checksummed runtime
 files and explicit GPU identity in `build.execution_host`. A checksummed
 `execution_bundle` can pin a host-staged comparison package independently of
-the repository under analysis. Supply a registered GPU pool and shared store. Worker secrets use named
+the repository under analysis. `report_links` holds https URL templates published
+in pull-request comments; only `{repository}`, `{target_sha}` and
+`{target_branch}` may appear, and their values are URL-quoted. Supply a registered GPU pool and shared store. Worker secrets use named
 environment inputs sent as sensitive remote headers. The coordinator discovers
 the current open PR and actual target, cancels obsolete workers, and retains
 reports under a key derived from the **parent invocation** identity. Default-branch
@@ -143,8 +185,14 @@ pushes compare the head to itself and populate the baseline cache. A branch with
 no current PR skips inference.
 
 The `Complexity comparison` BuildBuddy action runs on pull requests targeting
-`main` and on `main` pushes. PR updates compare committed source against the
-merge base of the actual target; `main` pushes populate the baseline cache.
+`main` and on `main` pushes. This repository runs the checkout's own coordinator
+through [dogfood.sh](dogfood.sh), so pull requests exercise coordinator changes
+before the host bundle is refreshed; consuming repositories call the published
+launcher instead. The coordinator derives its own head, branch and default branch
+from the checkout, unwrapping BuildBuddy's synthetic merge commit to the actual
+pull-request head. PR updates compare committed source against the merge base of
+the actual target; `main` pushes populate the baseline cache and publish the
+baseline ranking.
 The installed Bazzite runner, store, and pinned scorer provide the execution
 configuration. ci-toolkit consumes the completed BuildBuddy status and publishes
 the generated table and report links using `.ci-toolkit.yml` from the PR's
@@ -154,6 +202,16 @@ fresh PR comparison can publish automatically.
 ci-toolkit owns comment markers, serialization, ordering, and PR-state rechecks;
 these comparison stages never post comments. See
 [ci-toolkit.example.yml](ci-toolkit.example.yml) for the publication policy.
+
+## Adopting in another repository
+
+Copy the two templates in [consumer/](consumer) into the repository, replace
+`OWNER/REPO` in the BuildBuddy action, and merge the ci-toolkit automation on the
+default branch first. See [consumer/README.md](consumer/README.md) for the
+prerequisites, the shared-store trust note, and the `GITHUB_TOKEN` guidance.
+Execution always happens on the Bazzite host through
+`/var/lib/llm-cc/bin/llm-cc-coordinate`, which pins the verified package and its
+immutable configuration generation.
 
 Local acceptance is `bazel test //tools/comparison:comparison_test` and
 `BACKEND=cpu tools/check_consumer.sh --tests-only`. Tests use synthetic scorers,

@@ -3,16 +3,25 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
 import zipfile
 
-from .setup_bazzite import atomic_publish, package_bundle, verify_assets
+from .buildbuddy import report_links, validate_report_links
+from .inventory import validate_rules as _validate_rules
+from .setup_bazzite import (
+    atomic_publish,
+    launcher_script,
+    package_bundle,
+    verify_assets,
+)
 from .submit_bazzite import (
     coordinator_request,
     main,
     parent_invocation_id,
+    resolve_checkout,
     runner_metadata,
 )
 
@@ -48,14 +57,23 @@ class BazziteSetupTest(unittest.TestCase):
                             "run-coordinator",
                             "--config",
                             str(config),
+                            "--repository",
+                            "owner/repo",
                             "--head",
                             "a" * 40,
                             "--branch",
+                            "main",
+                            "--default-branch",
                             "main",
                         ]
                     ),
                     0,
                 )
+            with (
+                mock.patch.dict(os.environ, environment, clear=True),
+                self.assertRaises(SystemExit),
+            ):
+                main(["run-coordinator", "--config", str(config), "--head", "a" * 40])
 
     def test_runner_metadata_restricts_fields_and_handles_detached_checkout(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -182,6 +200,7 @@ class BazziteSetupTest(unittest.TestCase):
                 "buildbuddy.py",
                 "worker.py",
                 "pipeline.py",
+                "submit_bazzite.py",
             ):
                 (package / name).write_text("# source\n")
             (package / "dogfood-rules.json").write_text("{}")
@@ -242,6 +261,49 @@ class BazziteSetupTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "runtime file"):
                 verify_assets(profile, installed, model)
 
+    @unittest.skipUnless(os.name == "posix", "launcher execution requires POSIX")
+    def test_launcher_runs_only_verified_bytes_with_pinned_configuration(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / "packages/code.zip"
+            archive.parent.mkdir()
+            with zipfile.ZipFile(archive, "w") as bundle:
+                bundle.writestr(
+                    zipfile.ZipInfo(
+                        "tools/comparison/submit_bazzite.py",
+                        date_time=(1980, 1, 1, 0, 0, 0),
+                    ),
+                    "import sys; print(sys.argv[1:])",
+                )
+            checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
+            generation = root / "configurations/abc/comparison.json"
+            script = launcher_script(archive, checksum, generation)
+            text = script.decode("utf-8")
+            self.assertIn(checksum, text)
+            self.assertIn(str(generation), text)
+            self.assertIn("python3 -I -c", text)
+            self.assertTrue(text.rstrip().endswith('"$@"'))
+            launcher = root / "bin/llm-cc-coordinate"
+            atomic_publish(launcher, script, 0o755)
+            self.assertTrue(os.access(launcher, os.X_OK))
+            completed = subprocess.run(
+                [str(launcher), "--repository", "owner/repo"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertEqual(
+                completed.stdout.strip(),
+                "['run-coordinator', '--config', '%s', '--repository', 'owner/repo']"
+                % generation,
+            )
+            archive.write_bytes(b"replaced")
+            failed = subprocess.run([str(launcher)], capture_output=True, text=True)
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertIn("execution bundle checksum mismatch", failed.stderr)
+        with self.assertRaisesRegex(ValueError, "absolute"):
+            launcher_script("relative.zip", "a" * 64, "/var/lib/llm-cc/x.json")
+
     @unittest.skipUnless(os.name == "posix", "host publishing requires POSIX")
     def test_atomic_publish_replaces_complete_file_and_cleans_temporary(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -250,6 +312,146 @@ class BazziteSetupTest(unittest.TestCase):
             atomic_publish(path, b"new")
             self.assertEqual(path.read_bytes(), b"new")
             self.assertEqual(list(path.parent.iterdir()), [path])
+
+
+def git(repo, *args):
+    environment = os.environ | {
+        "GIT_AUTHOR_NAME": "Test",
+        "GIT_AUTHOR_EMAIL": "test@example.test",
+        "GIT_COMMITTER_NAME": "Test",
+        "GIT_COMMITTER_EMAIL": "test@example.test",
+    }
+    return (
+        subprocess.check_output(["git", "-C", str(repo), *args], env=environment)
+        .decode()
+        .strip()
+    )
+
+
+class CheckoutResolutionTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.repo = Path(self.temp.name)
+        git(self.repo, "init", "-q", "-b", "feature")
+        (self.repo / "a.txt").write_text("a\n")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "first")
+        self.head = git(self.repo, "rev-parse", "HEAD")
+
+    def test_synthetic_merge_checkout_resolves_the_pull_request_head(self):
+        git(self.repo, "checkout", "-q", "-b", "other")
+        (self.repo / "b.txt").write_text("b\n")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "second")
+        side = git(self.repo, "rev-parse", "HEAD")
+        merge = subprocess.check_output(
+            ["git", "-C", str(self.repo), "commit-tree", side + "^{tree}",
+             "-p", side, "-p", self.head, "-m", "synthetic merge"],
+            env=os.environ
+            | {
+                "GIT_AUTHOR_NAME": "CI",
+                "GIT_AUTHOR_EMAIL": "ci-runner@buildbuddy.io",
+                "GIT_COMMITTER_NAME": "CI",
+                "GIT_COMMITTER_EMAIL": "ci-runner@buildbuddy.io",
+            },
+        ).decode().strip()
+        head, branch, default = resolve_checkout(
+            self.repo, {"GIT_COMMIT": merge, "GIT_BRANCH": "feature"}
+        )
+        self.assertEqual(head, side)
+        self.assertEqual(branch, "feature")
+        self.assertEqual(default, "main")
+
+    def test_default_branch_precedence_and_checkout_fallbacks(self):
+        head, branch, default = resolve_checkout(self.repo, {})
+        self.assertEqual(head, self.head)
+        self.assertEqual(branch, "feature")
+        self.assertEqual(default, "main")
+        self.assertEqual(
+            resolve_checkout(self.repo, {"GIT_REPO_DEFAULT_BRANCH": "trunk"})[2],
+            "trunk",
+        )
+        self.assertEqual(
+            resolve_checkout(
+                self.repo, {"GIT_REPO_DEFAULT_BRANCH": "trunk"}, default_branch="release"
+            )[2],
+            "release",
+        )
+        self.assertEqual(
+            resolve_checkout(self.repo, {"COMMIT_SHA": self.head.upper()})[0],
+            self.head,
+        )
+        with self.assertRaisesRegex(ValueError, "full Git commit SHA"):
+            resolve_checkout(self.repo, {"GIT_COMMIT": "not-a-sha"})
+
+
+class ReportLinkTest(unittest.TestCase):
+    def test_links_accept_only_https_templates_with_identity_placeholders(self):
+        identity = {
+            "repository": "owner/repo",
+            "target_sha": "a" * 40,
+            "target_branch": "release/1.0",
+        }
+        resolved = report_links(
+            {
+                "report_links": {
+                    "baseline": "https://ci.example/{repository}/{target_branch}/baseline.md"
+                }
+            },
+            identity,
+        )
+        self.assertEqual(
+            resolved["baseline"],
+            "https://ci.example/owner%2Frepo/release%2F1.0/baseline.md",
+        )
+        self.assertEqual(report_links({}, identity), {})
+        for invalid in (
+            {"baseline": "http://ci.example/x"},
+            {"baseline": "https://ci.example/{secret}"},
+            {"baseline": "https://ci.example/a b"},
+            {"baseline": "https://ci.example/<script>"},
+            {"BASELINE": "https://ci.example/x"},
+            {"baseline": 7},
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                validate_report_links(invalid)
+
+
+class ConsumerTemplateTest(unittest.TestCase):
+    directory = Path(__file__).resolve().parent / "consumer"
+
+    def read(self, name):
+        return (self.directory / name).read_text(encoding="utf-8")
+
+    def test_templates_name_the_action_pool_launcher_and_artifacts(self):
+        workflow = self.read("buildbuddy.yaml")
+        self.assertIn('name: "Complexity comparison"', workflow)
+        self.assertIn('pool: "linux-amd64-rocm"', workflow)
+        self.assertIn("self_hosted: true", workflow)
+        self.assertIn(
+            "/var/lib/llm-cc/bin/llm-cc-coordinate --repository OWNER/REPO", workflow
+        )
+        policy = self.read(".ci-toolkit.yml")
+        self.assertIn("context: Complexity comparison", policy)
+        for artifact in (
+            "comment.md",
+            "publication.json",
+            "report.json",
+            "report.md",
+            "baseline.md",
+            "baseline.json",
+        ):
+            with self.subTest(artifact=artifact):
+                self.assertIn("name: " + artifact + ",", policy)
+        rules = json.loads(self.read("comparison-rules.json"))
+        _validate_rules(rules)
+        self.assertIn("target/**", rules["exclude"])
+        self.assertIn("xtask/**", rules["tooling"])
+        guide = self.read("README.md")
+        self.assertIn("llm-cc-coordinate", guide)
+        self.assertIn(".llm-cc/comparison-rules.json", guide)
+        self.assertIn("GITHUB_TOKEN", guide)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,6 @@
+{
+  "exclude": ["target/**", "vendor/**", "**/vendor/**", "**/generated/**"],
+  "tests": ["tests/**", "**/tests/**", "benches/**", "**/benches/**", "testdata/**", "**/testdata/**", "fuzz/**", "**/fuzz/**", "*_test.*", "test_*.*", "**/*_test.*", "**/test_*.*"],
+  "tooling": ["xtask/**", "scripts/**", "tools/**", "examples/**", ".github/**"],
+  "extensions": {}
+}

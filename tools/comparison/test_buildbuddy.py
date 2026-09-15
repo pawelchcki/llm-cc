@@ -335,6 +335,31 @@ class BuildBuddyTest(unittest.TestCase):
         self.assertNotEqual(completed.returncode, 0)
         self.assertIn("execution bundle checksum mismatch", completed.stderr)
 
+    def test_run_prepared_uploads_baseline_artifacts(self):
+        api = FakeAPI()
+        self.config = {}
+        report = self.run_plan(api)
+        self.assertEqual(report["status"], "complete")
+        prefix = _pipeline_prefix(self.identity)
+        for name in (
+            "report.json",
+            "report.md",
+            "comment.md",
+            "publication.json",
+            "baseline.md",
+            "baseline.json",
+        ):
+            with self.subTest(name=name):
+                self.assertIsNotNone(self.store.get(prefix + name))
+                self.assertTrue((self.root / "out" / name).is_file())
+        baseline = json.loads(self.store.get(prefix + "baseline.json"))
+        self.assertEqual(baseline["identity"], self.identity)
+        self.assertEqual(baseline["rankings"], report["rankings"]["head"])
+        self.assertIn(
+            "Baseline ranking for owner/repo@",
+            self.store.get(prefix + "baseline.md").decode("utf-8"),
+        )
+
     def test_pipeline_identity_cannot_escape_store(self):
         identity = dict(self.identity, pipeline_id="../../etc/passwd")
         self.assertRegex(_pipeline_prefix(identity), r"^pipelines/[0-9a-f]{64}/$")

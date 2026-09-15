@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import subprocess
 
 from .buildbuddy import BuildBuddy, bundle_command, coordinate
 from .common import read_json
@@ -48,6 +49,43 @@ def runner_metadata(name, artifact_directory=None, environment=None):
     if name == "COMMIT_SHA" and not re.fullmatch(r"[0-9a-fA-F]{40}", value):
         raise ValueError("BuildBuddy COMMIT_SHA must be a full Git SHA")
     return value
+
+
+CI_MERGE_COMMITTER = "ci-runner@buildbuddy.io"
+
+
+def _git(repo, *args):
+    return subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    ).stdout.strip()
+
+
+def resolve_checkout(repo=".", environment=None, default_branch=None):
+    """Derive the analysed head and branch from whatever the runner provides."""
+    environment = os.environ if environment is None else environment
+    head = environment.get("GIT_COMMIT") or environment.get("COMMIT_SHA")
+    if not head:
+        try:
+            head = runner_metadata("COMMIT_SHA", environment=environment)
+        except ValueError:
+            head = None
+    if not head:
+        head = _git(repo, "rev-parse", "HEAD")
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", head):
+        raise ValueError("checkout head must be a full Git commit SHA")
+    head = head.lower()
+    # BuildBuddy checks pull requests out at a synthetic merge commit whose
+    # first parent is the actual PR head. Compare the head the PR proposes.
+    if _git(repo, "show", "-s", "--format=%ce", head) == CI_MERGE_COMMITTER:
+        head = _git(repo, "rev-parse", head + "^1")
+    branch = environment.get("GIT_BRANCH") or _git(repo, "branch", "--show-current")
+    if not branch:
+        branch = runner_metadata("BRANCH_NAME", environment=environment)
+    default = default_branch or environment.get("GIT_REPO_DEFAULT_BRANCH") or "main"
+    return head, branch, default
 
 
 def parent_invocation_id(artifact_directory=None, environment=None):
@@ -116,10 +154,19 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("submit", "run-coordinator"))
     parser.add_argument("--config", default="/var/lib/llm-cc/comparison.json")
-    parser.add_argument("--repository", default="pawelchcki/llm-cc")
-    parser.add_argument("--head", required=True)
-    parser.add_argument("--branch", required=True)
+    parser.add_argument("--repository", required=True)
+    parser.add_argument("--head")
+    parser.add_argument("--branch")
+    parser.add_argument("--default-branch")
     args = parser.parse_args(argv)
+    repo = os.getcwd()
+    if not args.head or not args.branch or not args.default_branch:
+        head, branch, default_branch = resolve_checkout(
+            repo, default_branch=args.default_branch
+        )
+        args.head = args.head or head
+        args.branch = args.branch or branch
+        args.default_branch = args.default_branch or default_branch
     if args.action == "run-coordinator":
         config = read_json(args.config)
         api_key_env = config.get("api_key_env", "BUILDBUDDY_API_KEY")
@@ -129,8 +176,7 @@ def main(argv=None):
             # The submitting machine may use a custom variable name. Bind it
             # here to the server's runner credential, never the local API key.
             os.environ[api_key_env] = os.environ["BUILDBUDDY_API_KEY"]
-        args.repo = os.getcwd()
-        args.default_branch = "main"
+        args.repo = repo
         args.output_dir = os.environ["BUILDBUDDY_ARTIFACTS_DIRECTORY"]
         args.pipeline_id = parent_invocation_id(args.output_dir)
         return coordinate(args)

@@ -1,8 +1,9 @@
 import fnmatch
 import hashlib
+import re
 import subprocess
 
-from .common import digest
+from .common import canonical_bytes, digest
 
 LANGUAGES = {
     ".c": "c",
@@ -49,6 +50,67 @@ def _git(repo, args, data=None):
             % (" ".join(args), completed.stderr.decode("utf-8", "replace").strip())
         )
     return completed.stdout
+
+
+def validate_rules(rules):
+    """Reject classification rules that a repository could use to hide work."""
+    if not isinstance(rules, dict):
+        raise ValueError("classification rules must be a JSON object")
+    allowed = {"exclude", "tests", "tooling", "extensions"}
+    unknown = set(rules) - allowed
+    if unknown:
+        raise ValueError(
+            "unsupported classification rule keys: " + ", ".join(sorted(unknown))
+        )
+    total = 0
+    for name in ("exclude", "tests", "tooling"):
+        if name not in rules:
+            continue
+        patterns = rules[name]
+        if not isinstance(patterns, list):
+            raise ValueError("classification rule %s must be a list of globs" % name)
+        total += len(patterns)
+        for pattern in patterns:
+            if not isinstance(pattern, str) or not pattern or len(pattern) > 256:
+                raise ValueError(
+                    "classification rule %s needs non-empty globs of at most 256 characters"
+                    % name
+                )
+    if total > 512:
+        raise ValueError("classification rules use more than 512 glob patterns")
+    extensions = rules.get("extensions", {})
+    if not isinstance(extensions, dict):
+        raise ValueError("classification rule extensions must be an object")
+    languages = set(LANGUAGES.values())
+    for extension, language in extensions.items():
+        if (
+            not isinstance(extension, str)
+            or not re.fullmatch(r"\.[A-Za-z0-9_+-]{1,16}", extension)
+            or extension != extension.lower()
+        ):
+            raise ValueError(
+                "classification rule extensions must map lowercase .<ext> names"
+            )
+        if language not in languages:
+            raise ValueError(
+                "classification rule extension %s names an unsupported language"
+                % extension
+            )
+    if len(canonical_bytes(rules)) > 64 * 1024:
+        raise ValueError("classification rules exceed 64 KiB")
+    return rules
+
+
+def read_tree_file(repo, revision, path):
+    """Read one committed blob, returning None when the tree has no such path."""
+    target = "%s:%s" % (revision, path)
+    try:
+        kind = _git(repo, ["cat-file", "-t", target]).strip()
+    except GitError:
+        return None
+    if kind != b"blob":
+        raise GitError("%s is not a regular file in %s" % (path, revision))
+    return _git(repo, ["cat-file", "blob", target])
 
 
 def merge_base(repo, target, head):
@@ -123,7 +185,7 @@ def _classify(path, rules):
 
 
 def inventory(repo, revision, fingerprint, rules=None, max_file_bytes=65536):
-    rules = rules or {}
+    rules = validate_rules(rules or {})
     raw = _git(repo, ["ls-tree", "-rlz", "--full-tree", revision])
     records = []
     blob_ids = []

@@ -1,5 +1,6 @@
 import datetime
 import hashlib
+import json
 import os
 import unicodedata
 from pathlib import Path
@@ -13,7 +14,17 @@ from .common import (
     validate_execution_policy,
     write_json,
 )
-from .inventory import changes, inventory, merge_base, resolve_commit
+from .inventory import (
+    changes,
+    inventory,
+    merge_base,
+    read_tree_file,
+    resolve_commit,
+    validate_rules,
+)
+
+COMMENT_LIMIT = 24 * 1024
+REPOSITORY_RULES_PATH = ".llm-cc/comparison-rules.json"
 
 
 def _utc_now():
@@ -22,8 +33,41 @@ def _utc_now():
     )
 
 
+def resolve_rules(repo, target, rules, repository_rules_path):
+    """Prefer the target commit's own rules; a PR cannot reclassify itself."""
+    if repository_rules_path:
+        raw = read_tree_file(repo, target, repository_rules_path)
+        if raw is not None:
+            try:
+                candidate = json.loads(raw.decode("utf-8"))
+            except (UnicodeError, ValueError) as error:
+                raise ValueError(
+                    "repository classification rules at %s are not valid JSON: %s"
+                    % (repository_rules_path, error)
+                ) from None
+            return (
+                validate_rules(candidate),
+                {
+                    "source": "repository",
+                    "path": repository_rules_path,
+                    "commit": target,
+                },
+            )
+    return validate_rules(rules or {}), {"source": "host"}
+
+
 def prepare(
-    repo, head, target, identity, profile, rules, cache, output_dir, max_workers=4
+    repo,
+    head,
+    target,
+    identity,
+    profile,
+    rules,
+    cache,
+    output_dir,
+    max_workers=4,
+    repository_rules_path=REPOSITORY_RULES_PATH,
+    presentation=None,
 ):
     validate_execution_policy(profile)
     if not 1 <= max_workers <= 4:
@@ -56,6 +100,7 @@ def prepare(
     limit = profile.get("max_file_bytes", 65536)
     if type(limit) is not int or limit <= 0:
         raise ValueError("max_file_bytes must be a positive integer")
+    rules, rules_source = resolve_rules(repo, target, rules, repository_rules_path)
     base_inventory, base_blobs = inventory(repo, base, fingerprint, rules, limit)
     head_inventory, head_blobs = inventory(repo, head, fingerprint, rules, limit)
     all_blobs = base_blobs | head_blobs
@@ -102,6 +147,9 @@ def prepare(
         "profile": profile,
         "inventories": {"base": base_inventory, "head": head_inventory},
         "changes": changes(repo, base, head),
+        "rules": rules,
+        "rules_source": rules_source,
+        "presentation": presentation or {},
         "items": items,
         "hits": hits,
         "workers": workers,
@@ -273,15 +321,20 @@ def _delta(base, head):
     return {"base": base, "head": head, "absolute": absolute, "percent": percent}
 
 
-def _safe(text):
+def _neutralize_controls(text):
+    """Remove control/format characters that could reorder or hide rendered text."""
     value = str(text).encode("utf-8", "backslashreplace").decode("utf-8")
-    value = "".join(
+    return "".join(
         character
         if unicodedata.category(character) not in {"Cc", "Cf"}
         and character not in "\u2028\u2029"
         else "\\u%04x" % ord(character)
         for character in value
     )
+
+
+def _safe(text):
+    value = _neutralize_controls(text)
     return (
         value.replace("&", "&amp;")
         .replace("#", "&#35;")
@@ -309,136 +362,515 @@ def _safe(text):
     )
 
 
-def _render(report, full=False):
+PATH_DISPLAY_LIMIT = 120
+
+
+def _code(text, table=False):
+    """Render untrusted text as a balanced code span that Markdown cannot escape."""
+    value = _neutralize_controls(text)
+    if len(value) > PATH_DISPLAY_LIMIT:
+        head = (PATH_DISPLAY_LIMIT - 1) // 2
+        tail = PATH_DISPLAY_LIMIT - 1 - head
+        value = value[:head] + "…" + value[len(value) - tail :]
+    if table:
+        # GFM splits table cells on every unescaped pipe, code spans included.
+        value = value.replace("|", "\\|")
+    longest = run = 0
+    for character in value:
+        run = run + 1 if character == "`" else 0
+        longest = max(longest, run)
+    fence = "`" * (longest + 1)
+    pad = " " if not value or value.startswith("`") or value.endswith("`") else ""
+    return fence + pad + value + pad + fence
+
+
+TRUNCATION_NOTICE = b"\n_Full details are available in artifacts._\n"
+
+
+def _assemble(sections, limit=COMMENT_LIMIT):
+    """Drop the least important sections, then whole lines, to fit the limit."""
+
+    def render(kept):
+        lines = []
+        for _, section in kept:
+            lines.extend(section)
+        return ("\n".join(lines).rstrip("\n") + "\n").encode("utf-8")
+
+    kept = list(sections)
+    payload = render(kept)
+    while len(payload) > limit and len({priority for priority, _ in kept}) > 1:
+        lowest = max(priority for priority, _ in kept)
+        kept = [entry for entry in kept if entry[0] != lowest]
+        payload = render(kept)
+    if len(payload) > limit:
+        head = payload[: limit - len(TRUNCATION_NOTICE)]
+        cut = head.rfind(b"\n")
+        payload = (head[: cut + 1] if cut >= 0 else head) + TRUNCATION_NOTICE
+    return payload
+
+
+def _fmt(value):
+    return "unavailable" if value is None else "%.6g" % value
+
+
+def _percent(value):
+    return "unavailable" if value is None else "%+.3g%%" % value
+
+
+def _headline(report):
+    lines = []
+    for name in ("runtime", "tests", "tooling", "repository"):
+        item = (report.get("comparisons") or {}).get(name)
+        if not item:
+            continue
+        base, head = item["score"]["base"], item["score"]["head"]
+        lines.append(
+            "- %s %s → %s (%s)"
+            % (
+                name,
+                "unavailable" if base is None else "%.4f" % base,
+                "unavailable" if head is None else "%.4f" % head,
+                _percent(item["score"]["percent"]),
+            )
+        )
+    return lines
+
+
+def _category_table(report):
     lines = [
-        "## llm-cc comparison",
-        "",
-        "Status: **%s**" % report["status"],
         "",
         "| Category | Score base | Score head | Score Δ | Score Δ% | Raw LLM Δ | Tokens Δ | Coverage |",
         "|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for name in ("runtime", "tests", "tooling", "repository"):
-        item = report["comparisons"][name]
-        base = item["score"]["base"]
-        head = item["score"]["head"]
-        change = item["score"]["absolute"]
-
-        def fmt(x):
-            return "unavailable" if x is None else "%.6g" % x
-
+        item = (report.get("comparisons") or {}).get(name)
+        if not item:
+            continue
         lines.append(
             "| %s | %s | %s | %s | %s | %s | %s | %.1f%% / %.1f%% |"
             % (
-                _safe(name),
-                fmt(base),
-                fmt(head),
-                fmt(change),
-                "unavailable"
-                if item["score"]["percent"] is None
-                else "%+.3g%%" % item["score"]["percent"],
-                fmt(item["raw_llm_cc"]["absolute"]),
-                fmt(item["tokens"]["absolute"]),
+                name,
+                _fmt(item["score"]["base"]),
+                _fmt(item["score"]["head"]),
+                _fmt(item["score"]["absolute"]),
+                _percent(item["score"]["percent"]),
+                _fmt(item["raw_llm_cc"]["absolute"]),
+                _fmt(item["tokens"]["absolute"]),
                 item["coverage"]["base"] * 100,
                 item["coverage"]["head"] * 100,
             )
         )
-    lines += [
+    return lines
+
+
+def _changed_rows(report):
+    rows = list(report.get("changed_files") or [])
+    rows.sort(
+        key=lambda row: (
+            0 if row["delta"] is not None else 1,
+            -abs(row["delta"] or 0.0),
+            row["path"],
+        )
+    )
+    return rows
+
+
+def _changed_table_lines(rows, total_head):
+    lines = [
+        "| Path | Category | Base | Head | Δ | Δ% | Head rank |",
+        "|---|---|---:|---:|---:|---:|---:|",
+    ]
+    for row in rows:
+        side = row["head"] or row["base"] or {}
+        rank = "—"
+        if row["head"] and row["head"].get("rank") is not None:
+            rank = "#%d/%d" % (row["head"]["rank"], total_head)
+        # An added or deleted path has no opposite side at all, which reads
+        # differently from a present file whose score could not be measured.
+        lines.append(
+            "| %s | %s | %s | %s | %s | %s | %s |"
+            % (
+                _code(row["path"], table=True),
+                side.get("category") or "—",
+                "—" if row["base"] is None else _fmt(row["base"]["score"]),
+                "—" if row["head"] is None else _fmt(row["head"]["score"]),
+                "—"
+                if row["base"] is None or row["head"] is None
+                else _fmt(row["delta"]),
+                "—"
+                if row["base"] is None or row["head"] is None
+                else _percent(row["percent"]),
+                rank,
+            )
+        )
+    return lines
+
+
+CHANGED_FILES_INLINE = 25
+
+
+def _comment_sections(report, full=False):
+    identity = report.get("identity") or {}
+    rankings = report.get("rankings") or {"base": [], "head": []}
+    sections = [
+        (
+            1,
+            ["## llm-cc comparison", "", "Status: **%s**" % report["status"], ""]
+            + _headline(report),
+        ),
+        (2, _category_table(report)),
+    ]
+    status_lines = [
         "",
         "Cache: %d hits, %d misses."
         % (report["cache_stats"]["hits"], report["cache_stats"]["misses"]),
     ]
-    if report["leading_regressions"]:
-        lines += ["", "### Leading regressions", ""] + [
-            "- %s: %+.6g" % (_safe(x["path"]), x["change"])
-            for x in report["leading_regressions"]
-        ]
-    if report["leading_improvements"]:
-        lines += ["", "### Leading improvements", ""] + [
-            "- %s: %+.6g" % (_safe(x["path"]), x["change"])
-            for x in report["leading_improvements"]
-        ]
     if report["errors"]:
-        lines += ["", "Errors:"] + [
-            "- " + _safe(error) for error in report["errors"][:20]
+        status_lines += ["", "Errors:"] + [
+            "- " + _code(error) for error in report["errors"][:20]
         ]
-    if full:
-        lines += [
-            "",
-            "### Raw totals",
-            "",
-            "| Side/category | LLM total | Tokens | Score |",
-            "|---|---:|---:|---:|",
-        ]
-        for side in ("base", "head"):
-            for name in ("runtime", "tests", "tooling"):
-                values = report["sides"][side]["categories"][name]
-                lines.append(
-                    "| %s/%s | %s | %s | %s |"
-                    % (
-                        side,
-                        name,
-                        fmt(values["llm_cc"]),
-                        fmt(values["token_count"]),
-                        fmt(values["score"]),
-                    )
-                )
-        lines += ["", "### Coverage details", ""]
-        for side in ("base", "head"):
-            totals = report["sides"][side]["totals"]
-            reasons = (
-                ", ".join(
-                    "%s: %d" % (_safe(k), v)
-                    for k, v in sorted(totals["unmeasured_reasons"].items())
-                )
-                or "none"
-            )
-            lines.append(
-                "- %s: %d/%d supported paths measured; unscored paths: %s"
-                % (
-                    side.title(),
-                    totals["measured_paths"],
-                    totals["supported_paths"],
-                    reasons,
-                )
-            )
-        lines += ["", "### Changed paths", ""]
-        if report["changes"]:
-            for change in report["changes"]:
-                old = (
-                    _safe(change["old_path"]) if change["old_path"] is not None else "∅"
-                )
-                new = (
-                    _safe(change["new_path"]) if change["new_path"] is not None else "∅"
-                )
-                lines.append("- %s → %s (%s)" % (old, new, _safe(change["status"])))
-        else:
-            lines.append("- No changed paths.")
-        for side in ("base", "head"):
+    sections.append((3, status_lines))
+
+    rows = _changed_rows(report)
+    total_head = len(rankings.get("head") or [])
+    if rows:
+        inline = rows[:CHANGED_FILES_INLINE]
+        lines = ["", "### Changed files", ""] + _changed_table_lines(inline, total_head)
+        if not full and len(rows) > len(inline):
             lines += [
                 "",
-                "### %s inventory" % side.title(),
-                "",
-                "| Path | Category | Language | Bytes | Measurement |",
-                "|---|---|---|---:|---|",
+                "_%d more changed files are listed in the full report._"
+                % (len(rows) - len(inline)),
             ]
-            for file in report["inventories"][side]:
-                measurement = (
-                    "measured"
-                    if file["scorable"] and file["key"] in report["results"]
-                    else (file["reason"] or "missing")
+        sections.append((4, lines))
+
+    for title, entries in (
+        ("Leading regressions", report.get("leading_regressions") or []),
+        ("Leading improvements", report.get("leading_improvements") or []),
+    ):
+        if entries:
+            sections.append(
+                (
+                    5,
+                    ["", "### " + title, ""]
+                    + [
+                        "- %s: %+.6g" % (_code(entry["path"]), entry["change"])
+                        for entry in entries
+                    ],
                 )
-                lines.append(
-                    "| %s | %s | %s | %s | %s |"
-                    % (
-                        _safe(file["path"]),
-                        _safe(file["category"]),
-                        _safe(file["language"] or "—"),
-                        file["size"] if file["size"] is not None else "—",
-                        _safe(measurement),
-                    )
+            )
+
+    offenders = (rankings.get("base") or [])[:10]
+    if offenders:
+        branch = identity.get("target_branch") or identity.get("base_sha") or "base"
+        lines = [
+            "",
+            "<details>",
+            "<summary>Top offenders on base (%s)</summary>" % _code(branch),
+            "",
+            "| # | Path | Category | Score | Touched |",
+            "|---:|---|---|---:|---|",
+        ]
+        for entry in offenders:
+            lines.append(
+                "| %d | %s | %s | %s | %s |"
+                % (
+                    entry["rank"],
+                    _code(entry["path"], table=True),
+                    entry["category"],
+                    _fmt(entry["score"]),
+                    "yes" if entry["changed"] else "",
                 )
-    return "\n".join(lines) + "\n"
+            )
+        lines += ["", "</details>"]
+        sections.append((6, lines))
+
+    links = (report.get("presentation") or {}).get("report_links") or {}
+    baseline = links.get("baseline")
+    if isinstance(baseline, str) and baseline.startswith("https://"):
+        sections.append((7, ["", "Baseline ranking: <%s>" % baseline]))
+
+    source = report.get("rules_source") or {}
+    if source.get("source") == "repository":
+        sections.append(
+            (
+                8,
+                [
+                    "",
+                    "Rules: repository %s@%s"
+                    % (_code(source.get("path")), (source.get("commit") or "")[:7]),
+                ],
+            )
+        )
+    elif source.get("source") == "host":
+        sections.append((8, ["", "Rules: host"]))
+    return sections
+
+
+def _full_sections(report):
+    rows = _changed_rows(report)
+    total_head = len(((report.get("rankings") or {}).get("head")) or [])
+    lines = []
+    if len(rows) > CHANGED_FILES_INLINE:
+        lines += [
+            "",
+            "<details>",
+            "<summary>All %d changed files</summary>" % len(rows),
+            "",
+        ]
+        lines += _changed_table_lines(rows[CHANGED_FILES_INLINE:], total_head)
+        lines += ["", "</details>"]
+    lines += [
+        "",
+        "### Raw totals",
+        "",
+        "| Side/category | LLM total | Tokens | Score |",
+        "|---|---:|---:|---:|",
+    ]
+    for side in ("base", "head"):
+        for name in ("runtime", "tests", "tooling"):
+            values = report["sides"][side]["categories"][name]
+            lines.append(
+                "| %s/%s | %s | %s | %s |"
+                % (
+                    side,
+                    name,
+                    _fmt(values["llm_cc"]),
+                    _fmt(values["token_count"]),
+                    _fmt(values["score"]),
+                )
+            )
+    lines += ["", "### Coverage details", ""]
+    for side in ("base", "head"):
+        totals = report["sides"][side]["totals"]
+        reasons = (
+            ", ".join(
+                "%s: %d" % (key, value)
+                for key, value in sorted(totals["unmeasured_reasons"].items())
+            )
+            or "none"
+        )
+        lines.append(
+            "- %s: %d/%d supported paths measured; unscored paths: %s"
+            % (
+                side.title(),
+                totals["measured_paths"],
+                totals["supported_paths"],
+                reasons,
+            )
+        )
+    lines += ["", "### Changed paths", ""]
+    if report["changes"]:
+        for change in report["changes"]:
+            old = _code(change["old_path"]) if change["old_path"] is not None else "∅"
+            new = _code(change["new_path"]) if change["new_path"] is not None else "∅"
+            lines.append("- %s → %s (%s)" % (old, new, change["status"]))
+    else:
+        lines.append("- No changed paths.")
+    for side in ("base", "head"):
+        lines += [
+            "",
+            "### %s inventory" % side.title(),
+            "",
+            "| Path | Category | Language | Bytes | Measurement |",
+            "|---|---|---|---:|---|",
+        ]
+        for file in report["inventories"][side]:
+            measurement = (
+                "measured"
+                if file["scorable"] and file["key"] in report["results"]
+                else (file["reason"] or "missing")
+            )
+            lines.append(
+                "| %s | %s | %s | %s | %s |"
+                % (
+                    _code(file["path"], table=True),
+                    file["category"],
+                    file["language"] or "—",
+                    file["size"] if file["size"] is not None else "—",
+                    measurement,
+                )
+            )
+    return lines
+
+
+def _render(report, full=False):
+    sections = _comment_sections(report, full)
+    if not full:
+        return _assemble(sections).decode("utf-8")
+    lines = []
+    for _, section in sections:
+        lines.extend(section)
+    lines.extend(_full_sections(report))
+    return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def _render_baseline(report, output):
+    """Write the standalone worst-offender view for the scored head revision."""
+    identity = report.get("identity") or {}
+    rankings = (report.get("rankings") or {}).get("head") or []
+    categories = report["sides"]["head"]["categories"]
+    lines = [
+        "Baseline ranking for %s@%s (%s)"
+        % (
+            identity.get("repository") or "unknown",
+            identity.get("head_sha") or "unknown",
+            identity.get("target_branch") or "unknown",
+        ),
+        "",
+        "Status: **%s**" % report["status"],
+        "",
+        "| Category | Score | Raw LLM | Tokens | Measured paths |",
+        "|---|---:|---:|---:|---:|",
+    ]
+    for name in ("runtime", "tests", "tooling"):
+        values = categories[name]
+        lines.append(
+            "| %s | %s | %s | %s | %d/%d |"
+            % (
+                name,
+                _fmt(values["score"]),
+                _fmt(values["llm_cc"]),
+                _fmt(values["token_count"]),
+                values["measured_paths"],
+                values["supported_paths"],
+            )
+        )
+    totals = report["sides"]["head"]["totals"]
+    lines.append(
+        "| repository | %s | %s | %s | %d/%d |"
+        % (
+            _fmt(totals["score"]),
+            _fmt(totals["llm_cc"]),
+            _fmt(totals["token_count"]),
+            totals["measured_paths"],
+            totals["supported_paths"],
+        )
+    )
+
+    def table(entries):
+        rows = [
+            "| # | Path | Category | Score | LLM | Tokens |",
+            "|---:|---|---|---:|---:|---:|",
+        ]
+        for entry in entries:
+            rows.append(
+                "| %d | %s | %s | %s | %s | %d |"
+                % (
+                    entry["rank"],
+                    _code(entry["path"], table=True),
+                    entry["category"],
+                    _fmt(entry["score"]),
+                    _fmt(entry["llm_cc"]),
+                    entry["token_count"],
+                )
+            )
+        return rows
+
+    lines += ["", "## Top 50 files", ""]
+    lines += table(rankings[:50]) if rankings else ["No measured files."]
+    for name in ("runtime", "tests", "tooling"):
+        selected = [entry for entry in rankings if entry["category"] == name][:20]
+        lines += ["", "## Top 20 %s files" % name, ""]
+        lines += table(selected) if selected else ["No measured files."]
+    reasons = totals["unmeasured_reasons"]
+    lines += ["", "## Unmeasured paths", ""]
+    if reasons:
+        lines += [
+            "- %s: %d" % (reason, count) for reason, count in sorted(reasons.items())
+        ]
+    else:
+        lines.append("- None.")
+    (output / "baseline.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    write_json(
+        output / "baseline.json",
+        {
+            "schema_version": 1,
+            "identity": report["identity"],
+            "fingerprint": report["fingerprint"],
+            "status": report["status"],
+            "categories": categories,
+            "rankings": rankings,
+        },
+    )
+
+
+def _rankings(inventory, results, changed_paths):
+    """Order every measured file by descending score for a stable repository view."""
+    entries = []
+    for file in inventory:
+        if not file["scorable"]:
+            continue
+        result = results.get(file["key"])
+        if not result or not result["token_count"]:
+            continue
+        entries.append(
+            {
+                "path": file["path"],
+                "category": file["category"],
+                "language": file["language"],
+                "size": file["size"],
+                "score": result["llm_cc"] / result["token_count"],
+                "llm_cc": result["llm_cc"],
+                "token_count": result["token_count"],
+                "rank": 0,
+                "category_rank": 0,
+                "changed": file["path"] in changed_paths,
+            }
+        )
+    entries.sort(key=lambda entry: (-entry["score"], entry["path"]))
+    seen = {}
+    for position, entry in enumerate(entries, 1):
+        entry["rank"] = position
+        seen[entry["category"]] = seen.get(entry["category"], 0) + 1
+        entry["category_rank"] = seen[entry["category"]]
+    return entries
+
+
+def _changed_files(plan_changes, base_paths, head_paths, results, head_rankings):
+    """One row per change that carries a score on either side of the comparison."""
+    ranked = {entry["path"]: entry for entry in head_rankings}
+
+    def score(file):
+        result = results.get(file["key"]) if file and file.get("key") else None
+        if not result or not result["token_count"]:
+            return None
+        return result["llm_cc"] / result["token_count"]
+
+    rows = []
+    for change in plan_changes:
+        old = base_paths.get(change["old_path"])
+        new = head_paths.get(change["new_path"])
+        base_score, head_score = score(old), score(new)
+        if base_score is None and head_score is None:
+            continue
+        path = change["new_path"] or change["old_path"]
+        delta = _delta(base_score, head_score)
+        rank = ranked.get(new["path"]) if new else None
+        rows.append(
+            {
+                "status": change["status"],
+                "old_path": change["old_path"],
+                "new_path": change["new_path"],
+                "path": path,
+                "base": None
+                if old is None
+                else {"category": old["category"], "score": base_score},
+                "head": None
+                if new is None
+                else {
+                    "category": new["category"],
+                    "score": head_score,
+                    "rank": rank["rank"] if rank else None,
+                    "category_rank": rank["category_rank"] if rank else None,
+                },
+                "delta": delta["absolute"],
+                "percent": delta["percent"],
+            }
+        )
+    rows.sort(key=lambda row: row["path"])
+    return rows
+
 
 
 def _aggregate(plan, worker_paths, output):
@@ -554,25 +986,24 @@ def _aggregate(plan, worker_paths, output):
         new = head_paths.get(change["new_path"])
         if old and new and old["category"] != new["category"]:
             counts["category_moves"] += 1
-    path_deltas = []
-    for change in plan["changes"]:
-        old = base_paths.get(change["old_path"])
-        new = head_paths.get(change["new_path"])
-        old_result = results.get(old["key"]) if old and old["key"] else None
-        new_result = results.get(new["key"]) if new and new["key"] else None
-        if (
-            old_result
-            and new_result
-            and old_result["token_count"]
-            and new_result["token_count"]
-        ):
-            value = (
-                new_result["llm_cc"] / new_result["token_count"]
-                - old_result["llm_cc"] / old_result["token_count"]
-            )
-            path_deltas.append(
-                {"path": change["new_path"] or change["old_path"], "change": value}
-            )
+    base_changed = {
+        change["old_path"] for change in plan["changes"] if change["old_path"]
+    }
+    head_changed = {
+        change["new_path"] for change in plan["changes"] if change["new_path"]
+    }
+    rankings = {
+        "base": _rankings(plan["inventories"]["base"], results, base_changed),
+        "head": _rankings(plan["inventories"]["head"], results, head_changed),
+    }
+    changed_files = _changed_files(
+        plan["changes"], base_paths, head_paths, results, rankings["head"]
+    )
+    path_deltas = [
+        {"path": row["path"], "change": row["delta"]}
+        for row in changed_files
+        if row["delta"] is not None
+    ]
     regressions = sorted(
         (x for x in path_deltas if x["change"] > 0),
         key=lambda x: (-x["change"], x["path"]),
@@ -635,20 +1066,20 @@ def _aggregate(plan, worker_paths, output):
         "comparisons": comparisons,
         "changes": report_changes,
         "change_counts": counts,
+        "rankings": rankings,
+        "changed_files": changed_files,
         "leading_regressions": regressions,
         "leading_improvements": improvements,
+        "rules_source": plan.get("rules_source") or {"source": "host"},
+        "presentation": plan.get("presentation") or {},
         "cache_stats": plan["cache_stats"],
         "errors": errors,
     }
     write_json(output / "report.json", report)
     markdown = _render(report, full=True)
     (output / "report.md").write_text(markdown, encoding="utf-8")
+    _render_baseline(report, output)
     comment_bytes = _render(report).encode("utf-8")
-    if len(comment_bytes) > 24 * 1024:
-        comment_bytes = (
-            comment_bytes[: 24 * 1024 - 64].decode("utf-8", "ignore").encode("utf-8")
-            + b"\n\n_Full details are available in artifacts._\n"
-        )
     (output / "comment.md").write_bytes(comment_bytes)
     publication = {
         "schema_version": 1,
@@ -705,8 +1136,12 @@ def failure_report(output_dir, identity, fingerprint, errors):
             "renames": 0,
             "category_moves": 0,
         },
+        "rankings": {"base": [], "head": []},
+        "changed_files": [],
         "leading_regressions": [],
         "leading_improvements": [],
+        "rules_source": {"source": "host"},
+        "presentation": {},
         "cache_stats": {
             "items": 0,
             "hits": 0,
@@ -718,15 +1153,11 @@ def failure_report(output_dir, identity, fingerprint, errors):
     }
     write_json(output / "report.json", report)
     markdown = "## llm-cc comparison\n\nStatus: **failed**\n\nErrors:\n" + "".join(
-        "- %s\n" % _safe(error) for error in report["errors"]
+        "- %s\n" % _code(error) for error in report["errors"]
     )
     (output / "report.md").write_text(markdown, encoding="utf-8")
-    raw_comment = markdown.encode("utf-8")
-    comment = (
-        raw_comment
-        if len(raw_comment) <= 24 * 1024
-        else raw_comment[: 24 * 1024].decode("utf-8", "ignore").encode("utf-8")
-    )
+    _render_baseline(report, output)
+    comment = _assemble([(1, markdown.rstrip("\n").split("\n"))])
     (output / "comment.md").write_bytes(comment)
     write_json(
         output / "publication.json",
@@ -776,13 +1207,25 @@ def compare(
     installed_root,
     max_workers=4,
     deadline_seconds=6600,
+    repository_rules_path=REPOSITORY_RULES_PATH,
+    presentation=None,
 ):
     from .worker import run_worker
 
     if isinstance(scorer, os.PathLike):
         scorer = str(scorer)
     plan = prepare(
-        repo, head, target, identity, profile, rules, cache, output_dir, max_workers
+        repo,
+        head,
+        target,
+        identity,
+        profile,
+        rules,
+        cache,
+        output_dir,
+        max_workers,
+        repository_rules_path,
+        presentation,
     )
     if plan["workers"] and not all((scorer, model, installed_root)):
         return failure_report(

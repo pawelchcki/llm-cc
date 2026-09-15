@@ -25,6 +25,8 @@ sources:
         - { name: publication.json, media_type: application/json, max_bytes: 4096 }
         - { name: report.json, media_type: application/json, max_bytes: 16777216 }
         - { name: report.md, media_type: text/plain, max_bytes: 16777216 }
+        - { name: baseline.md, media_type: text/plain, max_bytes: 1048576 }
+        - { name: baseline.json, media_type: application/json, max_bytes: 16777216 }
 actions:
   - id: publish
     uses: toolkit.public-folder@v1
