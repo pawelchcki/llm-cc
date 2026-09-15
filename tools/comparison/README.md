@@ -131,7 +131,31 @@ python3 -m tools.comparison.profile \
   --output profile.json
 ```
 
-This checks the backend manifest's source commit and hashes installed files.
+This `dogfood` preset checks the backend manifest's source commit and hashes
+installed files. Any other scorer build uses the `generate` subcommand, which
+derives the same identity instead of pinning it:
+
+```sh
+python3 -m tools.comparison.profile generate \
+  --installed-root /opt/llm-cc --backend rocm \
+  --execution-image 'registry.example/scorer@sha256:<64-hex-digest>' \
+  --model /models/coder.gguf \
+  --context 32768 --kv-cache-type q8_0 --output profile.json
+```
+
+`generate` accepts one flag per scoring setting, and takes the model identity
+either from a local file (`--model`, hashed in place) or from explicit
+`--model-sha256 --model-bytes [--model-url]`. Both subcommands run the installed
+`bin/llm-cc` offline in a sanitized environment with private cache directories
+(`--version` and `cache status --format json`) to read the executable's version
+and inference ABI, and reject a tree whose executable, backend manifest and
+llama.cpp commit disagree. Neither command downloads anything, but the generator
+must run on a host that can execute the installed binary. `--flash-attn auto` and
+`--entropy-reduction auto` are rejected because the scorer would then resolve
+those settings against the runtime, leaving the expected configuration
+non-deterministic. Optional `--expected-source-commit` and
+`--expected-inference-abi` re-assert operator pins. `setup_bazzite.py` is
+unaffected; it consumes an already generated profile file.
 The CUDA profile pins the model's SHA-256 and 14,066,972,416-byte size, all
 layers on GPU, context 131072, batch 256, Flash Attention on, Q8_0 K/V with
 offload, device entropy reduction, structural hierarchy, tau 0.67 and alpha 0.8.

@@ -7,7 +7,13 @@ Profile: `{scoring: {...}, build: {...}, max_file_bytes: 65536}`.
 `scoring` contains `argv` (an ordered list of flags) and
 `expected_configuration` (the scorer's requested/effective JSONL fields);
 `build` includes source_commit, inference_abi, installed_files (relative path to
-SHA256), model_sha256, model_bytes, and immutable execution image identity.
+SHA256), backend_manifest, model_sha256, model_bytes, optional model_url, and
+immutable execution image identity. `source_commit` and `inference_abi` are
+derived by hashing the installed tree and executing its `bin/llm-cc` offline
+(`--version`, `cache status --format json`); the executable's version, the
+backend manifest and the ABI's llama.cpp commit must agree. The executable
+version is verified but deliberately not recorded, so the fingerprint of an
+unchanged installation does not move.
 Container profiles also require `container_environment_policy: "sanitized-v1"`;
 regenerate older profiles before preparing or reusing their cached results.
 Scorer processes receive a clean environment with private cache/runtime paths.
