@@ -963,7 +963,7 @@ nlohmann::json TotalsJson(const MetricTotals& totals,
   nlohmann::json result = TotalsMetricsJson(totals, score_mode);
   result.update(
       {{"type", "totals"},
-       {"analysis_version", 2},
+       {"analysis_version", 3},
        {"hierarchy_mode", hierarchy_mode == llmcc::HierarchyMode::kStructural
                               ? "structural"
                               : "reference"},
@@ -1015,7 +1015,7 @@ nlohmann::json ConfigurationJson(
                                                                       : "host";
   nlohmann::json configuration = {
       {"type", "configuration"},
-      {"analysis_version", 2},
+      {"analysis_version", 3},
       {"hierarchy_mode",
        arguments.hierarchy_mode == llmcc::HierarchyMode::kStructural
            ? "structural"

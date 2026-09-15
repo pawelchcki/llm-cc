@@ -209,11 +209,16 @@ class PipelineTest(unittest.TestCase):
             MemoryCache(), out / "probe", 1,
         )
         base = next(f for f in plan["inventories"]["base"] if f["path"] == "same.cc")
-        _, report = self._scored(out, tokens=lambda key: 0 if key == base["key"] else 2)
-        leading = report["leading_regressions"] + report["leading_improvements"]
-        entry = next(x for x in leading if x["path"] == "same.cc")
-        self.assertIsNone(entry["change"])
-        self.assertNotEqual(entry["raw_change"], 0)
+        head = next(f for f in plan["inventories"]["head"] if f["path"] == "same.cc")
+        for label, empty in (("one", {base["key"]}), ("both", {base["key"], head["key"]})):
+            with self.subTest(zero_token_sides=label):
+                _, report = self._scored(
+                    out / label, tokens=lambda key: 0 if key in empty else 2
+                )
+                leading = report["leading_regressions"] + report["leading_improvements"]
+                entry = next(x for x in leading if x["path"] == "same.cc")
+                self.assertIsNone(entry["change"])
+                self.assertNotEqual(entry["raw_change"], 0)
 
     def test_untrusted_paths_render_as_balanced_code_spans(self):
         path = "src/@team/[file]`name``x`~~$y$|pipe|https://example.com/a.cc"

@@ -60,7 +60,8 @@ FunctionScore ScoreFunction(const PreparedSource& prepared,
                             const FunctionSpan& function,
                             std::span<const Token> function_span,
                             double file_tau,
-                            const ProjectAnalysisOptions& options) {
+                            const ProjectAnalysisOptions& options,
+                            bool starts_source) {
   const auto& events = prepared.structural_events;
   const auto& line_starts = prepared.line_starts;
   const auto line_at = [&](std::size_t byte) {
@@ -84,7 +85,7 @@ FunctionScore ScoreFunction(const PreparedSource& prepared,
   Analysis function_analysis = llmcc::Analyze(
       function_tokens, function_events, function_line_starts,
       {.kind = TauRule::Kind::kAbsolute, .value = file_tau}, options.alpha,
-      function_meaningful, options.hierarchy_mode);
+      function_meaningful, options.hierarchy_mode, starts_source);
   return {
       .name = function.name,
       .start_line = line_at(function.start_byte),
@@ -96,6 +97,13 @@ std::vector<FunctionScore> ScoreFunctions(
     const PreparedSource& prepared, std::span<const Token> tokens,
     double file_tau, const ProjectAnalysisOptions& options) {
   std::vector<FunctionScore> functions;
+  // Only a function that begins at the file's first code token inherits the
+  // file-level rule that this token never opens an entropy block.
+  const std::size_t source_first =
+      prepared.meaningful_ranges.empty()
+          ? 0
+          : FirstOverlappingToken(
+                tokens, prepared.meaningful_ranges.front().start_byte);
   for (const FunctionSpan& function : prepared.functions) {
     const std::size_t first =
         FirstOverlappingToken(tokens, function.start_byte);
@@ -103,9 +111,9 @@ std::vector<FunctionScore> ScoreFunctions(
     if (first >= end) {
       continue;
     }
-    functions.push_back(ScoreFunction(prepared, function,
-                                      tokens.subspan(first, end - first),
-                                      file_tau, options));
+    functions.push_back(ScoreFunction(
+        prepared, function, tokens.subspan(first, end - first), file_tau,
+        options, /*starts_source=*/first <= source_first));
   }
   return functions;
 }

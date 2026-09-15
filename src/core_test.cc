@@ -181,6 +181,15 @@ int main() {  // NOLINT(bugprone-exception-escape)
   ExpectEq(scored_first_units.size(), std::size_t{0},
            "first scored token never opens a reference block");
 
+  // A function span later in the file keeps its first token's marker.
+  const auto [later_span_tau, later_span_units] = llmcc::DetectSemanticUnits(
+      scored_first_token, {}, first_line,
+      {.kind = llmcc::TauRule::Kind::kAbsolute, .value = 1.0}, {},
+      llmcc::HierarchyMode::kReference, /*span_starts_source=*/false);
+  ExpectEq(later_span_tau, 1.0, "later span first-token tau");
+  ExpectEq(later_span_units.size(), std::size_t{1},
+           "later span first token opens a reference block");
+
   // Without BOS the first source token is unscored; the second token's entropy
   // is a real observation and may open a block on its own line.
   const auto [bosless_tau, bosless_units] = llmcc::DetectSemanticUnits(

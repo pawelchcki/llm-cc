@@ -116,7 +116,7 @@ def dogfood_profile(
             "backend manifest checksum or size does not match installed bundle"
         )
     expected = {
-        "analysis_version": 2,
+        "analysis_version": 3,
         "hierarchy_mode": "structural",
         "include_headers": True,
         "no_ignore": True,

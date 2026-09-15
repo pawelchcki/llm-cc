@@ -125,10 +125,11 @@ def main():
                         help="extra llm-cc flags as one string, e.g. '--backend rocm'")
     args = parser.parse_args()
     args.inference = shlex.split(args.inference)
-    # Later flags win in the CLI, so a threshold here would silently replace the
-    # calibrated tau that the analysis records.
-    if any(flag.split("=", 1)[0] in ("--tau", "--tau-percentile") for flag in args.inference):
-        parser.error("--inference must not set --tau or --tau-percentile")
+    # Later flags win in the CLI, so these would silently replace the verified
+    # model or the calibrated tau that each artifact records.
+    reserved = ("--model", "--model-name", "--tau", "--tau-percentile")
+    if any(flag.split("=", 1)[0] in reserved for flag in args.inference):
+        parser.error("--inference must not set " + ", ".join(reserved))
     root = args.root.resolve()
     args.binary = args.binary.resolve()
     (root / "results").mkdir(exist_ok=True)

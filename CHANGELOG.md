@@ -12,8 +12,10 @@
   configuration event); re-baseline existing scores
 * accept the SentencePiece dummy-prefix space on the first token, so
   CodeLlama-style models can be analyzed
-* never let the first scored token open an entropy boundary, matching the
-  reference implementation
+* never let the file's first code token open an entropy boundary, matching the
+  reference implementation; `analysis_version` is now 3
+* download registered models from the Hugging Face revisions their default
+  tau was calibrated on
 * register `codellama-7b-q8_0`, the paper's reference model
 
 ## [0.2.0](https://github.com/pawelchcki/llm-cc/compare/v0.1.0...v0.2.0) (2026-09-07)

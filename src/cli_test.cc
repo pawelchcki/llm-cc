@@ -221,14 +221,14 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
           empty_events[3]["discovered"] == 0,
       "empty discovery emits a complete zero-file event stream");
   llmcc::test::Expect(empty_events[1]["hierarchy_mode"] == "structural" &&
-                          empty_events[1]["analysis_version"] == 2 &&
+                          empty_events[1]["analysis_version"] == 3 &&
                           empty_events[1]["batch_size"] == 64 &&
                           empty_events[1]["entropy_reduction"] == "auto" &&
                           empty_events[1]["flash_attn"] == "on" &&
                           empty_events[1]["kv_cache_type"] == "q8_0" &&
                           empty_events[1]["kv_offload"] == "on" &&
                           empty_events[3]["hierarchy_mode"] == "structural" &&
-                          empty_events[3]["analysis_version"] == 2,
+                          empty_events[3]["analysis_version"] == 3,
                       "default analysis metadata is additive and versioned");
   const fs::path empty_device_output =
       fs::path(test_tmpdir) / "empty-device.jsonl";
@@ -606,9 +606,9 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
                       "configuration distinguishes requested and effective "
                       "automatic flash attention");
   llmcc::test::Expect(events[3]["hierarchy_mode"] == "structural" &&
-                          events[3]["analysis_version"] == 2 &&
+                          events[3]["analysis_version"] == 3 &&
                           events[4]["hierarchy_mode"] == "structural" &&
-                          events[4]["analysis_version"] == 2,
+                          events[4]["analysis_version"] == 3,
                       "file and totals records identify corrected semantics");
   const nlohmann::json& file = events[3];
   for (std::string_view field :

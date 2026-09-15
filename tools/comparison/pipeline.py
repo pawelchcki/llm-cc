@@ -1026,17 +1026,19 @@ def _aggregate(plan, worker_paths, output):
         return None if result is None else result["llm_cc"]
 
     # Raw LM-CC is the paper's quantity and the displayed headline. It stays
-    # defined for zero-token files, whose per-token `change` is null; `change`
-    # keeps the per-token delta for existing report consumers.
+    # defined for zero-token files, which changed_files omits when neither side
+    # has a per-token score, so candidates come from every change; `change`
+    # keeps the per-token delta (null without tokens) for existing consumers.
+    per_token = {(row["old_path"], row["new_path"]): row["delta"] for row in changed_files}
     path_deltas = []
-    for row in changed_files:
-        base_raw = raw_llm_cc(base_paths, row["old_path"])
-        head_raw = raw_llm_cc(head_paths, row["new_path"])
+    for change in plan["changes"]:
+        base_raw = raw_llm_cc(base_paths, change["old_path"])
+        head_raw = raw_llm_cc(head_paths, change["new_path"])
         if base_raw is not None and head_raw is not None:
             path_deltas.append(
                 {
-                    "path": row["path"],
-                    "change": row["delta"],
+                    "path": change["new_path"] or change["old_path"],
+                    "change": per_token.get((change["old_path"], change["new_path"])),
                     "raw_change": head_raw - base_raw,
                 }
             )
