@@ -41,10 +41,21 @@ Preparation `plan.json`:
  fingerprint, profile,
  inventories: {base: [file], head: [file]},
  changes: [change],
+ rules, rules_source: {source: "host"} | {source: "repository", path, commit},
+ presentation: {report_links: {name: url}},
  items: {key: {key, content_sha256, language, size, blob: "blobs/<sha256>"}},
  hits: {key: result}, workers: [{worker_id: 0, keys: [key], bytes: 123}],
  cache_stats: {...}}
 ```
+Classification rules accept only `exclude`, `tests`, `tooling` (glob lists of
+non-empty strings up to 256 characters, 512 patterns in total) and `extensions`
+(lowercase `.<ext>` to a supported language), at most 64 KiB canonical.
+`prepare` reads `.llm-cc/comparison-rules.json` from the **target** commit's tree
+when present, so a pull request cannot reclassify its own files; invalid
+repository rules fail the run instead of falling back to host rules.
+`presentation.report_links` holds already-substituted https URLs; the BuildBuddy
+coordinator validates the templates and URL-quotes `{repository}`,
+`{target_sha}` and `{target_branch}` before preparation.
 Inventory file: `{path, language, category, size, content_sha256, key,
 scorable, reason}`; unavailable values are null. Categories runtime, tests,
 tooling; unsupported, excluded, oversized, symlink, submodule reasons retained.
@@ -66,10 +77,32 @@ results:{key:result}, errors:[string], elapsed_seconds}`. Always write
 `worker-<id>.json` in output_dir. Publish only after all invocations validate.
 
 Preparation entry `prepare(repo, head, target, identity, profile, rules,
-cache, output_dir, max_workers=4)` returns plan and writes plan.json/blobs.
+cache, output_dir, max_workers=4,
+repository_rules_path=".llm-cc/comparison-rules.json", presentation=None)`
+returns plan and writes plan.json/blobs.
 Aggregation entry `aggregate(plan_path, worker_paths, output_dir)` validates
-exact per-worker coverage, writes report.json/report.md/comment.md/publication.json
-and returns report dict. Failure reports are mandatory, scores advisory.
+exact per-worker coverage, writes report.json, report.md, comment.md,
+publication.json, baseline.md and baseline.json, and returns report dict.
+
+Report `report.json` stays `schema_version: 1`. Alongside the existing keys it
+carries `rankings: {base: [entry], head: [entry]}` where an entry is
+`{path, category, language, size, score, llm_cc, token_count, rank,
+category_rank, changed}` over measured files with a positive token count,
+ordered by descending score then path; `changed_files`, one row per change with a
+score on either side, `{status, old_path, new_path, path, base: {category,
+score} | null, head: {category, score, rank, category_rank} | null, delta,
+percent}`; and the plan's `rules_source` and `presentation`. `leading_regressions`
+and `leading_improvements` are derived from `changed_files`. Failure reports emit
+empty `rankings` and `changed_files` and still write both baseline artifacts.
+
+Baseline `baseline.json`: `{schema_version: 1, identity, fingerprint, status,
+categories, rankings}` where `rankings` is the head side's ranking. `baseline.md`
+opens with `Baseline ranking for <repository>@<head_sha> (<branch>)` and lists
+head category scores, the top 50 files overall, the top 20 per category, and
+unmeasured reasons. On a pull-request run these describe the PR head; the
+default-branch copies retained by the publisher are the repository baseline.
+
+Failure reports are mandatory, scores advisory.
 CLI `python -m tools.comparison {prepare,worker,aggregate,compare}` exposes the
 same stages through independently schedulable commands.
 
@@ -78,7 +111,8 @@ the result, fingerprint, and refresh timestamp; `entropy/<fingerprint>/<name>.cb
 contains an envelope with base64 payload, name, fingerprint, checksum, and time.
 Workers restore only CBOR entries. BuildBuddy transport uses
 `pipelines/<SHA256([repository,pipeline_id])>/` for the plan, blobs, per-worker
-outputs and final reports. The submitted request pins the plan's SHA-256.
+outputs and final reports (report.json, report.md, comment.md, publication.json,
+baseline.md, baseline.json). The submitted request pins the plan's SHA-256.
 
 Publication envelope: `{schema_version:1, identity, fingerprint,
 status:"complete"|"failed"|"incomplete", comment:{path:"comment.md",sha256,bytes}}`.

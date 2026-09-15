@@ -9,14 +9,23 @@ from pathlib import Path
 
 from tools.comparison.cache import FilesystemStore, ResultCache
 from tools.comparison.common import write_json
-from tools.comparison.inventory import GitError, _classify, inventory, merge_base
+from tools.comparison.inventory import (
+    GitError,
+    _classify,
+    inventory,
+    merge_base,
+    validate_rules,
+)
 from tools.comparison.pipeline import (
+    _assemble,
+    _code,
     _delta,
     _render,
     _safe,
     aggregate,
     compare,
     prepare,
+    resolve_rules,
 )
 
 
@@ -94,39 +103,322 @@ class PipelineTest(unittest.TestCase):
         self.assertNotIn("www.", escaped)
         self.assertNotIn("https://", escaped)
 
-    def test_report_escaped_paths_render_as_text_instead_of_literal_entities(self):
-        path = "src/#35/@team/[file]`name`~~$x$.cc"
+    def _scored(self, out):
+        plan = prepare(
+            self.repo,
+            self.head,
+            self.base,
+            self.identity,
+            self.profile,
+            {},
+            MemoryCache(),
+            out,
+            1,
+        )
+        worker = {
+            "schema_version": 1,
+            "identity": plan["identity"],
+            "fingerprint": plan["fingerprint"],
+            "worker_id": 0,
+            "status": "complete",
+            "errors": [],
+            "elapsed_seconds": 0,
+            "results": {},
+        }
+        for index, key in enumerate(plan["workers"][0]["keys"]):
+            item = plan["items"][key]
+            worker["results"][key] = {
+                "schema_version": 1,
+                "key": key,
+                "fingerprint": plan["fingerprint"],
+                "content_sha256": item["content_sha256"],
+                "language": item["language"],
+                "llm_cc": 2.0 + index,
+                "token_count": 2,
+            }
+        path = out / "worker-0.json"
+        write_json(path, worker)
+        return plan, aggregate(out / "plan.json", [path], out / "report")
+
+    def _report(self, **overrides):
         comparison = {
             "score": _delta(1.0, 2.0),
             "raw_llm_cc": _delta(1.0, 2.0),
             "tokens": _delta(1, 1),
             "coverage": {"base": 1.0, "head": 1.0},
         }
+        report = {
+            "status": "complete",
+            "identity": {"target_branch": "main", "repository": "o/r"},
+            "comparisons": {
+                name: comparison
+                for name in ("runtime", "tests", "tooling", "repository")
+            },
+            "cache_stats": {"hits": 1, "misses": 0},
+            "rankings": {"base": [], "head": []},
+            "changed_files": [],
+            "leading_regressions": [],
+            "leading_improvements": [],
+            "rules_source": {"source": "host"},
+            "presentation": {},
+            "errors": [],
+        }
+        report.update(overrides)
+        return report
+
+    def test_untrusted_paths_render_as_balanced_code_spans(self):
+        path = "src/@team/[file]`name``x`~~$y$|pipe|https://example.com/a.cc"
         markdown = _render(
-            {
-                "status": "complete",
-                "comparisons": {
-                    name: comparison
-                    for name in ("runtime", "tests", "tooling", "repository")
+            self._report(
+                leading_regressions=[{"path": path, "change": 1.0}],
+                changed_files=[
+                    {
+                        "status": "M",
+                        "old_path": path,
+                        "new_path": path,
+                        "path": path,
+                        "base": {"category": "runtime", "score": 1.0},
+                        "head": {
+                            "category": "runtime",
+                            "score": 2.0,
+                            "rank": 3,
+                            "category_rank": 2,
+                        },
+                        "delta": 1.0,
+                        "percent": 100.0,
+                    }
+                ],
+                rankings={
+                    "base": [],
+                    "head": [{"path": path, "rank": 3, "category_rank": 2}] * 130,
                 },
-                "cache_stats": {"hits": 1, "misses": 0},
-                "leading_regressions": [{"path": path, "change": 1.0}],
-                "leading_improvements": [],
-                "errors": [],
+            )
+        )
+        for line in markdown.splitlines():
+            self.assertEqual(
+                line.count("`") % 2, 0, "unbalanced code fence in %r" % line
+            )
+        bullet = next(
+            line for line in markdown.splitlines() if "@team" in line and line[0] == "-"
+        )
+        self.assertTrue(bullet.startswith("- ``"))
+        self.assertIn("@team", bullet)
+        self.assertIn("[file]", bullet)
+        self.assertIn("https://example.com", bullet)
+        row = next(line for line in markdown.splitlines() if line.startswith("| ``"))
+        # GFM splits table cells on unescaped pipes even inside a code span.
+        self.assertIn("\\|pipe\\|", row)
+        self.assertEqual(row.count("|") - row.count("\\|"), 8)
+        self.assertIn("#3/130", row)
+
+    def test_code_spans_fence_backticks_and_truncate_long_paths(self):
+        self.assertEqual(_code("plain"), "`plain`")
+        self.assertEqual(_code("a`b"), "``a`b``")
+        self.assertEqual(_code("`lead"), "`` `lead ``")
+        self.assertEqual(_code("a``b`"), "``` a``b` ```")
+        long_path = "d/" + "x" * 300 + ".py"
+        rendered = _code(long_path)
+        self.assertIn("…", rendered)
+        self.assertLessEqual(len(rendered.strip("`")), 121)
+        self.assertTrue(rendered.strip("`").startswith("d/xxx"))
+
+    def test_table_cells_escape_pipes_behind_literal_backslashes(self):
+        # A backslash run in front of a pipe must be doubled, or GFM consumes
+        # the escape and the bare pipe ends the cell mid-path.
+        self.assertEqual(_code("a|b", table=True), "`a\\|b`")
+        self.assertEqual(_code("a\\|@team.cc", table=True), "`a\\\\\\|@team.cc`")
+        self.assertEqual(_code("a\\\\|b", table=True), "`a\\\\\\\\\\|b`")
+        # Backslashes not in front of a pipe are literal and stay untouched.
+        self.assertEqual(_code("odd\\u000aname.py", table=True), "`odd\\u000aname.py`")
+        for path in ("a|b", "a\\|b", "a\\\\|b"):
+            with self.subTest(path=path):
+                cell = _code(path, table=True)
+                # Every pipe carries an odd number of preceding backslashes.
+                for index, character in enumerate(cell):
+                    if character != "|":
+                        continue
+                    run = 0
+                    while index - run - 1 >= 0 and cell[index - run - 1] == "\\":
+                        run += 1
+                    self.assertEqual(run % 2, 1, cell)
+
+    def test_report_links_and_repository_rules_are_announced(self):
+        markdown = _render(
+            self._report(
+                presentation={
+                    "report_links": {"baseline": "https://ci.example/o/r/baseline.md"}
+                },
+                rules_source={
+                    "source": "repository",
+                    "path": ".llm-cc/comparison-rules.json",
+                    "commit": "0123456789abcdef",
+                },
+            )
+        )
+        self.assertIn("Baseline ranking: <https://ci.example/o/r/baseline.md>", markdown)
+        self.assertNotIn("](", markdown)
+        self.assertIn("Rules: repository `.llm-cc/comparison-rules.json`@0123456", markdown)
+        self.assertIn("Rules: host", _render(self._report()))
+
+    def test_comment_stays_within_the_publication_limit(self):
+        paths = ["src/%s/%s.cc" % ("deep" * 20, index) for index in range(3000)]
+        rows = [
+            {
+                "status": "M",
+                "old_path": path,
+                "new_path": path,
+                "path": path,
+                "base": {"category": "runtime", "score": 1.0},
+                "head": {
+                    "category": "runtime",
+                    "score": 2.0 + index,
+                    "rank": index + 1,
+                    "category_rank": index + 1,
+                },
+                "delta": 1.0 + index,
+                "percent": 100.0,
             }
+            for index, path in enumerate(paths)
+        ]
+        offenders = [
+            {
+                "path": path,
+                "category": "runtime",
+                "language": "cpp",
+                "size": 10,
+                "score": 1.0,
+                "llm_cc": 1.0,
+                "token_count": 1,
+                "rank": index + 1,
+                "category_rank": index + 1,
+                "changed": True,
+            }
+            for index, path in enumerate(paths)
+        ]
+        report = self._report(
+            changed_files=rows,
+            rankings={"base": offenders, "head": offenders},
+            leading_regressions=[{"path": path, "change": 1.0} for path in paths[:10]],
+            errors=["e" * 2000] * 20,
         )
-        path_line = next(
-            line for line in markdown.splitlines() if line.startswith("- ")
+        markdown = _render(report)
+        self.assertLessEqual(len(markdown.encode("utf-8")), 24576)
+        for line in markdown.splitlines():
+            self.assertEqual(
+                line.count("`") % 2, 0, "unbalanced code fence in %r" % line
+            )
+        self.assertIn("### Changed files", markdown)
+        self.assertIn(
+            "_2975 more changed files are listed in the full report._", markdown
         )
-        self.assertNotIn("`", path_line)
-        self.assertNotRegex(path_line, r"(?<!&)#\d")
-        self.assertNotIn("@team", path_line)
-        self.assertNotIn("[file]", path_line)
-        self.assertNotIn("~~", path_line)
-        self.assertNotIn("$x$", path_line)
+
+    def test_assembly_drops_low_priority_sections_then_whole_lines(self):
+        head = [(1, ["## llm-cc comparison", "", "Status: **complete**"])]
+        changed = [(4, ["", "### Changed files"] + ["| %s |" % _code("a" * 100)] * 30)]
+        offenders = [(6, ["", "### Top offenders on base"] + ["- x"] * 200)]
+        payload = _assemble(head + changed + offenders, limit=4096).decode("utf-8")
+        self.assertLessEqual(len(payload.encode("utf-8")), 4096)
+        self.assertNotIn("Top offenders", payload)
+        self.assertIn("### Changed files", payload)
+        # A single oversized section is cut on line boundaries, never mid-span.
+        crowded = _assemble(
+            [(1, ["## llm-cc comparison"] + ["- %s" % _code("b" * 100)] * 200)],
+            limit=1024,
+        ).decode("utf-8")
+        self.assertLessEqual(len(crowded.encode("utf-8")), 1024)
+        self.assertTrue(
+            crowded.endswith("_Full details are available in artifacts._\n")
+        )
+        for line in crowded.splitlines():
+            self.assertEqual(
+                line.count("`") % 2, 0, "unbalanced code fence in %r" % line
+            )
+
+    def test_rankings_are_deterministic_and_flag_changed_paths(self):
+        out = Path(self.temp.name) / "ranked"
+        plan, report = self._scored(out)
+        head = report["rankings"]["head"]
+        self.assertEqual([entry["rank"] for entry in head], list(range(1, len(head) + 1)))
         self.assertEqual(
-            html.unescape(path_line), "- " + path.replace("@", "@\u200b") + ": +1"
+            head, sorted(head, key=lambda entry: (-entry["score"], entry["path"]))
         )
+        for category in ("runtime", "tests", "tooling"):
+            selected = [x["category_rank"] for x in head if x["category"] == category]
+            self.assertEqual(selected, list(range(1, len(selected) + 1)))
+        changed = {entry["path"] for entry in head if entry["changed"]}
+        self.assertIn("tests/move.cc", changed)
+        self.assertNotIn("copy.cc", changed)
+        moved = next(
+            row for row in report["changed_files"] if row["path"] == "tests/move.cc"
+        )
+        self.assertEqual(moved["head"]["rank"], moved["head"]["rank"])
+        self.assertIsNotNone(moved["head"]["category_rank"])
+        self.assertEqual(moved["base"]["category"], "runtime")
+        self.assertEqual(moved["head"]["category"], "tests")
+
+    def test_zero_base_score_reports_no_percentage(self):
+        row = _delta(0.0, 1.0)
+        self.assertIsNone(row["percent"])
+        self.assertEqual(row["absolute"], 1.0)
+
+    def test_repository_rules_come_from_the_target_commit(self):
+        (self.repo / ".llm-cc").mkdir()
+        (self.repo / ".llm-cc/comparison-rules.json").write_text(
+            json.dumps({"tooling": ["copy.cc"]})
+        )
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "target rules")
+        target = git(self.repo, "rev-parse", "HEAD")
+        (self.repo / ".llm-cc/comparison-rules.json").write_text(
+            json.dumps({"exclude": ["**"]})
+        )
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "head rules")
+        head = git(self.repo, "rev-parse", "HEAD")
+        rules, source = resolve_rules(
+            self.repo, target, {"tests": ["nothing"]}, ".llm-cc/comparison-rules.json"
+        )
+        self.assertEqual(rules, {"tooling": ["copy.cc"]})
+        self.assertEqual(source["source"], "repository")
+        self.assertEqual(source["commit"], target)
+        plan = prepare(
+            self.repo,
+            head,
+            target,
+            self.identity,
+            self.profile,
+            {},
+            MemoryCache(),
+            Path(self.temp.name) / "repo-rules",
+            1,
+        )
+        self.assertEqual(plan["rules_source"]["source"], "repository")
+        by_path = {x["path"]: x for x in plan["inventories"]["head"]}
+        self.assertEqual(by_path["copy.cc"]["category"], "tooling")
+        missing, host = resolve_rules(self.repo, target, {"tests": ["x"]}, "absent.json")
+        self.assertEqual(host, {"source": "host"})
+        self.assertEqual(missing, {"tests": ["x"]})
+
+    def test_invalid_repository_rules_fail_the_run(self):
+        (self.repo / ".llm-cc").mkdir()
+        (self.repo / ".llm-cc/comparison-rules.json").write_text(
+            json.dumps({"tests": ["ok"], "unexpected": True})
+        )
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "bad rules")
+        target = git(self.repo, "rev-parse", "HEAD")
+        with self.assertRaisesRegex(ValueError, "unsupported classification rule keys"):
+            resolve_rules(self.repo, target, {}, ".llm-cc/comparison-rules.json")
+        (self.repo / ".llm-cc/comparison-rules.json").write_text("{not json")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "unparsable rules")
+        broken = git(self.repo, "rev-parse", "HEAD")
+        with self.assertRaisesRegex(ValueError, "not valid JSON"):
+            resolve_rules(self.repo, broken, {}, ".llm-cc/comparison-rules.json")
+        with self.assertRaisesRegex(ValueError, "unsupported language"):
+            validate_rules({"extensions": {".zig": "zig"}})
+        with self.assertRaisesRegex(ValueError, "512 glob"):
+            validate_rules({"tests": ["a"] * 513})
 
     def test_inventory_dedup_categories_and_oversize(self):
         rows, _ = inventory(self.repo, self.head, "f", {"exclude": ["copy.cc"]}, 10)
@@ -368,8 +660,14 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(report["change_counts"]["category_moves"], 1)
         self.assertLessEqual((out / "report/comment.md").stat().st_size, 24 * 1024)
         self.assertIn(
-            "odd&#92;u000aname&#46;py", (out / "report/report.md").read_text()
+            "`odd\\u000aname.py`", (out / "report/report.md").read_text()
         )
+        self.assertIn(
+            "Baseline ranking for o/r@", (out / "report/baseline.md").read_text()
+        )
+        baseline = json.loads((out / "report/baseline.json").read_text())
+        self.assertEqual(baseline["schema_version"], 1)
+        self.assertEqual(baseline["rankings"], report["rankings"]["head"])
         bad = aggregate(out / "plan.json", [], out / "failed")
         self.assertEqual(bad["status"], "failed")
         self.assertTrue((out / "failed/publication.json").exists())

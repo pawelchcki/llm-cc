@@ -13,10 +13,12 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import stat
 import tempfile
 import zipfile
 
+from .buildbuddy import bundle_command, validate_report_links
 from .common import canonical_bytes
 from .profile import digest_file
 
@@ -36,6 +38,7 @@ def package_bundle(source_root):
         "buildbuddy.py",
         "worker.py",
         "pipeline.py",
+        "submit_bazzite.py",
     }
     if not required.issubset({p.name for p in paths[1:]}):
         raise ValueError("source root does not contain the complete comparison package")
@@ -60,16 +63,26 @@ def package_bundle(source_root):
     return payload, hashlib.sha256(payload).hexdigest()
 
 
-def atomic_publish(path, payload):
+def atomic_publish(path, payload, mode=0o644, directory_mode=0o755):
     """Publish complete bytes, preserving any concurrent reader's prior file."""
     path = Path(path)
+    # The non-root executor users must traverse and read every published
+    # directory. mkdir applies the ambient umask, so a hardened root umask such
+    # as 0077 would otherwise leave 0700 here and break every workflow.
+    created = [
+        parent
+        for parent in (path.parent, *path.parent.parents)
+        if not parent.exists()
+    ]
     path.parent.mkdir(parents=True, exist_ok=True)
+    for parent in created:
+        os.chmod(parent, directory_mode)
     descriptor, temporary = tempfile.mkstemp(prefix=".publish-", dir=path.parent)
     try:
         with os.fdopen(descriptor, "wb") as stream:
             stream.write(payload)
             stream.flush()
-            os.fchmod(stream.fileno(), 0o644)
+            os.fchmod(stream.fileno(), mode)
             os.fsync(stream.fileno())
         os.replace(temporary, path)
         directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
@@ -79,6 +92,31 @@ def atomic_publish(path, payload):
             os.close(directory)
     finally:
         Path(temporary).unlink(missing_ok=True)
+
+
+def launcher_script(bundle, checksum, generation_config):
+    """Emit a one-argument entry point pinning the verified package and settings."""
+    for path in (bundle, generation_config):
+        if not Path(path).is_absolute():
+            raise ValueError("launcher paths must be absolute")
+    command = bundle_command(
+        [
+            "python3",
+            "-m",
+            "tools.comparison.submit_bazzite",
+            "run-coordinator",
+            "--config",
+            str(generation_config),
+        ],
+        str(bundle),
+        checksum,
+    )
+    return (
+        "#!/usr/bin/env bash\n"
+        "# Published by tools.comparison.setup_bazzite. Do not edit in place.\n"
+        "set -euo pipefail\n"
+        "exec " + shlex.join(command) + ' "$@"\n'
+    ).encode("utf-8")
 
 
 def verify_assets(profile, installed_root, model):
@@ -168,6 +206,8 @@ def configure(args):
     rules = json.loads(
         (Path(args.source_root) / "tools/comparison/dogfood-rules.json").read_text()
     )
+    links = json.loads(args.report_links) if args.report_links else {}
+    validate_report_links(links)
     identity = hashlib.sha256(
         canonical_bytes(
             [
@@ -180,6 +220,7 @@ def configure(args):
                 args.endpoint,
                 args.execution_repository,
                 args.execution_commit,
+                links,
             ]
         )
     ).hexdigest()
@@ -206,6 +247,7 @@ def configure(args):
         "max_workers": 1,
         "refresh_days": 20,
         "expire_days": 30,
+        "report_links": links,
     }
     provision_lock(
         assets, profile["build"]["execution_host"]["resource_id"], args.lock_group
@@ -217,6 +259,13 @@ def configure(args):
     atomic_publish(generation / "comparison.json", canonical_bytes(config) + b"\n")
     output = Path(args.output) if args.output else assets / "comparison.json"
     atomic_publish(output, canonical_bytes(config) + b"\n")
+    # The launcher is the consumer-facing entry point; publish it only once its
+    # pinned package and immutable generation are already on disk.
+    atomic_publish(
+        assets / "bin" / "llm-cc-coordinate",
+        launcher_script(bundle_path, checksum, generation / "comparison.json"),
+        0o755,
+    )
     return output
 
 
@@ -236,6 +285,11 @@ def main(argv=None):
     )
     parser.add_argument("--endpoint", default="https://pawel.buildbuddy.io")
     parser.add_argument("--output")
+    parser.add_argument(
+        "--report-links",
+        help="JSON object of https URL templates published in PR comments, "
+        "for example {\"baseline\": \"https://example/{repository}/baseline.md\"}",
+    )
     parser.add_argument(
         "--lock-group",
         help="existing group shared by both executor users (default root)",

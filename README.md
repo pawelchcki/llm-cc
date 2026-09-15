@@ -272,8 +272,12 @@ tools/run_clang_tidy.sh
 
 Ordinary pull requests use BuildBuddy's CPU regression, GPU backend, and LMCC
 comparison checks. Comparisons run automatically on PR updates; `main` pushes
-populate the baseline cache. ci-toolkit publishes the comparison table and report
-links in one updated PR comment using the target branch's publication policy.
+populate the baseline cache and publish a repository-wide ranking of the
+worst-scoring files. ci-toolkit publishes the comparison table, the per-file
+changed table, and report links in one updated PR comment using the target
+branch's publication policy. Other repositories can adopt the same comparison by
+copying the templates in
+[tools/comparison/consumer](tools/comparison/consumer/README.md).
 The full GitHub Actions platform matrix, CPU/CUDA consumer installation checks,
 and cross-platform lockfile check run on `main` pushes and same-repository
 release-please PRs, such as `release-please--branches--main`. Manual full runs

@@ -1,0 +1,34 @@
+# Copy to buildbuddy.yaml in the consuming repository, replace OWNER/REPO, and
+# replace every "main" below -- the two branch filters and --default-branch --
+# with the repository's default branch.
+# The action name must stay "Complexity comparison": the ci-toolkit trigger
+# matches that commit-status context exactly.
+actions:
+  - name: "Complexity comparison"
+    self_hosted: true
+    pool: "linux-amd64-rocm"
+    platform_properties:
+      workload-isolation-type: "none"
+      container-image: "none"
+      debug-executor-labels: "machine=bazzite"
+    resource_requests: { disk: 10GB }
+    timeout: 130m
+    allow_concurrent_runs: false
+    triggers:
+      # Both filters must name the repository's default branch. A stale "main"
+      # here publishes no status at all on a "master" or "trunk" repository.
+      push:
+        branches:
+          - "main"
+      pull_request:
+        branches:
+          - "main"
+    steps:
+      # --default-branch must match the filters above. Without it the runner
+      # falls back to GIT_REPO_DEFAULT_BRANCH and then to "main", which makes a
+      # trunk/master push look like a feature branch with no open pull request,
+      # so it is skipped and no baseline is published.
+      - run: >-
+          /var/lib/llm-cc/bin/llm-cc-coordinate
+          --repository OWNER/REPO
+          --default-branch main

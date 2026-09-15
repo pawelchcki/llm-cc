@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import shlex
 import signal
+import string
 import subprocess
 import tempfile
 import time
@@ -30,7 +31,7 @@ from .common import (
     write_json,
 )
 from .deadline import Deadline, DeadlineExceeded
-from .pipeline import aggregate, prepare
+from .pipeline import REPOSITORY_RULES_PATH, aggregate, prepare
 
 
 def _request(
@@ -329,6 +330,53 @@ def worker_request(config, plan, worker, prefix, plan_digest):
         ]
     return request
 
+REPORT_LINK_PLACEHOLDERS = ("repository", "target_sha", "target_branch")
+
+
+def validate_report_links(links):
+    """Only fixed https templates with identity placeholders may reach a comment."""
+    if not isinstance(links, dict):
+        raise ValueError("report_links must be an object of names to URL templates")
+    validated = {}
+    for name, template in links.items():
+        if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_]*", name):
+            raise ValueError("invalid report link name")
+        if not isinstance(template, str) or not template.startswith("https://"):
+            raise ValueError("report link %s must be an https URL" % name)
+        if any(
+            character.isspace() or character in "<>`" or ord(character) < 32
+            for character in template
+        ):
+            raise ValueError("report link %s contains unsupported characters" % name)
+        fields = []
+        for _, field, specification, conversion in string.Formatter().parse(template):
+            if field is None:
+                continue
+            # A nested spec such as {repository:{secret}} parses as the allowed
+            # field, then fails or pads at format time. Accept plain fields only.
+            if specification or conversion:
+                raise ValueError(
+                    "report link %s must use plain {placeholder} fields" % name
+                )
+            fields.append(field)
+        unknown = set(fields) - set(REPORT_LINK_PLACEHOLDERS)
+        if unknown:
+            raise ValueError(
+                "report link %s uses unsupported placeholders: %s"
+                % (name, ", ".join(sorted(unknown)))
+            )
+        validated[name] = template
+    return validated
+
+
+def report_links(config, identity):
+    values = {
+        name: urllib.parse.quote(str(identity.get(name) or ""), safe="")
+        for name in REPORT_LINK_PLACEHOLDERS
+    }
+    validated = validate_report_links(config.get("report_links", {}))
+    return {name: template.format(**values) for name, template in validated.items()}
+
 
 def run_prepared(
     plan_path,
@@ -428,7 +476,14 @@ def run_prepared(
             errors + report.get("errors", []),
         )
     prefix = _pipeline_prefix(plan["identity"])
-    for name in ("report.json", "report.md", "comment.md", "publication.json"):
+    for name in (
+        "report.json",
+        "report.md",
+        "comment.md",
+        "publication.json",
+        "baseline.md",
+        "baseline.json",
+    ):
         store.put(prefix + name, (output / name).read_bytes())
     return report
 
@@ -586,6 +641,8 @@ def coordinate(args):
             cache,
             output,
             config.get("max_workers", 4),
+            config.get("repository_rules_path", REPOSITORY_RULES_PATH),
+            {"report_links": report_links(config, identity)},
         )
         api = BuildBuddy(
             config.get("endpoint", "https://pawel.buildbuddy.io"),

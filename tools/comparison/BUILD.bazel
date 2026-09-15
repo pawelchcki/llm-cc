@@ -5,7 +5,7 @@ package(default_visibility = ["//visibility:public"])
 
 filegroup(
     name = "sources",
-    srcs = glob(["*.py"]) + ["//tools:__init__.py"],
+    srcs = glob(["*.py"]) + glob(["consumer/*"]) + ["//tools:__init__.py"],
 )
 
 [
