@@ -41,6 +41,12 @@ def main():
         ["git", "-C", str(args.repository), "rev-parse", "HEAD"], text=True).strip()
     if head != REVISION:
         raise RuntimeError(f"expected {REVISION}, found {head}")
+    # Checkout keeps local edits, and the normalizer is imported from this tree,
+    # so only a pristine worktree may be attributed to REVISION.
+    changes = subprocess.check_output(
+        ["git", "-C", str(args.repository), "status", "--porcelain"], text=True)
+    if changes.strip():
+        raise SystemExit(f"{args.repository} has local changes; use a clean checkout:\n{changes}")
     normalizer_path, normalize = reference_normalizer(args.repository)
     corpus = args.work / "corpus"
     corpus.mkdir(parents=True, exist_ok=True)

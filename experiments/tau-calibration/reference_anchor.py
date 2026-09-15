@@ -69,6 +69,15 @@ def main():
                   reference_commit=git_head(args.repository),
                   corpus_sha256=hashlib.sha256(
                       json.dumps(manifest["files"], sort_keys=True).encode()).hexdigest())
+    # The reference code is imported from this worktree; it must be the exact
+    # commit the corpus was prepared from, without local edits.
+    if inputs["reference_commit"] != manifest["revision"]:
+        raise SystemExit(f"{args.repository} is at {inputs['reference_commit']}, "
+                         f"expected {manifest['revision']}; run prepare.py")
+    changes = subprocess.check_output(
+        ["git", "-C", str(args.repository), "status", "--porcelain"], text=True)
+    if changes.strip():
+        raise SystemExit(f"{args.repository} has local changes; use a clean checkout:\n{changes}")
     os.chdir(args.repository / "scripts")
     sys.path.insert(0, str(args.repository / "scripts"))
     from lm_cc.lm_cc import (CodeBlockProcessor, TokenEntropyCalculator,

@@ -52,6 +52,8 @@ def entropy_inputs(args, files, model):
                     json.dumps(files, sort_keys=True).encode()).hexdigest(),
                 binary_version=subprocess.check_output([str(args.binary), "--version"],
                                                        text=True).strip(),
+                # Unstamped development builds share one version string.
+                binary_sha256=sha256_file(args.binary),
                 inference=args.inference)
 
 
@@ -123,6 +125,10 @@ def main():
                         help="extra llm-cc flags as one string, e.g. '--backend rocm'")
     args = parser.parse_args()
     args.inference = shlex.split(args.inference)
+    # Later flags win in the CLI, so a threshold here would silently replace the
+    # calibrated tau that the analysis records.
+    if any(flag.split("=", 1)[0] in ("--tau", "--tau-percentile") for flag in args.inference):
+        parser.error("--inference must not set --tau or --tau-percentile")
     root = args.root.resolve()
     args.binary = args.binary.resolve()
     (root / "results").mkdir(exist_ok=True)

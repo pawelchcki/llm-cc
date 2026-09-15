@@ -2,6 +2,7 @@
 """Report each model's pooled 67th-percentile entropy (the paper's tau rule)."""
 import argparse
 import gzip
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -54,6 +55,16 @@ def main():
     anchor = next((r for r in records.values() if "llm_cc" in r), None)
     matched = None
     if anchor is not None:
+        # A reused anchor must come from the current corpus and reference code,
+        # or every matched tau would mix inputs.
+        manifest = json.loads((root / "corpus.json").read_text())
+        expected = dict(corpus_sha256=hashlib.sha256(
+                            json.dumps(manifest["files"], sort_keys=True).encode()).hexdigest(),
+                        reference_commit=manifest["revision"])
+        recorded = {key: anchor.get(key) for key in expected}
+        if recorded != expected:
+            raise SystemExit(f"reference anchor does not match corpus.json (recorded {recorded}, "
+                             f"expected {expected}); rerun reference_anchor.py")
         values = pooled_values(anchor["entropies"])
         matched = 100.0 * sum(v < PAPER_TAU for v in values) / len(values)
     summary = dict(percentile=PERCENTILE, matched_percentile=matched and round(matched, 3),
