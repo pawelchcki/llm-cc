@@ -116,7 +116,9 @@ def dogfood_profile(
             "backend manifest checksum or size does not match installed bundle"
         )
     expected = {
-        "analysis_version": 3,
+        # Tracks the pinned SOURCE_COMMIT scorer, not this checkout: bump it
+        # only when that scorer is rebuilt and redeployed.
+        "analysis_version": 2,
         "hierarchy_mode": "structural",
         "include_headers": True,
         "no_ignore": True,

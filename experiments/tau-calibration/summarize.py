@@ -96,16 +96,23 @@ def main():
         analysis = root / "results" / (name + ".analysis.json")
         if analysis.exists():
             result = json.loads(analysis.read_text())
-            # An analysis must come from the same inputs as the entropies it is
-            # reported beside, at the tau those entropies now imply.
+            # An analysis is reported only when it came from the same inputs as
+            # the entropies beside it, at the tau those entropies now imply.
+            # Thresholds are summarized before `run.py analysis` reruns, so a
+            # stale artifact is skipped with a notice rather than ending the run.
             if result.get("inputs") != record.get("inputs"):
-                raise SystemExit(f"{analysis} was produced from different or unrecorded "
-                                 f"inputs than {path.name}; rerun run.py analysis")
-            if result.get("tau") != item.get("tau_matched"):
-                raise SystemExit(f"{analysis} used tau {result.get('tau')}, but the matched "
-                                 f"tau is now {item.get('tau_matched')}; rerun run.py analysis")
-            item["analysis_tau"] = result["tau"]
-            item["mean_llm_cc_per_program"] = round(result["totals"]["mean_llm_cc_per_file"], 3)
+                stale = f"was produced from different or unrecorded inputs than {path.name}"
+            elif result.get("tau") != item.get("tau_matched"):
+                stale = f"used tau {result.get('tau')}, not the matched {item.get('tau_matched')}"
+            else:
+                stale = None
+            if stale:
+                print(f"skipping {analysis.name}: it {stale}; rerun run.py analysis",
+                      flush=True)
+            else:
+                item["analysis_tau"] = result["tau"]
+                item["mean_llm_cc_per_program"] = round(
+                    result["totals"]["mean_llm_cc_per_file"], 3)
         summary["models"][name] = item
     (root / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     print(f"matched percentile: {summary['matched_percentile']}")
