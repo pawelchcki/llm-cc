@@ -58,7 +58,10 @@ ModelIdentity InspectModel(
     std::uint32_t batch_size = 64, std::string_view reduction_policy = "auto",
     std::string_view effective_reducer = "host", bool cache_enabled = true,
     std::string_view flash_attention = "on",
-    std::string_view kv_cache_type = "q8_0", bool kv_offload = true);
+    std::string_view kv_cache_type = "q8_0", bool kv_offload = true,
+    // Computes `content_digest` even when the entropy cache is disabled, for
+    // callers that must know which weights they resolved.
+    bool digest_required = false);
 
 }  // namespace llmcc
 

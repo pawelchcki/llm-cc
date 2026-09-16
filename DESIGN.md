@@ -43,13 +43,20 @@ has three entry points:
    `bytes_hex`, verifies contiguous positions and exact source coverage, and
    aligns entropy to preprocessed byte ranges.
 4. `src/core.cc` applies an absolute tau by default (or resolves an explicitly
-   requested percentile). Structural mode combines line-snapped entropy and
+   requested percentile). The default absolute tau is the registered model's
+   `default_tau`, which transfers the entropy percentile of the paper's
+   CodeLlama-7b threshold to that model, or 0.67 for custom models. Token
+   alignment accepts the dummy-prefix space that SentencePiece tokenizers add
+   to the first piece. Structural mode combines line-snapped entropy and
    scope-termination boundaries. Reference mode uses entropy-led logical-line
-   partitioning. Both use source-aware meaningful positions and a scope sweep.
-   One implicit root occupies level 1; an undivided nonempty input is root-only
-   and scores `1 - alpha`.
+   partitioning. As in the reference implementation, the first scored token
+   never creates an entropy boundary. Both use source-aware meaningful
+   positions and a scope sweep. One implicit root occupies level 1; an
+   undivided nonempty input is root-only and scores `1 - alpha`.
 5. Unit offsets are mapped back to the original source and emitted as pretty
-   JSON. The top-level score field is `llm_cc`.
+   JSON. The top-level score field is `llm_cc`, the paper's raw LM-CC and the
+   default CLI headline; per-token, density, and mean-entropy scores are
+   optional derived views.
 
 ## Scoring contract
 

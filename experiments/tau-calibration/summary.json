@@ -1,0 +1,80 @@
+{
+  "percentile": 67.0,
+  "matched_percentile": 62.482,
+  "models": {
+    "codellama-7b-q8_0": {
+      "programs": 162,
+      "tokens": 13197,
+      "tau_p67": 0.7602,
+      "mean_entropy": 0.8981,
+      "fraction_at_or_above_paper_tau": 0.377,
+      "median_per_file_p67": 0.8258,
+      "tau_matched": 0.676
+    },
+    "deepseek-coder-6.7b-base-q6_k": {
+      "programs": 162,
+      "tokens": 14515,
+      "tau_p67": 0.9476,
+      "mean_entropy": 0.9566,
+      "fraction_at_or_above_paper_tau": 0.4222,
+      "median_per_file_p67": 1.0463,
+      "tau_matched": 0.7968,
+      "analysis_tau": 0.797,
+      "mean_llm_cc_per_program": 12.988
+    },
+    "deepseek-coder-v2-lite-base-q6_k": {
+      "programs": 162,
+      "tokens": 12972,
+      "tau_p67": 0.7249,
+      "mean_entropy": 0.8565,
+      "fraction_at_or_above_paper_tau": 0.3486,
+      "median_per_file_p67": 0.7794,
+      "tau_matched": 0.586,
+      "analysis_tau": 0.5861,
+      "mean_llm_cc_per_program": 12.167
+    },
+    "qwen2.5-coder-0.5b-q4_k_m": {
+      "programs": 162,
+      "tokens": 10529,
+      "tau_p67": 1.165,
+      "mean_entropy": 1.117,
+      "fraction_at_or_above_paper_tau": 0.4947,
+      "median_per_file_p67": 1.3032,
+      "tau_matched": 0.9939,
+      "analysis_tau": 0.9939,
+      "mean_llm_cc_per_program": 11.957
+    },
+    "qwen2.5-coder-1.5b-q6_k": {
+      "programs": 162,
+      "tokens": 10529,
+      "tau_p67": 0.9376,
+      "mean_entropy": 0.9972,
+      "fraction_at_or_above_paper_tau": 0.4212,
+      "median_per_file_p67": 1.0321,
+      "tau_matched": 0.7885,
+      "analysis_tau": 0.7886,
+      "mean_llm_cc_per_program": 11.941
+    },
+    "qwen2.5-coder-3b-q6_k": {
+      "programs": 162,
+      "tokens": 10529,
+      "tau_p67": 0.9275,
+      "mean_entropy": 0.9763,
+      "fraction_at_or_above_paper_tau": 0.4193,
+      "median_per_file_p67": 1.0331,
+      "tau_matched": 0.7783,
+      "analysis_tau": 0.7783,
+      "mean_llm_cc_per_program": 12.073
+    },
+    "reference-codellama-7b-hf": {
+      "programs": 162,
+      "tokens": 13197,
+      "tau_p67": 0.7583,
+      "mean_entropy": 0.8934,
+      "fraction_at_or_above_paper_tau": 0.3752,
+      "median_per_file_p67": 0.8236,
+      "tau_matched": 0.67,
+      "mean_reference_llm_cc": 9.311
+    }
+  }
+}

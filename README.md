@@ -20,15 +20,46 @@ The paper *Rethinking Code Complexity Through the Lens of Large Language
 Models* describes [semantic decomposition](https://arxiv.org/html/2602.07882v1#S3.SS2)
 using token uncertainty and structural boundaries, then defines
 [LM-CC](https://arxiv.org/html/2602.07882v1#S3.SS4) from branching and
-compositional depth. This implementation removes comments and Python docstrings
-before measuring entropy and constructing that hierarchy.
+compositional depth. The `llm_cc` field, and the default headline score, is that
+LM-CC: `0.8 × branches + 0.2 × Σ depth` over the block tree, on the same scale
+as the paper's reported values (tens for a typical program). This
+implementation removes comments and Python docstrings before measuring entropy
+and constructing that hierarchy.
 
 The paper's [rewriting experiment](https://arxiv.org/html/2602.07882v1#S4.SS2)
 reports program-repair pass@1 increasing from **13.4% to 16.2%** on its selected
 rewrite subset. Selection required lower LM-CC without lower cyclomatic
 complexity; passing original tests was also required outside the repair task.
 That result motivates investigating refactoring opportunities, but does not
-validate every rewrite, this implementation's defaults, or its normalized score.
+validate every rewrite, this implementation's deviations from the reference, or
+its optional normalized scores.
+
+### Relation to the reference implementation
+
+The per-token signal and the score formula match the authors' reference
+implementation ([xchen121/lm-cc](https://github.com/xchen121/lm-cc) at
+`c38a26af`): full-vocabulary entropy in nats at temperature 1, logits at
+position *i − 1* scoring token *i*, and a first code token that never opens a
+block. The paper sets τ = 0.67 nats from a percentile of CodeLlama-7b's token
+entropies. Entropy distributions differ between models, so an absolute 0.67
+marks a different share of tokens for each one. Every registered model
+therefore carries its own τ: the entropy percentile at which the authors'
+CodeLlama-7b pipeline reaches exactly 0.67 on the paper's HumanEval programs,
+applied to that model's entropies on the same programs. See the
+[τ calibration experiment](experiments/tau-calibration/README.md). A custom
+`--model` falls back to 0.67; `--tau-percentile` applies a percentile per file
+instead.
+
+These deviations are deliberate:
+
+- The default `--hierarchy structural` adds syntax scope boundaries to the
+  entropy boundaries. `--hierarchy reference` uses entropy boundaries only.
+- Nesting comes from tree-sitter scopes in every supported language rather
+  than from Python indentation.
+- Comments and docstrings are removed with tree-sitter, blank lines are kept,
+  and code is not reformatted with `black`.
+- The default model is DeepSeek-Coder-V2-Lite rather than CodeLlama-7b. The
+  registered `codellama-7b-q8_0` model reproduces the paper's model choice.
 
 ## Installation
 
@@ -246,18 +277,23 @@ including elapsed preprocessing time and peak host memory.
 
 ## Interpreting scores
 
-The raw `llm_cc` field combines branching and compositional depth and depends
-on input length. The default headline, `lmcc_per_token` (`--score lmcc`), divides
-raw LM-CC by the number of scored tokens. This normalization is a heuristic:
-it is neither length-invariant nor independently validated. `--score density`
-selects the fraction of tokens at or above the entropy threshold; `--score mean`
-selects mean entropy. Raw and normalized metrics remain available in JSONL.
+The default headline (`--score raw`) is raw LM-CC, the paper's metric. It
+combines branching and compositional depth, so it grows with input length.
+Project totals report the sum over files and `mean_llm_cc_per_file`.
+`--score lmcc` selects `lmcc_per_token`, raw LM-CC divided by the number of
+scored tokens. That normalization is a heuristic: it is neither length-invariant
+nor validated by the paper. `--score density` selects the fraction of tokens at
+or above the entropy threshold; `--score mean` selects mean entropy. Every
+metric remains available in JSONL regardless of the headline.
 
 Compare revisions with the same model, quantization, hierarchy, and inference
-settings. Establish a fresh baseline when changing them. The default
-`--hierarchy structural` combines entropy and syntax boundaries. The absolute
-threshold defaults to `--tau 0.67` nats, used with CodeLlama-7b in the paper;
-other models may need tuning. Use scores and hotspots to choose code to inspect,
+settings. Establish a fresh baseline when changing them, including after
+upgrading from releases that used a fixed τ of 0.67 for every model or the
+per-token headline. The default `--hierarchy structural` combines entropy and
+syntax boundaries. Without `--tau` or `--tau-percentile`, the threshold is the
+selected registered model's calibrated τ; the JSONL `configuration` event
+reports the effective `tau` and a `tau_source` of `model-default`,
+`paper-default`, or `cli`. Use scores and hotspots to choose code to inspect,
 then assess changes through readability, maintainability, tests, and review.
 
 ## Development

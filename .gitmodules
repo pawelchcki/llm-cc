@@ -1,0 +1,9 @@
+# Large experiment outputs live on protected data/* refs of this repository and
+# are fetched only on request:
+#   git submodule update --init --checkout experiments/tau-calibration/results
+[submodule "experiments/tau-calibration/results"]
+	path = experiments/tau-calibration/results
+	url = ../llm-cc.git
+	branch = data/tau-calibration
+	shallow = true
+	update = none

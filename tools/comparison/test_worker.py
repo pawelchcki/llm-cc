@@ -35,7 +35,7 @@ class WorkerTest(unittest.TestCase):
         binary.write_bytes(b"binary")
         binary.chmod(0o755)
         profile = {
-            "scoring": {"expected_configuration": {"analysis_version": 2}},
+            "scoring": {"expected_configuration": {"analysis_version": 3}},
             "build": {
                 "installed_files": {"llm-cc": hashlib.sha256(b"binary").hexdigest()},
                 "model_sha256": hashlib.sha256(b"model").hexdigest(),
@@ -99,7 +99,7 @@ class WorkerTest(unittest.TestCase):
                     for v in [
                         {
                             "type": "configuration",
-                            "analysis_version": 2,
+                            "analysis_version": 3,
                             "model_sha256": hashlib.sha256(b"model").hexdigest(),
                             "model_size": 5,
                             "language": "python",
@@ -275,7 +275,7 @@ class WorkerTest(unittest.TestCase):
                     for v in [
                         {
                             "type": "configuration",
-                            "analysis_version": 2,
+                            "analysis_version": 3,
                             "model_sha256": hashlib.sha256(b"model").hexdigest(),
                             "model_size": 5,
                             "language": "python",
@@ -344,7 +344,7 @@ import json, os, pathlib, sys
 source = sys.argv[-1]
 base = pathlib.Path(os.environ['LLM_CC_ENTROPY_CACHE_DIR']) / 'v2/entropy/nested'
 base.mkdir(parents=True, exist_ok=True); (base / 'entry.cbor').write_bytes(b'cbor')
-print(json.dumps({'type':'configuration','analysis_version':2,'model_sha256':'%s','model_size':5,'language':'python','no_download':True,'no_ignore':True,'include_headers':True}))
+print(json.dumps({'type':'configuration','analysis_version':3,'model_sha256':'%s','model_size':5,'language':'python','no_download':True,'no_ignore':True,'include_headers':True}))
 print(json.dumps({'type':'file','path':source,'language':'python','llm_cc':1.0,'token_count':1}))
 print(json.dumps({'type':'totals','discovered':1,'analyzed':1,'failed':0,'partial':False,'llm_cc':1.0,'token_count':1}))
 """
@@ -405,7 +405,7 @@ print(json.dumps({'type':'totals','discovered':1,'analyzed':1,'failed':0,'partia
             "import json, os, pathlib, sys\n"
             "source = sys.argv[-1]\n"
             + prelude
-            + "print(json.dumps({'type':'configuration','analysis_version':2,"
+            + "print(json.dumps({'type':'configuration','analysis_version':3,"
             "'model_sha256':'%s','model_size':5,'language':'python',"
             "'no_download':True,'no_ignore':True,'include_headers':True}))\n"
             "print(json.dumps({'type':'file','path':source,'language':'python',"

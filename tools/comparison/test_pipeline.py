@@ -108,7 +108,7 @@ class PipelineTest(unittest.TestCase):
         self.assertNotIn("www.", escaped)
         self.assertNotIn("https://", escaped)
 
-    def _scored(self, out):
+    def _scored(self, out, tokens=lambda key: 2):
         plan = prepare(
             self.repo,
             self.head,
@@ -139,7 +139,7 @@ class PipelineTest(unittest.TestCase):
                 "content_sha256": item["content_sha256"],
                 "language": item["language"],
                 "llm_cc": 2.0 + index,
-                "token_count": 2,
+                "token_count": tokens(key),
             }
         path = out / "worker-0.json"
         write_json(path, worker)
@@ -170,6 +170,73 @@ class PipelineTest(unittest.TestCase):
         }
         report.update(overrides)
         return report
+
+    def test_raw_lm_cc_is_the_rendered_headline(self):
+        markdown = _render(
+            self._report(
+                leading_regressions=[
+                    {"path": "a.cc", "change": 1.0, "raw_change": 2.5},
+                    {"path": "legacy.cc", "change": 0.5},
+                    {"path": "empty.cc", "change": None, "raw_change": 3.0},
+                ]
+            )
+        )
+        self.assertIn("- `empty.cc`: +3.0 LM-CC\n", markdown)
+        self.assertIn("- repository 1.0 → 2.0 LM-CC (+100%)", markdown)
+        self.assertIn("| repository | 1.0 | 2.0 | +1.0 | +100% |", markdown)
+        self.assertIn("- `a.cc`: +2.5 LM-CC (+1 per token)", markdown)
+        self.assertIn("- `legacy.cc`: +0.5 LM-CC/token", markdown)
+
+    def test_leading_paths_rank_by_raw_lm_cc(self):
+        # Admit the modified same.cc on both sides so it carries a delta.
+        self.profile["max_file_bytes"] = 100
+        plan, report = self._scored(Path(self.temp.name) / "raw")
+        leading = report["leading_regressions"] + report["leading_improvements"]
+        entry = next(x for x in leading if x["path"] == "same.cc")
+        base = next(
+            f for f in plan["inventories"]["base"] if f["path"] == "same.cc"
+        )
+        head = next(
+            f for f in plan["inventories"]["head"] if f["path"] == "same.cc"
+        )
+        keys = plan["workers"][0]["keys"]
+        # _scored assigns llm_cc = 2 + worker index over 2 tokens per file.
+        raw_base = 2.0 + keys.index(base["key"])
+        raw_head = 2.0 + keys.index(head["key"])
+        self.assertEqual(entry["raw_change"], raw_head - raw_base)
+        self.assertAlmostEqual(entry["change"], (raw_head - raw_base) / 2)
+
+    def test_added_files_carry_their_whole_raw_score(self):
+        self.profile["max_file_bytes"] = 100
+        plan, report = self._scored(Path(self.temp.name) / "added")
+        added = next(f for f in plan["inventories"]["head"] if f["path"] == "large.py")
+        self.assertNotIn("large.py", [f["path"] for f in plan["inventories"]["base"]])
+        entry = next(
+            x
+            for x in report["leading_regressions"] + report["leading_improvements"]
+            if x["path"] == "large.py"
+        )
+        self.assertIsNone(entry["change"])
+        self.assertEqual(entry["raw_change"], report["results"][added["key"]]["llm_cc"])
+
+    def test_zero_token_files_keep_raw_deltas(self):
+        self.profile["max_file_bytes"] = 100
+        out = Path(self.temp.name) / "zero"
+        plan = prepare(
+            self.repo, self.head, self.base, self.identity, self.profile, {},
+            MemoryCache(), out / "probe", 1,
+        )
+        base = next(f for f in plan["inventories"]["base"] if f["path"] == "same.cc")
+        head = next(f for f in plan["inventories"]["head"] if f["path"] == "same.cc")
+        for label, empty in (("one", {base["key"]}), ("both", {base["key"], head["key"]})):
+            with self.subTest(zero_token_sides=label):
+                _, report = self._scored(
+                    out / label, tokens=lambda key: 0 if key in empty else 2
+                )
+                leading = report["leading_regressions"] + report["leading_improvements"]
+                entry = next(x for x in leading if x["path"] == "same.cc")
+                self.assertIsNone(entry["change"])
+                self.assertNotEqual(entry["raw_change"], 0)
 
     def test_untrusted_paths_render_as_balanced_code_spans(self):
         path = "src/@team/[file]`name``x`~~$y$|pipe|https://example.com/a.cc"

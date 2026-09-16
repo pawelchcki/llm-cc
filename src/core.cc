@@ -117,7 +117,7 @@ std::pair<double, std::vector<SemanticUnit>> DetectSemanticUnits(
     std::span<const StructuralEvent> structural_events,
     std::span<const std::size_t> line_starts, TauRule tau_rule,
     std::span<const SourceRange> meaningful_ranges,
-    HierarchyMode hierarchy_mode) {
+    HierarchyMode hierarchy_mode, bool span_starts_source) {
   ValidateInputs(tokens, structural_events, line_starts, meaningful_ranges);
   std::vector<double> entropy_values;
   for (const Token& token : tokens) {
@@ -177,8 +177,16 @@ std::pair<double, std::vector<SemanticUnit>> DetectSemanticUnits(
   const std::size_t source_end = TokenIndexAt(tokens, meaningful_end);
   std::set<std::size_t> boundaries = {source_start, source_end};
   bool marker_at_source_start = false;
-  for (std::size_t i = source_start; i < source_end; ++i) {
-    if (tokens[i].entropy.has_value() && *tokens[i].entropy >= tau) {
+  // The reference implementation never lets the file's first code token open a
+  // block (`idx > 0`). Skip it by position: without a BOS token it is
+  // unscored, and the next token's entropy is a real observation. A function
+  // span later in the file keeps its first token.
+  for (std::size_t i = source_start + (span_starts_source ? 1 : 0);
+       i < source_end; ++i) {
+    if (!tokens[i].entropy.has_value()) {
+      continue;
+    }
+    if (*tokens[i].entropy >= tau) {
       const std::size_t boundary =
           std::max(first_token_on_line[i], source_start);
       if (boundary == source_start) {
@@ -342,13 +350,13 @@ Analysis Analyze(std::span<const Token> tokens,
                  std::span<const StructuralEvent> structural_events,
                  std::span<const std::size_t> line_starts, TauRule tau_rule,
                  double alpha, std::span<const SourceRange> meaningful_ranges,
-                 HierarchyMode hierarchy_mode) {
+                 HierarchyMode hierarchy_mode, bool span_starts_source) {
   if (!std::isfinite(alpha) || alpha < 0.0 || alpha > 1.0) {
     throw AnalysisError("alpha must be finite and between 0 and 1");
   }
-  auto [tau, semantic_units] =
-      DetectSemanticUnits(tokens, structural_events, line_starts, tau_rule,
-                          meaningful_ranges, hierarchy_mode);
+  auto [tau, semantic_units] = DetectSemanticUnits(
+      tokens, structural_events, line_starts, tau_rule, meaningful_ranges,
+      hierarchy_mode, span_starts_source);
   std::vector<Unit> units = BuildHierarchyImpl(
       semantic_units, hierarchy_mode == HierarchyMode::kStructural);
   auto [branches, levels] = Totals(units);

@@ -106,6 +106,8 @@ CONTRACT = (
 # Configuration keys the scorer always reports for the orchestrated flags the
 # worker itself supplies, plus derived constants.
 CONSTANT_CONFIGURATION = {
+    # Tracks the scorer an installation was built from, not this checkout:
+    # bump it only when that scorer is rebuilt and redeployed.
     "analysis_version": 2,
     "include_headers": True,
     "no_ignore": True,

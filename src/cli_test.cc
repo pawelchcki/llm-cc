@@ -221,14 +221,14 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
           empty_events[3]["discovered"] == 0,
       "empty discovery emits a complete zero-file event stream");
   llmcc::test::Expect(empty_events[1]["hierarchy_mode"] == "structural" &&
-                          empty_events[1]["analysis_version"] == 2 &&
+                          empty_events[1]["analysis_version"] == 3 &&
                           empty_events[1]["batch_size"] == 64 &&
                           empty_events[1]["entropy_reduction"] == "auto" &&
                           empty_events[1]["flash_attn"] == "on" &&
                           empty_events[1]["kv_cache_type"] == "q8_0" &&
                           empty_events[1]["kv_offload"] == "on" &&
                           empty_events[3]["hierarchy_mode"] == "structural" &&
-                          empty_events[3]["analysis_version"] == 2,
+                          empty_events[3]["analysis_version"] == 3,
                       "default analysis metadata is additive and versioned");
   const fs::path empty_device_output =
       fs::path(test_tmpdir) / "empty-device.jsonl";
@@ -606,9 +606,9 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
                       "configuration distinguishes requested and effective "
                       "automatic flash attention");
   llmcc::test::Expect(events[3]["hierarchy_mode"] == "structural" &&
-                          events[3]["analysis_version"] == 2 &&
+                          events[3]["analysis_version"] == 3 &&
                           events[4]["hierarchy_mode"] == "structural" &&
-                          events[4]["analysis_version"] == 2,
+                          events[4]["analysis_version"] == 3,
                       "file and totals records identify corrected semantics");
   const nlohmann::json& file = events[3];
   for (std::string_view field :
@@ -618,6 +618,21 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
     llmcc::test::Expect(file.contains(field),
                         std::string("file contains ") + std::string(field));
   }
+  llmcc::test::Expect(
+      file["score_mode"] == "raw" && file["score"] == file["llm_cc"],
+      "raw LM-CC is the default file headline");
+  llmcc::test::Expect(
+      file["functions"].is_array() && !file["functions"].empty() &&
+          file["functions"][0]["score"] == file["functions"][0]["lmcc"],
+      "raw LM-CC is the default function headline");
+  llmcc::test::Expect(events[1]["score_mode"] == "raw" &&
+                          events[1]["tau"] == 0.67 &&
+                          events[1]["tau_source"] == "paper-default",
+                      "custom models use the paper tau by default");
+  llmcc::test::Expect(
+      events[4]["score"] == events[4]["llm_cc"] &&
+          events[4]["mean_llm_cc_per_file"] == events[4]["llm_cc"],
+      "totals report raw LM-CC and its per-file mean");
   llmcc::test::Expect(!file["functions"].empty(),
                       "file includes function scores");
   llmcc::test::Expect(!file["hotspots"].empty(),
@@ -799,6 +814,17 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(density_file["score_mode"] == "density" &&
                           density_file["score"] == density_file["density"],
                       "density selects the density headline");
+  const fs::path per_token_output = fs::path(test_tmpdir) / "per-token.jsonl";
+  llmcc::test::ExpectEq(
+      Run(analysis_command.substr(0, analysis_command.rfind('>')) +
+          "--score lmcc --tau 0.67 >" + Quote(per_token_output)),
+      0, "per-token analysis succeeds");
+  const std::vector<nlohmann::json> per_token_events =
+      ReadEvents(per_token_output);
+  llmcc::test::Expect(
+      FileEvent(per_token_events)["score"] == file["lmcc_per_token"] &&
+          per_token_events[1]["tau_source"] == "cli",
+      "--score lmcc keeps the per-token headline");
   nlohmann::json default_without_headline = file;
   nlohmann::json density_without_headline = density_file;
   default_without_headline.erase("score");

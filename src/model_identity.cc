@@ -413,15 +413,13 @@ std::string ModelDigest(const std::vector<HashedFile>& files) {
 
 }  // namespace
 
-ModelIdentity InspectModel(const std::filesystem::path& model,
-                           std::string_view inference_abi,
-                           std::string_view backend,
-                           std::uint32_t context_limit,
-                           std::uint32_t batch_size,
-                           std::string_view reduction_policy,
-                           std::string_view effective_reducer,
-                           bool cache_enabled, std::string_view flash_attention,
-                           std::string_view kv_cache_type, bool kv_offload) {
+ModelIdentity InspectModel(
+    const std::filesystem::path& model, std::string_view inference_abi,
+    std::string_view backend, std::uint32_t context_limit,
+    std::uint32_t batch_size, std::string_view reduction_policy,
+    std::string_view effective_reducer, bool cache_enabled,
+    std::string_view flash_attention, std::string_view kv_cache_type,
+    bool kv_offload, bool digest_required) {
   std::error_code error;
   const auto canonical = std::filesystem::canonical(model, error);
   if (error)
@@ -430,7 +428,7 @@ ModelIdentity InspectModel(const std::filesystem::path& model,
   FileSignature stable = Signature(canonical);
   std::string digest;
   std::uint64_t total_size = stable.size;
-  if (cache_enabled) {
+  if (cache_enabled || digest_required) {
     const auto paths = ModelFiles(canonical);
     for (int attempt = 0; attempt != 2; ++attempt) {
       std::vector<HashedFile> files;

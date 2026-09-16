@@ -183,7 +183,10 @@ scores and totals are unavailable. Files are never truncated.
 Fingerprint inputs are the complete scoring contract and installed/model/image
 identity. Path, category, branch and application revision do not affect per-file
 keys. Identical contents in one language share inference but each path counts
-toward reporting. The repository/category score is `sum(llm_cc) / sum(tokens)`.
+toward reporting. The displayed repository/category headline is raw LM-CC,
+`sum(llm_cc)`, the paper's quantity printed with one decimal; `score` in
+`report.json` remains `sum(llm_cc) / sum(tokens)` and is shown as the
+LM-CC/token delta.
 Zero-token scores and zero-baseline percentages are unavailable.
 
 Filesystem writes use atomic replacement with owner/group permissions (`0660`)
