@@ -317,6 +317,25 @@ class BuildBuddyTest(unittest.TestCase):
                 self.config, self.plan, self.plan["workers"][0], "prefix/", "0" * 64
             )
 
+    def test_cache_bound_only_reaches_workers_when_narrowed(self):
+        self.miss()
+        default = worker_request(
+            self.config, self.plan, self.plan["workers"][0], "prefix/", "0" * 64
+        )["steps"][0]["run"]
+        # Bundles deployed before the option existed hard-code the default, so
+        # an unchanged bound must not add an argument they would reject.
+        self.assertNotIn("--cache-concurrency", default)
+        self.config["cache_concurrency"] = 2
+        narrowed = worker_request(
+            self.config, self.plan, self.plan["workers"][0], "prefix/", "0" * 64
+        )["steps"][0]["run"]
+        self.assertIn("--cache-concurrency 2", narrowed)
+        self.config["cache_concurrency"] = 0
+        with self.assertRaisesRegex(ValueError, "cache_concurrency"):
+            worker_request(
+                self.config, self.plan, self.plan["workers"][0], "prefix/", "0" * 64
+            )
+
     def test_bundle_executes_only_verified_bytes_with_expected_arguments(self):
         archive = self.root / "code.zip"
         with zipfile.ZipFile(archive, "w") as bundle:

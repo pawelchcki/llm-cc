@@ -196,8 +196,10 @@ and run each stage with umask `0007` so new
 directories and objects remain accessible to that group. An owner-only deployment
 can use umask `0077`. Preparation reads cached results in
 parallel, bounded by `--cache-concurrency` (default 8, maximum 64); the same
-option on the `worker` stage bounds restoring native entropy entries, and the
-coordinator passes its configured value through to every remote worker. Read or
+option on the `worker` stage bounds restoring native entropy entries. The
+coordinator forwards a narrowed `cache_concurrency` to every remote worker, so
+lowering it below the default requires redeploying the execution bundle from a
+commit that accepts the option. Read or
 authentication errors still fail the run, and the plan does not depend on the
 bound. S3 requires the optional `boto3`
 dependency in coordinator and worker environments. A `--store-options` JSON file

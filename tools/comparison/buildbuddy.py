@@ -233,9 +233,15 @@ def bundle_command(command, bundle, bundle_sha):
     ]
 
 
+# Worker bundles are deployed separately and pinned by checksum, so a bundle
+# predating --cache-concurrency is a normal deployment state. It hard-codes
+# this same default, so only a narrowed bound has to reach the worker at all.
+DEFAULT_CACHE_CONCURRENCY = 8
+
+
 def cache_concurrency(config):
     """The one validated result-cache bound every stage of a run must share."""
-    value = config.get("cache_concurrency", 8)
+    value = config.get("cache_concurrency", DEFAULT_CACHE_CONCURRENCY)
     if type(value) is not int or not 1 <= value <= 64:
         raise ValueError("cache_concurrency must be between 1 and 64")
     return value
@@ -281,11 +287,14 @@ def worker_request(config, plan, worker, prefix, plan_digest):
         config["model"],
         "--installed-root",
         config["installed_root"],
-        "--cache-concurrency",
-        str(cache_concurrency(config)),
         "--store-options-json",
         json.dumps(options, sort_keys=True),
     ]
+    bound = cache_concurrency(config)
+    if bound != DEFAULT_CACHE_CONCURRENCY:
+        # Narrowing the bound requires a worker bundle from a commit that
+        # understands the option; the default needs no redeployment.
+        command += ["--cache-concurrency", str(bound)]
     bundle = config.get("execution_bundle")
     if bundle is not None:
         bundle_sha = config.get("execution_bundle_sha256", "")
