@@ -17,7 +17,7 @@ import subprocess
 import sys
 import tempfile
 
-from .common import CONTAINER_ENVIRONMENT_POLICY
+from .common import CONTAINER_ENVIRONMENT_POLICY, model_digest, model_files
 
 SOURCE_COMMIT = "4646123b274005c587dfeb614f17ddf5fd36aef6"
 MODEL_SHA256 = "5a2e25280075d769abdb111de8211d9d3367f2ae0d0e6166a288ee6e8ed0345d"
@@ -177,6 +177,12 @@ class ScoringSettings:
         _finite("alpha", self.alpha)
         if not 0 <= self.alpha <= 1:
             raise ValueError("alpha must be between zero and one")
+        # Combinations each scorer run rejects, so an accepted profile is
+        # executable rather than failing on every worker invocation.
+        if self.kv_cache_type != "f16" and self.flash_attn == "off":
+            raise ValueError("quantized kv_cache_type requires flash_attn on")
+        if self.entropy_reduction == "device" and self.gpu_layers != -1:
+            raise ValueError("device entropy_reduction requires gpu_layers -1")
 
     def argv(self):
         argv = []
@@ -217,9 +223,10 @@ class ModelSpec:
 
     @classmethod
     def from_path(cls, path, sha256=None, bytes=None, url=None):
-        model = Path(path)
-        measured = digest_file(model)
-        size = model.stat().st_size
+        """Pin the identity the scorer reports, across every shard it loads."""
+        shards = model_files(path)
+        measured = model_digest([digest_file(shard) for shard in shards])
+        size = sum(shard.stat().st_size for shard in shards)
         if (sha256 is not None and sha256 != measured) or (
             bytes is not None and bytes != size
         ):
@@ -356,7 +363,10 @@ def inspect_installation(
         ).strip()
         status_text = _run_scorer(
             executable,
-            ["cache", "status", str(sandbox / "entropy"), "--format", "json"],
+            # A positional path is parsed as the repository to report on and
+            # is rejected outside a Git worktree; the sandbox environment
+            # already points LLM_CC_ENTROPY_CACHE_DIR at this directory.
+            ["cache", "status", "--format", "json"],
             sandbox,
             runtime_dir,
             timeout,
@@ -382,6 +392,18 @@ def inspect_installation(
             "installed executable reports inference ABI %r but the backend was built "
             "against llama.cpp %s" % (inference_abi, manifest["llama_cpp_commit"])
         )
+    source_commit = status.get("source_commit")
+    if not isinstance(source_commit, str) or not re.fullmatch(
+        r"[0-9a-f]{40}", source_commit
+    ):
+        raise ValueError("cache status JSON is missing a valid source_commit")
+    # The manifest describes the backend bundle; only this probe establishes
+    # the commit the executable itself embeds and resolves backends with.
+    if source_commit != manifest["git_sha"]:
+        raise ValueError(
+            "installed executable was built from commit %s but the backend "
+            "manifest declares %s" % (source_commit, manifest["git_sha"])
+        )
     if expected_inference_abi is not None and inference_abi != expected_inference_abi:
         raise ValueError(
             f"{backend.upper()} backend must report inference ABI {expected_inference_abi}"
@@ -390,7 +412,7 @@ def inspect_installation(
         root=str(root),
         backend=backend,
         version=manifest["version"],
-        source_commit=manifest["git_sha"],
+        source_commit=source_commit,
         inference_abi=inference_abi,
         manifest=manifest,
         installed_files=files,

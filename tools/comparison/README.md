@@ -163,9 +163,10 @@ python3 -m tools.comparison.profile generate \
 either from a local file (`--model`, hashed in place) or from explicit
 `--model-sha256 --model-bytes [--model-url]`. Both subcommands run the installed
 `bin/llm-cc` offline in a sanitized environment with private cache directories
-(`--version` and `cache status --format json`) to read the executable's version
-and inference ABI, and reject a tree whose executable, backend manifest and
-llama.cpp commit disagree. Neither command downloads anything, but the generator
+(`--version` and `cache status --format json`) to read the executable's version,
+its embedded source commit and its inference ABI, and reject a tree whose
+executable, backend manifest and llama.cpp commit disagree. A `--model` naming
+one shard of a split GGUF pins the whole set, exactly as the scorer reports it. Neither command downloads anything, but the generator
 must run on a host that can execute the installed binary. `--flash-attn auto` and
 `--entropy-reduction auto` are rejected because the scorer would then resolve
 those settings against the runtime, leaving the expected configuration
@@ -191,8 +192,9 @@ filesystem cache, provision its root with their shared group and mode `2770`,
 and run each stage with umask `0007` so new
 directories and objects remain accessible to that group. An owner-only deployment
 can use umask `0077`. Preparation reads cached results in
-parallel, bounded by `--cache-concurrency` (default 8, maximum 64); the bound
-also applies to restoring native entropy entries in a worker. Read or
+parallel, bounded by `--cache-concurrency` (default 8, maximum 64); the same
+option on the `worker` stage bounds restoring native entropy entries, and the
+coordinator passes its configured value through to every remote worker. Read or
 authentication errors still fail the run, and the plan does not depend on the
 bound. S3 requires the optional `boto3`
 dependency in coordinator and worker environments. A `--store-options` JSON file

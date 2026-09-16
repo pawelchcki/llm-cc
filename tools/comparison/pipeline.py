@@ -1291,6 +1291,7 @@ def compare(
             model,
             installed_root,
             deadline_seconds,
+            cache_concurrency,
         )
         worker_paths.append(Path(output_dir) / ("worker-%d.json" % worker["worker_id"]))
     return aggregate(Path(output_dir) / "plan.json", worker_paths, output_dir)

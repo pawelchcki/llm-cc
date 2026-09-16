@@ -233,6 +233,14 @@ def bundle_command(command, bundle, bundle_sha):
     ]
 
 
+def cache_concurrency(config):
+    """The one validated result-cache bound every stage of a run must share."""
+    value = config.get("cache_concurrency", 8)
+    if type(value) is not int or not 1 <= value <= 64:
+        raise ValueError("cache_concurrency must be between 1 and 64")
+    return value
+
+
 def worker_request(config, plan, worker, prefix, plan_digest):
     validate_execution_policy(plan["profile"])
     image = config["execution_image"]
@@ -273,6 +281,8 @@ def worker_request(config, plan, worker, prefix, plan_digest):
         config["model"],
         "--installed-root",
         config["installed_root"],
+        "--cache-concurrency",
+        str(cache_concurrency(config)),
         "--store-options-json",
         json.dumps(options, sort_keys=True),
     ]
@@ -545,6 +555,7 @@ def remote_worker(args):
                     args.model,
                     args.installed_root,
                     deadline_seconds=max(0, 6600 - (time.monotonic() - started)),
+                    cache_concurrency=args.cache_concurrency,
                 )
                 deadline.check()
         except BaseException as error:
@@ -643,7 +654,7 @@ def coordinate(args):
             config.get("max_workers", 4),
             config.get("repository_rules_path", REPOSITORY_RULES_PATH),
             {"report_links": report_links(config, identity)},
-            config.get("cache_concurrency", 8),
+            cache_concurrency(config),
         )
         api = BuildBuddy(
             config.get("endpoint", "https://pawel.buildbuddy.io"),
@@ -674,6 +685,7 @@ def main(argv=None):
     for name in ("cache", "prefix", "plan-sha256", "scorer", "model", "installed-root"):
         worker.add_argument("--" + name, required=True)
     worker.add_argument("--worker-id", type=int, required=True)
+    worker.add_argument("--cache-concurrency", type=int, default=8)
     worker.add_argument("--store-options-json", default="{}")
     coordinator = stages.add_parser("coordinate")
     for name in ("config", "repository", "head", "branch", "pipeline-id", "output-dir"):

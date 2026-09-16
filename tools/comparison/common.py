@@ -2,6 +2,7 @@ import hashlib
 import json
 import math
 import os
+import re
 from pathlib import Path
 
 SCHEMA_VERSION = 1
@@ -62,3 +63,46 @@ def valid_result(result, item, fingerprint):
         )
     except (KeyError, TypeError):
         return False
+
+
+# Mirrors src/model_identity.cc: `ModelFiles` discovers the companion shards of
+# a split GGUF and `ModelDigest` domain-separates their digests, while the
+# reported size is the shard total. A generated profile must pin the identity
+# the scorer will report, or every comparison fails verification.
+SPLIT_MODEL_DOMAIN = b"llm-cc-split-model-v1"
+_SPLIT_MODEL_NAME = re.compile(r"(.*)-([0-9]{5})-of-([0-9]{5})\.gguf")
+
+
+def model_files(path):
+    """Every shard of the model `path` names, in scorer order.
+
+    A name that does not match the split convention, or whose indices are
+    inconsistent, describes itself alone -- exactly as the scorer decides it.
+    """
+    canonical = Path(os.path.realpath(path))
+    match = _SPLIT_MODEL_NAME.fullmatch(canonical.name)
+    if match is None:
+        return [canonical]
+    index, count = int(match.group(2)), int(match.group(3))
+    if count <= 1 or index == 0 or index > count:
+        return [canonical]
+    shards = []
+    for shard in range(1, count + 1):
+        name = "%s-%05d-of-%05d.gguf" % (match.group(1), shard, count)
+        companion = canonical.parent / name
+        if not companion.is_file():
+            raise ValueError("cannot resolve model shard " + name)
+        shards.append(Path(os.path.realpath(companion)))
+    return shards
+
+
+def model_digest(digests):
+    """The scorer's composite digest over already-hashed shards, in order."""
+    if len(digests) == 1:
+        return digests[0]
+    composite = hashlib.sha256()
+    composite.update(SPLIT_MODEL_DOMAIN)
+    for value in digests:
+        composite.update(b"\0")
+        composite.update(value.encode("ascii"))
+    return composite.hexdigest()

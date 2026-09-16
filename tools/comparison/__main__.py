@@ -44,6 +44,7 @@ def parser():
     worker.add_argument("--model", required=True)
     worker.add_argument("--installed-root", required=True)
     worker.add_argument("--deadline-seconds", type=int, default=6600)
+    worker.add_argument("--cache-concurrency", type=int, default=8)
     worker.add_argument("--store-options")
     aggregation = commands.add_parser("aggregate")
     aggregation.add_argument("--plan", required=True)
@@ -83,6 +84,7 @@ def _run(args):
             args.model,
             args.installed_root,
             args.deadline_seconds,
+            args.cache_concurrency,
         )
         return 0 if artifact["status"] == "complete" else 1
     cache = ResultCache(store, args.refresh_days, args.expire_days)

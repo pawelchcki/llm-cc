@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .cache import ResultCache
-from .common import validate_execution_policy
+from .common import model_digest, model_files, validate_execution_policy
 from .deadline import Deadline, DeadlineExceeded
 
 
@@ -29,6 +29,8 @@ MODEL_DIGEST_MEMO_FORMAT = "llm-cc-model-digest-memo-v1"
 
 # Restoring a native entropy cache is many small reads; the bound keeps a
 # high-latency object store from serializing them one round trip at a time.
+# It is the default only: an operator's configured --cache-concurrency is
+# carried through to the worker so one limit governs every stage.
 NATIVE_ENTROPY_CONCURRENCY = 8
 
 
@@ -78,35 +80,51 @@ def _hash(path: Path, deadline: float | None = None) -> str:
     return _hash_with_signature(path, deadline)[0]
 
 
-def _record_model_digest_memo(
-    entropy_root: Path, model_path: Path, signature: dict[str, int], digest: str
-) -> Path | None:
-    """Seed llm-cc's advisory model digest memo from our own verification.
+def _record_model_digest_memos(entropy_root: Path, shards: list[dict]) -> list[Path]:
+    """Seed llm-cc's advisory model digest memos from our own verification.
 
-    The worker has just hashed the model under the same identity the scorer
-    would use, so writing the documented memo file lets every language
-    invocation skip re-hashing many gigabytes. The memo lives outside
-    `v2/entropy`, so it is never published to the shared cache, and it dies
-    with the worker's private temporary directory.
+    The worker has just hashed every shard under the same identity the scorer
+    would use, so writing the documented memo files lets every language
+    invocation skip re-hashing many gigabytes. llm-cc memoizes a split model
+    one shard at a time, so each shard gets its own memo. The memos live
+    outside `v2/entropy`, so they are never published to the shared cache, and
+    they die with the worker's private temporary directory.
+
+    Every signature is re-checked before anything is written, so a model that
+    moved under us leaves no partial memo directory behind.
     """
-    canonical = os.path.realpath(model_path)
-    try:
-        key = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-    except UnicodeEncodeError:
-        return None  # llm-cc keys memos by UTF-8 path; skip an unencodable one.
-    if _file_signature(os.stat(canonical)) != signature:
-        raise WorkerError("model changed before digest reuse")
+    entries = []
+    for shard in shards:
+        canonical = os.path.realpath(shard["path"])
+        try:
+            key = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        except UnicodeEncodeError:
+            continue  # llm-cc keys memos by UTF-8 path; skip an unencodable one.
+        if _file_signature(os.stat(canonical)) != shard["signature"]:
+            raise WorkerError("model changed before digest reuse")
+        entries.append((key, shard))
+    if not entries:
+        return []
     directory = Path(entropy_root) / "model-digests"
     directory.mkdir(mode=0o700, exist_ok=False)
-    target = directory / (key + ".json")
-    temporary = directory / (key + ".tmp")
-    handle = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(handle, "wb") as stream:
-        stream.write(
-            _json({"format": MODEL_DIGEST_MEMO_FORMAT, **signature, "digest": digest})
-        )
-    os.replace(temporary, target)
-    return target
+    written = []
+    for key, shard in entries:
+        target = directory / (key + ".json")
+        temporary = directory / (key + ".tmp")
+        handle = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(handle, "wb") as stream:
+            stream.write(
+                _json(
+                    {
+                        "format": MODEL_DIGEST_MEMO_FORMAT,
+                        **shard["signature"],
+                        "digest": shard["digest"],
+                    }
+                )
+            )
+        os.replace(temporary, target)
+        written.append(target)
+    return written
 
 
 def _host_gpu_environment(host, deadline, sysfs=Path("/sys"), devices=Path("/dev")):
@@ -483,6 +501,7 @@ def _run_worker(
     model: str | os.PathLike[str],
     installed_root: str | os.PathLike[str],
     deadline_seconds: int = 6600,
+    cache_concurrency: int = NATIVE_ENTROPY_CONCURRENCY,
 ) -> dict[str, Any]:
     """Execute a worker assignment and always persist its artifact."""
     started, output = time.monotonic(), Path(output_dir)
@@ -560,14 +579,27 @@ def _run_worker(
         if not model_path.is_file():
             raise WorkerError("model file is missing")
         expected_model_bytes = build.get("model_bytes")
-        before_model = _file_signature(os.stat(model_path))
-        model_digest, model_signature = _hash_with_signature(model_path, deadline)
-        after_model = _file_signature(os.stat(model_path))
-        if before_model != model_signature or model_signature != after_model:
-            raise WorkerError("model changed while being verified")
+        try:
+            shard_paths = model_files(model_path)
+        except ValueError as error:
+            raise WorkerError(str(error)) from error
+        # The scorer reports the composite identity of every shard it loads,
+        # so verify the whole set the profile pins, not the named file alone.
+        shards = []
+        for shard_path in shard_paths:
+            before = _file_signature(os.stat(shard_path))
+            digest, signature = _hash_with_signature(shard_path, deadline)
+            after = _file_signature(os.stat(shard_path))
+            if before != signature or signature != after:
+                raise WorkerError("model changed while being verified")
+            shards.append(
+                {"path": shard_path, "digest": digest, "signature": signature}
+            )
+        verified_digest = model_digest([shard["digest"] for shard in shards])
+        verified_bytes = sum(shard["signature"]["size"] for shard in shards)
         if (
-            model_signature["size"] != expected_model_bytes
-            or model_digest != build.get("model_sha256")
+            verified_bytes != expected_model_bytes
+            or verified_digest != build.get("model_sha256")
         ):
             raise WorkerError("model digest or size mismatch")
         items = []
@@ -637,13 +669,11 @@ def _run_worker(
             entropy_root = Path(entropy_dir)
             native_dir = entropy_root / "v2" / "entropy"
             native_dir.mkdir(parents=True)
-            # Only the digest this worker verified against the profile is ever
-            # offered back to the scorer.
-            _record_model_digest_memo(
-                entropy_root, model_path, model_signature, model_digest
-            )
+            # Only the digests this worker verified against the profile are
+            # ever offered back to the scorer.
+            _record_model_digest_memos(entropy_root, shards)
             for name, contents in cache.native_entropy(
-                plan["fingerprint"], NATIVE_ENTROPY_CONCURRENCY
+                plan["fingerprint"], cache_concurrency
             ).items():
                 if time.monotonic() > deadline:
                     raise WorkerError(
@@ -879,8 +909,11 @@ def run_worker(
     model: str | os.PathLike[str],
     installed_root: str | os.PathLike[str],
     deadline_seconds: int = 6600,
+    cache_concurrency: int = NATIVE_ENTROPY_CONCURRENCY,
 ) -> dict[str, Any]:
     """Run with a POSIX wall-clock timer; non-POSIX callers use checks inside."""
+    if type(cache_concurrency) is not int or not 1 <= cache_concurrency <= 64:
+        raise ValueError("cache_concurrency must be between 1 and 64")
     try:
         with Deadline(deadline_seconds):
             return _run_worker(
@@ -892,6 +925,7 @@ def run_worker(
                 model,
                 installed_root,
                 deadline_seconds,
+                cache_concurrency,
             )
     except DeadlineExceeded as error:
         artifact = {

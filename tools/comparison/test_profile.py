@@ -136,6 +136,14 @@ sys.exit(2)
 '''
 
 
+# Settings the scorer rejects in combination, so varying one field at a time
+# still produces a profile it would accept.
+LEGAL_COMPANIONS = {
+    "gpu_layers": {"entropy_reduction": "host"},
+    "flash_attn": {"kv_cache_type": "f16"},
+}
+
+
 class ProfileTest(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -207,6 +215,7 @@ class ProfileTest(unittest.TestCase):
             "directory": str(self.support),
             "storage_version": 2,
             "inference_abi": inference_abi,
+            "source_commit": SOURCE_COMMIT,
             "entries": 0,
             "bytes": 0,
             **overrides,
@@ -305,11 +314,13 @@ class ProfileTest(unittest.TestCase):
             sorted(variants), sorted(f.name for f in dataclasses.fields(base))
         )
         for field, value in variants.items():
-            changed = ScoringSettings(**{**base.__dict__, field: value})
+            start = {**base.__dict__, **LEGAL_COMPANIONS.get(field, {})}
+            unchanged = ScoringSettings(**start)
+            changed = ScoringSettings(**{**start, field: value})
             with self.subTest(field=field):
-                self.assertNotEqual(base.argv(), changed.argv())
+                self.assertNotEqual(unchanged.argv(), changed.argv())
                 self.assertNotEqual(
-                    base.expected_configuration(INFERENCE_ABI),
+                    unchanged.expected_configuration(INFERENCE_ABI),
                     changed.expected_configuration(INFERENCE_ABI),
                 )
 
@@ -372,7 +383,11 @@ class ProfileTest(unittest.TestCase):
             ("hotspots", 3),
         ):
             settings = ScoringSettings(
-                **{**ScoringSettings(backend="rocm").__dict__, field: value}
+                **{
+                    **ScoringSettings(backend="rocm").__dict__,
+                    **LEGAL_COMPANIONS.get(field, {}),
+                    field: value,
+                }
             )
             with self.subTest(field=field):
                 fingerprint = digest(profile(settings))
@@ -417,7 +432,7 @@ class ProfileTest(unittest.TestCase):
         )
         self.write_version("1.4.0")
         abi = "llama.cpp-" + other_llama + "/entropy-v9"
-        self.write_status(abi)
+        self.write_status(abi, source_commit=other_commit)
         installation = inspect_installation(self.root, "rocm")
         self.assertEqual(installation.source_commit, other_commit)
         self.assertEqual(installation.inference_abi, abi)
@@ -486,6 +501,70 @@ class ProfileTest(unittest.TestCase):
             self.write_status("llama.cpp-" + LLAMA_CPP_COMMIT + "/entropy-v4")
             with self.assertRaisesRegex(ValueError, "inference ABI"):
                 self.rocm()
+            self.write_status(INFERENCE_ABI)
+        with self.subTest("source commit"):
+            # A mixed installation shares the version and ABI but not the
+            # commit the executable resolves backends with.
+            self.write_status(INFERENCE_ABI, source_commit="b" * 40)
+            with self.assertRaisesRegex(ValueError, "built from commit"):
+                self.rocm()
+            for value in (None, "", "main", SOURCE_COMMIT.upper()):
+                self.write_status(INFERENCE_ABI, source_commit=value)
+                with self.assertRaisesRegex(ValueError, "valid source_commit"):
+                    self.rocm()
+            self.write_status(INFERENCE_ABI)
+
+    def test_invalid_scorer_setting_combinations_rejected(self):
+        # Each pair parses as individually valid but is refused by every
+        # scorer run, so a profile carrying it could never be executed.
+        with self.assertRaisesRegex(ValueError, "requires flash_attn on"):
+            ScoringSettings(backend="rocm", flash_attn="off")
+        with self.assertRaisesRegex(ValueError, "requires gpu_layers -1"):
+            ScoringSettings(backend="rocm", gpu_layers=20)
+        ScoringSettings(backend="rocm", flash_attn="off", kv_cache_type="f16")
+        ScoringSettings(backend="rocm", gpu_layers=20, entropy_reduction="host")
+
+    def test_split_model_identity_covers_every_shard(self):
+        models = self.root / "models"
+        models.mkdir()
+        shards = []
+        for index in (1, 2):
+            shard = models / ("m-%05d-of-00002.gguf" % index)
+            shard.write_bytes(b"shard-%d" % index)
+            shards.append(shard)
+        composite = hashlib.sha256(b"llm-cc-split-model-v1")
+        for shard in shards:
+            composite.update(b"\0")
+            composite.update(
+                hashlib.sha256(shard.read_bytes()).hexdigest().encode("ascii")
+            )
+        for named in shards:
+            spec = ModelSpec.from_path(named)
+            self.assertEqual(spec.sha256, composite.hexdigest())
+            self.assertEqual(spec.bytes, sum(s.stat().st_size for s in shards))
+        single = models / "plain.gguf"
+        single.write_bytes(b"plain")
+        self.assertEqual(
+            ModelSpec.from_path(single).sha256,
+            hashlib.sha256(b"plain").hexdigest(),
+        )
+        # An index outside its own count is not a split name to the scorer.
+        odd = models / "m-00003-of-00002.gguf"
+        odd.write_bytes(b"odd")
+        self.assertEqual(
+            ModelSpec.from_path(odd).sha256, hashlib.sha256(b"odd").hexdigest()
+        )
+        shards[1].unlink()
+        with self.assertRaisesRegex(ValueError, "cannot resolve model shard"):
+            ModelSpec.from_path(shards[0])
+
+    def test_cache_status_is_not_scoped_to_a_repository(self):
+        # A positional path is read as the repository to report on and is
+        # rejected outside a Git worktree, which a temporary sandbox is.
+        self.rocm()
+        record = json.loads((self.support / "status-call.json").read_text())
+        self.assertEqual(record["argv"], ["cache", "status", "--format", "json"])
+        self.assertEqual(record["entropy"], str(Path(record["home"]) / "entropy"))
 
     def test_scorer_runs_offline_in_sanitized_environment(self):
         before = {
