@@ -8,6 +8,7 @@ raw LM-CC for each program for a scale comparison with llm-cc.
 import argparse
 import gzip
 import hashlib
+import importlib.metadata
 import json
 import os
 from pathlib import Path
@@ -37,6 +38,17 @@ def git_head(path):
     # Split on lines only: a work tree path may contain spaces.
     top, head = result.stdout.splitlines()
     return head if Path(top).resolve() == path.resolve() else None
+
+
+def runtime_versions(torch):
+    """Package versions that change entropies, so a resume may not cross them."""
+    versions = {"torch": torch.__version__}
+    for package in ("transformers", "tokenizers"):
+        try:
+            versions[package] = importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError:
+            versions[package] = None
+    return versions
 
 
 def model_provenance(path):
@@ -73,6 +85,7 @@ def main():
     provenance = model_provenance(args.hf_model)
     manifest = json.loads((args.root / "corpus.json").read_text())
     inputs = dict(model=provenance, dtype=args.dtype,
+                  runtime=runtime_versions(torch),
                   reference_commit=git_head(args.repository),
                   corpus_sha256=hashlib.sha256(
                       json.dumps(manifest["files"], sort_keys=True).encode()).hexdigest())
@@ -129,13 +142,17 @@ def main():
         print(f"reference {index}/{len(manifest['files'])} {row['id']} "
               f"LM-CC={scores[row['id']]:.1f}", flush=True)
     (args.root / "results").mkdir(exist_ok=True)
-    with gzip.open(args.root / "results" / "reference-codellama-7b-hf.entropy.json.gz",
-                   "wt") as stream:
-        json.dump(dict(**provenance, dtype=args.dtype, torch=torch.__version__,
+    target = args.root / "results" / "reference-codellama-7b-hf.entropy.json.gz"
+    # Publish atomically: an interrupted write would truncate the anchor that a
+    # default regeneration reuses, and summarize.py would fail to read it.
+    partial_path = target.with_suffix(".writing")
+    with gzip.open(partial_path, "wt") as stream:
+        json.dump(dict(**provenance, dtype=args.dtype, runtime=inputs["runtime"],
                        reference_commit=inputs["reference_commit"],
                        corpus_sha256=inputs["corpus_sha256"],
                        wall_seconds=elapsed(),
                        entropies=entropies, llm_cc=scores), stream)
+    partial_path.replace(target)
 
 
 if __name__ == "__main__":

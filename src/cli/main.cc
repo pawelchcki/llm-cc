@@ -987,7 +987,8 @@ struct EffectiveTau {
 // An explicit --tau or --tau-percentile wins. Otherwise a registered model
 // supplies its calibrated 67th-percentile threshold, and custom GGUFs fall back
 // to the paper's CodeLlama-7b value.
-EffectiveTau ResolveTau(const AnalyzeArguments& arguments) {
+EffectiveTau ResolveTau(const AnalyzeArguments& arguments,
+                        const llmcc::ModelIdentity* identity = nullptr) {
   if (arguments.tau_percentile.has_value()) {
     return {.value = std::nullopt, .source = "cli"};
   }
@@ -999,6 +1000,15 @@ EffectiveTau ResolveTau(const AnalyzeArguments& arguments) {
                                        ? llmcc::FindModel(*arguments.model_name)
                                        : &llmcc::DefaultModel();
     if (spec != nullptr && spec->default_tau.has_value()) {
+      // A cached file is accepted by name, so it may hold other weights than
+      // the ones this threshold was calibrated on. Where the digest is known
+      // and disagrees, the calibration is declined rather than misapplied.
+      const bool mismatched =
+          identity != nullptr && !identity->content_digest.empty() &&
+          !spec->sha256.empty() && spec->sha256 != identity->content_digest;
+      if (mismatched) {
+        return {.value = llmcc::kPaperTau, .source = "model-digest-mismatch"};
+      }
       return {.value = *spec->default_tau, .source = "model-default"};
     }
   }
@@ -1009,7 +1019,7 @@ nlohmann::json ConfigurationJson(
     const AnalyzeArguments& arguments, std::string_view requested_model,
     const llmcc::ModelIdentity* identity = nullptr) {
   const bool percentile = arguments.tau_percentile.has_value();
-  const EffectiveTau tau = ResolveTau(arguments);
+  const EffectiveTau tau = ResolveTau(arguments, identity);
   const char* effective_reducer =
       arguments.entropy_reduction == llmcc::EntropyReduction::kDevice ? "device"
                                                                       : "host";
@@ -1477,6 +1487,12 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
   for (const auto& message : discovery.warnings) {
     warning(message);
   }
+  const EffectiveTau analysis_tau = ResolveTau(arguments, &identity);
+  if (analysis_tau.source == std::string_view("model-digest-mismatch")) {
+    warning("the cached model does not match the registered " +
+            std::string(requested_model) +
+            "; using the paper threshold instead of its calibrated tau");
+  }
   if (!arguments.no_cache && arguments.backend_directory.has_value()) {
     warning("entropy caching is disabled for custom backend directories");
   }
@@ -1495,7 +1511,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
                ? llmcc::TauRule{.kind = llmcc::TauRule::Kind::kPercentile,
                                 .value = *arguments.tau_percentile}
                : llmcc::TauRule{.kind = llmcc::TauRule::Kind::kAbsolute,
-                                .value = ResolveTau(arguments).value.value_or(
+                                .value = analysis_tau.value.value_or(
                                     llmcc::kPaperTau)},
        .alpha = arguments.alpha,
        .cache = entropy_cache,

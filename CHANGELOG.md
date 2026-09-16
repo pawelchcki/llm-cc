@@ -15,7 +15,9 @@
 * never let the file's first code token open an entropy boundary, matching the
   reference implementation; `analysis_version` is now 3
 * download registered models from the Hugging Face revisions their default
-  tau was calibrated on
+  tau was calibrated on, and decline a calibrated tau when a cached file's
+  digest does not match the registered model, falling back to the paper
+  threshold (`tau_source` reports `model-digest-mismatch`)
 * register `codellama-7b-q8_0`, the paper's reference model
 
 ## [0.2.0](https://github.com/pawelchcki/llm-cc/compare/v0.1.0...v0.2.0) (2026-09-07)

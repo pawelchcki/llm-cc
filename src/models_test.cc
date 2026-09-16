@@ -25,6 +25,11 @@ int main() try {
                         "registry model fields are populated");
     llmcc::test::Expect(names.emplace(model.name).second,
                         "registry model names are unique");
+    llmcc::test::Expect(
+        model.sha256.size() == 64 &&
+            model.sha256.find_first_not_of("0123456789abcdef") ==
+                std::string_view::npos,
+        "registry model records the digest its tau was calibrated on");
   }
   llmcc::test::Expect(llmcc::FindModel("not-a-model") == nullptr,
                       "unknown model is not found");
