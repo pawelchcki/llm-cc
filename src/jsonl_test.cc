@@ -1,7 +1,9 @@
 #include "src/jsonl.h"
 
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include "src/test_util.h"
 
@@ -22,6 +24,49 @@ int main() {  // NOLINT(bugprone-exception-escape)
     mismatch = true;
   }
   llmcc::test::Expect(mismatch, "byte mismatch rejected");
+
+  const std::vector<llmcc::EntropyRecord> prefixed = {
+      {.position = 0, .bytes = " ab", .entropy = 1.0},
+      {.position = 1, .bytes = " c", .entropy = 0.5}};
+  const auto prefixed_tokens = llmcc::AlignTokens("ab c", prefixed);
+  llmcc::test::Expect(
+      prefixed_tokens.size() == 2 && prefixed_tokens[0].start_byte == 0 &&
+          prefixed_tokens[0].end_byte == 2 && prefixed_tokens[1].end_byte == 4,
+      "first-piece dummy-prefix space is not source text");
+  const std::vector<llmcc::EntropyRecord> lone_prefix = {
+      {.position = 0, .bytes = " ", .entropy = 1.0},
+      {.position = 1, .bytes = "ab", .entropy = 0.5}};
+  const auto lone_tokens = llmcc::AlignTokens("ab", lone_prefix);
+  llmcc::test::Expect(lone_tokens.size() == 1 && lone_tokens[0].start_byte == 0,
+                      "a lone dummy-prefix piece is dropped");
+  bool later_space_rejected = false;
+  try {
+    static_cast<void>(llmcc::AlignTokens(
+        "ab", std::vector<llmcc::EntropyRecord>{
+                  {.position = 0, .bytes = "a", .entropy = std::nullopt},
+                  {.position = 1, .bytes = " b", .entropy = 0.5}}));
+  } catch (const std::invalid_argument&) {
+    later_space_rejected = true;
+  }
+  llmcc::test::Expect(later_space_rejected,
+                      "only the first piece may carry a dummy prefix");
+
+  std::vector<llmcc::EntropyRecord> publishable = {{0, " ab", 1.0},
+                                                   {1, "c", 0.5}};
+  llmcc::test::Expect(
+      llmcc::NormalizeDummyPrefix("abc", publishable) &&
+          publishable.size() == 2 && publishable[0].bytes == "ab" &&
+          publishable[0].position == 0 && publishable[1].position == 1,
+      "normalized records concatenate to the source");
+  std::vector<llmcc::EntropyRecord> lone = {{0, " ", std::nullopt},
+                                            {1, "ab", 1.0}};
+  llmcc::test::Expect(!llmcc::NormalizeDummyPrefix("ab", lone) &&
+                          lone.size() == 2 && lone.front().bytes == " ",
+                      "a standalone dummy-prefix piece is left unpublished");
+  std::vector<llmcc::EntropyRecord> plain = {{0, "ab", 1.0}};
+  llmcc::test::Expect(!llmcc::NormalizeDummyPrefix("ab", plain) &&
+                          plain.size() == 1 && plain.front().bytes == "ab",
+                      "records without a dummy prefix are left alone");
 
   llmcc::OffsetMap compact_map;
   compact_map.AppendRun(5, 2);

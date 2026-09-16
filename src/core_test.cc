@@ -159,7 +159,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
   Expect(std::abs(reference_golden.llm_cc - 2.8) < 1e-12,
          "reference golden raw score");
 
-  const auto first_line_marker_tokens = ByteTokens({std::nullopt, 2.0, 0.0});
+  const auto first_line_marker_tokens = ByteTokens({std::nullopt, 0.0, 2.0});
   const std::vector<std::size_t> first_line = {0};
   const auto [first_line_tau, first_line_units] = llmcc::DetectSemanticUnits(
       first_line_marker_tokens, {}, first_line,
@@ -178,10 +178,39 @@ int main() {  // NOLINT(bugprone-exception-escape)
           {.kind = llmcc::TauRule::Kind::kAbsolute, .value = 1.0}, {},
           llmcc::HierarchyMode::kReference);
   ExpectEq(scored_first_tau, 1.0, "scored first-token reference marker tau");
-  ExpectEq(scored_first_units.size(), std::size_t{1},
-           "scored first token creates a reference block");
-  ExpectEq(scored_first_units.front().start_byte, std::size_t{0},
-           "scored first-token block starts at the source boundary");
+  ExpectEq(scored_first_units.size(), std::size_t{0},
+           "first scored token never opens a reference block");
+
+  // A function span later in the file keeps its first token's marker.
+  const auto [later_span_tau, later_span_units] = llmcc::DetectSemanticUnits(
+      scored_first_token, {}, first_line,
+      {.kind = llmcc::TauRule::Kind::kAbsolute, .value = 1.0}, {},
+      llmcc::HierarchyMode::kReference, /*span_starts_source=*/false);
+  ExpectEq(later_span_tau, 1.0, "later span first-token tau");
+  ExpectEq(later_span_units.size(), std::size_t{1},
+           "later span first token opens a reference block");
+
+  // Without BOS the first source token is unscored; the second token's entropy
+  // is a real observation and may open a block on its own line.
+  const auto [bosless_tau, bosless_units] = llmcc::DetectSemanticUnits(
+      ByteTokens({std::nullopt, 2.0, 0.0}), {},
+      std::vector<std::size_t>{0, 1, 2},
+      {.kind = llmcc::TauRule::Kind::kAbsolute, .value = 1.0}, {},
+      llmcc::HierarchyMode::kReference);
+  ExpectEq(bosless_tau, 1.0, "BOS-less second-token tau");
+  ExpectEq(bosless_units.size(), std::size_t{1},
+           "BOS-less second token opens a reference block");
+  ExpectEq(bosless_units.front().start_byte, std::size_t{1},
+           "BOS-less block starts at the second token");
+
+  const auto [structural_first_tau, structural_first_units] =
+      llmcc::DetectSemanticUnits(
+          ByteTokens({std::nullopt, 2.0, 0.0, 0.0}), {},
+          std::vector<std::size_t>{0, 2},
+          {.kind = llmcc::TauRule::Kind::kAbsolute, .value = 1.0});
+  ExpectEq(structural_first_tau, 1.0, "structural first-token tau");
+  ExpectEq(structural_first_units.size(), std::size_t{1},
+           "first scored token never creates a structural boundary");
 
   const auto whitespace_tokens = ByteTokens({std::nullopt, 0.0, 0.0, 0.0, 0.0});
   const llmcc::Analysis with_trailing_whitespace =

@@ -154,13 +154,21 @@ std::vector<Token> AlignTokens(std::string_view source,
       throw std::invalid_argument("token " + std::to_string(record.position) +
                                   " has empty bytes_hex");
     }
-    if (record.bytes.size() >
-        std::numeric_limits<std::size_t>::max() - offset) {
+    std::string_view bytes = record.bytes;
+    // SentencePiece tokenizers (e.g. CodeLlama) prepend a dummy-prefix space
+    // to the first piece that is not part of the source text.
+    if (&record == records.data() && bytes.front() == ' ' &&
+        !source.starts_with(bytes) && source.starts_with(bytes.substr(1))) {
+      bytes.remove_prefix(1);
+      if (bytes.empty()) {
+        continue;
+      }
+    }
+    if (bytes.size() > std::numeric_limits<std::size_t>::max() - offset) {
       throw std::overflow_error("token byte offset overflow");
     }
-    const std::size_t end = offset + record.bytes.size();
-    if (end > source.size() || source.substr(offset, record.bytes.size()) !=
-                                   std::string_view(record.bytes)) {
+    const std::size_t end = offset + bytes.size();
+    if (end > source.size() || source.substr(offset, bytes.size()) != bytes) {
       throw std::invalid_argument(
           "token " + std::to_string(record.position) +
           " bytes do not match preprocessed source at byte " +
@@ -176,6 +184,27 @@ std::vector<Token> AlignTokens(std::string_view source,
                                 std::to_string(source.size()));
   }
   return tokens;
+}
+
+bool NormalizeDummyPrefix(std::string_view source,
+                          std::vector<EntropyRecord>& records) {
+  if (records.empty()) {
+    return false;
+  }
+  std::string& first = records.front().bytes;
+  const std::string_view bytes = first;
+  if (bytes.empty() || bytes.front() != ' ' || source.starts_with(bytes) ||
+      !source.starts_with(bytes.substr(1))) {
+    return false;
+  }
+  if (bytes.size() == 1) {
+    // A standalone prefix piece could only be dropped, and a shorter record
+    // vector would reconstruct different scoring metadata than the run that
+    // produced it. Such a file stays unpublished instead.
+    return false;
+  }
+  first.erase(0, 1);
+  return true;
 }
 
 void MapAnalysisOffsets(Analysis& analysis, const OffsetMap& map) {
@@ -198,7 +227,7 @@ nlohmann::json AnalysisJson(const Analysis& analysis) {
     mean_entropy = analysis.metrics.mean_entropy;
   }
   return {{"llm_cc", analysis.llm_cc},
-          {"analysis_version", 2},
+          {"analysis_version", 3},
           {"hierarchy_mode",
            analysis.hierarchy_mode == HierarchyMode::kStructural ? "structural"
                                                                  : "reference"},

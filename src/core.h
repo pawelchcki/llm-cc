@@ -88,19 +88,24 @@ class AnalysisError : public std::invalid_argument {
 std::optional<double> Percentile(std::span<const double> values,
                                  double percentile);
 std::size_t TokenIndexAt(std::span<const Token> tokens, std::size_t byte);
+// `span_starts_source` is true when the first meaningful token of `tokens` is
+// the first code token of the file, which never opens an entropy block. A
+// function span later in the file passes false.
 std::pair<double, std::vector<SemanticUnit>> DetectSemanticUnits(
     std::span<const Token> tokens,
     std::span<const StructuralEvent> structural_events,
     std::span<const std::size_t> line_starts = {}, TauRule tau_rule = {},
     std::span<const SourceRange> meaningful_ranges = {},
-    HierarchyMode hierarchy_mode = HierarchyMode::kStructural);
+    HierarchyMode hierarchy_mode = HierarchyMode::kStructural,
+    bool span_starts_source = true);
 std::vector<Unit> BuildHierarchy(std::span<const SemanticUnit> semantic_units);
 Analysis Analyze(std::span<const Token> tokens,
                  std::span<const StructuralEvent> structural_events,
                  std::span<const std::size_t> line_starts = {},
                  TauRule tau_rule = {}, double alpha = 0.8,
                  std::span<const SourceRange> meaningful_ranges = {},
-                 HierarchyMode hierarchy_mode = HierarchyMode::kStructural);
+                 HierarchyMode hierarchy_mode = HierarchyMode::kStructural,
+                 bool span_starts_source = true);
 
 }  // namespace llmcc
 

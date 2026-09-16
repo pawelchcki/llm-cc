@@ -419,8 +419,20 @@ def _fmt(value):
     return "unavailable" if value is None else "%.6g" % value
 
 
+def _raw(value, sign=""):
+    return "unavailable" if value is None else ("%" + sign + ".1f") % value
+
+
 def _percent(value):
     return "unavailable" if value is None else "%+.3g%%" % value
+
+
+def _path_change(delta):
+    if "raw_change" not in delta:  # Reports written before raw headlines.
+        return "%+.6g LM-CC/token" % delta["change"]
+    if delta["change"] is None:  # Zero tokens on one side.
+        return "%+.1f LM-CC" % delta["raw_change"]
+    return "%+.1f LM-CC (%+.3g per token)" % (delta["raw_change"], delta["change"])
 
 
 def _headline(report):
@@ -429,14 +441,14 @@ def _headline(report):
         item = (report.get("comparisons") or {}).get(name)
         if not item:
             continue
-        base, head = item["score"]["base"], item["score"]["head"]
+        raw = item["raw_llm_cc"]
         lines.append(
-            "- %s %s → %s (%s)"
+            "- %s %s → %s LM-CC (%s)"
             % (
                 name,
-                "unavailable" if base is None else "%.4f" % base,
-                "unavailable" if head is None else "%.4f" % head,
-                _percent(item["score"]["percent"]),
+                _raw(raw["base"]),
+                _raw(raw["head"]),
+                _percent(raw["percent"]),
             )
         )
     return lines
@@ -445,7 +457,7 @@ def _headline(report):
 def _category_table(report):
     lines = [
         "",
-        "| Category | Score base | Score head | Score Δ | Score Δ% | Raw LLM Δ | Tokens Δ | Coverage |",
+        "| Category | LM-CC base | LM-CC head | LM-CC Δ | LM-CC Δ% | LM-CC/token Δ | Tokens Δ | Coverage |",
         "|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for name in ("runtime", "tests", "tooling", "repository"):
@@ -456,11 +468,11 @@ def _category_table(report):
             "| %s | %s | %s | %s | %s | %s | %s | %.1f%% / %.1f%% |"
             % (
                 name,
-                _fmt(item["score"]["base"]),
-                _fmt(item["score"]["head"]),
+                _raw(item["raw_llm_cc"]["base"]),
+                _raw(item["raw_llm_cc"]["head"]),
+                _raw(item["raw_llm_cc"]["absolute"], "+"),
+                _percent(item["raw_llm_cc"]["percent"]),
                 _fmt(item["score"]["absolute"]),
-                _percent(item["score"]["percent"]),
-                _fmt(item["raw_llm_cc"]["absolute"]),
                 _fmt(item["tokens"]["absolute"]),
                 item["coverage"]["base"] * 100,
                 item["coverage"]["head"] * 100,
@@ -560,7 +572,7 @@ def _comment_sections(report, full=False):
                     5,
                     ["", "### " + title, ""]
                     + [
-                        "- %s: %+.6g" % (_code(entry["path"]), entry["change"])
+                        "- %s: %s" % (_code(entry["path"]), _path_change(entry))
                         for entry in entries
                     ],
                 )
@@ -633,7 +645,7 @@ def _full_sections(report):
         "",
         "### Raw totals",
         "",
-        "| Side/category | LLM total | Tokens | Score |",
+        "| Side/category | LM-CC | Tokens | LM-CC/token |",
         "|---|---:|---:|---:|",
     ]
     for side in ("base", "head"):
@@ -644,7 +656,7 @@ def _full_sections(report):
                 % (
                     side,
                     name,
-                    _fmt(values["llm_cc"]),
+                    _raw(values["llm_cc"]),
                     _fmt(values["token_count"]),
                     _fmt(values["score"]),
                 )
@@ -1008,18 +1020,39 @@ def _aggregate(plan, worker_paths, output):
     changed_files = _changed_files(
         plan["changes"], base_paths, head_paths, results, rankings["head"]
     )
-    path_deltas = [
-        {"path": row["path"], "change": row["delta"]}
-        for row in changed_files
-        if row["delta"] is not None
-    ]
+    def raw_llm_cc(paths, path):
+        # A side that does not exist contributes nothing; a side that exists but
+        # was not measured leaves the raw delta undefined.
+        if path is None:
+            return 0.0
+        file = paths.get(path)
+        result = results.get(file["key"]) if file and file.get("key") else None
+        return None if result is None else result["llm_cc"]
+
+    # Raw LM-CC is the paper's quantity and the displayed headline. It stays
+    # defined for zero-token files, which changed_files omits when neither side
+    # has a per-token score, so candidates come from every change; `change`
+    # keeps the per-token delta (null without tokens) for existing consumers.
+    per_token = {(row["old_path"], row["new_path"]): row["delta"] for row in changed_files}
+    path_deltas = []
+    for change in plan["changes"]:
+        base_raw = raw_llm_cc(base_paths, change["old_path"])
+        head_raw = raw_llm_cc(head_paths, change["new_path"])
+        if base_raw is not None and head_raw is not None:
+            path_deltas.append(
+                {
+                    "path": change["new_path"] or change["old_path"],
+                    "change": per_token.get((change["old_path"], change["new_path"])),
+                    "raw_change": head_raw - base_raw,
+                }
+            )
     regressions = sorted(
-        (x for x in path_deltas if x["change"] > 0),
-        key=lambda x: (-x["change"], x["path"]),
+        (x for x in path_deltas if x["raw_change"] > 0),
+        key=lambda x: (-x["raw_change"], x["path"]),
     )[:10]
     improvements = sorted(
-        (x for x in path_deltas if x["change"] < 0),
-        key=lambda x: (x["change"], x["path"]),
+        (x for x in path_deltas if x["raw_change"] < 0),
+        key=lambda x: (x["raw_change"], x["path"]),
     )[:10]
     incomplete_coverage = (
         base["totals"]["coverage"] < 1.0 or head["totals"]["coverage"] < 1.0
