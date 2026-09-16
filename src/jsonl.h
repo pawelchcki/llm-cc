@@ -23,6 +23,12 @@ struct EntropyRecord {
 std::vector<EntropyRecord> ParseEntropyJsonl(std::string_view input);
 std::vector<Token> AlignTokens(std::string_view source,
                                std::span<const EntropyRecord> records);
+// Removes the SentencePiece dummy-prefix space from the first record, dropping
+// a piece that consists only of it and renumbering positions, so the records
+// concatenate to the source exactly as alignment and the entropy cache expect.
+// Returns whether anything changed.
+bool NormalizeDummyPrefix(std::string_view source,
+                          std::vector<EntropyRecord>& records);
 void MapAnalysisOffsets(Analysis& analysis, const OffsetMap& map);
 nlohmann::json AnalysisJson(const Analysis& analysis);
 std::string PrettyAnalysisJson(const Analysis& analysis);

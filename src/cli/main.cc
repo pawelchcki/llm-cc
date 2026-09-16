@@ -1474,13 +1474,19 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
   const bool entropy_cache =
       !arguments.no_cache && !arguments.backend_directory.has_value();
   progress.Phase("hashing model and resolving cache identity");
+  // A calibrated tau belongs to specific weights, so this run needs the digest
+  // even when the entropy cache is off and nothing else would compute it.
+  const bool calibrated_tau_applies =
+      !arguments.tau.has_value() && !arguments.tau_percentile.has_value() &&
+      !arguments.model.has_value() && model_spec.default_tau.has_value();
   const auto identity = llmcc::InspectModel(
       resolved_model, llmcc::InferenceAbi(), backend_identity,
       arguments.context, arguments.batch_size,
       llmcc::EntropyReductionName(arguments.entropy_reduction),
       device_reduction ? "device" : "host", entropy_cache,
       llmcc::FlashAttentionName(arguments.flash_attention),
-      llmcc::KvCacheTypeName(arguments.kv_cache_type), arguments.kv_offload);
+      llmcc::KvCacheTypeName(arguments.kv_cache_type), arguments.kv_offload,
+      calibrated_tau_applies);
   if (!text) {
     Emit(ConfigurationJson(arguments, requested_model, &identity));
   }

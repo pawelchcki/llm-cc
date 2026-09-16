@@ -259,6 +259,10 @@ EntropyProviderResult ProjectAnalyzer::ReadRecords(std::string_view source) {
   if (options_.cache) {
     ReportPhase("entropy cache publication");
     try {
+      // The dummy-prefix space is not source text. Published unchanged, the
+      // entry fails the cache's completeness rule, so a SentencePiece model
+      // would rescan every file instead of ever reaching a cache hit.
+      NormalizeDummyPrefix(source, scored.records);
       WriteEntropyCache(source, options_.model, scored.records);
     } catch (const std::exception&) {
       // Entropy caching is advisory and must not lose an analysis.

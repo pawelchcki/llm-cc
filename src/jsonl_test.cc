@@ -51,6 +51,24 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(later_space_rejected,
                       "only the first piece may carry a dummy prefix");
 
+  std::vector<llmcc::EntropyRecord> publishable = {{0, " ab", 1.0},
+                                                   {1, "c", 0.5}};
+  llmcc::test::Expect(
+      llmcc::NormalizeDummyPrefix("abc", publishable) &&
+          publishable.size() == 2 && publishable[0].bytes == "ab" &&
+          publishable[0].position == 0 && publishable[1].position == 1,
+      "normalized records concatenate to the source");
+  std::vector<llmcc::EntropyRecord> lone = {{0, " ", std::nullopt},
+                                            {1, "ab", 1.0}};
+  llmcc::test::Expect(llmcc::NormalizeDummyPrefix("ab", lone) &&
+                          lone.size() == 1 && lone.front().position == 0 &&
+                          lone.front().bytes == "ab",
+                      "a lone dummy-prefix piece is dropped and renumbered");
+  std::vector<llmcc::EntropyRecord> plain = {{0, "ab", 1.0}};
+  llmcc::test::Expect(!llmcc::NormalizeDummyPrefix("ab", plain) &&
+                          plain.size() == 1 && plain.front().bytes == "ab",
+                      "records without a dummy prefix are left alone");
+
   llmcc::OffsetMap compact_map;
   compact_map.AppendRun(5, 2);
   compact_map.Append(20);

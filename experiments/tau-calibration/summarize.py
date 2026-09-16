@@ -9,6 +9,8 @@ import math
 from pathlib import Path
 import statistics
 
+from reference_anchor import HF_MODEL, HF_REVISION, REFERENCE_DTYPE
+
 PERCENTILE = 67.0
 PAPER_TAU = 0.67
 
@@ -76,11 +78,15 @@ def main():
     matched = None
     if anchor is not None:
         # A reused anchor must come from the current corpus and reference code,
-        # or every matched tau would mix inputs.
+        # and from the verified checkpoint and dtype the operating point is
+        # defined by, or every matched tau would mix inputs. A copied checkpoint
+        # records `revision: null` and is refused here.
         manifest = json.loads((root / "corpus.json").read_text())
         expected = dict(corpus_sha256=hashlib.sha256(
                             json.dumps(manifest["files"], sort_keys=True).encode()).hexdigest(),
-                        reference_commit=manifest["revision"])
+                        reference_commit=manifest["revision"],
+                        model=HF_MODEL, revision=HF_REVISION,
+                        dtype=REFERENCE_DTYPE)
         recorded = {key: anchor.get(key) for key in expected}
         if recorded != expected:
             raise SystemExit(f"reference anchor does not match corpus.json (recorded {recorded}, "

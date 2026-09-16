@@ -186,6 +186,27 @@ std::vector<Token> AlignTokens(std::string_view source,
   return tokens;
 }
 
+bool NormalizeDummyPrefix(std::string_view source,
+                          std::vector<EntropyRecord>& records) {
+  if (records.empty()) {
+    return false;
+  }
+  std::string& first = records.front().bytes;
+  const std::string_view bytes = first;
+  if (bytes.empty() || bytes.front() != ' ' || source.starts_with(bytes) ||
+      !source.starts_with(bytes.substr(1))) {
+    return false;
+  }
+  first.erase(0, 1);
+  if (first.empty()) {
+    records.erase(records.begin());
+  }
+  for (std::size_t i = 0; i < records.size(); ++i) {
+    records[i].position = i;
+  }
+  return true;
+}
+
 void MapAnalysisOffsets(Analysis& analysis, const OffsetMap& map) {
   for (Unit& unit : analysis.units) {
     MapUnit(unit, map);

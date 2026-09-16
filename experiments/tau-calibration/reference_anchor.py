@@ -17,7 +17,10 @@ import sys
 import time
 
 CACHE = Path.home() / ".cache" / "llm-cc-validation"
+HF_MODEL = "codellama/CodeLlama-7b-hf"
 HF_REVISION = "6c284d1468fe6c413cf56183e69b194dcfa27fe6"
+# The published anchor, and so the operating point every matched tau transfers.
+REFERENCE_DTYPE = "float16"
 MODEL_SUFFIXES = {".bin", ".json", ".model", ".safetensors"}
 
 
@@ -63,7 +66,7 @@ def model_provenance(path):
         raise SystemExit(f"no model files found in {path}")
     # `revision` is null when the directory carries no revision; the file
     # hashes are then the record of which weights produced the results.
-    return dict(model="codellama/CodeLlama-7b-hf", expected_revision=HF_REVISION,
+    return dict(model=HF_MODEL, expected_revision=HF_REVISION,
                 revision=revision, files=files)
 
 
@@ -72,7 +75,8 @@ def main():
     parser.add_argument("--repository", type=Path, default=CACHE / "lm-cc")
     parser.add_argument("--hf-model", type=Path, default=CACHE / "hf" / "CodeLlama-7b-hf")
     parser.add_argument("--work", type=Path, default=CACHE / "tau-calibration")
-    parser.add_argument("--dtype", choices=["float32", "float16"], default="float32")
+    parser.add_argument("--dtype", choices=["float32", "float16"],
+                        default=REFERENCE_DTYPE)
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parent)
     args = parser.parse_args()
     # Resolve before the chdir below, which would otherwise reinterpret every
