@@ -112,7 +112,9 @@ the authors' pipeline. `summarize.py` summarizes an entropy dump only when its
 recorded corpus hash and model checksum match `corpus.json` and `models.json`,
 so a partial rerun cannot leave a stale dump contributing a τ, and it accepts
 the reference run only when that run's corpus hash, reference commit, model,
-verified revision, and dtype match as well. The reference and corpus scripts
+verified revision, and dtype match as well. The reference run must be present:
+without it there is no matched percentile, so `summarize.py` stops rather than
+publishing a summary with no thresholds. The reference and corpus scripts
 refuse a reference checkout with local changes.
 Passing `--tau` or `--tau-percentile` through `--inference` is rejected. `--publish` commits the new results to the data branch
 and stages the updated submodule pointer and `summary.json`.

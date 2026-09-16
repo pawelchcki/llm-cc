@@ -60,10 +60,9 @@ int main() {  // NOLINT(bugprone-exception-escape)
       "normalized records concatenate to the source");
   std::vector<llmcc::EntropyRecord> lone = {{0, " ", std::nullopt},
                                             {1, "ab", 1.0}};
-  llmcc::test::Expect(llmcc::NormalizeDummyPrefix("ab", lone) &&
-                          lone.size() == 1 && lone.front().position == 0 &&
-                          lone.front().bytes == "ab",
-                      "a lone dummy-prefix piece is dropped and renumbered");
+  llmcc::test::Expect(!llmcc::NormalizeDummyPrefix("ab", lone) &&
+                          lone.size() == 2 && lone.front().bytes == " ",
+                      "a standalone dummy-prefix piece is left unpublished");
   std::vector<llmcc::EntropyRecord> plain = {{0, "ab", 1.0}};
   llmcc::test::Expect(!llmcc::NormalizeDummyPrefix("ab", plain) &&
                           plain.size() == 1 && plain.front().bytes == "ab",

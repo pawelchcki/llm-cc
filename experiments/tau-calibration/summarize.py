@@ -80,22 +80,26 @@ def main():
     pinned = {model["name"]: model for model in
               json.loads((root / "models.json").read_text())}
     anchor = next((r for r in records.values() if "llm_cc" in r), None)
-    matched = None
-    if anchor is not None:
-        # A reused anchor must come from the current corpus and reference code,
-        # and from the verified checkpoint and dtype the operating point is
-        # defined by, or every matched tau would mix inputs. A copied checkpoint
-        # records `revision: null` and is refused here.
-        expected = dict(corpus_sha256=corpus_sha256,
-                        reference_commit=manifest["revision"],
-                        model=HF_MODEL, revision=HF_REVISION,
-                        dtype=REFERENCE_DTYPE)
-        recorded = {key: anchor.get(key) for key in expected}
-        if recorded != expected:
-            raise SystemExit(f"reference anchor does not match corpus.json (recorded {recorded}, "
-                             f"expected {expected}); rerun reference_anchor.py")
-        matched = inverse_percentile(pooled_values(anchor["entropies"]), PAPER_TAU)
-    summary = dict(percentile=PERCENTILE, matched_percentile=matched and round(matched, 3),
+    if anchor is None:
+        # Without the anchor there is no matched percentile, and a summary
+        # written anyway would replace a usable one with models that carry no
+        # tau_matched for `run.py analysis` to read.
+        raise SystemExit(f"no reference anchor in {root / 'results'}; run "
+                         f"reference_anchor.py, or regenerate.sh --reference")
+    # A reused anchor must come from the current corpus and reference code, and
+    # from the verified checkpoint and dtype the operating point is defined by,
+    # or every matched tau would mix inputs. A copied checkpoint records
+    # `revision: null` and is refused here.
+    expected = dict(corpus_sha256=corpus_sha256,
+                    reference_commit=manifest["revision"],
+                    model=HF_MODEL, revision=HF_REVISION,
+                    dtype=REFERENCE_DTYPE)
+    recorded = {key: anchor.get(key) for key in expected}
+    if recorded != expected:
+        raise SystemExit(f"reference anchor does not match corpus.json (recorded {recorded}, "
+                         f"expected {expected}); rerun reference_anchor.py")
+    matched = inverse_percentile(pooled_values(anchor["entropies"]), PAPER_TAU)
+    summary = dict(percentile=PERCENTILE, matched_percentile=round(matched, 3),
                    models={})
     for path, record in records.items():
         name = path.name.removesuffix(".entropy.json.gz")

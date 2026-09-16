@@ -261,7 +261,9 @@ EntropyProviderResult ProjectAnalyzer::ReadRecords(std::string_view source) {
     try {
       // The dummy-prefix space is not source text. Published unchanged, the
       // entry fails the cache's completeness rule, so a SentencePiece model
-      // would rescan every file instead of ever reaching a cache hit.
+      // would rescan every file instead of ever reaching a cache hit. A first
+      // piece that is only the prefix cannot be normalized without changing
+      // the record count, and that file goes unpublished.
       NormalizeDummyPrefix(source, scored.records);
       WriteEntropyCache(source, options_.model, scored.records);
     } catch (const std::exception&) {

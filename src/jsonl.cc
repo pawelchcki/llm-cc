@@ -197,13 +197,13 @@ bool NormalizeDummyPrefix(std::string_view source,
       !source.starts_with(bytes.substr(1))) {
     return false;
   }
+  if (bytes.size() == 1) {
+    // A standalone prefix piece could only be dropped, and a shorter record
+    // vector would reconstruct different scoring metadata than the run that
+    // produced it. Such a file stays unpublished instead.
+    return false;
+  }
   first.erase(0, 1);
-  if (first.empty()) {
-    records.erase(records.begin());
-  }
-  for (std::size_t i = 0; i < records.size(); ++i) {
-    records[i].position = i;
-  }
   return true;
 }
 
