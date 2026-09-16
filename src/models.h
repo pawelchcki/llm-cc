@@ -37,7 +37,7 @@ inline constexpr std::array<ModelSpec, 6> kModels = {{
             "DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf",
      .approx_bytes = 14'000'000'000ULL,
      .note = "default",
-     .default_tau = 0.5861},
+     .default_tau = 0.586},
     {.name = "deepseek-coder-6.7b-base-q6_k",
      .file = "deepseek-coder-6.7b-base.Q6_K.gguf",
      .url = "https://huggingface.co/TheBloke/"
@@ -46,7 +46,7 @@ inline constexpr std::array<ModelSpec, 6> kModels = {{
             "deepseek-coder-6.7b-base.Q6_K.gguf",
      .approx_bytes = 5'500'000'000ULL,
      .note = "",
-     .default_tau = 0.7970},
+     .default_tau = 0.7968},
     {.name = "qwen2.5-coder-1.5b-q6_k",
      .file = "Qwen2.5-Coder-1.5B.Q6_K.gguf",
      .url = "https://huggingface.co/QuantFactory/"
@@ -55,7 +55,7 @@ inline constexpr std::array<ModelSpec, 6> kModels = {{
             "Qwen2.5-Coder-1.5B.Q6_K.gguf",
      .approx_bytes = 1'300'000'000ULL,
      .note = "smaller alternative: low memory",
-     .default_tau = 0.7886},
+     .default_tau = 0.7885},
     {.name = "qwen2.5-coder-3b-q6_k",
      .file = "Qwen2.5-Coder-3B-Q6_K.gguf",
      .url = "https://huggingface.co/bartowski/"
@@ -81,7 +81,7 @@ inline constexpr std::array<ModelSpec, 6> kModels = {{
             "CodeLlama-7b-hf.Q8_0.gguf",
      .approx_bytes = 7'200'000'000ULL,
      .note = "paper reference model; not default",
-     .default_tau = 0.6761},
+     .default_tau = 0.676},
 }};
 
 const ModelSpec& DefaultModel();

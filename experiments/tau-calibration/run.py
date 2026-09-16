@@ -94,6 +94,7 @@ def entropy(args, root, files, model):
 def analysis(args, root, files, model):
     # default_tau in src/models.h is the matched-percentile value.
     tau = json.loads((root / "summary.json").read_text())["models"][model["name"]]["tau_matched"]
+    inputs = entropy_inputs(args, files, model)
     target = root / "results" / f"{model['name']}.analysis.json"
     path = verified_model(args.work, model)
     sources = [str(args.work / "corpus" / f"{row['id']}.py") for row in files]
@@ -107,7 +108,7 @@ def analysis(args, root, files, model):
     scores = {Path(e["path"]).stem: dict(llm_cc=e["llm_cc"], lmcc_per_token=e["lmcc_per_token"],
                                           tokens=e["token_count"])
               for e in events if e["type"] == "file"}
-    target.write_text(json.dumps(dict(model=model["name"], tau=tau, files=scores,
+    target.write_text(json.dumps(dict(model=model["name"], tau=tau, inputs=inputs, files=scores,
                                       totals={k: totals[k] for k in ("llm_cc", "mean_llm_cc_per_file",
                                                                      "token_count")}),
                                  indent=2) + "\n")

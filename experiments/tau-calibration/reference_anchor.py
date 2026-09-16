@@ -107,8 +107,12 @@ def main():
         tree = processor.parse_code_blocks(text, tokens=tokens, start_end_tokens=spans)
         entropies[row["id"]] = values
         scores[row["id"]] = get_lmcc(tree)
-        checkpoint.write_text(json.dumps(dict(inputs=inputs, entropies=entropies,
-                                              llm_cc=scores)))
+        # Replace atomically: a partial write would strand every completed
+        # program behind a JSON parse error on the next run.
+        partial_path = checkpoint.with_suffix(".writing")
+        partial_path.write_text(json.dumps(dict(inputs=inputs, entropies=entropies,
+                                                llm_cc=scores)))
+        partial_path.replace(checkpoint)
         print(f"reference {index}/{len(manifest['files'])} {row['id']} "
               f"LM-CC={scores[row['id']]:.1f}", flush=True)
     (args.root / "results").mkdir(exist_ok=True)

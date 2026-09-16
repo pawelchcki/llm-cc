@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Report each model's pooled 67th-percentile entropy (the paper's tau rule)."""
 import argparse
+import bisect
 import gzip
 import hashlib
 import json
@@ -18,6 +19,25 @@ def percentile(values, rank_percent):
     rank = rank_percent / 100.0 * (len(ordered) - 1)
     lower, upper = math.floor(rank), math.ceil(rank)
     return ordered[lower] + (ordered[upper] - ordered[lower]) * (rank - lower)
+
+
+def inverse_percentile(values, target):
+    """The percentile whose `percentile()` value is exactly `target`.
+
+    The empirical fraction below `target` is not this inverse: `percentile()`
+    interpolates between the two values bracketing the rank, so the matched
+    quantile has to be solved on the same interpolation.
+    """
+    ordered = sorted(values)
+    if target <= ordered[0]:
+        return 0.0
+    if target >= ordered[-1]:
+        return 100.0
+    upper = bisect.bisect_left(ordered, target)
+    lower = upper - 1
+    span = ordered[upper] - ordered[lower]
+    rank = lower + (1.0 if span == 0 else (target - ordered[lower]) / span)
+    return 100.0 * rank / (len(ordered) - 1)
 
 
 def pooled_values(entropies):
@@ -65,20 +85,27 @@ def main():
         if recorded != expected:
             raise SystemExit(f"reference anchor does not match corpus.json (recorded {recorded}, "
                              f"expected {expected}); rerun reference_anchor.py")
-        values = pooled_values(anchor["entropies"])
-        matched = 100.0 * sum(v < PAPER_TAU for v in values) / len(values)
+        matched = inverse_percentile(pooled_values(anchor["entropies"]), PAPER_TAU)
     summary = dict(percentile=PERCENTILE, matched_percentile=matched and round(matched, 3),
                    models={})
     for path, record in records.items():
+        name = path.name.removesuffix(".entropy.json.gz")
         item = describe(record["entropies"], matched)
         if "llm_cc" in record:
             item["mean_reference_llm_cc"] = round(statistics.fmean(record["llm_cc"].values()), 3)
-        analysis = root / "results" / (path.name.removesuffix(".entropy.json.gz") + ".analysis.json")
+        analysis = root / "results" / (name + ".analysis.json")
         if analysis.exists():
             result = json.loads(analysis.read_text())
+            # An analysis must come from the same inputs as the entropies it is
+            # reported beside, at the tau those entropies now imply.
+            if result.get("inputs") != record.get("inputs"):
+                raise SystemExit(f"{analysis} was produced from different or unrecorded "
+                                 f"inputs than {path.name}; rerun run.py analysis")
+            if result.get("tau") != item.get("tau_matched"):
+                raise SystemExit(f"{analysis} used tau {result.get('tau')}, but the matched "
+                                 f"tau is now {item.get('tau_matched')}; rerun run.py analysis")
             item["analysis_tau"] = result["tau"]
             item["mean_llm_cc_per_program"] = round(result["totals"]["mean_llm_cc_per_file"], 3)
-        name = path.name.removesuffix(".entropy.json.gz")
         summary["models"][name] = item
     (root / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     print(f"matched percentile: {summary['matched_percentile']}")

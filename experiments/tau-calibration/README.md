@@ -43,6 +43,11 @@ tokens. `default_tau` is that matched value.
 - **One file spot check.** On HumanEval_0 with CodeLlama Q8_0, reference
   hierarchy, and τ 0.67, llm-cc scores 13.0; the authors' pipeline scores 11.6.
 
+The mean raw LM-CC column comes from the published `data/tau-calibration-v1`
+analyses, which ran at each model's previous matched τ, before the percentile
+was solved on the interpolation; those τ differ from the current ones by at
+most 0.0003 and are recorded per model as `analysis_tau` in `summary.json`.
+
 The anchor ran in float16 on CPU; the float32 run exceeded the shared host's
 memory. llm-cc entropies came from ROCm for the DeepSeek and CodeLlama models
 and from CPU for the Qwen models.
@@ -64,7 +69,9 @@ and from CPU for the Qwen models.
   It reports the plain 67th percentile (`tau_p67`) and the matched value
   (`tau_matched`): the percentile at which the reference CodeLlama entropies
   reach 0.67, applied to this model. Both use the same linear interpolation as
-  `llmcc::Percentile`. `default_tau` is `tau_matched`.
+  `llmcc::Percentile`, and the matched percentile is solved on that
+  interpolation, so applying it to the reference entropies returns exactly
+  0.67. `default_tau` is `tau_matched`.
 - **Reference anchor.** `reference_anchor.py` runs the authors'
   `TokenEntropyCalculator` with `codellama/CodeLlama-7b-hf` (revision
   `6c284d14`, CPU, float16; a float32 run exceeded the shared host's memory)
