@@ -74,6 +74,11 @@ def main():
     # different percentile; transferring that quantile keeps CodeLlama exactly
     # at the paper's operating point and gives every model the same share of
     # boundary tokens.
+    manifest = json.loads((root / "corpus.json").read_text())
+    corpus_sha256 = hashlib.sha256(
+        json.dumps(manifest["files"], sort_keys=True).encode()).hexdigest()
+    pinned = {model["name"]: model for model in
+              json.loads((root / "models.json").read_text())}
     anchor = next((r for r in records.values() if "llm_cc" in r), None)
     matched = None
     if anchor is not None:
@@ -81,9 +86,7 @@ def main():
         # and from the verified checkpoint and dtype the operating point is
         # defined by, or every matched tau would mix inputs. A copied checkpoint
         # records `revision: null` and is refused here.
-        manifest = json.loads((root / "corpus.json").read_text())
-        expected = dict(corpus_sha256=hashlib.sha256(
-                            json.dumps(manifest["files"], sort_keys=True).encode()).hexdigest(),
+        expected = dict(corpus_sha256=corpus_sha256,
                         reference_commit=manifest["revision"],
                         model=HF_MODEL, revision=HF_REVISION,
                         dtype=REFERENCE_DTYPE)
@@ -96,6 +99,22 @@ def main():
                    models={})
     for path, record in records.items():
         name = path.name.removesuffix(".entropy.json.gz")
+        if "llm_cc" not in record:
+            # run.py only checks the dumps it regenerates, so a partial rerun
+            # can leave an unselected dump behind. Every dump that contributes
+            # a tau is held to the current corpus and pinned model here.
+            model = pinned.get(name)
+            if model is None:
+                raise SystemExit(f"{path.name} is not a model in models.json; "
+                                 f"delete it or restore the model entry")
+            inputs = record.get("inputs") or {}
+            expected_inputs = dict(corpus_sha256=corpus_sha256,
+                                   model_sha256=model["sha256"])
+            recorded_inputs = {key: inputs.get(key) for key in expected_inputs}
+            if recorded_inputs != expected_inputs:
+                raise SystemExit(f"{path.name} was produced from different or unrecorded "
+                                 f"inputs (recorded {recorded_inputs}, expected "
+                                 f"{expected_inputs}); delete it and rerun run.py entropy")
         item = describe(record["entropies"], matched)
         if "llm_cc" in record:
             item["mean_reference_llm_cc"] = round(statistics.fmean(record["llm_cc"].values()), 3)

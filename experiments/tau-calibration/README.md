@@ -108,9 +108,12 @@ The script initializes `results/` and runs the steps below. An existing entropy
 dump is reused only when its recorded model checksum, corpus, llm-cc version,
 and inference flags match the current run; otherwise the run stops, and you
 delete the file to recompute it. `--reference` also reruns
-the authors' pipeline; `summarize.py` accepts a reference run only when its
-recorded corpus hash and reference commit match `corpus.json`, and the
-reference and corpus scripts refuse a reference checkout with local changes.
+the authors' pipeline. `summarize.py` summarizes an entropy dump only when its
+recorded corpus hash and model checksum match `corpus.json` and `models.json`,
+so a partial rerun cannot leave a stale dump contributing a τ, and it accepts
+the reference run only when that run's corpus hash, reference commit, model,
+verified revision, and dtype match as well. The reference and corpus scripts
+refuse a reference checkout with local changes.
 Passing `--tau` or `--tau-percentile` through `--inference` is rejected. `--publish` commits the new results to the data branch
 and stages the updated submodule pointer and `summary.json`.
 
