@@ -63,6 +63,12 @@ def main():
     parser.add_argument("--dtype", choices=["float32", "float16"], default="float32")
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parent)
     args = parser.parse_args()
+    # Resolve before the chdir below, which would otherwise reinterpret every
+    # relative path against the reference repository's scripts directory.
+    args.repository = args.repository.resolve()
+    args.hf_model = args.hf_model.resolve()
+    args.work = args.work.resolve()
+    args.root = args.root.resolve()
     import torch  # Imported late so --help works without the ML stack.
     provenance = model_provenance(args.hf_model)
     manifest = json.loads((args.root / "corpus.json").read_text())

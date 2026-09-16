@@ -112,10 +112,14 @@ def analysis(args, root, files, model):
     scores = {Path(e["path"]).stem: dict(llm_cc=e["llm_cc"], lmcc_per_token=e["lmcc_per_token"],
                                           tokens=e["token_count"])
               for e in events if e["type"] == "file"}
-    target.write_text(json.dumps(dict(model=model["name"], tau=tau, inputs=inputs, files=scores,
-                                      totals={k: totals[k] for k in ("llm_cc", "mean_llm_cc_per_file",
-                                                                     "token_count")}),
-                                 indent=2) + "\n")
+    payload = dict(model=model["name"], tau=tau, inputs=inputs, files=scores,
+                   totals={k: totals[k] for k in ("llm_cc", "mean_llm_cc_per_file",
+                                                  "token_count")})
+    # Publish atomically: summarize.py parses every analysis artifact, so a
+    # truncated one would block the next regeneration before it is rewritten.
+    partial_path = target.with_suffix(".writing")
+    partial_path.write_text(json.dumps(payload, indent=2) + "\n")
+    partial_path.replace(target)
     print(f"{model['name']}: mean raw LM-CC per program {totals['mean_llm_cc_per_file']:.2f}")
 
 
