@@ -87,8 +87,12 @@ def entropy(args, root, files, model):
                   ["score", "--model", model["file"], "--file", "PROGRAM", *command[6:]],
                   binary_version=inputs["binary_version"], inputs=inputs,
                   wall_seconds=time.monotonic() - started, entropies=rows)
-    with gzip.open(target, "wt") as stream:
+    # Publish atomically: a truncated dump would be taken for a complete one on
+    # the next run and fail to load instead of recomputing.
+    partial_path = target.with_suffix(".writing")
+    with gzip.open(partial_path, "wt") as stream:
         json.dump(record, stream)
+    partial_path.replace(target)
 
 
 def analysis(args, root, files, model):

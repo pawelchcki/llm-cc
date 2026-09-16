@@ -14,6 +14,13 @@ set -euo pipefail
 
 here="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 binary="${LLM_CC_BINARY:?set LLM_CC_BINARY to the llm-cc binary}"
+# Resolve against the caller's directory: the run happens from $here, where a
+# relative path such as bazel-bin/llm-cc would no longer exist.
+if [ -e "$binary" ]; then
+  binary="$(CDPATH= cd -- "$(dirname -- "$binary")" && pwd)/$(basename -- "$binary")"
+else
+  binary="$(command -v -- "$binary" || echo "$binary")"
+fi
 inference="${LLM_CC_INFERENCE:-}"
 reference=false
 publish=false

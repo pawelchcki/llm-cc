@@ -201,6 +201,19 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(entry["raw_change"], raw_head - raw_base)
         self.assertAlmostEqual(entry["change"], (raw_head - raw_base) / 2)
 
+    def test_added_files_carry_their_whole_raw_score(self):
+        self.profile["max_file_bytes"] = 100
+        plan, report = self._scored(Path(self.temp.name) / "added")
+        added = next(f for f in plan["inventories"]["head"] if f["path"] == "large.py")
+        self.assertNotIn("large.py", [f["path"] for f in plan["inventories"]["base"]])
+        entry = next(
+            x
+            for x in report["leading_regressions"] + report["leading_improvements"]
+            if x["path"] == "large.py"
+        )
+        self.assertIsNone(entry["change"])
+        self.assertEqual(entry["raw_change"], report["results"][added["key"]]["llm_cc"])
+
     def test_zero_token_files_keep_raw_deltas(self):
         self.profile["max_file_bytes"] = 100
         out = Path(self.temp.name) / "zero"

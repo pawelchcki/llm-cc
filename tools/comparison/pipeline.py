@@ -1021,6 +1021,10 @@ def _aggregate(plan, worker_paths, output):
         plan["changes"], base_paths, head_paths, results, rankings["head"]
     )
     def raw_llm_cc(paths, path):
+        # A side that does not exist contributes nothing; a side that exists but
+        # was not measured leaves the raw delta undefined.
+        if path is None:
+            return 0.0
         file = paths.get(path)
         result = results.get(file["key"]) if file and file.get("key") else None
         return None if result is None else result["llm_cc"]

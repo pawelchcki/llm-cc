@@ -34,7 +34,8 @@ def git_head(path):
                             capture_output=True, text=True)
     if result.returncode != 0:
         return None
-    top, head = result.stdout.split()
+    # Split on lines only: a work tree path may contain spaces.
+    top, head = result.stdout.splitlines()
     return head if Path(top).resolve() == path.resolve() else None
 
 
@@ -90,11 +91,17 @@ def main():
     # checkpoint is reused only for the exact model, corpus, and reference code.
     checkpoint = args.work / f"reference-anchor-{args.dtype}.partial.json"
     entropies, scores, started = {}, {}, time.monotonic()
+    # Runtime accumulates across resumes; this corpus takes many CPU hours.
+    earlier_seconds = 0.0
     if checkpoint.exists():
         partial = json.loads(checkpoint.read_text())
         if partial.get("inputs") != inputs:
             raise SystemExit(f"{checkpoint} was produced from different inputs; delete it")
         entropies, scores = partial["entropies"], partial["llm_cc"]
+        earlier_seconds = partial.get("wall_seconds", 0.0)
+
+    def elapsed():
+        return earlier_seconds + time.monotonic() - started
     for index, row in enumerate(manifest["files"], 1):
         if row["id"] in scores:
             continue
@@ -111,7 +118,7 @@ def main():
         # program behind a JSON parse error on the next run.
         partial_path = checkpoint.with_suffix(".writing")
         partial_path.write_text(json.dumps(dict(inputs=inputs, entropies=entropies,
-                                                llm_cc=scores)))
+                                                llm_cc=scores, wall_seconds=elapsed())))
         partial_path.replace(checkpoint)
         print(f"reference {index}/{len(manifest['files'])} {row['id']} "
               f"LM-CC={scores[row['id']]:.1f}", flush=True)
@@ -121,7 +128,7 @@ def main():
         json.dump(dict(**provenance, dtype=args.dtype, torch=torch.__version__,
                        reference_commit=inputs["reference_commit"],
                        corpus_sha256=inputs["corpus_sha256"],
-                       wall_seconds=time.monotonic() - started,
+                       wall_seconds=elapsed(),
                        entropies=entropies, llm_cc=scores), stream)
 
 
