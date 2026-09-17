@@ -268,8 +268,10 @@ class ModelSpec:
             r"[0-9a-f]{64}", self.sha256
         ):
             raise ValueError("model_sha256 must be a lowercase SHA-256 digest")
-        if type(self.bytes) is not int or self.bytes <= 0:
-            raise ValueError("model_bytes must be a positive integer")
+        # The scorer reports a model's size as uint64 and can never match a
+        # wider value, so such a profile fails every worker's verification.
+        if type(self.bytes) is not int or not 0 < self.bytes <= 2**64 - 1:
+            raise ValueError("model_bytes must be a positive uint64")
         if self.url is not None and (
             not isinstance(self.url, str) or not self.url.startswith("https://")
         ):

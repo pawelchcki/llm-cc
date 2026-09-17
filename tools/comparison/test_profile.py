@@ -609,6 +609,13 @@ class ProfileTest(unittest.TestCase):
         ScoringSettings(backend="rocm", flash_attn="off", kv_cache_type="f16")
         ScoringSettings(backend="rocm", gpu_layers=20, entropy_reduction="host")
 
+    def test_model_bytes_outside_uint64_rejected(self):
+        ModelSpec("f" * 64, 2**64 - 1)
+        for value in (0, -1, 2**64, True):
+            with self.subTest(bytes=value):
+                with self.assertRaisesRegex(ValueError, "model_bytes"):
+                    ModelSpec("f" * 64, value)
+
     def test_gpu_layers_outside_int32_rejected(self):
         # The scorer parses --gpu-layers as int32 and refuses anything wider.
         ScoringSettings(backend="rocm", gpu_layers=2147483647,
