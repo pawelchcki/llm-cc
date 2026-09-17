@@ -16,8 +16,8 @@ actions:
           - "main"
     steps:
       - run: "tools/check_format.sh"
-      - run: "bazel test --config=buildbuddy //:unit //:integration"
-      - run: "bazel test --config=buildbuddy //:tls_integration_test //tools/comparison:comparison_test"
+      - run: "bazel test --config=buildbuddy --test_output=errors //:unit //:integration"
+      - run: "bazel test --config=buildbuddy --test_output=errors //:tls_integration_test //tools/comparison:comparison_test"
       - run: "BACKEND=cpu tools/check_consumer.sh --tests-only"
       - run: "bazel build --config=buildbuddy --remote_download_all --config=distribution --config=portable //:cpu_static_archive"
       - run: "tools/check_glibc_version.sh bazel-bin/llm-cc 2.28"

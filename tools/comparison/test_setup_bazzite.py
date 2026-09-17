@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from unittest import mock
 import zipfile
+from .common import model_digest
 
 from .buildbuddy import report_links, validate_report_links
 from .inventory import validate_rules as _validate_rules
@@ -265,6 +266,52 @@ class BazziteSetupTest(unittest.TestCase):
             runtime.write_bytes(b"changed")
             with self.assertRaisesRegex(ValueError, "runtime file"):
                 verify_assets(profile, installed, model)
+
+    def test_validated_assets_cover_every_split_model_shard(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            installed = root / "install"
+            (installed / "bin").mkdir(parents=True)
+            scorer = installed / "bin/llm-cc"
+            scorer.write_bytes(b"scorer")
+            scorer.chmod(0o755)
+            runtime = root / "runtime.so"
+            runtime.write_bytes(b"runtime")
+            shards = []
+            for index in (1, 2):
+                shard = root / ("m-%05d-of-00002.gguf" % index)
+                shard.write_bytes(b"shard-%d" % index)
+                shards.append(shard)
+            profile = {
+                "build": {
+                    "execution_image": "none",
+                    "execution_host": {
+                        "gpu_arch": "gfx1100",
+                        "runtime_files": {
+                            str(runtime): hashlib.sha256(b"runtime").hexdigest()
+                        },
+                    },
+                    "installed_files": {
+                        "bin/llm-cc": hashlib.sha256(b"scorer").hexdigest()
+                    },
+                    "model_bytes": sum(s.stat().st_size for s in shards),
+                    "model_sha256": model_digest(
+                        [
+                            hashlib.sha256(s.read_bytes()).hexdigest()
+                            for s in shards
+                        ]
+                    ),
+                }
+            }
+            self.assertEqual(
+                verify_assets(profile, installed, shards[0]),
+                (installed, shards[0].resolve()),
+            )
+            # A companion shard is part of the pinned identity, so changing it
+            # must fail here rather than at the first comparison.
+            shards[1].write_bytes(b"shard-X")
+            with self.assertRaisesRegex(ValueError, "model size or checksum"):
+                verify_assets(profile, installed, shards[0])
 
     @unittest.skipUnless(os.name == "posix", "launcher execution requires POSIX")
     def test_launcher_runs_only_verified_bytes_with_pinned_configuration(self):

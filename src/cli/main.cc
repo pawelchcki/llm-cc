@@ -738,6 +738,12 @@ void PrintCacheJson(
       {"directory", PathUtf8(status.directory)},
       {"storage_version", status.storage_version},
       {"inference_abi", llmcc::InferenceAbi()},
+      // External verifiers (tools/comparison) pin an installation to the
+      // commit this executable was built from; the backend manifest only
+      // describes the backend bundle.
+      {"source_commit", LLM_CC_GIT_SHA},
+      {"analysis_version", llmcc::kAnalysisVersion},
+      {"backend_configuration", LLM_CC_BACKEND_CONFIGURATION},
       {"entries", status.entries},
       {"bytes", status.bytes},
       {"limit_bytes", status.limit},
@@ -771,6 +777,9 @@ void PrintCacheText(
             << "directory: " << PathUtf8(status.directory) << '\n'
             << "storage version: " << status.storage_version << '\n'
             << "inference ABI: " << llmcc::InferenceAbi() << '\n'
+            << "source commit: " << LLM_CC_GIT_SHA << '\n'
+            << "analysis version: " << llmcc::kAnalysisVersion << '\n'
+            << "backend configuration: " << LLM_CC_BACKEND_CONFIGURATION << '\n'
             << "entries: " << status.entries << '\n'
             << "bytes: " << status.bytes << '\n'
             << "limit bytes: " << status.limit << '\n'
@@ -963,7 +972,7 @@ nlohmann::json TotalsJson(const MetricTotals& totals,
   nlohmann::json result = TotalsMetricsJson(totals, score_mode);
   result.update(
       {{"type", "totals"},
-       {"analysis_version", 3},
+       {"analysis_version", llmcc::kAnalysisVersion},
        {"hierarchy_mode", hierarchy_mode == llmcc::HierarchyMode::kStructural
                               ? "structural"
                               : "reference"},
@@ -1025,7 +1034,7 @@ nlohmann::json ConfigurationJson(
                                                                       : "host";
   nlohmann::json configuration = {
       {"type", "configuration"},
-      {"analysis_version", 3},
+      {"analysis_version", llmcc::kAnalysisVersion},
       {"hierarchy_mode",
        arguments.hierarchy_mode == llmcc::HierarchyMode::kStructural
            ? "structural"

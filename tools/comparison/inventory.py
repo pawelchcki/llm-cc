@@ -56,7 +56,7 @@ def validate_rules(rules):
     """Reject classification rules that a repository could use to hide work."""
     if not isinstance(rules, dict):
         raise ValueError("classification rules must be a JSON object")
-    allowed = {"exclude", "tests", "tooling", "extensions"}
+    allowed = {"exclude", "tests", "tooling", "extensions", "paths"}
     unknown = set(rules) - allowed
     if unknown:
         raise ValueError(
@@ -76,12 +76,33 @@ def validate_rules(rules):
                     "classification rule %s needs non-empty globs of at most 256 characters"
                     % name
                 )
+    paths = rules.get("paths", [])
+    languages = set(LANGUAGES.values())
+    if not isinstance(paths, list):
+        raise ValueError("classification rule paths must be a list of objects")
+    total += len(paths)
+    for override in paths:
+        if (
+            not isinstance(override, dict)
+            or set(override) != {"pattern", "language"}
+            or not isinstance(override["pattern"], str)
+            or not override["pattern"]
+            or len(override["pattern"]) > 256
+        ):
+            raise ValueError(
+                "classification rule paths needs {pattern, language} objects with "
+                "non-empty globs of at most 256 characters"
+            )
+        if override["language"] not in languages:
+            raise ValueError(
+                "classification rule path %s names an unsupported language"
+                % override["pattern"]
+            )
     if total > 512:
         raise ValueError("classification rules use more than 512 glob patterns")
     extensions = rules.get("extensions", {})
     if not isinstance(extensions, dict):
         raise ValueError("classification rule extensions must be an object")
-    languages = set(LANGUAGES.values())
     for extension, language in extensions.items():
         if (
             not isinstance(extension, str)
@@ -184,6 +205,19 @@ def _classify(path, rules):
     return "runtime"
 
 
+def resolve_language(path, rules):
+    """First matching path override wins, then extensions, then the defaults.
+
+    Overrides are matched against the full repository path, so a header that
+    means C in one directory and C++ in another gets a different language, and
+    therefore a different cache key, on each side.
+    """
+    for override in rules.get("paths", []):
+        if fnmatch.fnmatchcase(path, override["pattern"]):
+            return override["language"]
+    return (LANGUAGES | rules.get("extensions", {})).get(_extension(path))
+
+
 def inventory(repo, revision, fingerprint, rules=None, max_file_bytes=65536):
     rules = validate_rules(rules or {})
     raw = _git(repo, ["ls-tree", "-rlz", "--full-tree", revision])
@@ -208,9 +242,7 @@ def inventory(repo, revision, fingerprint, rules=None, max_file_bytes=65536):
             "_object": object_id.decode("ascii"),
         }
         if kind == b"blob":
-            record["language"] = (LANGUAGES | rules.get("extensions", {})).get(
-                _extension(path)
-            )
+            record["language"] = resolve_language(path, rules)
         if mode == b"160000" or kind == b"commit":
             record["reason"] = "submodule"
         elif mode == b"120000":

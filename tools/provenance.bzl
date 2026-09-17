@@ -4,6 +4,30 @@ load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 
 ProvenanceInfo = provider(fields = ["metadata", "header"])
 
+# Every file that can change the produced backend binaries, including every
+# patch applied to a pinned backend dependency. `//:provenance_test` enforces
+# that a patch cannot be applied without joining this list.
+PROVENANCE_CONFIGURATION = [
+    Label("//:extensions.bzl"),
+    Label("//:MODULE.bazel"),
+    Label("//tools:gpu_sdk_repositories.bzl"),
+    Label("//tools:build_configuration.bzl"),
+    Label("//tools:cuda_host_compiler_wrapper.sh"),
+    Label("//tools:cuda_glibc_compat.h"),
+    Label("//tools:hip_library.bzl"),
+    Label("//third_party:llama_cpp.BUILD.bazel"),
+    Label("//third_party:llama_cpp_backend_score.patch"),
+    Label("//third_party:llama_cpp_deterministic_hip_cuid.patch"),
+    Label("//third_party:llama_cpp_namespaced_backends.patch"),
+    Label("//third_party:backend_module.lds"),
+    Label("//third_party:ggml_backend_abi.list"),
+    Label("//third_party:cuda_host_toolchain.BUILD.bazel"),
+    Label("//third_party:rules_cuda_explicit_tools.patch"),
+    Label("//third_party:rocm_sdk.BUILD.bazel"),
+    Label("//third_party:llama_cpp_deepseek_flash_attention.patch"),
+    Label("//third_party:cuda_host_sysroot_package.patch"),
+]
+
 # Pinned inputs and build recipes are hashed by content, never by their external
 # repository name. Moving the same source into a consumer keeps the same key.
 def _provenance_impl(ctx):
@@ -43,24 +67,7 @@ provenance = rule(
         "artifact_base_url": attr.label(default = Label("//:artifact_base_url")),
         "archs": attr.label(default = Label("//:cuda_archs")),
         "stamp": attr.bool(),
-        "configuration": attr.label_list(allow_files = True, default = [
-            Label("//:extensions.bzl"),
-            Label("//:MODULE.bazel"),
-            Label("//tools:gpu_sdk_repositories.bzl"),
-            Label("//tools:build_configuration.bzl"),
-            Label("//tools:cuda_host_compiler_wrapper.sh"),
-            Label("//tools:cuda_glibc_compat.h"),
-            Label("//tools:hip_library.bzl"),
-            Label("//third_party:llama_cpp.BUILD.bazel"),
-            Label("//third_party:llama_cpp_backend_score.patch"),
-            Label("//third_party:llama_cpp_deterministic_hip_cuid.patch"),
-            Label("//third_party:llama_cpp_namespaced_backends.patch"),
-            Label("//third_party:backend_module.lds"),
-            Label("//third_party:ggml_backend_abi.list"),
-            Label("//third_party:cuda_host_toolchain.BUILD.bazel"),
-            Label("//third_party:rules_cuda_explicit_tools.patch"),
-            Label("//third_party:rocm_sdk.BUILD.bazel"),
-        ]),
+        "configuration": attr.label_list(allow_files = True, default = PROVENANCE_CONFIGURATION),
         "_generator": attr.label(default = Label("//tools:generate_provenance"), executable = True, cfg = "exec"),
     },
 )

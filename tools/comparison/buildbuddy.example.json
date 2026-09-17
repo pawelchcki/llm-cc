@@ -18,6 +18,7 @@
   "worker_env": {},
   "platform_properties": {"EstimatedFreeDiskBytes": "40000000000"},
   "max_workers": 4,
+  "cache_concurrency": 8,
   "refresh_days": 20,
   "expire_days": 30
 }

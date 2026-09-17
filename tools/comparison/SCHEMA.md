@@ -3,11 +3,27 @@
 All JSON uses UTF-8, sorted keys, compact separators, and finite numbers.
 Python package: `tools.comparison` (stdlib except optional boto3 for S3).
 
-Profile: `{scoring: {...}, build: {...}, max_file_bytes: 65536}`.
+Profile: `{scoring: {...}, build: {...}, max_file_bytes: 65536,
+inspection: {...}}`. Only `scoring` and `build` are fingerprinted;
+`inspection.executable_identity_verified` records how the identity was
+established, not what it is, so recording it never invalidates cached results.
 `scoring` contains `argv` (an ordered list of flags) and
 `expected_configuration` (the scorer's requested/effective JSONL fields);
 `build` includes source_commit, inference_abi, installed_files (relative path to
-SHA256), model_sha256, model_bytes, and immutable execution image identity.
+SHA256), backend_manifest, model_sha256, model_bytes, optional model_url, and
+immutable execution image identity. `source_commit` and `inference_abi` are
+derived by hashing the installed tree and executing its `bin/llm-cc` offline
+(`--version`, `cache status --format json`). The executable's version, its
+reported `source_commit` and `backend_configuration`, the backend manifest and
+the ABI's llama.cpp commit must all agree, and the executable's reported
+`analysis_version` becomes the expected one. An executable predating those
+reported fields records `inspection.executable_identity_verified: false`; its
+analysis version may only be assumed for the pinned dogfood commit, so any
+other unreporting executable is rejected. `model_sha256`/`model_bytes` carry the scorer's
+composite identity: for a split GGUF that is the domain-separated digest of
+every shard and their total size, not the named shard alone. The executable
+version is verified but deliberately not recorded, so the fingerprint of an
+unchanged installation does not move.
 Container profiles also require `container_environment_policy: "sanitized-v1"`;
 regenerate older profiles before preparing or reusing their cached results.
 Scorer processes receive a clean environment with private cache/runtime paths.
@@ -29,6 +45,18 @@ pool. An optional absolute `execution_bundle` and `execution_bundle_sha256` in
 the BuildBuddy configuration pin the comparison Python package on that host.
 The package identity controls execution, while scorer cache keys remain based
 on the complete scoring/build profile.
+Model digest memo: after verifying the model the worker writes
+`<LLM_CC_ENTROPY_CACHE_DIR>/model-digests/<sha256 of the UTF-8 canonical model
+path>.json` (directory `0700`, file `0600`) containing
+`{format: "llm-cc-model-digest-memo-v1", size, mtime, ctime, device, inode,
+digest}`, where the times are nanoseconds and the identifiers come from
+`stat()`. llm-cc reuses `digest` only while all five stat fields still match,
+and ignores keys it does not know; the contract is documented in
+`src/model_identity.h`. The memo is advisory, is written only from a digest the
+worker itself verified against the profile, sits outside `v2/entropy` so it is
+never published, and dies with the worker's temporary directory. For a split
+GGUF model the worker verifies and memoizes every shard, one memo per shard,
+matching how the scorer memoizes them.
 Fingerprint = SHA256(canonical JSON of `{scoring, build}`). Eligibility and
 classification do not affect it. File key = SHA256(canonical JSON of
 `[content_sha256, language, fingerprint]`).
@@ -48,8 +76,15 @@ Preparation `plan.json`:
  cache_stats: {...}}
 ```
 Classification rules accept only `exclude`, `tests`, `tooling` (glob lists of
-non-empty strings up to 256 characters, 512 patterns in total) and `extensions`
-(lowercase `.<ext>` to a supported language), at most 64 KiB canonical.
+non-empty strings up to 256 characters), `extensions` (lowercase `.<ext>` to a
+supported language) and `paths` (an ordered list of
+`{pattern: <glob>, language: <supported>}` objects), 512 patterns in total
+across the glob lists and `paths`, at most 64 KiB canonical. Language
+resolution takes the first matching `paths` rule, then `extensions`, then the
+built-in extension table; patterns match the full repository path with
+`fnmatchcase`. The resolved language is part of the file key, so the same bytes
+under two overridden directories are separate cache entries. Symlinks and
+submodules keep their unscorable reason whatever rule matches them.
 `prepare` reads `.llm-cc/comparison-rules.json` from the **target** commit's tree
 when present, so a pull request cannot reclassify its own files; invalid
 repository rules fail the run instead of falling back to host rules.
@@ -78,8 +113,11 @@ results:{key:result}, errors:[string], elapsed_seconds}`. Always write
 
 Preparation entry `prepare(repo, head, target, identity, profile, rules,
 cache, output_dir, max_workers=4,
-repository_rules_path=".llm-cc/comparison-rules.json", presentation=None)`
-returns plan and writes plan.json/blobs.
+repository_rules_path=".llm-cc/comparison-rules.json", presentation=None,
+cache_concurrency=8)` returns plan and writes plan.json/blobs.
+`cache_concurrency` (1-64) bounds parallel result-cache reads. The plan is
+assembled from sorted keys, so it is byte-identical at any bound; the first
+read error cancels queued reads and fails the run.
 Aggregation entry `aggregate(plan_path, worker_paths, output_dir)` validates
 exact per-worker coverage, writes report.json, report.md, comment.md,
 publication.json, baseline.md and baseline.json, and returns report dict.

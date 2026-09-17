@@ -1,4 +1,5 @@
 load(":build_configuration.bzl", "cuda_host_compiler")
+load(":provenance.bzl", "PROVENANCE_CONFIGURATION")
 load("@rules_foreign_cc//toolchains/native_tools:native_tools_toolchain.bzl", "native_tool_toolchain")
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
@@ -68,6 +69,7 @@ exports_files([
     "materialize_tree.cc",
     "model_smoke_test.sh",
     "package_payload.sh",
+    "provenance_test.sh",
     "version.sh",
     "version_test.sh",
 ])
@@ -122,6 +124,14 @@ cc_binary(
     }),
     srcs = ["generate_provenance.cc"],
     deps = ["//:sha256", "//:linux_compat"],
+)
+
+# Lets the test discover the provenance inputs without re-parsing Starlark.
+genrule(
+    name = "provenance_configuration_list",
+    srcs = PROVENANCE_CONFIGURATION,
+    outs = ["provenance_configuration.txt"],
+    cmd = "for f in $(SRCS); do echo $$f; done > $@",
 )
 
 cc_binary(

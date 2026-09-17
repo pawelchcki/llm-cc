@@ -3,21 +3,26 @@ import html
 import os
 import subprocess
 import tempfile
+import threading
+import time
 import unittest
 from unittest import mock
 from pathlib import Path
 
-from tools.comparison.cache import FilesystemStore, ResultCache
+from tools.comparison.__main__ import parser
+from tools.comparison.cache import CacheError, FilesystemStore, ResultCache
 from tools.comparison.common import write_json
 from tools.comparison.inventory import (
     GitError,
     _classify,
     inventory,
     merge_base,
+    resolve_language,
     validate_rules,
 )
 from tools.comparison.pipeline import (
     _assemble,
+    _changed_files,
     _code,
     _delta,
     _render,
@@ -972,3 +977,388 @@ print(json.dumps({'type':'totals','discovered':len(paths),'analyzed':len(paths),
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PathLanguageRulesTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.repo = Path(self.temp.name) / "repo"
+        (self.repo / "c").mkdir(parents=True)
+        (self.repo / "cpp").mkdir(parents=True)
+        git(self.repo, "init", "-q")
+        (self.repo / "c/x.h").write_text("int shared(void);\n")
+        (self.repo / "cpp/x.h").write_text("int shared(void);\n")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "base")
+        self.base = git(self.repo, "rev-parse", "HEAD")
+        self.head = self.base
+        self.rules = {
+            "paths": [
+                {"pattern": "cpp/**", "language": "cpp"},
+                {"pattern": "c/**", "language": "c"},
+            ]
+        }
+        self.profile = {
+            "scoring": {"tau": 0.67},
+            "build": {"source_commit": "abc"},
+            "max_file_bytes": 1024,
+        }
+        self.identity = {
+            "repository": "o/r",
+            "pipeline_id": "p",
+            "target_branch": "main",
+            "pr_number": 1,
+            "started_at": "2026-01-01T00:00:00Z",
+        }
+
+    def _prepare(self, name, rules=None, head=None, target=None):
+        return prepare(
+            self.repo,
+            head or self.head,
+            target or self.base,
+            self.identity,
+            self.profile,
+            self.rules if rules is None else rules,
+            MemoryCache(),
+            Path(self.temp.name) / name,
+            1,
+        )
+
+    def test_path_rules_select_language_before_keys(self):
+        plan = self._prepare("paths")
+        by_path = {record["path"]: record for record in plan["inventories"]["head"]}
+        self.assertEqual(by_path["c/x.h"]["language"], "c")
+        self.assertEqual(by_path["cpp/x.h"]["language"], "cpp")
+        self.assertEqual(
+            by_path["c/x.h"]["content_sha256"], by_path["cpp/x.h"]["content_sha256"]
+        )
+        self.assertNotEqual(by_path["c/x.h"]["key"], by_path["cpp/x.h"]["key"])
+        self.assertEqual(len(plan["items"]), 2)
+        default = self._prepare("default", rules={})
+        defaults = {record["path"]: record for record in default["inventories"]["head"]}
+        self.assertEqual(defaults["cpp/x.h"]["language"], "c")
+        self.assertEqual(len(default["items"]), 1)
+
+    def test_overlapping_path_rules_first_match_wins_over_extensions(self):
+        rules = {
+            "paths": [
+                {"pattern": "cpp/x.h", "language": "cpp"},
+                {"pattern": "cpp/**", "language": "rust"},
+            ],
+            "extensions": {".h": "python"},
+        }
+        plan = self._prepare("precedence", rules=rules)
+        by_path = {record["path"]: record for record in plan["inventories"]["head"]}
+        self.assertEqual(by_path["cpp/x.h"]["language"], "cpp")
+        self.assertEqual(by_path["c/x.h"]["language"], "python")
+        self.assertEqual(
+            resolve_language("other/x.h", {"extensions": {".h": "python"}}), "python"
+        )
+        self.assertEqual(resolve_language("other/x.h", {}), "c")
+
+    def test_rename_between_language_overridden_directories(self):
+        (self.repo / "c/moved.h").write_text("int moved(void);\n")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "add movable header")
+        base = git(self.repo, "rev-parse", "HEAD")
+        git(self.repo, "mv", "c/moved.h", "cpp/moved.h")
+        git(self.repo, "commit", "-qm", "move header")
+        head = git(self.repo, "rev-parse", "HEAD")
+        plan = self._prepare("rename", head=head, target=base)
+        statuses = {
+            (change["old_path"], change["new_path"]): change["status"]
+            for change in plan["changes"]
+        }
+        self.assertIn(("c/moved.h", "cpp/moved.h"), statuses)
+        self.assertTrue(statuses[("c/moved.h", "cpp/moved.h")].startswith("R"))
+        base_records = {r["path"]: r for r in plan["inventories"]["base"]}
+        head_records = {r["path"]: r for r in plan["inventories"]["head"]}
+        self.assertEqual(base_records["c/moved.h"]["language"], "c")
+        self.assertEqual(head_records["cpp/moved.h"]["language"], "cpp")
+        base_key = base_records["c/moved.h"]["key"]
+        head_key = head_records["cpp/moved.h"]["key"]
+        self.assertNotEqual(base_key, head_key)
+        results = {
+            key: {
+                "schema_version": 1,
+                "key": key,
+                "fingerprint": plan["fingerprint"],
+                "content_sha256": plan["items"][key]["content_sha256"],
+                "language": plan["items"][key]["language"],
+                "llm_cc": 4.0 if key == head_key else 2.0,
+                "token_count": 2,
+            }
+            for key in plan["items"]
+        }
+        rows = _changed_files(
+            plan["changes"],
+            {record["path"]: record for record in plan["inventories"]["base"]},
+            {record["path"]: record for record in plan["inventories"]["head"]},
+            results,
+            [],
+        )
+        moved = [row for row in rows if row["path"] == "cpp/moved.h"]
+        self.assertEqual(len(moved), 1)
+        self.assertEqual(moved[0]["base"]["score"], 1.0)
+        self.assertEqual(moved[0]["head"]["score"], 2.0)
+
+    def test_path_rules_apply_to_both_revisions_from_target_rules(self):
+        (self.repo / ".llm-cc").mkdir()
+        (self.repo / ".llm-cc/comparison-rules.json").write_text(json.dumps(self.rules))
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "target rules")
+        target = git(self.repo, "rev-parse", "HEAD")
+        (self.repo / ".llm-cc/comparison-rules.json").write_text(
+            json.dumps({"paths": [{"pattern": "**", "language": "rust"}]})
+        )
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "head rules")
+        head = git(self.repo, "rev-parse", "HEAD")
+        plan = prepare(
+            self.repo,
+            head,
+            target,
+            self.identity,
+            self.profile,
+            {},
+            MemoryCache(),
+            Path(self.temp.name) / "target-rules",
+            1,
+        )
+        self.assertEqual(plan["rules_source"]["source"], "repository")
+        for side in ("base", "head"):
+            by_path = {record["path"]: record for record in plan["inventories"][side]}
+            self.assertEqual(by_path["c/x.h"]["language"], "c")
+            self.assertEqual(by_path["cpp/x.h"]["language"], "cpp")
+
+    @unittest.skipUnless(os.name == "posix", "symlink creation requires POSIX")
+    def test_path_rules_do_not_follow_symlinks_or_submodules(self):
+        (self.repo / "cpp/link.h").symlink_to("x.h")
+        subprocess.run(
+            ["git", "-C", str(self.repo), "update-index", "--add", "--cacheinfo",
+             "160000,%s,cpp/module" % self.base],
+            check=True,
+        )
+        git(self.repo, "add", "cpp/link.h")
+        git(self.repo, "commit", "-qm", "link and submodule")
+        head = git(self.repo, "rev-parse", "HEAD")
+        plan = self._prepare("symlinks", head=head)
+        by_path = {record["path"]: record for record in plan["inventories"]["head"]}
+        self.assertEqual(by_path["cpp/link.h"]["reason"], "symlink")
+        self.assertFalse(by_path["cpp/link.h"]["scorable"])
+        self.assertEqual(by_path["cpp/module"]["reason"], "submodule")
+        self.assertFalse(by_path["cpp/module"]["scorable"])
+
+    def test_invalid_path_rules_rejected(self):
+        for paths in (
+            {},
+            "cpp/**",
+            [["cpp/**", "cpp"]],
+            [{"pattern": "cpp/**"}],
+            [{"language": "cpp"}],
+            [{"pattern": "cpp/**", "language": "cpp", "extra": 1}],
+            [{"pattern": "", "language": "cpp"}],
+            [{"pattern": "c" * 257, "language": "cpp"}],
+            [{"pattern": "cpp/**", "language": "brainfuck"}],
+            [{"pattern": "cpp/**", "language": None}],
+            [{"pattern": 7, "language": "cpp"}],
+        ):
+            with self.subTest(paths=paths), self.assertRaises(ValueError):
+                validate_rules({"paths": paths})
+        many = [{"pattern": "p%d" % index, "language": "c"} for index in range(500)]
+        validate_rules({"paths": many})
+        with self.assertRaisesRegex(ValueError, "512 glob patterns"):
+            validate_rules({"paths": many, "exclude": ["x"] * 13})
+
+
+class DelayedFailingCache(MemoryCache):
+    """Counts concurrent lookups and can fail or corrupt individual keys."""
+
+    def __init__(self, values=None, delay=0.0, failing=(), invalid=()):
+        super().__init__(values)
+        self.delay = delay
+        self.failing = set(failing)
+        self.invalid = set(invalid)
+        self.lock = threading.Lock()
+        self.started = 0
+        self.completed = 0
+        self.in_flight = 0
+        self.max_in_flight = 0
+
+    def get(self, item, fingerprint):
+        key = item["key"]
+        with self.lock:
+            self.started += 1
+            self.in_flight += 1
+            self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        try:
+            time.sleep(self.delay)
+            if key in self.failing:
+                raise CacheError("store unavailable")
+            if key in self.invalid:
+                return {"schema_version": 1, "key": "wrong"}
+            with self.lock:
+                self.completed += 1
+            return self.values.get(key)
+        finally:
+            with self.lock:
+                self.in_flight -= 1
+
+
+class PrepareConcurrencyTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.repo = Path(self.temp.name) / "repo"
+        self.repo.mkdir()
+        git(self.repo, "init", "-q")
+        for index in range(6):
+            (self.repo / ("file%d.cc" % index)).write_text("int v%d;\n" % index)
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "base")
+        self.base = git(self.repo, "rev-parse", "HEAD")
+        (self.repo / "file0.cc").write_text("int changed;\n")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "head")
+        self.head = git(self.repo, "rev-parse", "HEAD")
+        self.profile = {
+            "scoring": {"tau": 0.67},
+            "build": {"source_commit": "abc"},
+            "max_file_bytes": 1024,
+        }
+        self.identity = {
+            "repository": "o/r",
+            "pipeline_id": "p",
+            "target_branch": "main",
+            "pr_number": 1,
+            "started_at": "2026-01-01T00:00:00Z",
+        }
+
+    def _results(self, keys, plan):
+        return {
+            key: {
+                "schema_version": 1,
+                "key": key,
+                "fingerprint": plan["fingerprint"],
+                "content_sha256": plan["items"][key]["content_sha256"],
+                "language": plan["items"][key]["language"],
+                "llm_cc": 1.0,
+                "token_count": 1,
+            }
+            for key in keys
+        }
+
+    def _prepare(self, cache, name, concurrency):
+        return prepare(
+            self.repo,
+            self.head,
+            self.base,
+            self.identity,
+            self.profile,
+            {},
+            cache,
+            Path(self.temp.name) / name,
+            1,
+            cache_concurrency=concurrency,
+        )
+
+    def test_concurrent_plan_equals_sequential_plan(self):
+        cold = self._prepare(MemoryCache(), "cold", 1)
+        values = self._results(cold["items"], cold)
+        sequential = self._prepare(DelayedFailingCache(values), "sequential", 1)
+        concurrent_plan = self._prepare(DelayedFailingCache(values), "concurrent", 8)
+        self.assertEqual(
+            (Path(self.temp.name) / "sequential" / "plan.json").read_bytes(),
+            (Path(self.temp.name) / "concurrent" / "plan.json").read_bytes(),
+        )
+        self.assertEqual(sequential, concurrent_plan)
+        self.assertEqual(concurrent_plan["workers"], [])
+        self.assertEqual(concurrent_plan["cache_stats"]["misses"], 0)
+
+    def test_lookup_concurrency_is_bounded(self):
+        cold = self._prepare(MemoryCache(), "cold", 1)
+        values = self._results(cold["items"], cold)
+        self.assertGreater(len(values), 2)
+        for bound in (1, 2):
+            cache = DelayedFailingCache(values, delay=0.02)
+            self._prepare(cache, "bounded-%d" % bound, bound)
+            self.assertEqual(cache.started, len(values))
+            self.assertLessEqual(cache.max_in_flight, bound)
+
+    def test_store_failure_cancels_queued_lookups(self):
+        cold = self._prepare(MemoryCache(), "cold", 1)
+        values = self._results(cold["items"], cold)
+        failing = sorted(values)[0]
+        cache = DelayedFailingCache(values, delay=0.01, failing=[failing])
+        with self.assertRaises(CacheError):
+            self._prepare(cache, "failing", 2)
+        self.assertLessEqual(cache.started, cache.completed + 2)
+        self.assertLess(cache.started, len(values))
+
+    def test_invalid_entries_remain_misses_under_concurrency(self):
+        cold = self._prepare(MemoryCache(), "cold", 1)
+        values = self._results(cold["items"], cold)
+        invalid = sorted(values)[0]
+        cache = DelayedFailingCache(values, invalid=[invalid])
+        plan = self._prepare(cache, "invalid", 8)
+        self.assertEqual(plan["cache_stats"]["misses"], 1)
+        self.assertNotIn(invalid, plan["hits"])
+        self.assertEqual([invalid], plan["workers"][0]["keys"])
+
+    def test_cache_concurrency_bounds_validated(self):
+        for value in (0, -1, 65, True, 1.0, "8"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self._prepare(MemoryCache(), "invalid-bound", value)
+
+    def test_command_line_exposes_the_bound(self):
+        arguments = parser().parse_args(
+            [
+                "prepare",
+                "--repo",
+                ".",
+                "--head",
+                "h",
+                "--target",
+                "t",
+                "--identity",
+                "i",
+                "--profile",
+                "p",
+                "--rules",
+                "r",
+                "--cache",
+                "c",
+                "--output-dir",
+                "o",
+            ]
+        )
+        self.assertEqual(arguments.cache_concurrency, 8)
+        self.assertEqual(
+            parser()
+            .parse_args(
+                [
+                    "compare",
+                    "--repo",
+                    ".",
+                    "--head",
+                    "h",
+                    "--target",
+                    "t",
+                    "--identity",
+                    "i",
+                    "--profile",
+                    "p",
+                    "--rules",
+                    "r",
+                    "--cache",
+                    "c",
+                    "--output-dir",
+                    "o",
+                    "--cache-concurrency",
+                    "3",
+                ]
+            )
+            .cache_concurrency,
+            3,
+        )

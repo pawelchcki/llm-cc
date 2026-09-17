@@ -25,6 +25,7 @@ def _common(parser):
     parser.add_argument("--cache", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--max-workers", type=int, default=4)
+    parser.add_argument("--cache-concurrency", type=int, default=8)
     parser.add_argument("--refresh-days", type=int, default=20)
     parser.add_argument("--expire-days", type=int, default=30)
     parser.add_argument("--store-options")
@@ -43,6 +44,7 @@ def parser():
     worker.add_argument("--model", required=True)
     worker.add_argument("--installed-root", required=True)
     worker.add_argument("--deadline-seconds", type=int, default=6600)
+    worker.add_argument("--cache-concurrency", type=int, default=8)
     worker.add_argument("--store-options")
     aggregation = commands.add_parser("aggregate")
     aggregation.add_argument("--plan", required=True)
@@ -82,6 +84,7 @@ def _run(args):
             args.model,
             args.installed_root,
             args.deadline_seconds,
+            args.cache_concurrency,
         )
         return 0 if artifact["status"] == "complete" else 1
     cache = ResultCache(store, args.refresh_days, args.expire_days)
@@ -95,6 +98,7 @@ def _run(args):
         cache=cache,
         output_dir=args.output_dir,
         max_workers=args.max_workers,
+        cache_concurrency=args.cache_concurrency,
     )
     if args.command == "prepare":
         prepare(**kwargs)

@@ -76,10 +76,26 @@ pull-request comments will link to it.
 `prepare` reads `.llm-cc/comparison-rules.json` from the **target** commit's
 tree. A pull request therefore cannot reclassify its own files, and rules that
 fail validation fail the run instead of silently reverting to the host defaults.
-Accepted keys are `exclude`, `tests`, `tooling` and `extensions`; glob lists hold
-non-empty patterns of at most 256 characters, at most 512 patterns in total, and
-the canonical document must stay under 64 KiB. Repositories without that file use
-the rules the host publishes.
+Accepted keys are `exclude`, `tests`, `tooling`, `extensions` and `paths`; glob
+lists hold non-empty patterns of at most 256 characters, at most 512 patterns in
+total including `paths`, and the canonical document must stay under 64 KiB.
+Repositories without that file use the rules the host publishes.
+
+`paths` is an ordered list of `{"pattern": <glob>, "language": <supported>}`
+objects that choose a language by location rather than by extension, for a
+repository where the same extension means different languages in different
+directories:
+
+```json
+{"paths": [{"pattern": "include/legacy/**/*.h", "language": "c"}]}
+```
+
+Patterns match the full repository path, case-sensitively, like the category
+globs. The first matching `paths` rule wins, then `extensions`, then the
+built-in extension table. The resolved language is part of a file's cache key,
+so the same bytes under two differently overridden directories are scored
+separately. Symlinks and submodules stay unscorable whatever rule matches
+them.
 
 Run without Bazel using `python3 -m tools.comparison prepare` (Python 3.11+ and
 Git). A consuming module can run `@llm_cc//tools/comparison:prepare`, including
@@ -131,7 +147,35 @@ python3 -m tools.comparison.profile \
   --output profile.json
 ```
 
-This checks the backend manifest's source commit and hashes installed files.
+This `dogfood` preset checks the backend manifest's source commit and hashes
+installed files. Any other scorer build uses the `generate` subcommand, which
+derives the same identity instead of pinning it:
+
+```sh
+python3 -m tools.comparison.profile generate \
+  --installed-root /opt/llm-cc --backend rocm \
+  --execution-image 'registry.example/scorer@sha256:<64-hex-digest>' \
+  --model /models/coder.gguf \
+  --context 32768 --kv-cache-type q8_0 --output profile.json
+```
+
+`generate` accepts one flag per scoring setting, and takes the model identity
+either from a local file (`--model`, hashed in place) or from explicit
+`--model-sha256 --model-bytes [--model-url]`. Both subcommands run the installed
+`bin/llm-cc` offline in a sanitized environment with private cache directories
+(`--version` and `cache status --format json`) to read the executable's version,
+its embedded source commit, its backend configuration, its analysis version and
+its inference ABI, and reject a tree whose executable, backend manifest and
+llama.cpp commit disagree. An executable built before it reported its own
+identity is still accepted only for the pinned dogfood commit, whose analysis
+version is known, with the manifest's claim recorded as unverified. A `--model` naming
+one shard of a split GGUF pins the whole set, exactly as the scorer reports it. Neither command downloads anything, but the generator
+must run on a host that can execute the installed binary. `--flash-attn auto` and
+`--entropy-reduction auto` are rejected because the scorer would then resolve
+those settings against the runtime, leaving the expected configuration
+non-deterministic. Optional `--expected-source-commit` and
+`--expected-inference-abi` re-assert operator pins. `setup_bazzite.py` is
+unaffected; it consumes an already generated profile file.
 The CUDA profile pins the model's SHA-256 and 14,066,972,416-byte size, all
 layers on GPU, context 131072, batch 256, Flash Attention on, Q8_0 K/V with
 offload, device entropy reduction, structural hierarchy, tau 0.67 and alpha 0.8.
@@ -153,7 +197,14 @@ restricted by the writer's umask/default ACL. For executor accounts sharing a
 filesystem cache, provision its root with their shared group and mode `2770`,
 and run each stage with umask `0007` so new
 directories and objects remain accessible to that group. An owner-only deployment
-can use umask `0077`. S3 requires the optional `boto3`
+can use umask `0077`. Preparation reads cached results in
+parallel, bounded by `--cache-concurrency` (default 8, maximum 64); the same
+option on the `worker` stage bounds restoring native entropy entries. The
+coordinator forwards a narrowed `cache_concurrency` to every remote worker, so
+lowering it below the default requires redeploying the execution bundle from a
+commit that accepts the option. Read or
+authentication errors still fail the run, and the plan does not depend on the
+bound. S3 requires the optional `boto3`
 dependency in coordinator and worker environments. A `--store-options` JSON file
 can contain `endpoint_url` and `region_name`; provide credentials through the AWS
 environment/provider chain, never in plan artifacts. Read/authentication/transport
@@ -164,7 +215,12 @@ published individually; locks, accounting, temporary files and model memos stay
 private to each worker.
 
 Workers verify the scorer, model, and source blobs before running one invocation
-per language. Complete JSONL configuration, results, totals and process exit must
+per language. Model verification re-stats the file before and after hashing, and
+the worker then seeds llm-cc's own digest memo with the digest it just verified,
+so the scorer never re-hashes the multi-gigabyte model, not even once, however
+many languages the assignment spans. The memo is written only from a digest that
+matched the profile, lives outside the published namespace, and is deleted with
+the worker's private temporary directory. Complete JSONL configuration, results, totals and process exit must
 validate for every invocation before results are published. Each worker has a
 110-minute deadline within a two-hour job, terminates scorer process groups on
 cancellation, and retains separate JSONL/stderr logs and a structured artifact.

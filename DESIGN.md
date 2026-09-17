@@ -119,7 +119,11 @@ marked dirty before changing committed entries and rebuilt after interrupted
 operations. A conservative next-expiry timestamp avoids scanning on ordinary
 insertions. Digest memos in `model-digests/` use streaming SHA-256 and a file
 signature checked before and after hashing, retrying once if the file changes.
-Validated hits survive timestamp or maintenance failures.
+Validated hits survive timestamp or maintenance failures. The memo file format
+is documented in `src/model_identity.h` as the supported interface for external
+verifiers: a caller that has already hashed the model under the same signature,
+such as the comparison worker, can write the memo so the scorer reuses that
+digest instead of hashing again.
 
 ## Build boundaries
 
@@ -142,6 +146,11 @@ footer entry names the backend and records offset zero, the body length, and a
 SHA-256 over the complete body. Each bundle is accompanied by a checksum and
 `manifest.json`; the manifest records the backend name, llm-cc version, build
 Git SHA, compatibility fields, bundle SHA-256, and size.
+
+The backend configuration fingerprint (`LLM_CC_BACKEND_CONFIGURATION`) hashes
+every file that can change the produced backend binaries, including every patch
+applied to a pinned backend dependency; `//:provenance_test` fails if a patch is
+applied without joining that list.
 
 Stamped binaries contain an artifact base URL. For development builds it is
 formed from the configured resolver as

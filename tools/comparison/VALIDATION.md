@@ -22,6 +22,46 @@ CUDA and generated-comment publication acceptance remain outstanding.
   metrics** completed in 0.0464 seconds with 109 unique cache hits and zero GPU
   workers. This measures the CPU/cache stages, not model inference or remote
   object-store latency.
+- Warm-preparation cache concurrency, measured on 2026-09-15 on this repository
+  with 132 seeded results, zero misses and an empty worker plan. `plan.json` was
+  byte-identical across all four runs.
+
+  | Store | `--cache-concurrency 1` | `--cache-concurrency 8` |
+  |---|---:|---:|
+  | Local filesystem | 0.053 s | 0.056 s |
+  | 20 ms injected read latency | 2.707 s | 0.385 s |
+
+  A local filesystem cache is already fast enough that the bound does not
+  matter; the default of 8 exists for high-latency object stores. Reproduce it
+  by seeding a filesystem cache from a cold plan, then timing preparation at
+  each bound:
+
+  ```python
+  import time
+  from tools.comparison.cache import FilesystemStore, ResultCache
+  from tools.comparison.pipeline import prepare
+
+  class SlowStore(FilesystemStore):
+      def get(self, key):
+          time.sleep(0.02)
+          return super().get(key)
+
+  cold = prepare(repo, head, base, identity, profile, {},
+                 ResultCache(FilesystemStore(cache)), out, 4)
+  writer = ResultCache(FilesystemStore(cache))
+  for key, item in cold["items"].items():
+      writer.put({"schema_version": 1, "key": key,
+                  "fingerprint": cold["fingerprint"],
+                  "content_sha256": item["content_sha256"],
+                  "language": item["language"], "llm_cc": 1.0,
+                  "token_count": 10})
+  for concurrency in (1, 8):
+      start = time.monotonic()
+      prepare(repo, head, base, identity, profile, {},
+              ResultCache(SlowStore(cache)), out, 4,
+              cache_concurrency=concurrency)
+      print(concurrency, time.monotonic() - start)
+  ```
 
 The companion publisher passed all 419 ci-toolkit unit tests and the TypeScript
 check. Coverage includes concurrent initial publications, one-comment updates,

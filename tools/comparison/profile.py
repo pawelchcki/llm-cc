@@ -1,12 +1,24 @@
-"""Materialize the pinned dogfood contract from an installed scorer tree."""
+"""Materialize a scoring identity from an installed scorer tree.
+
+The generator derives the scorer identity by executing the installed
+executable offline (`bin/llm-cc --version` and `bin/llm-cc cache status
+--format json`); it never trusts an operator-supplied commit or ABI.  The
+dogfood preset keeps its pinned constants as cross-checks.
+"""
 
 import argparse
+import dataclasses
 import hashlib
 import json
+import math
+import os
 from pathlib import Path
 import re
+import subprocess
+import sys
+import tempfile
 
-from .common import CONTAINER_ENVIRONMENT_POLICY
+from .common import CONTAINER_ENVIRONMENT_POLICY, model_digest, model_files
 
 SOURCE_COMMIT = "4646123b274005c587dfeb614f17ddf5fd36aef6"
 MODEL_SHA256 = "5a2e25280075d769abdb111de8211d9d3367f2ae0d0e6166a288ee6e8ed0345d"
@@ -17,10 +29,517 @@ MODEL_URL = (
 )
 INFERENCE_ABI = "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v3"
 
+BACKENDS = ("cuda", "rocm")
+DEFAULT_CONTEXT = {"rocm": 32768, "cuda": 131072}
+FLASH_ATTENTION = ("on", "off")
+KV_CACHE_TYPES = ("f16", "q8_0", "q4_0")
+KV_OFFLOAD = ("on", "off")
+ENTROPY_REDUCTIONS = ("device", "host")
+HIERARCHIES = ("structural", "reference")
+SCORE_MODES = ("raw", "lmcc", "density", "mean")
+INFERENCE_ABI_PATTERN = r"llama\.cpp-[0-9a-f]{40}/entropy-v\d+"
+
+# `cache status --format json` gained source_commit and analysis_version after
+# the pinned dogfood scorer was built. When a scorer reports them they are
+# authoritative; otherwise the profile falls back to what that pinned build is
+# known to do, and its commit is only as trustworthy as its backend manifest.
+PINNED_ANALYSIS_VERSION = 2
+
+# The native entropy cache layout workers restore into and publish from.
+NATIVE_STORAGE_VERSION = 2
+
 
 def digest_file(path):
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def _signature_of(status):
+    """The fields the scorer compares when deciding a model is unchanged."""
+    return (
+        status.st_size,
+        status.st_mtime_ns,
+        status.st_ctime_ns,
+        status.st_dev,
+        status.st_ino,
+    )
+
+
+def _signature(path):
+    return _signature_of(path.stat())
+
+
+def _digest_with_signature(path):
+    """Hash a file and report the signature of the descriptor actually read.
+
+    Statting a pathname and separately reopening it can describe two different
+    inodes when a directory is swapped and rolled back mid-hash, which would
+    pin a digest no stable model reproduces.
+    """
+    with path.open("rb") as stream:
+        signature = _signature_of(os.fstat(stream.fileno()))
+        return hashlib.file_digest(stream, "sha256").hexdigest(), signature
+
+
+def _text(value):
+    return str(value)
+
+
+@dataclasses.dataclass(frozen=True)
+class _Flag:
+    """One scorer flag and the configuration keys it must be echoed in."""
+
+    flag: str
+    field: str | None = None
+    constant: str | None = None
+    render: object = _text
+    expected_keys: tuple = ()
+    derived: object = None
+
+    def value(self, settings):
+        return self.constant if self.field is None else getattr(settings, self.field)
+
+
+# Single source of truth: `argv()` and `expected_configuration()` are both
+# generated from this table so the launched flags and the keys the worker
+# validates cannot drift apart.
+CONTRACT = (
+    _Flag(
+        "--backend",
+        "backend",
+        derived=lambda s: {"backend": f"{s.backend}/gpu-layers={s.gpu_layers}"},
+    ),
+    _Flag("--gpu-layers", "gpu_layers", expected_keys=("gpu_layers",)),
+    _Flag("--context", "context", expected_keys=("context",)),
+    _Flag("--batch-size", "batch_size", expected_keys=("batch_size",)),
+    _Flag(
+        "--flash-attn",
+        "flash_attn",
+        expected_keys=("flash_attn", "effective_flash_attn"),
+    ),
+    _Flag(
+        "--kv-cache-type",
+        "kv_cache_type",
+        expected_keys=("kv_cache_type", "effective_kv_cache_type"),
+    ),
+    _Flag(
+        "--kv-offload",
+        "kv_offload",
+        expected_keys=("kv_offload", "effective_kv_offload"),
+    ),
+    _Flag(
+        "--entropy-reduction",
+        "entropy_reduction",
+        expected_keys=("entropy_reduction", "effective_entropy_reducer"),
+    ),
+    _Flag("--hierarchy", "hierarchy", expected_keys=("hierarchy_mode",)),
+    _Flag("--tau", "tau", render=repr, expected_keys=("tau",)),
+    _Flag("--alpha", "alpha", render=repr, expected_keys=("alpha",)),
+    _Flag("--score", "score_mode", expected_keys=("score_mode",)),
+    _Flag("--progress", constant="always", expected_keys=("progress",)),
+    _Flag("--hotspots", "hotspots", expected_keys=("hotspots",)),
+)
+
+# Configuration keys the scorer always reports for the orchestrated flags the
+# worker itself supplies, plus derived constants.
+CONSTANT_CONFIGURATION = {
+    # Overridden by the version an installation reports; this is the fallback
+    # for the pinned scorer that predates the probe, not this checkout's value.
+    "analysis_version": PINNED_ANALYSIS_VERSION,
+    "include_headers": True,
+    "no_ignore": True,
+    "no_download": True,
+    "backend_diagnostics": False,
+    "tau_rule": "absolute",
+    "tau_percentile": None,
+}
+
+
+def _positive_int(name, value, limit=4294967295):
+    if type(value) is not int or not 0 < value <= limit:
+        raise ValueError(f"{name} must be a positive 32-bit integer")
+
+
+def _finite(name, value):
+    if type(value) not in (int, float) or not math.isfinite(value):
+        raise ValueError(f"{name} must be a finite number")
+
+
+def _choice(name, value, choices):
+    if value not in choices:
+        raise ValueError(f"{name} must be one of {', '.join(choices)}")
+
+
+@dataclasses.dataclass(frozen=True)
+class ScoringSettings:
+    """Deterministic scorer settings shared by argv and expected configuration."""
+
+    backend: str = "cuda"
+    gpu_layers: int = -1
+    context: int | None = None
+    batch_size: int = 256
+    flash_attn: str = "on"
+    kv_cache_type: str = "q8_0"
+    kv_offload: str = "on"
+    entropy_reduction: str = "device"
+    hierarchy: str = "structural"
+    tau: float = 0.67
+    alpha: float = 0.8
+    score_mode: str = "lmcc"
+    hotspots: int = 0
+
+    def __post_init__(self):
+        _choice("backend", self.backend, BACKENDS)
+        if self.context is None:
+            object.__setattr__(self, "context", DEFAULT_CONTEXT[self.backend])
+        self.validate()
+
+    def validate(self):
+        _choice("backend", self.backend, BACKENDS)
+        _positive_int("context", self.context)
+        # Scoring plans windows of at least two tokens.
+        if self.context < 2:
+            raise ValueError("context must be at least 2")
+        _positive_int("batch_size", self.batch_size)
+        # The scorer parses --gpu-layers as int32 and rejects anything wider,
+        # and every supported backend is an accelerator, for which it refuses
+        # zero layers as a contradictory CPU/accelerator request.
+        if (
+            type(self.gpu_layers) is not int
+            or not -1 <= self.gpu_layers <= 2147483647
+        ):
+            raise ValueError("gpu_layers must be an int32 >= -1")
+        if self.gpu_layers == 0:
+            raise ValueError("gpu_layers must be -1 or positive on a GPU backend")
+        # The scorer parses --hotspots as size_t.
+        if type(self.hotspots) is not int or not 0 <= self.hotspots <= 2**64 - 1:
+            raise ValueError("hotspots must be a size_t")
+        # `auto` resolves against the runtime, so the scorer's effective_*
+        # values would stop being predictable from the profile alone.
+        _choice("flash_attn", self.flash_attn, FLASH_ATTENTION)
+        _choice("kv_cache_type", self.kv_cache_type, KV_CACHE_TYPES)
+        _choice("kv_offload", self.kv_offload, KV_OFFLOAD)
+        _choice("entropy_reduction", self.entropy_reduction, ENTROPY_REDUCTIONS)
+        _choice("hierarchy", self.hierarchy, HIERARCHIES)
+        _choice("score_mode", self.score_mode, SCORE_MODES)
+        _finite("tau", self.tau)
+        # The scorer accepts every finite non-negative absolute threshold.
+        if self.tau < 0:
+            raise ValueError("tau must not be negative")
+        _finite("alpha", self.alpha)
+        if not 0 <= self.alpha <= 1:
+            raise ValueError("alpha must be between zero and one")
+        # Combinations each scorer run rejects, so an accepted profile is
+        # executable rather than failing on every worker invocation.
+        if self.kv_cache_type != "f16" and self.flash_attn == "off":
+            raise ValueError("quantized kv_cache_type requires flash_attn on")
+        if self.entropy_reduction == "device" and self.gpu_layers != -1:
+            raise ValueError("device entropy_reduction requires gpu_layers -1")
+
+    def argv(self):
+        argv = []
+        for row in CONTRACT:
+            argv.extend([row.flag, row.render(row.value(self))])
+        return argv
+
+    def expected_configuration(self, inference_abi, analysis_version=None):
+        expected = dict(CONSTANT_CONFIGURATION)
+        if analysis_version is not None:
+            expected["analysis_version"] = analysis_version
+        for row in CONTRACT:
+            for key in row.expected_keys:
+                expected[key] = row.value(self)
+            if row.derived is not None:
+                expected.update(row.derived(self))
+        expected["inference_abi"] = inference_abi
+        return expected
+
+
+@dataclasses.dataclass(frozen=True)
+class ModelSpec:
+    """Digest-pinned identity of the GGUF model the scorer must load."""
+
+    sha256: str
+    bytes: int
+    url: str | None = None
+
+    def __post_init__(self):
+        if not isinstance(self.sha256, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", self.sha256
+        ):
+            raise ValueError("model_sha256 must be a lowercase SHA-256 digest")
+        # The scorer reports a model's size as uint64 and can never match a
+        # wider value, so such a profile fails every worker's verification.
+        if type(self.bytes) is not int or not 0 < self.bytes <= 2**64 - 1:
+            raise ValueError("model_bytes must be a positive uint64")
+        if self.url is not None and (
+            not isinstance(self.url, str) or not self.url.startswith("https://")
+        ):
+            raise ValueError("model_url must be an https URL")
+
+    @classmethod
+    def from_path(cls, path, sha256=None, bytes=None, url=None):
+        """Pin the identity the scorer reports, across every shard it loads."""
+        shards = model_files(path)
+        # Hashing many gigabytes takes long enough for a shard to be replaced
+        # underneath us, and a composite digest mixing old and new shards
+        # would pin an identity no stable model set can ever reproduce. So
+        # take every signature first and require the whole set to be unchanged
+        # once the last shard has been hashed.
+        before = [_signature(shard) for shard in shards]
+        measured = [_digest_with_signature(shard) for shard in shards]
+        digests = [digest for digest, _ in measured]
+        for shard, signature, (_, read) in zip(shards, before, measured):
+            if read != signature or _signature(shard) != signature:
+                raise ValueError("model changed while being hashed: %s" % shard)
+        size = sum(signature[0] for signature in before)
+        composite = model_digest(digests)
+        if (sha256 is not None and sha256 != composite) or (
+            bytes is not None and bytes != size
+        ):
+            raise ValueError("model file does not match the declared digest or size")
+        return cls(composite, size, url)
+
+
+@dataclasses.dataclass(frozen=True)
+class ScorerInstallation:
+    """Identity of an installed scorer tree, derived by executing it."""
+
+    root: str
+    backend: str
+    version: str
+    source_commit: str
+    inference_abi: str
+    manifest: dict
+    installed_files: dict
+    # False when the executable does not report its own commit and backend
+    # configuration, so the recorded identity is the backend manifest's claim
+    # rather than a verified fact.
+    executable_identity_verified: bool = True
+    analysis_version: int = PINNED_ANALYSIS_VERSION
+
+    def __getitem__(self, key):
+        return getattr(self, key)
+
+
+def _sanitized_environment(sandbox, runtime_dir):
+    return {
+        "PATH": "/usr/bin:/bin",
+        "LANG": "C.UTF-8",
+        "HOME": str(sandbox),
+        "LLM_CC_ENTROPY_CACHE_DIR": str(sandbox / "entropy"),
+        "LLM_CC_CACHE_DIR": str(sandbox / "models"),
+        "LLM_CC_RUNTIME_DIR": str(runtime_dir),
+    }
+
+
+def _run_scorer(executable, arguments, sandbox, runtime_dir, timeout):
+    try:
+        completed = subprocess.run(
+            [str(executable), *arguments],
+            env=_sanitized_environment(sandbox, runtime_dir),
+            cwd=str(sandbox),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=timeout,
+            start_new_session=True,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise ValueError(
+            "installed scorer timed out running " + " ".join(arguments)
+        ) from error
+    except OSError as error:
+        raise ValueError(
+            "installed scorer could not be executed: " + str(error)
+        ) from error
+    if completed.returncode != 0:
+        raise ValueError(
+            "installed scorer failed running %s (exit %d)"
+            % (" ".join(arguments), completed.returncode)
+        )
+    try:
+        return completed.stdout.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError("installed scorer output is not UTF-8") from error
+
+
+def _validate_manifest(manifest, backend):
+    if (
+        not isinstance(manifest, dict)
+        or not isinstance(manifest.get("git_sha"), str)
+        or not re.fullmatch(r"[0-9a-f]{40}", manifest["git_sha"])
+        or not isinstance(manifest.get("version"), str)
+        or not manifest["version"]
+        or not isinstance(manifest.get("llama_cpp_commit"), str)
+        or not re.fullmatch(r"[0-9a-f]{40}", manifest["llama_cpp_commit"])
+        or not isinstance(manifest.get("configuration"), str)
+        or not re.fullmatch(r"[0-9a-f]{64}", manifest["configuration"])
+        or not isinstance(manifest.get("ggml_backend_api_version"), str)
+        or not manifest["ggml_backend_api_version"]
+        # Backend resolution compares the manifest's own name with the backend
+        # it was asked for, so a mislabelled manifest never loads.
+        or manifest.get("name") != backend
+    ):
+        raise ValueError("backend manifest is incomplete")
+
+
+def inspect_installation(
+    installed_root,
+    backend,
+    *,
+    timeout=60,
+    expected_source_commit=None,
+    expected_inference_abi=None,
+):
+    """Hash an installed tree and execute it offline to derive its identity."""
+    _choice("backend", backend, BACKENDS)
+    root = Path(installed_root).resolve(strict=True)
+    manifests = sorted(root.glob(f"lib/llm-cc/backends/**/{backend}.manifest.json"))
+    if len(manifests) != 1:
+        raise ValueError(
+            f"install exactly one pinned {backend.upper()} backend before creating the profile"
+        )
+    manifest = json.loads(manifests[0].read_text())
+    if expected_source_commit is not None and (
+        not isinstance(manifest, dict)
+        or manifest.get("git_sha") != expected_source_commit
+    ):
+        raise ValueError(
+            f"{backend.upper()} backend must be built from {expected_source_commit}"
+        )
+    _validate_manifest(manifest, backend)
+    files = {}
+    for path in sorted(root.rglob("*")):
+        if path.is_symlink():
+            raise ValueError(f"installed identity cannot contain symlinks: {path}")
+        if path.is_file():
+            files[path.relative_to(root).as_posix()] = digest_file(path)
+    if "bin/llm-cc" not in files:
+        raise ValueError("installed bin/llm-cc is missing")
+    bundle = manifests[0].with_name(f"{backend}.bundle")
+    if (
+        not bundle.is_file()
+        or manifest.get("sha256") != files.get(bundle.relative_to(root).as_posix())
+        or type(manifest.get("size")) is not int
+        or manifest["size"] != bundle.stat().st_size
+    ):
+        raise ValueError(
+            "backend manifest checksum or size does not match installed bundle"
+        )
+    executable = root / "bin/llm-cc"
+    with tempfile.TemporaryDirectory() as sandbox_name:
+        sandbox = Path(sandbox_name)
+        (sandbox / "entropy").mkdir()
+        (sandbox / "models").mkdir()
+        runtime_dir = root / "lib/llm-cc"
+        version = _run_scorer(
+            executable, ["--version"], sandbox, runtime_dir, timeout
+        ).strip()
+        status_text = _run_scorer(
+            executable,
+            # A positional path is parsed as the repository to report on and
+            # is rejected outside a Git worktree; the sandbox environment
+            # already points LLM_CC_ENTROPY_CACHE_DIR at this directory.
+            ["cache", "status", "--format", "json"],
+            sandbox,
+            runtime_dir,
+            timeout,
+        )
+    if version != "llm-cc " + manifest["version"]:
+        raise ValueError(
+            "installed executable reports %r but the backend manifest declares version %r"
+            % (version, manifest["version"])
+        )
+    try:
+        status = json.loads(status_text)
+    except json.JSONDecodeError as error:
+        raise ValueError("cache status did not produce JSON") from error
+    if not isinstance(status, dict) or type(status.get("storage_version")) is not int:
+        raise ValueError("cache status JSON is missing storage_version")
+    # Workers restore and publish native entries under `v2/entropy` only, so
+    # another layout would silently defeat the shared inference cache.
+    if status["storage_version"] != NATIVE_STORAGE_VERSION:
+        raise ValueError(
+            "installed executable uses entropy storage version %d, but workers "
+            "exchange version %d"
+            % (status["storage_version"], NATIVE_STORAGE_VERSION)
+        )
+    inference_abi = status.get("inference_abi")
+    if not isinstance(inference_abi, str) or not re.fullmatch(
+        INFERENCE_ABI_PATTERN, inference_abi
+    ):
+        raise ValueError("cache status JSON is missing a valid inference_abi")
+    if not inference_abi.startswith("llama.cpp-" + manifest["llama_cpp_commit"] + "/"):
+        raise ValueError(
+            "installed executable reports inference ABI %r but the backend was built "
+            "against llama.cpp %s" % (inference_abi, manifest["llama_cpp_commit"])
+        )
+    # The manifest describes the backend bundle; only this probe establishes
+    # the commit the executable itself embeds and resolves backends with.
+    reported_commit = status.get("source_commit")
+    executable_identity_verified = reported_commit is not None
+    if executable_identity_verified:
+        if not isinstance(reported_commit, str) or not re.fullmatch(
+            r"[0-9a-f]{40}", reported_commit
+        ):
+            raise ValueError("cache status JSON is missing a valid source_commit")
+        if reported_commit != manifest["git_sha"]:
+            raise ValueError(
+                "installed executable was built from commit %s but the backend "
+                "manifest declares %s" % (reported_commit, manifest["git_sha"])
+            )
+        source_commit = reported_commit
+    else:
+        source_commit = manifest["git_sha"]
+    analysis_version = status.get("analysis_version")
+    if analysis_version is None:
+        # Only the pinned dogfood build is known to emit a particular version
+        # without reporting it. Any other unreporting scorer could emit
+        # anything, and guessing wrong fails every worker invocation.
+        if manifest["git_sha"] != SOURCE_COMMIT:
+            raise ValueError(
+                "installed executable does not report analysis_version; only "
+                "the pinned " + SOURCE_COMMIT + " build may omit it"
+            )
+        analysis_version = PINNED_ANALYSIS_VERSION
+    elif type(analysis_version) is not int or analysis_version <= 0:
+        raise ValueError("cache status JSON is missing a valid analysis_version")
+    # Backend resolution derives the installed bundle path from the
+    # executable's embedded configuration and refuses a bundle built with a
+    # different one, so an installation whose two halves disagree can never
+    # load a backend.
+    configuration = status.get("backend_configuration")
+    if configuration is not None:
+        if not isinstance(configuration, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", configuration
+        ):
+            raise ValueError(
+                "cache status JSON is missing a valid backend_configuration"
+            )
+        if configuration != manifest["configuration"]:
+            raise ValueError(
+                "installed executable was built with backend configuration %s "
+                "but the backend manifest declares %s"
+                % (configuration, manifest["configuration"])
+            )
+    else:
+        executable_identity_verified = False
+    if expected_inference_abi is not None and inference_abi != expected_inference_abi:
+        raise ValueError(
+            f"{backend.upper()} backend must report inference ABI {expected_inference_abi}"
+        )
+    return ScorerInstallation(
+        root=str(root),
+        backend=backend,
+        version=manifest["version"],
+        source_commit=source_commit,
+        executable_identity_verified=executable_identity_verified,
+        analysis_version=analysis_version,
+        inference_abi=inference_abi,
+        manifest=manifest,
+        installed_files=files,
+    )
 
 
 def _validate_execution_host(host):
@@ -56,6 +575,90 @@ def _validate_execution_host(host):
             raise ValueError("runtime_files must map absolute paths to SHA-256 digests")
 
 
+def validate_execution(execution_image, execution_host, backend, max_file_bytes):
+    """Reject mutable images and incomplete bare-host identities."""
+    if execution_image == "none":
+        if backend != "rocm":
+            raise ValueError("bare dogfooding requires the ROCm backend")
+        _validate_execution_host(execution_host)
+    elif not isinstance(execution_image, str) or not re.fullmatch(
+        r"[^\s]+@sha256:[0-9a-f]{64}", execution_image
+    ):
+        raise ValueError("execution image must be pinned by its SHA-256 digest")
+    elif execution_host is not None:
+        raise ValueError("execution_host requires execution_image='none'")
+    if type(max_file_bytes) is not int or max_file_bytes <= 0:
+        raise ValueError("max_file_bytes must be a positive integer")
+
+
+def build_profile(
+    installation,
+    model,
+    settings,
+    *,
+    execution_image,
+    execution_host=None,
+    max_file_bytes=65536,
+    expected_source_commit=None,
+    expected_inference_abi=None,
+):
+    """Assemble the profile document from a derived installation identity."""
+    settings.validate()
+    if installation.backend != settings.backend:
+        raise ValueError("settings backend differs from the inspected installation")
+    validate_execution(
+        execution_image, execution_host, settings.backend, max_file_bytes
+    )
+    if (
+        expected_source_commit is not None
+        and installation.source_commit != expected_source_commit
+    ):
+        raise ValueError(
+            f"{settings.backend.upper()} backend must be built from {expected_source_commit}"
+        )
+    if (
+        expected_inference_abi is not None
+        and installation.inference_abi != expected_inference_abi
+    ):
+        raise ValueError(
+            f"{settings.backend.upper()} backend must report inference ABI "
+            + expected_inference_abi
+        )
+    build = {
+        "source_commit": installation.source_commit,
+        "inference_abi": installation.inference_abi,
+        "installed_files": installation.installed_files,
+        "backend_manifest": installation.manifest,
+        "execution_image": execution_image,
+        "model_sha256": model.sha256,
+        "model_bytes": model.bytes,
+    }
+    if model.url is not None:
+        build["model_url"] = model.url
+    profile = {
+        "max_file_bytes": max_file_bytes,
+        # How the identity was established, not part of it: `scoring` and
+        # `build` alone are fingerprinted, so recording this cannot invalidate
+        # results a byte-identical installation already produced.
+        "inspection": {
+            "executable_identity_verified": installation.executable_identity_verified
+        },
+        "scoring": {
+            "argv": settings.argv(),
+            "expected_configuration": settings.expected_configuration(
+                installation.inference_abi, installation.analysis_version
+            ),
+        },
+        "build": build,
+    }
+    if execution_host is not None:
+        # Copy through JSON so caller mutations cannot change a prepared contract.
+        profile["build"]["execution_host"] = json.loads(json.dumps(execution_host))
+    else:
+        profile["build"]["container_environment_policy"] = CONTAINER_ENVIRONMENT_POLICY
+    return profile
+
+
 def dogfood_profile(
     installed_root,
     execution_image,
@@ -67,166 +670,153 @@ def dogfood_profile(
     kv_cache_type="q8_0",
     execution_host=None,
 ):
-    root = Path(installed_root).resolve(strict=True)
-    if backend not in {"cuda", "rocm"}:
-        raise ValueError("backend must be cuda or rocm")
-    if execution_image == "none":
-        if backend != "rocm":
-            raise ValueError("bare dogfooding requires the ROCm backend")
-        _validate_execution_host(execution_host)
-    elif not re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", execution_image):
-        raise ValueError("execution image must be pinned by its SHA-256 digest")
-    elif execution_host is not None:
-        raise ValueError("execution_host requires execution_image='none'")
-    if type(max_file_bytes) is not int or max_file_bytes <= 0:
-        raise ValueError("max_file_bytes must be a positive integer")
-    if context is None:
-        context = 32768 if backend == "rocm" else 131072
-    for name, value in (("context", context), ("batch_size", batch_size)):
-        if type(value) is not int or not 0 < value <= 4294967295:
-            raise ValueError(f"{name} must be a positive 32-bit integer")
-    if kv_cache_type not in {"f16", "q8_0", "q4_0"}:
-        raise ValueError("kv_cache_type must be f16, q8_0, or q4_0")
-    manifests = sorted(root.glob(f"lib/llm-cc/backends/**/{backend}.manifest.json"))
-    if len(manifests) != 1:
-        raise ValueError(
-            f"install exactly one pinned {backend.upper()} backend before creating the profile"
-        )
-    manifest = json.loads(manifests[0].read_text())
-    if manifest.get("git_sha") != SOURCE_COMMIT:
-        raise ValueError(
-            f"{backend.upper()} backend must be built from {SOURCE_COMMIT}"
-        )
-    files = {}
-    for path in sorted(root.rglob("*")):
-        if path.is_symlink():
-            raise ValueError(f"installed identity cannot contain symlinks: {path}")
-        if path.is_file():
-            files[path.relative_to(root).as_posix()] = digest_file(path)
-    if "bin/llm-cc" not in files:
-        raise ValueError("installed bin/llm-cc is missing")
-    bundle = manifests[0].with_name(f"{backend}.bundle")
-    if (
-        not bundle.is_file()
-        or manifest.get("sha256") != files.get(bundle.relative_to(root).as_posix())
-        or type(manifest.get("size")) is not int
-        or manifest["size"] != bundle.stat().st_size
-    ):
-        raise ValueError(
-            "backend manifest checksum or size does not match installed bundle"
-        )
-    expected = {
-        # Tracks the pinned SOURCE_COMMIT scorer, not this checkout: bump it
-        # only when that scorer is rebuilt and redeployed.
-        "analysis_version": 2,
-        "hierarchy_mode": "structural",
-        "include_headers": True,
-        "no_ignore": True,
-        "no_download": True,
-        "progress": "always",
-        "context": context,
-        "batch_size": batch_size,
-        "entropy_reduction": "device",
-        "effective_entropy_reducer": "device",
-        "flash_attn": "on",
-        "effective_flash_attn": "on",
-        "kv_cache_type": kv_cache_type,
-        "effective_kv_cache_type": kv_cache_type,
-        "kv_offload": "on",
-        "effective_kv_offload": "on",
-        "backend_diagnostics": False,
-        "score_mode": "lmcc",
-        "tau_rule": "absolute",
-        "tau": 0.67,
-        "tau_percentile": None,
-        "alpha": 0.8,
-        "hotspots": 0,
-        "backend": f"{backend}/gpu-layers=-1",
-        "gpu_layers": -1,
-        "inference_abi": INFERENCE_ABI,
-    }
-    argv = [
-        "--backend",
+    """Preset that pins the shared dogfood identity to a known scorer build."""
+    settings = ScoringSettings(
+        backend=backend,
+        context=context,
+        batch_size=batch_size,
+        kv_cache_type=kv_cache_type,
+    )
+    validate_execution(execution_image, execution_host, backend, max_file_bytes)
+    installation = inspect_installation(
+        installed_root,
         backend,
-        "--gpu-layers",
-        "-1",
-        "--context",
-        str(context),
-        "--batch-size",
-        str(batch_size),
-        "--flash-attn",
-        "on",
-        "--kv-cache-type",
-        kv_cache_type,
-        "--kv-offload",
-        "on",
-        "--entropy-reduction",
-        "device",
-        "--hierarchy",
-        "structural",
-        "--tau",
-        "0.67",
-        "--alpha",
-        "0.8",
-        "--score",
-        "lmcc",
-        "--progress",
-        "always",
-        "--hotspots",
-        "0",
-    ]
-    profile = {
-        "max_file_bytes": max_file_bytes,
-        "scoring": {"argv": argv, "expected_configuration": expected},
-        "build": {
-            "source_commit": SOURCE_COMMIT,
-            "inference_abi": INFERENCE_ABI,
-            "installed_files": files,
-            "backend_manifest": manifest,
-            "execution_image": execution_image,
-            "model_sha256": MODEL_SHA256,
-            "model_bytes": MODEL_BYTES,
-            "model_url": MODEL_URL,
-        },
-    }
-    if execution_host is not None:
-        # Copy through JSON so caller mutations cannot change a prepared contract.
-        profile["build"]["execution_host"] = json.loads(json.dumps(execution_host))
-    else:
-        profile["build"]["container_environment_policy"] = CONTAINER_ENVIRONMENT_POLICY
-    return profile
+        expected_source_commit=SOURCE_COMMIT,
+        expected_inference_abi=INFERENCE_ABI,
+    )
+    return build_profile(
+        installation,
+        ModelSpec(MODEL_SHA256, MODEL_BYTES, MODEL_URL),
+        settings,
+        execution_image=execution_image,
+        execution_host=execution_host,
+        max_file_bytes=max_file_bytes,
+        expected_source_commit=SOURCE_COMMIT,
+        expected_inference_abi=INFERENCE_ABI,
+    )
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+def _add_execution_arguments(parser):
     parser.add_argument("--installed-root", required=True)
     parser.add_argument("--execution-image", default="none")
     parser.add_argument(
         "--execution-host",
         help="JSON AMD GPU identity and runtime checksums for bare execution",
     )
-    parser.add_argument("--backend", choices=("cuda", "rocm"), default="cuda")
-    parser.add_argument("--context", type=int)
-    parser.add_argument("--batch-size", type=int, default=256)
-    parser.add_argument(
-        "--kv-cache-type", choices=("f16", "q8_0", "q4_0"), default="q8_0"
-    )
     parser.add_argument("--max-file-bytes", type=int, default=65536)
     parser.add_argument("--output", required=True)
-    args = parser.parse_args()
-    profile = dogfood_profile(
-        args.installed_root,
-        args.execution_image,
-        args.max_file_bytes,
-        backend=args.backend,
-        context=args.context,
-        batch_size=args.batch_size,
-        kv_cache_type=args.kv_cache_type,
-        execution_host=json.loads(Path(args.execution_host).read_text())
-        if args.execution_host
-        else None,
+
+
+def parser():
+    result = argparse.ArgumentParser(
+        prog="python -m tools.comparison.profile", description=__doc__
     )
+    commands = result.add_subparsers(dest="command", required=True)
+    preset = commands.add_parser("dogfood", help="pinned dogfood identity")
+    _add_execution_arguments(preset)
+    preset.add_argument("--backend", choices=BACKENDS, default="cuda")
+    preset.add_argument("--context", type=int)
+    preset.add_argument("--batch-size", type=int, default=256)
+    preset.add_argument("--kv-cache-type", choices=KV_CACHE_TYPES, default="q8_0")
+    general = commands.add_parser(
+        "generate", help="identity derived from any installed scorer"
+    )
+    _add_execution_arguments(general)
+    general.add_argument("--backend", choices=BACKENDS, required=True)
+    general.add_argument("--model", help="local GGUF file to hash")
+    general.add_argument("--model-sha256")
+    general.add_argument("--model-bytes", type=int)
+    general.add_argument("--model-url")
+    general.add_argument("--expected-source-commit")
+    general.add_argument("--expected-inference-abi")
+    general.add_argument("--gpu-layers", type=int, default=-1)
+    general.add_argument("--context", type=int)
+    general.add_argument("--batch-size", type=int, default=256)
+    general.add_argument("--flash-attn", choices=FLASH_ATTENTION, default="on")
+    general.add_argument("--kv-cache-type", choices=KV_CACHE_TYPES, default="q8_0")
+    general.add_argument("--kv-offload", choices=KV_OFFLOAD, default="on")
+    general.add_argument(
+        "--entropy-reduction", choices=ENTROPY_REDUCTIONS, default="device"
+    )
+    general.add_argument("--hierarchy", choices=HIERARCHIES, default="structural")
+    general.add_argument("--tau", type=float, default=0.67)
+    general.add_argument("--alpha", type=float, default=0.8)
+    general.add_argument("--score-mode", choices=SCORE_MODES, default="lmcc")
+    general.add_argument("--hotspots", type=int, default=0)
+    return result
+
+
+def _model_spec(args):
+    if args.model:
+        return ModelSpec.from_path(
+            args.model, args.model_sha256, args.model_bytes, args.model_url
+        )
+    if not args.model_sha256 or args.model_bytes is None:
+        raise ValueError(
+            "generate requires --model PATH or --model-sha256 with --model-bytes"
+        )
+    return ModelSpec(args.model_sha256, args.model_bytes, args.model_url)
+
+
+def _host(args):
+    if not args.execution_host:
+        return None
+    return json.loads(Path(args.execution_host).read_text())
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] not in {"dogfood", "generate", "-h", "--help"}:
+        # Backward compatibility with the documented flag-only invocation.
+        argv.insert(0, "dogfood")
+    args = parser().parse_args(argv)
+    if args.command == "dogfood":
+        profile = dogfood_profile(
+            args.installed_root,
+            args.execution_image,
+            args.max_file_bytes,
+            backend=args.backend,
+            context=args.context,
+            batch_size=args.batch_size,
+            kv_cache_type=args.kv_cache_type,
+            execution_host=_host(args),
+        )
+    else:
+        settings = ScoringSettings(
+            backend=args.backend,
+            gpu_layers=args.gpu_layers,
+            context=args.context,
+            batch_size=args.batch_size,
+            flash_attn=args.flash_attn,
+            kv_cache_type=args.kv_cache_type,
+            kv_offload=args.kv_offload,
+            entropy_reduction=args.entropy_reduction,
+            hierarchy=args.hierarchy,
+            tau=args.tau,
+            alpha=args.alpha,
+            score_mode=args.score_mode,
+            hotspots=args.hotspots,
+        )
+        model = _model_spec(args)
+        validate_execution(
+            args.execution_image, _host(args), args.backend, args.max_file_bytes
+        )
+        installation = inspect_installation(
+            args.installed_root,
+            args.backend,
+            expected_source_commit=args.expected_source_commit,
+            expected_inference_abi=args.expected_inference_abi,
+        )
+        profile = build_profile(
+            installation,
+            model,
+            settings,
+            execution_image=args.execution_image,
+            execution_host=_host(args),
+            max_file_bytes=args.max_file_bytes,
+        )
     Path(args.output).write_text(json.dumps(profile, indent=2, allow_nan=False) + "\n")
+    return 0
 
 
 if __name__ == "__main__":

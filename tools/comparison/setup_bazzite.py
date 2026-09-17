@@ -19,7 +19,7 @@ import tempfile
 import zipfile
 
 from .buildbuddy import bundle_command, validate_report_links
-from .common import canonical_bytes
+from .common import canonical_bytes, model_digest, model_files
 from .profile import digest_file
 
 
@@ -147,10 +147,15 @@ def verify_assets(profile, installed_root, model):
         if not candidate.is_file() or digest_file(candidate) != expected:
             raise ValueError(f"installed file does not match profile: {relative}")
     model = Path(model).resolve(strict=True)
-    if (
-        not model.is_file()
-        or model.stat().st_size != build.get("model_bytes")
-        or digest_file(model) != build.get("model_sha256")
+    if not model.is_file():
+        raise ValueError("model size or checksum does not match profile")
+    # A profile pins the composite identity of every shard the scorer loads,
+    # so a split model must be verified as the whole set it names.
+    shards = model_files(model)
+    if sum(shard.stat().st_size for shard in shards) != build.get(
+        "model_bytes"
+    ) or model_digest([digest_file(shard) for shard in shards]) != build.get(
+        "model_sha256"
     ):
         raise ValueError("model size or checksum does not match profile")
     return root, model
@@ -245,6 +250,7 @@ def configure(args):
         "worker_env": {},
         "platform_properties": {"EstimatedComputeUnits": "1"},
         "max_workers": 1,
+        "cache_concurrency": 8,
         "refresh_days": 20,
         "expire_days": 30,
         "report_links": links,

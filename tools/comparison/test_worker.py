@@ -12,10 +12,13 @@ from unittest.mock import patch
 
 from tools.comparison.cache import FilesystemStore, ResultCache
 from tools.comparison.common import CONTAINER_ENVIRONMENT_POLICY
+from tools.comparison import worker as worker_module
 from tools.comparison.worker import (
     WorkerError,
+    _file_signature,
     _gpu_lease,
     _host_gpu_environment,
+    _record_model_digest_memos,
     run_worker,
 )
 
@@ -392,6 +395,317 @@ print(json.dumps({'type':'totals','discovered':1,'analyzed':1,'failed':0,'partia
             self.assertTrue(
                 (Path(directory) / "out" / "worker-0-python.stderr").is_file()
             )
+
+    def _real_scorer(self, directory, prelude="", exit_code=0):
+        """Install a fake scorer whose plan matches its own checksum."""
+        plan_path, model, binary, old_key, blob = self._plan(directory)
+        digest = hashlib.sha256(b"model").hexdigest()
+        script = (
+            "#!" + sys.executable + "\n"
+            "import json, os, pathlib, sys\n"
+            "source = sys.argv[-1]\n"
+            + prelude
+            + "print(json.dumps({'type':'configuration','analysis_version':3,"
+            "'model_sha256':'%s','model_size':5,'language':'python',"
+            "'no_download':True,'no_ignore':True,'include_headers':True}))\n"
+            "print(json.dumps({'type':'file','path':source,'language':'python',"
+            "'llm_cc':1.0,'token_count':1}))\n"
+            "print(json.dumps({'type':'totals','discovered':1,'analyzed':1,"
+            "'failed':0,'partial':False,'llm_cc':1.0,'token_count':1}))\n"
+            "sys.stdout.flush()\n"
+            "sys.exit(%d)\n" % (digest, exit_code)
+        )
+        binary.write_text(script)
+        binary.chmod(0o755)
+        plan = json.loads(plan_path.read_text())
+        profile = plan["profile"]
+        profile["build"]["installed_files"]["llm-cc"] = hashlib.sha256(
+            binary.read_bytes()
+        ).hexdigest()
+        fingerprint = hashlib.sha256(
+            json.dumps(profile, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        item = plan["items"].pop(old_key)
+        new_key = hashlib.sha256(
+            json.dumps(
+                [item["content_sha256"], "python", fingerprint],
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        item["key"] = new_key
+        plan["items"][new_key] = item
+        plan["workers"][0]["keys"] = [new_key]
+        plan["fingerprint"] = fingerprint
+        plan_path.write_text(json.dumps(plan))
+        return plan_path, model, binary, fingerprint, new_key
+
+    def test_model_verification_records_private_digest_memo(self):
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "memo-report.json"
+            prelude = (
+                "base = pathlib.Path(os.environ['LLM_CC_ENTROPY_CACHE_DIR'])\n"
+                "model = pathlib.Path(%r)\n"
+                "import hashlib\n"
+                "key = hashlib.sha256("
+                "os.path.realpath(model).encode('utf-8')).hexdigest()\n"
+                "memo = base / 'model-digests' / (key + '.json')\n"
+                "status = os.stat(os.path.realpath(model))\n"
+                "pathlib.Path(%r).write_text(json.dumps({\n"
+                "    'memo': json.loads(memo.read_text()),\n"
+                "    'directory_mode': oct(os.stat(memo.parent).st_mode & 0o777),\n"
+                "    'file_mode': oct(os.stat(memo).st_mode & 0o777),\n"
+                "    'entropy': str(base),\n"
+                "    'stat': {'size': status.st_size, 'mtime': status.st_mtime_ns,\n"
+                "             'device': status.st_dev, 'inode': status.st_ino,\n"
+                "             'ctime': status.st_ctime_ns}}))\n"
+                % (str(Path(directory) / "model.gguf"), str(marker))
+            )
+            plan_path, model, binary, fingerprint, _ = self._real_scorer(
+                directory, prelude
+            )
+            store = FilesystemStore(Path(directory) / "cache")
+            result = run_worker(
+                plan_path,
+                0,
+                store,
+                Path(directory) / "out",
+                str(binary),
+                model,
+                directory,
+            )
+            self.assertEqual(result["status"], "complete")
+            report = json.loads(marker.read_text())
+            self.assertEqual(
+                report["memo"],
+                {
+                    "format": "llm-cc-model-digest-memo-v1",
+                    "digest": hashlib.sha256(b"model").hexdigest(),
+                    **report["stat"],
+                },
+            )
+            self.assertEqual(report["directory_mode"], "0o700")
+            self.assertEqual(report["file_mode"], "0o600")
+            self.assertFalse(Path(report["entropy"]).exists())
+            published = list(store.list(""))
+            self.assertTrue(published)
+            self.assertFalse([key for key in published if "model-digests" in key])
+
+    def test_model_changed_during_verification_fails_without_memo(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan_path, model, binary, fingerprint, _ = self._real_scorer(directory)
+            original = worker_module._hash_with_signature
+
+            def replace(path, deadline=None):
+                digest, signature = original(path, deadline)
+                if Path(path) == Path(model):
+                    replacement = Path(directory) / "replacement.gguf"
+                    replacement.write_bytes(b"model")
+                    os.replace(replacement, model)
+                return digest, signature
+
+            with (
+                patch(
+                    "tools.comparison.worker._hash_with_signature", side_effect=replace
+                ),
+                patch(
+                    "tools.comparison.worker._record_model_digest_memos"
+                ) as recorder,
+            ):
+                result = run_worker(
+                    plan_path,
+                    0,
+                    FilesystemStore(Path(directory) / "cache"),
+                    Path(directory) / "out",
+                    str(binary),
+                    model,
+                    directory,
+                )
+            self.assertEqual(result["status"], "failed")
+            self.assertTrue(any("changed" in error for error in result["errors"]))
+            recorder.assert_not_called()
+
+    def test_unverified_digest_is_never_recorded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan_path, model, binary, fingerprint, _ = self._real_scorer(directory)
+            model.write_bytes(b"other")
+            with patch(
+                "tools.comparison.worker._record_model_digest_memos"
+            ) as recorder:
+                result = run_worker(
+                    plan_path,
+                    0,
+                    FilesystemStore(Path(directory) / "cache"),
+                    Path(directory) / "out",
+                    str(binary),
+                    model,
+                    directory,
+                )
+            self.assertEqual(result["status"], "failed")
+            self.assertTrue(
+                any("model digest or size" in error for error in result["errors"])
+            )
+            recorder.assert_not_called()
+
+    def test_worker_cleanup_removes_memo(self):
+        for exit_code, status in ((0, "complete"), (3, "failed")):
+            with (
+                self.subTest(exit_code=exit_code),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                marker = Path(directory) / "entropy-root.txt"
+                prelude = (
+                    "pathlib.Path(%r).write_text("
+                    "os.environ['LLM_CC_ENTROPY_CACHE_DIR'])\n" % str(marker)
+                )
+                plan_path, model, binary, fingerprint, _ = self._real_scorer(
+                    directory, prelude, exit_code
+                )
+                result = run_worker(
+                    plan_path,
+                    0,
+                    FilesystemStore(Path(directory) / "cache"),
+                    Path(directory) / "out",
+                    str(binary),
+                    model,
+                    directory,
+                )
+                self.assertEqual(result["status"], status)
+                entropy_root = Path(marker.read_text())
+                self.assertFalse(entropy_root.exists())
+                self.assertFalse((entropy_root / "model-digests").exists())
+
+    @unittest.skipUnless(os.name == "posix", "memo keys resolve POSIX symlinks")
+    def test_model_memo_matches_native_signature_fields(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = root / "model.gguf"
+            model.write_bytes(b"model")
+            link = root / "link.gguf"
+            link.symlink_to(model)
+            status = os.stat(model)
+            signature = _file_signature(status)
+            digest = hashlib.sha256(b"model").hexdigest()
+            entropy_root = root / "entropy"
+            entropy_root.mkdir()
+            (memo,) = _record_model_digest_memos(
+                entropy_root,
+                [{"path": link, "signature": signature, "digest": digest}],
+            )
+            expected = entropy_root / "model-digests" / (
+                hashlib.sha256(
+                    os.path.realpath(model).encode("utf-8")
+                ).hexdigest()
+                + ".json"
+            )
+            self.assertEqual(memo, expected)
+            self.assertEqual(
+                json.loads(memo.read_text()),
+                {
+                    "format": "llm-cc-model-digest-memo-v1",
+                    "digest": digest,
+                    "size": status.st_size,
+                    "mtime": status.st_mtime_ns,
+                    "ctime": status.st_ctime_ns,
+                    "device": status.st_dev,
+                    "inode": status.st_ino,
+                },
+            )
+            self.assertEqual(os.stat(memo.parent).st_mode & 0o777, 0o700)
+            self.assertEqual(os.stat(memo).st_mode & 0o777, 0o600)
+            # A different length keeps the signature mismatch independent of the
+            # filesystem's timestamp granularity.
+            model.write_bytes(b"other model")
+            with self.assertRaisesRegex(WorkerError, "changed before digest reuse"):
+                _record_model_digest_memos(
+                    root / "second",
+                    [{"path": link, "signature": signature, "digest": digest}],
+                )
+            self.assertFalse((root / "second").exists())
+
+    def test_split_model_shards_are_verified(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan_path, model, binary, _, _ = self._real_scorer(directory)
+            named = model.with_name("m-00001-of-00002.gguf")
+            model.rename(named)
+            result = run_worker(
+                plan_path,
+                0,
+                FilesystemStore(Path(directory) / "cache"),
+                Path(directory) / "out",
+                str(binary),
+                named,
+                directory,
+            )
+            self.assertEqual(result["status"], "failed")
+            self.assertTrue(
+                any("model shard" in error for error in result["errors"]), result
+            )
+
+    def test_every_shard_gets_its_own_digest_memo(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            entropy_root = root / "entropy"
+            entropy_root.mkdir()
+            shards = []
+            for index in (1, 2):
+                shard = root / ("m-%05d-of-00002.gguf" % index)
+                shard.write_bytes(b"shard-%d" % index)
+                shards.append(
+                    {
+                        "path": shard,
+                        "signature": _file_signature(os.stat(shard)),
+                        "digest": hashlib.sha256(shard.read_bytes()).hexdigest(),
+                    }
+                )
+            written = _record_model_digest_memos(entropy_root, shards)
+            self.assertEqual(len(written), 2)
+            for memo, shard in zip(written, shards):
+                key = hashlib.sha256(
+                    os.path.realpath(shard["path"]).encode("utf-8")
+                ).hexdigest()
+                self.assertEqual(memo.name, key + ".json")
+                self.assertEqual(
+                    json.loads(memo.read_text())["digest"], shard["digest"]
+                )
+
+    def test_worker_restores_native_entropy_with_the_configured_bound(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan_path, model, binary, _, _ = self._real_scorer(directory)
+            seen = []
+
+            def native_entropy(self, fingerprint, concurrency=1):
+                seen.append(concurrency)
+                return {}
+
+            with patch.object(
+                worker_module.ResultCache, "native_entropy", native_entropy
+            ):
+                result = run_worker(
+                    plan_path,
+                    0,
+                    FilesystemStore(Path(directory) / "cache"),
+                    Path(directory) / "out",
+                    str(binary),
+                    model,
+                    directory,
+                    cache_concurrency=3,
+                )
+            self.assertEqual(result["status"], "complete", result)
+            self.assertEqual(seen, [3])
+            for invalid in (0, 65, True, "3"):
+                with self.subTest(cache_concurrency=invalid):
+                    with self.assertRaisesRegex(ValueError, "cache_concurrency"):
+                        run_worker(
+                            plan_path,
+                            0,
+                            FilesystemStore(Path(directory) / "cache"),
+                            Path(directory) / "out",
+                            str(binary),
+                            model,
+                            directory,
+                            cache_concurrency=invalid,
+                        )
 
     def test_timeout_retains_partial_stream_files(self):
         with tempfile.TemporaryDirectory() as directory:

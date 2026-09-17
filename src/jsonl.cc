@@ -227,7 +227,7 @@ nlohmann::json AnalysisJson(const Analysis& analysis) {
     mean_entropy = analysis.metrics.mean_entropy;
   }
   return {{"llm_cc", analysis.llm_cc},
-          {"analysis_version", 3},
+          {"analysis_version", kAnalysisVersion},
           {"hierarchy_mode",
            analysis.hierarchy_mode == HierarchyMode::kStructural ? "structural"
                                                                  : "reference"},

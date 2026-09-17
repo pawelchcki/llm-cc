@@ -3,7 +3,9 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
+#include <utility>
 
 #include "src/entropy_cache.h"
 #include "src/sha256.h"
@@ -11,6 +13,7 @@
 #if !defined(_WIN32)
 #include <fcntl.h>
 #include <signal.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
@@ -86,6 +89,53 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::ExpectEq(llmcc::EntropyCacheKey("source", copied),
                         llmcc::EntropyCacheKey("source", first),
                         "identical copy has same cache key");
+
+#if !defined(_WIN32)
+  // The memo file is the supported interface for external verifiers: a memo
+  // written by someone else, with a signature that still matches, is reused
+  // verbatim instead of hashing the model again.
+  const fs::path external = root / "external.gguf";
+  const std::string external_bytes = "external model bytes";
+  Write(external, external_bytes);
+  const fs::path external_memo =
+      root / "model-digests" /
+      (llmcc::Sha256Hex(fs::canonical(external).generic_string()) + ".json");
+  const auto write_external_memo = [&](const std::string& digest,
+                                       std::int64_t change_time_offset,
+                                       std::uint64_t inode_offset) {
+    struct stat details{};
+    llmcc::test::Expect(stat(external.c_str(), &details) == 0,
+                        "stat external model");
+    std::ostringstream memo_json;
+    memo_json << R"({"format":"llm-cc-model-digest-memo-v1","size":)"
+              << static_cast<std::uint64_t>(details.st_size) << R"(,"mtime":)"
+              << (static_cast<std::int64_t>(details.st_mtim.tv_sec) *
+                      1000000000LL +
+                  details.st_mtim.tv_nsec)
+              << R"(,"device":)" << static_cast<std::uint64_t>(details.st_dev)
+              << R"(,"inode":)"
+              << (static_cast<std::uint64_t>(details.st_ino) + inode_offset)
+              << R"(,"ctime":)"
+              << (static_cast<std::int64_t>(details.st_ctim.tv_sec) *
+                      1000000000LL +
+                  details.st_ctim.tv_nsec + change_time_offset)
+              << R"(,"digest":")" << digest << R"("})";
+    Write(external_memo, memo_json.str());
+  };
+  const std::string sentinel(64, 'c');
+  write_external_memo(sentinel, 0, 0);
+  const auto reused = llmcc::InspectModel(external, "abi", "cpu", 32);
+  llmcc::test::ExpectEq(reused.content_digest, sentinel,
+                        "externally written memo is reused without hashing");
+  for (const auto& stale : {std::pair<std::int64_t, std::uint64_t>{1, 0},
+                            std::pair<std::int64_t, std::uint64_t>{0, 1}}) {
+    write_external_memo(sentinel, stale.first, stale.second);
+    const auto rehashed = llmcc::InspectModel(external, "abi", "cpu", 32);
+    llmcc::test::ExpectEq(rehashed.content_digest,
+                          llmcc::Sha256Hex(external_bytes),
+                          "stale memo signature falls back to hashing");
+  }
+#endif
 
   const fs::path shard1 = root / "split-00001-of-00002.gguf";
   const fs::path shard2 = root / "split-00002-of-00002.gguf";

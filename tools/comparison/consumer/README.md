@@ -43,7 +43,19 @@ category rankings rather than an error.
 Rules are read from the **target** commit's tree, so a pull request cannot
 reclassify its own files. Invalid rules fail the run rather than silently
 falling back to the host defaults. Accepted keys are `exclude`, `tests`,
-`tooling`, and `extensions`.
+`tooling`, `extensions`, and `paths`.
+
+`paths` chooses a language by location, for a repository where one extension
+means different languages in different directories:
+
+```json
+{"paths": [{"pattern": "include/legacy/**/*.h", "language": "c"}]}
+```
+
+The first matching `paths` entry wins, then `extensions`, then the built-in
+extension table. A host older than this feature rejects the key as an
+unsupported classification rule, which fails the run, so only add `paths` once
+the host runs a version that supports it.
 
 ## Private repositories and GitHub quota
 

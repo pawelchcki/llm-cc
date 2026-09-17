@@ -17,9 +17,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .common import bounded_map
+
 
 class CacheError(RuntimeError):
     """A store could not be read or written (as opposed to an invalid entry)."""
+
+
+def _read_many(store: Any, keys: list[str], concurrency: int):
+    """Yield (key, bytes) in key order, reading with bounded concurrency.
+
+    Entry bodies are released as they are consumed rather than accumulated,
+    so restoring a cache near its size limit does not need the whole cache
+    resident at once.
+    """
+    yield from zip(keys, bounded_map(store.get, keys, concurrency))
 
 
 def _canonical(value: Any) -> bytes:
@@ -318,16 +330,22 @@ class ResultCache:
     def put_entropy(self, key: str, value: bytes) -> None:
         self.store.put("entropy/" + key, value)
 
-    def native_entropy(self, fingerprint: str) -> dict[str, bytes]:
+    def native_entropy(
+        self, fingerprint: str, concurrency: int = 1
+    ) -> dict[str, bytes]:
         """Return individually checksummed native-cache files for a fingerprint.
 
         llm-cc independently checks its CBOR provenance when it consumes these;
         this layer verifies transport integrity and keeps model configurations
-        isolated before they reach that parser.
+        isolated before they reach that parser. Reads run with bounded
+        concurrency and fail on the first transport error; invalid entries are
+        still skipped.
         """
+        if type(concurrency) is not int or not 1 <= concurrency <= 64:
+            raise ValueError("concurrency must be between 1 and 64")
         output = {}
-        for key in self.store.list("entropy/" + fingerprint + "/"):
-            raw = self.store.get(key)
+        keys = sorted(self.store.list("entropy/" + fingerprint + "/"))
+        for key, raw in _read_many(self.store, keys, concurrency):
             if raw is None:
                 continue
             try:
