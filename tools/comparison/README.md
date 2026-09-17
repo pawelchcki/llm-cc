@@ -167,7 +167,8 @@ either from a local file (`--model`, hashed in place) or from explicit
 its embedded source commit, its backend configuration, its analysis version and
 its inference ABI, and reject a tree whose executable, backend manifest and
 llama.cpp commit disagree. An executable built before it reported its own
-identity is still accepted, with the manifest's claim recorded as unverified. A `--model` naming
+identity is still accepted only for the pinned dogfood commit, whose analysis
+version is known, with the manifest's claim recorded as unverified. A `--model` naming
 one shard of a split GGUF pins the whole set, exactly as the scorer reports it. Neither command downloads anything, but the generator
 must run on a host that can execute the installed binary. `--flash-attn auto` and
 `--entropy-reduction auto` are rejected because the scorer would then resolve

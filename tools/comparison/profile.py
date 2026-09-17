@@ -11,6 +11,7 @@ import dataclasses
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -53,9 +54,8 @@ def digest_file(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def _signature(path):
+def _signature_of(status):
     """The fields the scorer compares when deciding a model is unchanged."""
-    status = path.stat()
     return (
         status.st_size,
         status.st_mtime_ns,
@@ -63,6 +63,22 @@ def _signature(path):
         status.st_dev,
         status.st_ino,
     )
+
+
+def _signature(path):
+    return _signature_of(path.stat())
+
+
+def _digest_with_signature(path):
+    """Hash a file and report the signature of the descriptor actually read.
+
+    Statting a pathname and separately reopening it can describe two different
+    inodes when a directory is swapped and rolled back mid-hash, which would
+    pin a digest no stable model reproduces.
+    """
+    with path.open("rb") as stream:
+        signature = _signature_of(os.fstat(stream.fileno()))
+        return hashlib.file_digest(stream, "sha256").hexdigest(), signature
 
 
 def _text(value):
@@ -269,17 +285,18 @@ class ModelSpec:
         # take every signature first and require the whole set to be unchanged
         # once the last shard has been hashed.
         before = [_signature(shard) for shard in shards]
-        digests = [digest_file(shard) for shard in shards]
-        for shard, signature in zip(shards, before):
-            if _signature(shard) != signature:
+        measured = [_digest_with_signature(shard) for shard in shards]
+        digests = [digest for digest, _ in measured]
+        for shard, signature, (_, read) in zip(shards, before, measured):
+            if read != signature or _signature(shard) != signature:
                 raise ValueError("model changed while being hashed: %s" % shard)
         size = sum(signature[0] for signature in before)
-        measured = model_digest(digests)
-        if (sha256 is not None and sha256 != measured) or (
+        composite = model_digest(digests)
+        if (sha256 is not None and sha256 != composite) or (
             bytes is not None and bytes != size
         ):
             raise ValueError("model file does not match the declared digest or size")
-        return cls(measured, size, url)
+        return cls(composite, size, url)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -473,8 +490,18 @@ def inspect_installation(
         source_commit = reported_commit
     else:
         source_commit = manifest["git_sha"]
-    analysis_version = status.get("analysis_version", PINNED_ANALYSIS_VERSION)
-    if type(analysis_version) is not int or analysis_version <= 0:
+    analysis_version = status.get("analysis_version")
+    if analysis_version is None:
+        # Only the pinned dogfood build is known to emit a particular version
+        # without reporting it. Any other unreporting scorer could emit
+        # anything, and guessing wrong fails every worker invocation.
+        if manifest["git_sha"] != SOURCE_COMMIT:
+            raise ValueError(
+                "installed executable does not report analysis_version; only "
+                "the pinned " + SOURCE_COMMIT + " build may omit it"
+            )
+        analysis_version = PINNED_ANALYSIS_VERSION
+    elif type(analysis_version) is not int or analysis_version <= 0:
         raise ValueError("cache status JSON is missing a valid analysis_version")
     # Backend resolution derives the installed bundle path from the
     # executable's embedded configuration and refuses a bundle built with a

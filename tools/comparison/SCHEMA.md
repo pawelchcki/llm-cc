@@ -17,8 +17,9 @@ derived by hashing the installed tree and executing its `bin/llm-cc` offline
 reported `source_commit` and `backend_configuration`, the backend manifest and
 the ABI's llama.cpp commit must all agree, and the executable's reported
 `analysis_version` becomes the expected one. An executable predating those
-reported fields records `inspection.executable_identity_verified: false` and the pinned
-analysis version instead. `model_sha256`/`model_bytes` carry the scorer's
+reported fields records `inspection.executable_identity_verified: false`; its
+analysis version may only be assumed for the pinned dogfood commit, so any
+other unreporting executable is rejected. `model_sha256`/`model_bytes` carry the scorer's
 composite identity: for a split GGUF that is the domain-separated digest of
 every shard and their total size, not the named shard alone. The executable
 version is verified but deliberately not recorded, so the fingerprint of an

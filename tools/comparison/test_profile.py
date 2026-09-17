@@ -220,6 +220,7 @@ class ProfileTest(unittest.TestCase):
             "inference_abi": inference_abi,
             "source_commit": SOURCE_COMMIT,
             "backend_configuration": "e" * 64,
+            "analysis_version": PINNED_ANALYSIS_VERSION,
             "entries": 0,
             "bytes": 0,
             **overrides,
@@ -523,7 +524,7 @@ class ProfileTest(unittest.TestCase):
                     self.rocm()
             self.write_status(INFERENCE_ABI)
         with self.subTest("analysis version"):
-            for value in (0, -1, "3", None):
+            for value in (0, -1, "3"):
                 self.write_status(INFERENCE_ABI, analysis_version=value)
                 with self.assertRaisesRegex(ValueError, "valid analysis_version"):
                     self.rocm()
@@ -535,6 +536,7 @@ class ProfileTest(unittest.TestCase):
         status = json.loads((self.support / "status.json").read_text())
         status.pop("source_commit")
         status.pop("backend_configuration")
+        status.pop("analysis_version")
         (self.support / "status.json").write_text(json.dumps(status))
         installation = inspect_installation(self.root, "rocm")
         self.assertEqual(installation.source_commit, SOURCE_COMMIT)
@@ -546,6 +548,22 @@ class ProfileTest(unittest.TestCase):
             profile["scoring"]["expected_configuration"]["analysis_version"],
             PINNED_ANALYSIS_VERSION,
         )
+
+    def test_unreported_analysis_version_needs_the_pinned_commit(self):
+        # A legacy scorer that does not report its version may still emit any
+        # version, and guessing wrong fails every worker invocation.
+        status = json.loads((self.support / "status.json").read_text())
+        status.pop("analysis_version")
+        (self.support / "status.json").write_text(json.dumps(status))
+        other = "b" * 40
+        self.write_manifest("rocm", git_sha=other)
+        self.write_status(INFERENCE_ABI, source_commit=other)
+        json_status = json.loads((self.support / "status.json").read_text())
+        json_status.pop("analysis_version")
+        json_status.pop("source_commit")
+        (self.support / "status.json").write_text(json.dumps(json_status))
+        with self.assertRaisesRegex(ValueError, "does not report analysis_version"):
+            inspect_installation(self.root, "rocm")
 
     def test_mislabelled_manifest_and_storage_version_rejected(self):
         with self.subTest("manifest name"):
@@ -605,14 +623,16 @@ class ProfileTest(unittest.TestCase):
         models.mkdir()
         model = models / "model.gguf"
         model.write_bytes(b"original")
-        real = profile_module.digest_file
+        real = profile_module._digest_with_signature
 
         def swap(path):
             measured = real(path)
             path.write_bytes(b"replaced with other contents")
             return measured
 
-        with unittest.mock.patch.object(profile_module, "digest_file", swap):
+        with unittest.mock.patch.object(
+            profile_module, "_digest_with_signature", swap
+        ):
             with self.assertRaisesRegex(ValueError, "changed while being hashed"):
                 ModelSpec.from_path(model)
 
