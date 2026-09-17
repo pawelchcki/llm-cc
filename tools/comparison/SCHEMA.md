@@ -12,7 +12,9 @@ immutable execution image identity. `source_commit` and `inference_abi` are
 derived by hashing the installed tree and executing its `bin/llm-cc` offline
 (`--version`, `cache status --format json`); the executable's version, its
 reported `source_commit`, the backend manifest and the ABI's llama.cpp commit
-must agree. `model_sha256`/`model_bytes` carry the scorer's composite identity:
+must agree, and its reported `analysis_version` becomes the expected one. An
+executable predating those two fields records `source_commit_verified: false`
+and the pinned analysis version instead. `model_sha256`/`model_bytes` carry the scorer's composite identity:
 for a split GGUF that is the domain-separated digest of every shard and their
 total size, not the named shard alone. The executable
 version is verified but deliberately not recorded, so the fingerprint of an

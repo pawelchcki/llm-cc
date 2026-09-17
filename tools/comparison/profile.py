@@ -38,10 +38,28 @@ HIERARCHIES = ("structural", "reference")
 SCORE_MODES = ("lmcc", "density", "mean")
 INFERENCE_ABI_PATTERN = r"llama\.cpp-[0-9a-f]{40}/entropy-v\d+"
 
+# `cache status --format json` gained source_commit and analysis_version after
+# the pinned dogfood scorer was built. When a scorer reports them they are
+# authoritative; otherwise the profile falls back to what that pinned build is
+# known to do, and its commit is only as trustworthy as its backend manifest.
+PINNED_ANALYSIS_VERSION = 2
+
 
 def digest_file(path):
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def _signature(path):
+    """The fields the scorer compares when deciding a model is unchanged."""
+    status = path.stat()
+    return (
+        status.st_size,
+        status.st_mtime_ns,
+        status.st_ctime_ns,
+        status.st_dev,
+        status.st_ino,
+    )
 
 
 def _text(value):
@@ -106,9 +124,9 @@ CONTRACT = (
 # Configuration keys the scorer always reports for the orchestrated flags the
 # worker itself supplies, plus derived constants.
 CONSTANT_CONFIGURATION = {
-    # Tracks the scorer an installation was built from, not this checkout:
-    # bump it only when that scorer is rebuilt and redeployed.
-    "analysis_version": 2,
+    # Overridden by the version an installation reports; this is the fallback
+    # for the pinned scorer that predates the probe, not this checkout's value.
+    "analysis_version": PINNED_ANALYSIS_VERSION,
     "include_headers": True,
     "no_ignore": True,
     "no_download": True,
@@ -161,8 +179,12 @@ class ScoringSettings:
         _choice("backend", self.backend, BACKENDS)
         _positive_int("context", self.context)
         _positive_int("batch_size", self.batch_size)
-        if type(self.gpu_layers) is not int or self.gpu_layers < -1:
-            raise ValueError("gpu_layers must be an integer >= -1")
+        # The scorer parses --gpu-layers as int32 and rejects anything wider.
+        if (
+            type(self.gpu_layers) is not int
+            or not -1 <= self.gpu_layers <= 2147483647
+        ):
+            raise ValueError("gpu_layers must be an int32 >= -1")
         if type(self.hotspots) is not int or self.hotspots < 0:
             raise ValueError("hotspots must be a non-negative integer")
         # `auto` resolves against the runtime, so the scorer's effective_*
@@ -192,8 +214,10 @@ class ScoringSettings:
             argv.extend([row.flag, row.render(row.value(self))])
         return argv
 
-    def expected_configuration(self, inference_abi):
+    def expected_configuration(self, inference_abi, analysis_version=None):
         expected = dict(CONSTANT_CONFIGURATION)
+        if analysis_version is not None:
+            expected["analysis_version"] = analysis_version
         for row in CONTRACT:
             for key in row.expected_keys:
                 expected[key] = row.value(self)
@@ -227,8 +251,17 @@ class ModelSpec:
     def from_path(cls, path, sha256=None, bytes=None, url=None):
         """Pin the identity the scorer reports, across every shard it loads."""
         shards = model_files(path)
-        measured = model_digest([digest_file(shard) for shard in shards])
-        size = sum(shard.stat().st_size for shard in shards)
+        digests, size = [], 0
+        for shard in shards:
+            # Hashing many gigabytes takes long enough for a shard to be
+            # replaced underneath us; a digest and a size read from different
+            # contents would pin an identity no worker can ever reproduce.
+            before = _signature(shard)
+            digests.append(digest_file(shard))
+            if _signature(shard) != before:
+                raise ValueError("model changed while being hashed: %s" % shard)
+            size += before[0]
+        measured = model_digest(digests)
         if (sha256 is not None and sha256 != measured) or (
             bytes is not None and bytes != size
         ):
@@ -247,6 +280,10 @@ class ScorerInstallation:
     inference_abi: str
     manifest: dict
     installed_files: dict
+    # False when the executable does not report its own commit, so the
+    # recorded one is the backend manifest's claim rather than a verified fact.
+    source_commit_verified: bool = True
+    analysis_version: int = PINNED_ANALYSIS_VERSION
 
     def __getitem__(self, key):
         return getattr(self, key)
@@ -394,18 +431,26 @@ def inspect_installation(
             "installed executable reports inference ABI %r but the backend was built "
             "against llama.cpp %s" % (inference_abi, manifest["llama_cpp_commit"])
         )
-    source_commit = status.get("source_commit")
-    if not isinstance(source_commit, str) or not re.fullmatch(
-        r"[0-9a-f]{40}", source_commit
-    ):
-        raise ValueError("cache status JSON is missing a valid source_commit")
     # The manifest describes the backend bundle; only this probe establishes
     # the commit the executable itself embeds and resolves backends with.
-    if source_commit != manifest["git_sha"]:
-        raise ValueError(
-            "installed executable was built from commit %s but the backend "
-            "manifest declares %s" % (source_commit, manifest["git_sha"])
-        )
+    reported_commit = status.get("source_commit")
+    source_commit_verified = reported_commit is not None
+    if source_commit_verified:
+        if not isinstance(reported_commit, str) or not re.fullmatch(
+            r"[0-9a-f]{40}", reported_commit
+        ):
+            raise ValueError("cache status JSON is missing a valid source_commit")
+        if reported_commit != manifest["git_sha"]:
+            raise ValueError(
+                "installed executable was built from commit %s but the backend "
+                "manifest declares %s" % (reported_commit, manifest["git_sha"])
+            )
+        source_commit = reported_commit
+    else:
+        source_commit = manifest["git_sha"]
+    analysis_version = status.get("analysis_version", PINNED_ANALYSIS_VERSION)
+    if type(analysis_version) is not int or analysis_version <= 0:
+        raise ValueError("cache status JSON is missing a valid analysis_version")
     if expected_inference_abi is not None and inference_abi != expected_inference_abi:
         raise ValueError(
             f"{backend.upper()} backend must report inference ABI {expected_inference_abi}"
@@ -415,6 +460,8 @@ def inspect_installation(
         backend=backend,
         version=manifest["version"],
         source_commit=source_commit,
+        source_commit_verified=source_commit_verified,
+        analysis_version=analysis_version,
         inference_abi=inference_abi,
         manifest=manifest,
         installed_files=files,
@@ -505,6 +552,7 @@ def build_profile(
         )
     build = {
         "source_commit": installation.source_commit,
+        "source_commit_verified": installation.source_commit_verified,
         "inference_abi": installation.inference_abi,
         "installed_files": installation.installed_files,
         "backend_manifest": installation.manifest,
@@ -519,7 +567,7 @@ def build_profile(
         "scoring": {
             "argv": settings.argv(),
             "expected_configuration": settings.expected_configuration(
-                installation.inference_abi
+                installation.inference_abi, installation.analysis_version
             ),
         },
         "build": build,

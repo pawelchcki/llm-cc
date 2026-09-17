@@ -9,7 +9,9 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
+from . import profile as profile_module
 from .common import CONTAINER_ENVIRONMENT_POLICY, digest
 from .profile import (
     build_profile,
@@ -19,6 +21,7 @@ from .profile import (
     ModelSpec,
     ScoringSettings,
     INFERENCE_ABI,
+    PINNED_ANALYSIS_VERSION,
     SOURCE_COMMIT,
 )
 
@@ -287,6 +290,7 @@ class ProfileTest(unittest.TestCase):
                 "model_sha256",
                 "model_url",
                 "source_commit",
+                "source_commit_verified",
             ],
         )
         self.assertEqual(profile["build"]["source_commit"], SOURCE_COMMIT)
@@ -508,11 +512,44 @@ class ProfileTest(unittest.TestCase):
             self.write_status(INFERENCE_ABI, source_commit="b" * 40)
             with self.assertRaisesRegex(ValueError, "built from commit"):
                 self.rocm()
-            for value in (None, "", "main", SOURCE_COMMIT.upper()):
+            for value in ("", "main", SOURCE_COMMIT.upper()):
                 self.write_status(INFERENCE_ABI, source_commit=value)
                 with self.assertRaisesRegex(ValueError, "valid source_commit"):
                     self.rocm()
             self.write_status(INFERENCE_ABI)
+        with self.subTest("analysis version"):
+            for value in (0, -1, "3", None):
+                self.write_status(INFERENCE_ABI, analysis_version=value)
+                with self.assertRaisesRegex(ValueError, "valid analysis_version"):
+                    self.rocm()
+            self.write_status(INFERENCE_ABI)
+
+    def test_scorer_predating_the_probes_falls_back_to_pinned_values(self):
+        # The pinned dogfood executable reports neither field; its commit is
+        # then only the manifest's claim, and its analysis version is pinned.
+        status = json.loads((self.support / "status.json").read_text())
+        status.pop("source_commit")
+        (self.support / "status.json").write_text(json.dumps(status))
+        installation = inspect_installation(self.root, "rocm")
+        self.assertEqual(installation.source_commit, SOURCE_COMMIT)
+        self.assertFalse(installation.source_commit_verified)
+        self.assertEqual(installation.analysis_version, PINNED_ANALYSIS_VERSION)
+        profile = self.rocm()
+        self.assertFalse(profile["build"]["source_commit_verified"])
+        self.assertEqual(
+            profile["scoring"]["expected_configuration"]["analysis_version"],
+            PINNED_ANALYSIS_VERSION,
+        )
+
+    def test_reported_analysis_version_reaches_the_expected_configuration(self):
+        self.write_status(INFERENCE_ABI, analysis_version=3)
+        installation = inspect_installation(self.root, "rocm")
+        self.assertEqual(installation.analysis_version, 3)
+        self.assertTrue(installation.source_commit_verified)
+        profile = self.rocm()
+        self.assertEqual(
+            profile["scoring"]["expected_configuration"]["analysis_version"], 3
+        )
 
     def test_invalid_scorer_setting_combinations_rejected(self):
         # Each pair parses as individually valid but is refused by every
@@ -523,6 +560,31 @@ class ProfileTest(unittest.TestCase):
             ScoringSettings(backend="rocm", gpu_layers=20)
         ScoringSettings(backend="rocm", flash_attn="off", kv_cache_type="f16")
         ScoringSettings(backend="rocm", gpu_layers=20, entropy_reduction="host")
+
+    def test_gpu_layers_outside_int32_rejected(self):
+        # The scorer parses --gpu-layers as int32 and refuses anything wider.
+        ScoringSettings(backend="rocm", gpu_layers=2147483647,
+                        entropy_reduction="host")
+        with self.assertRaisesRegex(ValueError, "int32"):
+            ScoringSettings(
+                backend="rocm", gpu_layers=2147483648, entropy_reduction="host"
+            )
+
+    def test_model_changed_while_hashing_is_rejected(self):
+        models = self.root / "unstable"
+        models.mkdir()
+        model = models / "model.gguf"
+        model.write_bytes(b"original")
+        real = profile_module.digest_file
+
+        def swap(path):
+            measured = real(path)
+            path.write_bytes(b"replaced with other contents")
+            return measured
+
+        with unittest.mock.patch.object(profile_module, "digest_file", swap):
+            with self.assertRaisesRegex(ValueError, "changed while being hashed"):
+                ModelSpec.from_path(model)
 
     def test_split_model_identity_covers_every_shard(self):
         models = self.root / "models"
