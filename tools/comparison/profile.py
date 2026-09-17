@@ -257,16 +257,17 @@ class ModelSpec:
     def from_path(cls, path, sha256=None, bytes=None, url=None):
         """Pin the identity the scorer reports, across every shard it loads."""
         shards = model_files(path)
-        digests, size = [], 0
-        for shard in shards:
-            # Hashing many gigabytes takes long enough for a shard to be
-            # replaced underneath us; a digest and a size read from different
-            # contents would pin an identity no worker can ever reproduce.
-            before = _signature(shard)
-            digests.append(digest_file(shard))
-            if _signature(shard) != before:
+        # Hashing many gigabytes takes long enough for a shard to be replaced
+        # underneath us, and a composite digest mixing old and new shards
+        # would pin an identity no stable model set can ever reproduce. So
+        # take every signature first and require the whole set to be unchanged
+        # once the last shard has been hashed.
+        before = [_signature(shard) for shard in shards]
+        digests = [digest_file(shard) for shard in shards]
+        for shard, signature in zip(shards, before):
+            if _signature(shard) != signature:
                 raise ValueError("model changed while being hashed: %s" % shard)
-            size += before[0]
+        size = sum(signature[0] for signature in before)
         measured = model_digest(digests)
         if (sha256 is not None and sha256 != measured) or (
             bytes is not None and bytes != size
@@ -579,7 +580,6 @@ def build_profile(
         )
     build = {
         "source_commit": installation.source_commit,
-        "executable_identity_verified": installation.executable_identity_verified,
         "inference_abi": installation.inference_abi,
         "installed_files": installation.installed_files,
         "backend_manifest": installation.manifest,
@@ -591,6 +591,12 @@ def build_profile(
         build["model_url"] = model.url
     profile = {
         "max_file_bytes": max_file_bytes,
+        # How the identity was established, not part of it: `scoring` and
+        # `build` alone are fingerprinted, so recording this cannot invalidate
+        # results a byte-identical installation already produced.
+        "inspection": {
+            "executable_identity_verified": installation.executable_identity_verified
+        },
         "scoring": {
             "argv": settings.argv(),
             "expected_configuration": settings.expected_configuration(

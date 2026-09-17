@@ -3,7 +3,10 @@
 All JSON uses UTF-8, sorted keys, compact separators, and finite numbers.
 Python package: `tools.comparison` (stdlib except optional boto3 for S3).
 
-Profile: `{scoring: {...}, build: {...}, max_file_bytes: 65536}`.
+Profile: `{scoring: {...}, build: {...}, max_file_bytes: 65536,
+inspection: {...}}`. Only `scoring` and `build` are fingerprinted;
+`inspection.executable_identity_verified` records how the identity was
+established, not what it is, so recording it never invalidates cached results.
 `scoring` contains `argv` (an ordered list of flags) and
 `expected_configuration` (the scorer's requested/effective JSONL fields);
 `build` includes source_commit, inference_abi, installed_files (relative path to
@@ -14,7 +17,7 @@ derived by hashing the installed tree and executing its `bin/llm-cc` offline
 reported `source_commit` and `backend_configuration`, the backend manifest and
 the ABI's llama.cpp commit must all agree, and the executable's reported
 `analysis_version` becomes the expected one. An executable predating those
-reported fields records `executable_identity_verified: false` and the pinned
+reported fields records `inspection.executable_identity_verified: false` and the pinned
 analysis version instead. `model_sha256`/`model_bytes` carry the scorer's
 composite identity: for a split GGUF that is the domain-separated digest of
 every shard and their total size, not the named shard alone. The executable

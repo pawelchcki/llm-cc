@@ -283,7 +283,6 @@ class ProfileTest(unittest.TestCase):
             sorted(profile["build"]),
             [
                 "backend_manifest",
-                "executable_identity_verified",
                 "execution_host",
                 "execution_image",
                 "inference_abi",
@@ -293,6 +292,11 @@ class ProfileTest(unittest.TestCase):
                 "model_url",
                 "source_commit",
             ],
+        )
+        # Inspection metadata must stay outside the fingerprinted identity or
+        # regenerating the preset invalidates every shared cached result.
+        self.assertEqual(
+            sorted(profile["inspection"]), ["executable_identity_verified"]
         )
         self.assertEqual(profile["build"]["source_commit"], SOURCE_COMMIT)
         self.assertEqual(profile["build"]["inference_abi"], INFERENCE_ABI)
@@ -537,7 +541,7 @@ class ProfileTest(unittest.TestCase):
         self.assertFalse(installation.executable_identity_verified)
         self.assertEqual(installation.analysis_version, PINNED_ANALYSIS_VERSION)
         profile = self.rocm()
-        self.assertFalse(profile["build"]["executable_identity_verified"])
+        self.assertFalse(profile["inspection"]["executable_identity_verified"])
         self.assertEqual(
             profile["scoring"]["expected_configuration"]["analysis_version"],
             PINNED_ANALYSIS_VERSION,
