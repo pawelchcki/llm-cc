@@ -44,6 +44,9 @@ INFERENCE_ABI_PATTERN = r"llama\.cpp-[0-9a-f]{40}/entropy-v\d+"
 # known to do, and its commit is only as trustworthy as its backend manifest.
 PINNED_ANALYSIS_VERSION = 2
 
+# The native entropy cache layout workers restore into and publish from.
+NATIVE_STORAGE_VERSION = 2
+
 
 def digest_file(path):
     with path.open("rb") as stream:
@@ -178,6 +181,9 @@ class ScoringSettings:
     def validate(self):
         _choice("backend", self.backend, BACKENDS)
         _positive_int("context", self.context)
+        # Scoring plans windows of at least two tokens.
+        if self.context < 2:
+            raise ValueError("context must be at least 2")
         _positive_int("batch_size", self.batch_size)
         # The scorer parses --gpu-layers as int32 and rejects anything wider,
         # and every supported backend is an accelerator, for which it refuses
@@ -339,7 +345,7 @@ def _run_scorer(executable, arguments, sandbox, runtime_dir, timeout):
         raise ValueError("installed scorer output is not UTF-8") from error
 
 
-def _validate_manifest(manifest):
+def _validate_manifest(manifest, backend):
     if (
         not isinstance(manifest, dict)
         or not isinstance(manifest.get("git_sha"), str)
@@ -352,6 +358,9 @@ def _validate_manifest(manifest):
         or not re.fullmatch(r"[0-9a-f]{64}", manifest["configuration"])
         or not isinstance(manifest.get("ggml_backend_api_version"), str)
         or not manifest["ggml_backend_api_version"]
+        # Backend resolution compares the manifest's own name with the backend
+        # it was asked for, so a mislabelled manifest never loads.
+        or manifest.get("name") != backend
     ):
         raise ValueError("backend manifest is incomplete")
 
@@ -380,7 +389,7 @@ def inspect_installation(
         raise ValueError(
             f"{backend.upper()} backend must be built from {expected_source_commit}"
         )
-    _validate_manifest(manifest)
+    _validate_manifest(manifest, backend)
     files = {}
     for path in sorted(root.rglob("*")):
         if path.is_symlink():
@@ -429,6 +438,14 @@ def inspect_installation(
         raise ValueError("cache status did not produce JSON") from error
     if not isinstance(status, dict) or type(status.get("storage_version")) is not int:
         raise ValueError("cache status JSON is missing storage_version")
+    # Workers restore and publish native entries under `v2/entropy` only, so
+    # another layout would silently defeat the shared inference cache.
+    if status["storage_version"] != NATIVE_STORAGE_VERSION:
+        raise ValueError(
+            "installed executable uses entropy storage version %d, but workers "
+            "exchange version %d"
+            % (status["storage_version"], NATIVE_STORAGE_VERSION)
+        )
     inference_abi = status.get("inference_abi")
     if not isinstance(inference_abi, str) or not re.fullmatch(
         INFERENCE_ABI_PATTERN, inference_abi

@@ -547,6 +547,20 @@ class ProfileTest(unittest.TestCase):
             PINNED_ANALYSIS_VERSION,
         )
 
+    def test_mislabelled_manifest_and_storage_version_rejected(self):
+        with self.subTest("manifest name"):
+            for name in (None, "cuda", ""):
+                self.write_manifest("rocm", name=name)
+                with self.assertRaisesRegex(ValueError, "manifest is incomplete"):
+                    self.rocm()
+            self.write_manifest("rocm")
+        with self.subTest("storage version"):
+            # Workers exchange native entries under `v2/entropy` only.
+            self.write_status(INFERENCE_ABI, storage_version=3)
+            with self.assertRaisesRegex(ValueError, "entropy storage version"):
+                self.rocm()
+            self.write_status(INFERENCE_ABI)
+
     def test_mismatched_backend_configuration_rejected(self):
         # Backend resolution derives the bundle path from the executable's
         # embedded configuration, so a disagreeing pair can never load one.
@@ -737,6 +751,7 @@ class ProfileTest(unittest.TestCase):
             {"hotspots": True},
             {"hotspots": 2**64},
             {"gpu_layers": 0},
+            {"context": 1},
             {"gpu_layers": 2147483648},
             {"tau": -0.1},
             {"tau": float("nan")},
