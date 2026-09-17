@@ -164,10 +164,10 @@ either from a local file (`--model`, hashed in place) or from explicit
 `--model-sha256 --model-bytes [--model-url]`. Both subcommands run the installed
 `bin/llm-cc` offline in a sanitized environment with private cache directories
 (`--version` and `cache status --format json`) to read the executable's version,
-its embedded source commit, its analysis version and its inference ABI, and
-reject a tree whose executable, backend manifest and llama.cpp commit disagree.
-An executable built before it reported its own commit and analysis version is
-still accepted, with the backend manifest's commit recorded as unverified. A `--model` naming
+its embedded source commit, its backend configuration, its analysis version and
+its inference ABI, and reject a tree whose executable, backend manifest and
+llama.cpp commit disagree. An executable built before it reported its own
+identity is still accepted, with the manifest's claim recorded as unverified. A `--model` naming
 one shard of a split GGUF pins the whole set, exactly as the scorer reports it. Neither command downloads anything, but the generator
 must run on a host that can execute the installed binary. `--flash-attn auto` and
 `--entropy-reduction auto` are rejected because the scorer would then resolve

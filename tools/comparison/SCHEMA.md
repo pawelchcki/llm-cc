@@ -10,13 +10,14 @@ Profile: `{scoring: {...}, build: {...}, max_file_bytes: 65536}`.
 SHA256), backend_manifest, model_sha256, model_bytes, optional model_url, and
 immutable execution image identity. `source_commit` and `inference_abi` are
 derived by hashing the installed tree and executing its `bin/llm-cc` offline
-(`--version`, `cache status --format json`); the executable's version, its
-reported `source_commit`, the backend manifest and the ABI's llama.cpp commit
-must agree, and its reported `analysis_version` becomes the expected one. An
-executable predating those two fields records `source_commit_verified: false`
-and the pinned analysis version instead. `model_sha256`/`model_bytes` carry the scorer's composite identity:
-for a split GGUF that is the domain-separated digest of every shard and their
-total size, not the named shard alone. The executable
+(`--version`, `cache status --format json`). The executable's version, its
+reported `source_commit` and `backend_configuration`, the backend manifest and
+the ABI's llama.cpp commit must all agree, and the executable's reported
+`analysis_version` becomes the expected one. An executable predating those
+reported fields records `executable_identity_verified: false` and the pinned
+analysis version instead. `model_sha256`/`model_bytes` carry the scorer's
+composite identity: for a split GGUF that is the domain-separated digest of
+every shard and their total size, not the named shard alone. The executable
 version is verified but deliberately not recorded, so the fingerprint of an
 unchanged installation does not move.
 Container profiles also require `container_environment_policy: "sanitized-v1"`;

@@ -35,7 +35,7 @@ KV_CACHE_TYPES = ("f16", "q8_0", "q4_0")
 KV_OFFLOAD = ("on", "off")
 ENTROPY_REDUCTIONS = ("device", "host")
 HIERARCHIES = ("structural", "reference")
-SCORE_MODES = ("lmcc", "density", "mean")
+SCORE_MODES = ("raw", "lmcc", "density", "mean")
 INFERENCE_ABI_PATTERN = r"llama\.cpp-[0-9a-f]{40}/entropy-v\d+"
 
 # `cache status --format json` gained source_commit and analysis_version after
@@ -179,14 +179,19 @@ class ScoringSettings:
         _choice("backend", self.backend, BACKENDS)
         _positive_int("context", self.context)
         _positive_int("batch_size", self.batch_size)
-        # The scorer parses --gpu-layers as int32 and rejects anything wider.
+        # The scorer parses --gpu-layers as int32 and rejects anything wider,
+        # and every supported backend is an accelerator, for which it refuses
+        # zero layers as a contradictory CPU/accelerator request.
         if (
             type(self.gpu_layers) is not int
             or not -1 <= self.gpu_layers <= 2147483647
         ):
             raise ValueError("gpu_layers must be an int32 >= -1")
-        if type(self.hotspots) is not int or self.hotspots < 0:
-            raise ValueError("hotspots must be a non-negative integer")
+        if self.gpu_layers == 0:
+            raise ValueError("gpu_layers must be -1 or positive on a GPU backend")
+        # The scorer parses --hotspots as size_t.
+        if type(self.hotspots) is not int or not 0 <= self.hotspots <= 2**64 - 1:
+            raise ValueError("hotspots must be a size_t")
         # `auto` resolves against the runtime, so the scorer's effective_*
         # values would stop being predictable from the profile alone.
         _choice("flash_attn", self.flash_attn, FLASH_ATTENTION)
@@ -196,8 +201,9 @@ class ScoringSettings:
         _choice("hierarchy", self.hierarchy, HIERARCHIES)
         _choice("score_mode", self.score_mode, SCORE_MODES)
         _finite("tau", self.tau)
-        if self.tau <= 0:
-            raise ValueError("tau must be greater than zero")
+        # The scorer accepts every finite non-negative absolute threshold.
+        if self.tau < 0:
+            raise ValueError("tau must not be negative")
         _finite("alpha", self.alpha)
         if not 0 <= self.alpha <= 1:
             raise ValueError("alpha must be between zero and one")
@@ -280,9 +286,10 @@ class ScorerInstallation:
     inference_abi: str
     manifest: dict
     installed_files: dict
-    # False when the executable does not report its own commit, so the
-    # recorded one is the backend manifest's claim rather than a verified fact.
-    source_commit_verified: bool = True
+    # False when the executable does not report its own commit and backend
+    # configuration, so the recorded identity is the backend manifest's claim
+    # rather than a verified fact.
+    executable_identity_verified: bool = True
     analysis_version: int = PINNED_ANALYSIS_VERSION
 
     def __getitem__(self, key):
@@ -434,8 +441,8 @@ def inspect_installation(
     # The manifest describes the backend bundle; only this probe establishes
     # the commit the executable itself embeds and resolves backends with.
     reported_commit = status.get("source_commit")
-    source_commit_verified = reported_commit is not None
-    if source_commit_verified:
+    executable_identity_verified = reported_commit is not None
+    if executable_identity_verified:
         if not isinstance(reported_commit, str) or not re.fullmatch(
             r"[0-9a-f]{40}", reported_commit
         ):
@@ -451,6 +458,26 @@ def inspect_installation(
     analysis_version = status.get("analysis_version", PINNED_ANALYSIS_VERSION)
     if type(analysis_version) is not int or analysis_version <= 0:
         raise ValueError("cache status JSON is missing a valid analysis_version")
+    # Backend resolution derives the installed bundle path from the
+    # executable's embedded configuration and refuses a bundle built with a
+    # different one, so an installation whose two halves disagree can never
+    # load a backend.
+    configuration = status.get("backend_configuration")
+    if configuration is not None:
+        if not isinstance(configuration, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", configuration
+        ):
+            raise ValueError(
+                "cache status JSON is missing a valid backend_configuration"
+            )
+        if configuration != manifest["configuration"]:
+            raise ValueError(
+                "installed executable was built with backend configuration %s "
+                "but the backend manifest declares %s"
+                % (configuration, manifest["configuration"])
+            )
+    else:
+        executable_identity_verified = False
     if expected_inference_abi is not None and inference_abi != expected_inference_abi:
         raise ValueError(
             f"{backend.upper()} backend must report inference ABI {expected_inference_abi}"
@@ -460,7 +487,7 @@ def inspect_installation(
         backend=backend,
         version=manifest["version"],
         source_commit=source_commit,
-        source_commit_verified=source_commit_verified,
+        executable_identity_verified=executable_identity_verified,
         analysis_version=analysis_version,
         inference_abi=inference_abi,
         manifest=manifest,
@@ -552,7 +579,7 @@ def build_profile(
         )
     build = {
         "source_commit": installation.source_commit,
-        "source_commit_verified": installation.source_commit_verified,
+        "executable_identity_verified": installation.executable_identity_verified,
         "inference_abi": installation.inference_abi,
         "installed_files": installation.installed_files,
         "backend_manifest": installation.manifest,

@@ -219,6 +219,7 @@ class ProfileTest(unittest.TestCase):
             "storage_version": 2,
             "inference_abi": inference_abi,
             "source_commit": SOURCE_COMMIT,
+            "backend_configuration": "e" * 64,
             "entries": 0,
             "bytes": 0,
             **overrides,
@@ -282,6 +283,7 @@ class ProfileTest(unittest.TestCase):
             sorted(profile["build"]),
             [
                 "backend_manifest",
+                "executable_identity_verified",
                 "execution_host",
                 "execution_image",
                 "inference_abi",
@@ -290,7 +292,6 @@ class ProfileTest(unittest.TestCase):
                 "model_sha256",
                 "model_url",
                 "source_commit",
-                "source_commit_verified",
             ],
         )
         self.assertEqual(profile["build"]["source_commit"], SOURCE_COMMIT)
@@ -529,23 +530,34 @@ class ProfileTest(unittest.TestCase):
         # then only the manifest's claim, and its analysis version is pinned.
         status = json.loads((self.support / "status.json").read_text())
         status.pop("source_commit")
+        status.pop("backend_configuration")
         (self.support / "status.json").write_text(json.dumps(status))
         installation = inspect_installation(self.root, "rocm")
         self.assertEqual(installation.source_commit, SOURCE_COMMIT)
-        self.assertFalse(installation.source_commit_verified)
+        self.assertFalse(installation.executable_identity_verified)
         self.assertEqual(installation.analysis_version, PINNED_ANALYSIS_VERSION)
         profile = self.rocm()
-        self.assertFalse(profile["build"]["source_commit_verified"])
+        self.assertFalse(profile["build"]["executable_identity_verified"])
         self.assertEqual(
             profile["scoring"]["expected_configuration"]["analysis_version"],
             PINNED_ANALYSIS_VERSION,
         )
 
+    def test_mismatched_backend_configuration_rejected(self):
+        # Backend resolution derives the bundle path from the executable's
+        # embedded configuration, so a disagreeing pair can never load one.
+        self.write_status(INFERENCE_ABI, backend_configuration="d" * 64)
+        with self.assertRaisesRegex(ValueError, "backend configuration"):
+            self.rocm()
+        self.write_status(INFERENCE_ABI, backend_configuration="nope")
+        with self.assertRaisesRegex(ValueError, "valid backend_configuration"):
+            self.rocm()
+
     def test_reported_analysis_version_reaches_the_expected_configuration(self):
         self.write_status(INFERENCE_ABI, analysis_version=3)
         installation = inspect_installation(self.root, "rocm")
         self.assertEqual(installation.analysis_version, 3)
-        self.assertTrue(installation.source_commit_verified)
+        self.assertTrue(installation.executable_identity_verified)
         profile = self.rocm()
         self.assertEqual(
             profile["scoring"]["expected_configuration"]["analysis_version"], 3
@@ -719,7 +731,10 @@ class ProfileTest(unittest.TestCase):
             {"gpu_layers": True},
             {"hotspots": -1},
             {"hotspots": True},
-            {"tau": 0},
+            {"hotspots": 2**64},
+            {"gpu_layers": 0},
+            {"gpu_layers": 2147483648},
+            {"tau": -0.1},
             {"tau": float("nan")},
             {"tau": "0.67"},
             {"alpha": -0.1},
@@ -733,6 +748,10 @@ class ProfileTest(unittest.TestCase):
         ):
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                 ScoringSettings(backend=kwargs.pop("backend", "rocm"), **kwargs)
+        # Values the scorer itself accepts must survive generation.
+        for kwargs in ({"tau": 0}, {"score_mode": "raw"}, {"hotspots": 2**64 - 1}):
+            with self.subTest(accepted=kwargs):
+                ScoringSettings(backend="rocm", **kwargs)
 
     def test_unpinned_backend_rejected(self):
         self.write_manifest("rocm", git_sha="main")

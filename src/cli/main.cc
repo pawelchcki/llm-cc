@@ -743,6 +743,7 @@ void PrintCacheJson(
       // describes the backend bundle.
       {"source_commit", LLM_CC_GIT_SHA},
       {"analysis_version", llmcc::kAnalysisVersion},
+      {"backend_configuration", LLM_CC_BACKEND_CONFIGURATION},
       {"entries", status.entries},
       {"bytes", status.bytes},
       {"limit_bytes", status.limit},
@@ -778,6 +779,7 @@ void PrintCacheText(
             << "inference ABI: " << llmcc::InferenceAbi() << '\n'
             << "source commit: " << LLM_CC_GIT_SHA << '\n'
             << "analysis version: " << llmcc::kAnalysisVersion << '\n'
+            << "backend configuration: " << LLM_CC_BACKEND_CONFIGURATION << '\n'
             << "entries: " << status.entries << '\n'
             << "bytes: " << status.bytes << '\n'
             << "limit bytes: " << status.limit << '\n'
