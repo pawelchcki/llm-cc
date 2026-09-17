@@ -1,4 +1,7 @@
+import collections
+import concurrent.futures
 import hashlib
+import itertools
 import json
 import math
 import os
@@ -106,3 +109,39 @@ def model_digest(digests):
         composite.update(b"\0")
         composite.update(value.encode("ascii"))
     return composite.hexdigest()
+
+
+def bounded_map(function, arguments, concurrency):
+    """Yield `function(argument)` in argument order with bounded concurrency.
+
+    Only `concurrency` results are in flight or buffered at once, so a stage
+    reading many large cache entries cannot be forced to hold all of them
+    before the first is consumed. The first failure cancels queued work and
+    propagates, so a broken store fails the run instead of quietly degrading
+    into cache misses.
+    """
+    arguments = list(arguments)
+    if concurrency == 1 or len(arguments) <= 1:
+        for argument in arguments:
+            yield function(argument)
+        return
+    executor = concurrent.futures.ThreadPoolExecutor(
+        max_workers=concurrency, thread_name_prefix="bounded-map"
+    )
+    try:
+        upcoming = iter(arguments)
+        pending = collections.deque(
+            executor.submit(function, argument)
+            for argument in itertools.islice(upcoming, concurrency)
+        )
+        while pending:
+            try:
+                value = pending.popleft().result()
+            except BaseException:
+                executor.shutdown(wait=False, cancel_futures=True)
+                raise
+            for argument in itertools.islice(upcoming, 1):
+                pending.append(executor.submit(function, argument))
+            yield value
+    finally:
+        executor.shutdown(wait=True)

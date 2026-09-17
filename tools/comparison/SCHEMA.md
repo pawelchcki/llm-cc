@@ -51,8 +51,8 @@ and ignores keys it does not know; the contract is documented in
 `src/model_identity.h`. The memo is advisory, is written only from a digest the
 worker itself verified against the profile, sits outside `v2/entropy` so it is
 never published, and dies with the worker's temporary directory. For a split
-GGUF model the worker memoizes only the `--model` file; the scorer hashes the
-companion shards itself.
+GGUF model the worker verifies and memoizes every shard, one memo per shard,
+matching how the scorer memoizes them.
 Fingerprint = SHA256(canonical JSON of `{scoring, build}`). Eligibility and
 classification do not affect it. File key = SHA256(canonical JSON of
 `[content_sha256, language, fingerprint]`).

@@ -7,7 +7,6 @@ rather than a way to silently contaminate a comparison.
 
 from __future__ import annotations
 
-import concurrent.futures
 import hashlib
 import json
 import math
@@ -18,6 +17,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .common import bounded_map
+
 
 class CacheError(RuntimeError):
     """A store could not be read or written (as opposed to an invalid entry)."""
@@ -26,29 +27,11 @@ class CacheError(RuntimeError):
 def _read_many(store: Any, keys: list[str], concurrency: int):
     """Yield (key, bytes) in key order, reading with bounded concurrency.
 
-    The first failure cancels queued reads and propagates, so a broken store
-    fails the run instead of quietly degrading into cache misses.
+    Entry bodies are released as they are consumed rather than accumulated,
+    so restoring a cache near its size limit does not need the whole cache
+    resident at once.
     """
-    if concurrency == 1 or len(keys) <= 1:
-        for key in keys:
-            yield key, store.get(key)
-        return
-    executor = concurrent.futures.ThreadPoolExecutor(
-        max_workers=concurrency, thread_name_prefix="cache-read"
-    )
-    try:
-        pending = {executor.submit(store.get, key): key for key in keys}
-        values = {}
-        for future in concurrent.futures.as_completed(pending):
-            try:
-                values[pending[future]] = future.result()
-            except BaseException:
-                executor.shutdown(wait=False, cancel_futures=True)
-                raise
-    finally:
-        executor.shutdown(wait=True)
-    for key in keys:
-        yield key, values[key]
+    yield from zip(keys, bounded_map(store.get, keys, concurrency))
 
 
 def _canonical(value: Any) -> bytes:

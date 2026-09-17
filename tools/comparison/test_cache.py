@@ -8,7 +8,12 @@ import time
 import unittest
 from pathlib import Path
 
-from tools.comparison.cache import CacheError, FilesystemStore, ResultCache
+from tools.comparison.cache import (
+    CacheError,
+    FilesystemStore,
+    ResultCache,
+    _read_many,
+)
 
 
 def item():
@@ -189,6 +194,23 @@ class CacheTest(unittest.TestCase):
                     self.assertRaises(
                         ValueError, cache.native_entropy, "f" * 64, concurrency
                     )
+
+    def test_reads_are_streamed_rather_than_accumulated(self):
+        started = []
+
+        class Store:
+            def get(self, key):
+                started.append(key)
+                return key.encode()
+
+        stream = _read_many(Store(), ["k%d" % i for i in range(12)], 3)
+        first = next(stream)
+        # Only the bounded window may have been read before the first result,
+        # so a cache near its size limit is never resident all at once.
+        self.assertEqual(first, ("k0", b"k0"))
+        self.assertLessEqual(len(started), 3)
+        self.assertEqual([key for key, _ in stream], ["k%d" % i for i in range(1, 12)])
+        self.assertEqual(len(started), 12)
 
     def test_malformed_native_timestamp_is_cache_miss(self):
         with tempfile.TemporaryDirectory() as directory:

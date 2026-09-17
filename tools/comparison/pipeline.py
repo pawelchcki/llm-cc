@@ -1,4 +1,3 @@
-import concurrent.futures
 import datetime
 import hashlib
 import json
@@ -10,6 +9,7 @@ from pathlib import Path
 from .cache import FilesystemStore
 from .common import (
     SCHEMA_VERSION,
+    bounded_map,
     digest,
     read_json,
     valid_result,
@@ -67,24 +67,12 @@ def _lookup_results(cache, items, fingerprint, concurrency):
     keys = sorted(items)
     cached = {}
     if cache:
-        executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=concurrency, thread_name_prefix="cache-lookup"
+        # Authentication and transport errors must fail the run; queued reads
+        # are pointless once one has failed.
+        results = bounded_map(
+            lambda key: cache.get(items[key], fingerprint), keys, concurrency
         )
-        try:
-            pending = {
-                executor.submit(cache.get, items[key], fingerprint): key
-                for key in keys
-            }
-            for future in concurrent.futures.as_completed(pending):
-                try:
-                    cached[pending[future]] = future.result()
-                except BaseException:
-                    # Authentication and transport errors must fail the run;
-                    # queued reads are pointless once one has failed.
-                    executor.shutdown(wait=False, cancel_futures=True)
-                    raise
-        finally:
-            executor.shutdown(wait=True)
+        cached = dict(zip(keys, results))
     hits, misses = {}, []
     for key in keys:
         item = items[key]
