@@ -52,6 +52,15 @@ cc_library(
     hdrs = [":version_header"],
 )
 
+# The only consumer of the stamped header: a new commit recompiles this file
+# instead of every translation unit that reports provenance.
+cc_library(
+    name = "build_info",
+    srcs = ["src/build_info.cc"],
+    hdrs = ["src/build_info.h"],
+    implementation_deps = [":version"],
+)
+
 string_flag(
     name = "backend",
     build_setting_default = "auto",
@@ -301,7 +310,8 @@ cc_library(
         ":progress",
         ":download",
         ":payload",
-        ":version",
+        ":sha256",
+        ":build_info",
         "@nlohmann_json//:json",
     ],
 )
@@ -416,6 +426,15 @@ cc_library(
 cc_library(
     name = "sha256",
     hdrs = ["src/sha256.h"],
+)
+
+cc_test(
+    name = "sha256_test",
+    srcs = ["src/sha256_test.cc"],
+    deps = [
+        ":sha256",
+        ":test_util",
+    ],
 )
 
 cc_library(
@@ -554,6 +573,7 @@ cc_library(
         "//conditions:default": ["LLMCC_BACKEND_CPU"],
     }),
     deps = [
+        ":build_info",
         ":progress",
         ":backend_fetch",
         ":backend_runtime",
@@ -565,7 +585,6 @@ cc_library(
         ":llama",
         ":models",
         ":scoring",
-        ":version",
     ],
     tags = ["manual"],
 )
@@ -638,6 +657,7 @@ cc_binary(
         "//conditions:default": [],
     }),
     deps = [
+        ":build_info",
         ":progress",
         ":analyze",
         ":backend_fetch",
@@ -651,7 +671,6 @@ cc_binary(
         ":models",
         ":project",
         ":score_cmd",
-        ":version",
     ],
     tags = ["manual"],
 )
@@ -667,6 +686,7 @@ cc_binary(
         "-Wl,--dynamic-list=$(location //third_party:ggml_backend_abi.list)",
     ],
     deps = [
+        ":build_info",
         ":progress",
         ":analyze",
         ":backend_fetch",
@@ -679,7 +699,6 @@ cc_binary(
         ":models",
         ":project",
         ":score_cmd",
-        ":version",
     ],
     tags = ["manual"],
     target_compatible_with = select({
@@ -1249,6 +1268,7 @@ test_suite(
         ":rocm_topology_test",
         ":score_cmd_test",
         ":scoring_test",
+        ":sha256_test",
         ":starlark_test",
         ":version_test",
     ],

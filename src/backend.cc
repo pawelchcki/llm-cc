@@ -375,8 +375,7 @@ LoadedPlugin LoadPlugin(
           prepared = PrepareEmbeddedPayload(BackendName(backend));
           return prepared.has_value();
         },
-        [] { return RuntimeRoot(); }, version,
-        std::string_view{LLM_CC_GIT_SHA, sizeof(LLM_CC_GIT_SHA) - 1}, fetch,
+        [] { return RuntimeRoot(); }, version, build_info::GitSha(), fetch,
         [] { return InstalledBackendRoot(); });
     if (resolved.source == BackendPluginSource::kBundle ||
         resolved.source == BackendPluginSource::kInstalledBundle) {
@@ -630,8 +629,8 @@ std::string DiscoverBackendSource(BackendKind backend) {
     const auto resolved = ResolveBackendPlugin(
         backend, directory, PluginCandidates(backend),
         [backend] { return HasEmbeddedPayload(BackendName(backend)); },
-        [] { return RuntimeRoot(); }, LLM_CC_VERSION, LLM_CC_GIT_SHA, {},
-        [] { return InstalledBackendRoot(); }, false);
+        [] { return RuntimeRoot(); }, build_info::Version(),
+        build_info::GitSha(), {}, [] { return InstalledBackendRoot(); }, false);
     if (resolved.source == BackendPluginSource::kEmbedded)
       return "embedded (device untested)";
     return resolved.path.string() + " (device untested)";

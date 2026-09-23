@@ -24,10 +24,11 @@ namespace fs = std::filesystem;
 
 namespace {
 
-std::string Manifest(
-    std::string_view commit = "", std::string_view name = "cuda",
-    std::string_view version = "1.2.3",
-    std::string_view configuration = LLM_CC_BACKEND_CONFIGURATION) {
+std::string Manifest(std::string_view commit = "",
+                     std::string_view name = "cuda",
+                     std::string_view version = "1.2.3",
+                     std::string_view configuration =
+                         llmcc::build_info::BackendConfiguration()) {
   return "{\"name\":\"" + std::string(name) + "\",\"version\":\"" +
          std::string(version) + "\",\"git_sha\":\"" + std::string(commit) +
          "\",\"configuration\":\"" + std::string(configuration) + "\"}";

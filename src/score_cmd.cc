@@ -45,8 +45,8 @@
 #include <windows.h>
 #endif
 
-#include "generated/version.h"
 #include "src/backend.h"
+#include "src/build_info.h"
 #include "src/cache.h"
 #include "src/download.h"
 #include "src/inference_guard.h"
@@ -328,7 +328,7 @@ Arguments ParseArguments(int argc, char** argv) {
       Usage();
     }
     if (option == "-V" || option == "--version") {
-      std::cout << "llm-cc " << LLM_CC_VERSION << '\n';
+      std::cout << "llm-cc " << llmcc::build_info::Version() << '\n';
       std::exit(0);
     }
     if (option == "--entropy") {
@@ -1449,7 +1449,7 @@ std::unique_ptr<BackendRuntime> CreateBackendRuntime(
     const InferenceOptions& options) {
   try {
     return std::make_unique<BackendRuntime>(
-        options.backend, options.gpu_layers, LLM_CC_VERSION,
+        options.backend, options.gpu_layers, build_info::Version(),
         options.backend_directory, options.no_download,
         options.fetch_backend &&
             ShouldFetchBackend(options.backend, options.gpu_layers));
@@ -1785,7 +1785,7 @@ int RunScoreCommand(int argc, char** argv) {
     BackendRuntime backend = [&] {
       try {
         return BackendRuntime(
-            arguments.backend, arguments.gpu_layers, LLM_CC_VERSION,
+            arguments.backend, arguments.gpu_layers, build_info::Version(),
             arguments.backend_directory, arguments.no_download,
             ShouldFetchBackend(arguments.backend, arguments.gpu_layers));
       } catch (const std::exception& error) {

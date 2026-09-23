@@ -62,6 +62,8 @@ build:buildbuddy --build_metadata=ROLE=CI
 build:buildbuddy --remote_upload_local_results=true
 build:buildbuddy --remote_download_minimal
 build:buildbuddy --remote_timeout=3600
+# zstd shrinks object files and GPU modules on the wire in both directions.
+build:buildbuddy --remote_cache_compression
 
 build:buildbuddy-rbe --config=buildbuddy
 build:buildbuddy-rbe --remote_executor=grpcs://remote.buildbuddy.io

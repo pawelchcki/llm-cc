@@ -2,19 +2,48 @@
 # Run outside Bazel: this test creates an independent module and action graph.
 set -euo pipefail
 source_root="$(cd -- "$(dirname -- "$0")/.." && pwd)"
-consumer="$(mktemp -d "${TMPDIR:-/tmp}/llm-cc-consumer.XXXXXXXX")"
+# CONSUMER_ROOT keeps the consumer's output base between runs, so its action
+# cache stays warm. The output base remains inside the workspace either way:
+# Bazel records toolchain inputs relative to it, and moving it would miss the
+# shared repository contents cache and extract the LLVM toolchain again.
+if [[ -n "${CONSUMER_ROOT:-}" ]]; then
+  if [[ -n "${CONSUMER_OUTPUT_BASE:-}" ]]; then
+    echo "CONSUMER_ROOT keeps its own output base; unset CONSUMER_OUTPUT_BASE" >&2
+    exit 2
+  fi
+  consumer="$CONSUMER_ROOT"
+  mkdir -p "$consumer"
+else
+  consumer="$(mktemp -d "${TMPDIR:-/tmp}/llm-cc-consumer.XXXXXXXX")"
+fi
 consumer_output="${CONSUMER_OUTPUT_BASE:-$consumer/output-base}"
 function bazel() {
   command bazel --output_base="$consumer_output" "$@"
 }
+# Foreign-build outputs contain read-only directories. Do not follow the
+# runfiles/external symlinks back into the source checkout or shared caches.
+function remove_workspace() {
+  local entry
+  for entry in "$consumer"/* "$consumer"/.[!.]* "$consumer"/..?*; do
+    if [[ ! -e "$entry" && ! -L "$entry" ]] || [[ "$entry" == "$consumer/output-base" ]]; then
+      continue
+    fi
+    if [[ -d "$entry" && ! -L "$entry" ]]; then
+      find "$entry" -type d -exec chmod u+w {} +
+    fi
+    rm -rf "$entry"
+  done
+}
 function cleanup() {
   bazel shutdown >/dev/null 2>&1 || true
-  # Foreign-build outputs contain read-only directories. Do not follow the
-  # runfiles/external symlinks back into the source checkout or shared caches.
-  find "$consumer" -type d -exec chmod u+w {} +
-  rm -rf "$consumer"
+  if [[ -z "${CONSUMER_ROOT:-}" ]]; then
+    find "$consumer" -type d -exec chmod u+w {} +
+    rm -rf "$consumer"
+  fi
 }
 trap cleanup EXIT
+# A persistent root starts from a fresh copy; only its output base survives.
+remove_workspace
 cp -R "$source_root/examples/consumer/." "$consumer/"
 cp "$source_root/.bazelversion" "$consumer/"
 for patch in rules_cuda_explicit_tools rules_foreign_cc_reproducible_logs; do
