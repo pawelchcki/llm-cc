@@ -61,10 +61,12 @@ class DiscoveryTest(unittest.TestCase):
             self.github.discover(HEAD, "feature", "main")
 
     def test_other_repositories_and_branches_are_filtered(self):
-        # The same commit proposed to an upstream repository, or pushed under
-        # another branch name, must not select this repository's comparison.
+        # The same commit proposed to an upstream repository, pushed under
+        # another branch name, or proposed from a fork's same-named branch,
+        # must not select this repository's comparison.
         self.github.open_pull(5, "feature", HEAD, base_repo="upstream/repo")
         self.github.open_pull(6, "other-branch", HEAD)
+        self.github.open_pull(8, "feature", HEAD, head_repo="fork/repo")
         self.assertIsNone(self.github.discover(HEAD, "feature", "main"))
         self.github.open_pull(7, "feature", HEAD)
         self.assertEqual(self.github.discover(HEAD, "feature", "main")["pr_number"], 7)

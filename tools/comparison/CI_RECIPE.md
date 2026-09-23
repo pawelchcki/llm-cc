@@ -51,9 +51,11 @@ application's own build and tests stay authoritative.
 ## 1. Pin the tool, backend, model and scoring contract
 
 Images are built from a clean llm-cc checkout at one full commit;
-[`build.sh`](recipe/images/build.sh) refuses anything else. The scorer build
-passes `--//:source_commit` and `--//:source_version` explicitly, so the
-installed identity names llm-cc's revision and never the application's.
+[`build.sh`](recipe/images/build.sh) refuses anything else, and builds the
+scorer from a `git archive` of that commit, so ignored local files (models,
+caches, `bazel-*` trees) never reach the build. The scorer build passes
+`--//:source_commit` and `--//:source_version` explicitly, so the installed
+identity names llm-cc's revision and never the application's.
 Remote build caching is optional and arrives only as a build secret; local
 builds need no organizational credentials. Projects that consume llm-cc as a
 Bazel module instead should follow the [consumer example](../../examples/consumer/README.md);
@@ -281,9 +283,11 @@ carried in the plan, which is where the parent's publisher looks. `publish` then
 
 Reserving before the external update means a lost API response cannot let an
 older pipeline overwrite a newer comment: its retry adopts the comment it
-created. Publication is serialized per branch (`resource_group` on GitLab,
-`concurrency` on GitHub); the conditional marker and the embedded ordinal still
-reject an older pipeline if that serialization is bypassed. The re-check is not
+created. Publication must be serialized per branch (`resource_group` on
+GitLab, `concurrency` on GitHub): two publishers writing at the same moment
+can still interleave their comment updates. Beyond that, the conditional
+marker and the embedded ordinal reject an older pipeline, such as a delayed or
+retried job, that publishes after a newer one has reserved. The re-check is not
 atomic with pull-request changes: a push or retarget between the re-check and
 the comment update leaves one outdated comment until the next pipeline
 publishes. Stale and suppressed outcomes exit 0 with the reason printed;

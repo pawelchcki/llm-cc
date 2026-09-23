@@ -83,6 +83,9 @@ class GitHub:
                 and p["head"]["sha"] == head
                 and p["head"]["ref"] == branch
                 and p["base"]["repo"]["full_name"] == self.repository
+                # A fork can propose the same commit under the same branch
+                # name; a deleted fork has no head repository at all.
+                and (p["head"]["repo"] or {}).get("full_name") == self.repository
             )
             if len(batch) < 100:
                 break

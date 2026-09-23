@@ -411,6 +411,8 @@ class TemplateTest(unittest.TestCase):
         (tools / "skopeo").write_text(skopeo)
         (tools / "podman").write_text(
             '#!/bin/sh\necho "$*" >> "$ENGINE_LOG"\ncase "$1" in\n'
+            "  build) for context; do :; done\n"
+            '    (cd "$context" && find . -type f) >> "$ENGINE_LOG.context" ;;\n'
             "  push) printf 'sha256:%064d' 0 > \"$3\" ;;\n"
             "  run) echo '{}' ;;\nesac\n"
         )
@@ -447,6 +449,13 @@ class TemplateTest(unittest.TestCase):
         source, environment = self.image_build("#!/bin/sh\nexit 1\n")
         fetch = "registry.example/alpine@sha256:" + "4" * 64
         environment["FETCH_IMAGE"] = fetch
+        # Ignored local artifacts, such as downloaded models, stay out of the
+        # scorer's build context.
+        environment["LLM_CC_COMMIT"] = commit_files(
+            source, {".gitignore": "/models/\n"}, "ignore models"
+        )
+        (source / "models").mkdir()
+        (source / "models" / "model.gguf").write_text("weights\n")
         # The default OUTPUT lands inside the checkout; a rerun must still
         # pass the clean-source check.
         for _ in range(2):
@@ -464,6 +473,11 @@ class TemplateTest(unittest.TestCase):
         self.assertEqual(len(models), 2)
         for line in models:
             self.assertIn("--build-arg FETCH_IMAGE=" + fetch, line)
+        context = Path(environment["ENGINE_LOG"] + ".context").read_text()
+        # Only the scorer builds from the source tree.
+        self.assertIn("./.gitignore", context.splitlines())
+        self.assertNotIn("model.gguf", context)
+        self.assertFalse((source / "comparison" / "scorer-context").exists())
         # Only the outputs are exempt: an edited source still refuses to build.
         (source / "tools" / "__init__.py").write_text("# edited\n")
         completed = self.build_images(source, environment)

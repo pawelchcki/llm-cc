@@ -1,7 +1,7 @@
 # GPU scorer image: the installed llm-cc CUDA scorer, the comparison worker and
 # a non-root user, built on the content-keyed model image by digest.
 #
-# Build from an llm-cc checkout at the pinned commit (build.sh does this):
+# Build from the pinned commit's tracked files (build.sh uses `git archive`):
 #
 #   podman build -f tools/comparison/recipe/images/scorer.Containerfile \
 #     --build-arg MODEL_IMAGE=registry.example.com/llm-cc/model@sha256:<digest> \

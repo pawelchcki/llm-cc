@@ -76,7 +76,7 @@ comparison-images:
     # Registry-only trust; prefer COSIGN_PUBLIC_KEY/COSIGN_PRIVATE_KEY.
     TRUST_REGISTRY: "1"
   script:
-    - dnf install -y --quiet git skopeo
+    - dnf install -y --quiet git skopeo tar
     - printf '%s' "$CI_REGISTRY_PASSWORD" | podman login --username "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
     - git clone --quiet https://github.com/pawelchcki/llm-cc.git llm-cc
     - git -C llm-cc checkout --quiet --detach "$LLM_CC_COMMIT"
@@ -154,8 +154,9 @@ comparison-score:
     strategy: depend
 
 # Runs even when earlier jobs failed, so failures reach the pull request.
-# The resource group serializes publication per branch; store-backed ordinals
-# still reject a delayed older pipeline if serialization is bypassed.
+# The resource group serializes publication per branch, which overlapping
+# publishers require; store-backed ordinals still reject a delayed older
+# pipeline that publishes after a newer one.
 comparison-publish:
   stage: publish
   image: $COMPARISON_COORDINATOR_IMAGE

@@ -114,11 +114,23 @@ class FakeGitHub(GitHub):
         self.calls = []
         self.lose_next_write = False
 
-    def open_pull(self, number, head_ref, head_sha, base_ref="main", base_repo=None):
+    def open_pull(
+        self,
+        number,
+        head_ref,
+        head_sha,
+        base_ref="main",
+        base_repo=None,
+        head_repo=None,
+    ):
         self.pulls[number] = {
             "number": number,
             "state": "open",
-            "head": {"ref": head_ref, "sha": head_sha},
+            "head": {
+                "ref": head_ref,
+                "sha": head_sha,
+                "repo": {"full_name": head_repo or self.repository},
+            },
             "base": {
                 "ref": base_ref,
                 "sha": self.branches[base_ref],

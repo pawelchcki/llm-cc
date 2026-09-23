@@ -7,7 +7,8 @@
 # Writes $OUTPUT/images.env with immutable name@sha256 references and
 # $OUTPUT/profile.json, the scoring profile baked into the coordinator.
 #
-# Needs podman, skopeo and sha256sum; cosign when signatures are configured.
+# Needs podman, skopeo, git, tar and sha256sum; cosign when signatures are
+# configured.
 # Run it from the llm-cc checkout at LLM_CC_COMMIT.
 set -eu
 
@@ -40,7 +41,7 @@ case "$OUTPUT/" in
   "$LLM_CC_SOURCE"/*)
     prefix="${OUTPUT#"$LLM_CC_SOURCE"}/"
     prefix="${prefix#/}"
-    for name in .digest coordinator-context images.env profile.json; do
+    for name in .digest coordinator-context images.env profile.json scorer-context; do
       tracked="$(git -C "$LLM_CC_SOURCE" ls-files -- ":(literal)$prefix$name")"
       if [ -n "$tracked" ]; then
         echo "OUTPUT would overwrite tracked source $prefix$name" >&2
@@ -136,10 +137,20 @@ if [ -n "${BUILDER_IMAGE:-}" ]; then set -- "$@" --build-arg "BUILDER_IMAGE=$BUI
 if [ -n "${RUNTIME_IMAGE:-}" ]; then set -- "$@" --build-arg "RUNTIME_IMAGE=$RUNTIME_IMAGE"; fi
 # Remote-cache credentials reach Bazel only as a build secret.
 if [ -n "${BAZELRC:-}" ]; then set -- "$@" --secret "id=bazelrc,src=$BAZELRC"; fi
-scorer="$(existing "$scorer_name" "$scorer_tag" org.opencontainers.image.revision "$LLM_CC_COMMIT" \
-  io.llm-cc.input-key "$scorer_tag")" ||
-  scorer="$(publish "$scorer_name" "$scorer_tag" "$LLM_CC_SOURCE" \
+if ! scorer="$(existing "$scorer_name" "$scorer_tag" \
+  org.opencontainers.image.revision "$LLM_CC_COMMIT" io.llm-cc.input-key "$scorer_tag")"; then
+  # Build from the pinned commit's tracked files only: ignored local artifacts
+  # (models, caches, bazel-* trees) never reach the engine or the image.
+  context="$OUTPUT/scorer-context"
+  rm -rf "$context"
+  mkdir -p "$context"
+  git -C "$LLM_CC_SOURCE" archive --output="$context/source.tar" "$LLM_CC_COMMIT"
+  tar -x -f "$context/source.tar" -C "$context"
+  rm "$context/source.tar"
+  scorer="$(publish "$scorer_name" "$scorer_tag" "$context" \
     "$recipe/images/scorer.Containerfile" "$@")"
+  rm -rf "$context"
+fi
 
 # 3. Coordinator: the comparison code plus the profile that names the scorer.
 coordinator_name="$REGISTRY/coordinator"

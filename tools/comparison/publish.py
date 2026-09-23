@@ -303,7 +303,8 @@ def publish(
     if existing is not None and _comment_ordinal(existing["body"]) > ordinal:
         _finish(store, key, token, dict(record, state="suppressed"))
         return "stale", "comment %d already shows a newer pipeline" % existing["id"]
-    # Without CI serialization another publisher may have reserved meanwhile.
+    # A publisher that CI failed to serialize may have reserved meanwhile. This
+    # narrows the window before the comment update; only serialization closes it.
     if store.get_versioned(key)[1] != token:
         marker, _ = _read_marker(store, key)
         if marker is not None and marker["ordinal"] > ordinal:

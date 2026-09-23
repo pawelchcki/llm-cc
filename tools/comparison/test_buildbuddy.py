@@ -392,7 +392,11 @@ class BuildBuddyTest(unittest.TestCase):
         pull = {
             "number": 123,
             "state": "open",
-            "head": {"sha": "a" * 40, "ref": "feature"},
+            "head": {
+                "sha": "a" * 40,
+                "ref": "feature",
+                "repo": {"full_name": "owner/repo"},
+            },
             "base": {
                 "sha": "b" * 40,
                 "ref": "release",
