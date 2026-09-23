@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+* add a reproducible CI recipe for cached GPU comparisons
+  ([tools/comparison/CI_RECIPE.md](tools/comparison/CI_RECIPE.md)): `discover`,
+  `store-report`, `publish` and `ci` comparison commands, GitLab parent/child
+  and GitHub Actions templates, and Containerfiles for the model, scorer and
+  coordinator images ([#38](https://github.com/pawelchcki/llm-cc/issues/38))
+* publish one pull-request comment per PR natively, ordered by pipeline with
+  conditional store writes, re-checking the PR before every update and still
+  reporting failures when no report was produced
+
 ### Changed
 
 * report raw LM-CC, the paper's metric, as the default headline (`--score raw`);

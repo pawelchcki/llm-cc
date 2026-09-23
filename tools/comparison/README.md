@@ -101,10 +101,9 @@ Run without Bazel using `python3 -m tools.comparison prepare` (Python 3.11+ and
 Git). A consuming module can run `@llm_cc//tools/comparison:prepare`, including
 when its `bazel_dep` uses a different `repo_name`. Each stage accepts explicit
 paths; Bazel launchers resolve those paths in the original working directory.
-For GitLab, upload `plan.json` and `blobs/` from preparation, generate zero to four
-jobs from `plan.workers`, and run aggregation with `when: always`. Download worker
-outputs into separate directories and pass every `worker-<id>.json` using repeated
-`--worker` flags. Do not unpack preparation artifacts over completed worker files.
+
+For GitLab and GitHub Actions pipelines built from these stages, see
+[CI_RECIPE.md](CI_RECIPE.md).
 
 An identity file for a PR looks like:
 
@@ -260,9 +259,29 @@ the generated table and report links using `.ci-toolkit.yml` from the PR's
 target commit. The publication policy must land on the target branch before a
 fresh PR comparison can publish automatically.
 
-ci-toolkit owns comment markers, serialization, ordering, and PR-state rechecks;
-these comparison stages never post comments. See
+In this BuildBuddy flow, ci-toolkit owns comment markers, serialization,
+ordering, and PR-state rechecks, and the coordinator never posts comments. See
 [ci-toolkit.example.yml](ci-toolkit.example.yml) for the publication policy.
+Other CI systems can use the native `publish` command instead; see
+[CI_RECIPE.md](CI_RECIPE.md#7-publication-with-ordering-protection).
+
+## CI recipe
+
+[CI_RECIPE.md](CI_RECIPE.md) is the provider-neutral guide to running these
+stages in CI: pinning, the model/scorer/coordinator image roles, the store
+layout, strict workers, reporting and ordered publication, with an acceptance
+checklist. Four more commands complete the pipeline around the core stages:
+
+- `discover` resolves the current pull request and its actual target, or skips
+  a branch without one, and writes `identity.json` plus dotenv outputs.
+- `ci gitlab-child` and `ci github-matrix` turn a plan into zero to four GPU
+  jobs: a GitLab child pipeline or a GitHub Actions matrix.
+- `store-report` stores a report under the pipeline that produced it.
+- `publish` validates a stored report and maintains one ordered comment per
+  pull request, re-checking the pull request before it writes.
+
+Ready-made [GitLab and GitHub Actions templates](recipe/README.md) and
+Containerfiles for the three image roles live under [recipe/](recipe).
 
 ## Adopting in another repository
 

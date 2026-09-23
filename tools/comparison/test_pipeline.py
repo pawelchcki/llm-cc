@@ -1,5 +1,4 @@
 import json
-import html
 import os
 import subprocess
 import tempfile
@@ -12,6 +11,7 @@ from pathlib import Path
 from tools.comparison.__main__ import parser
 from tools.comparison.cache import CacheError, FilesystemStore, ResultCache
 from tools.comparison.common import write_json
+from tools.comparison.fixtures import git, synthetic_scorer
 from tools.comparison.inventory import (
     GitError,
     _classify,
@@ -40,20 +40,6 @@ class MemoryCache:
 
     def get(self, item, fingerprint):
         return self.values.get(item["key"])
-
-
-def git(repo, *args):
-    env = os.environ | {
-        "GIT_AUTHOR_NAME": "Test",
-        "GIT_AUTHOR_EMAIL": "test@example.test",
-        "GIT_COMMITTER_NAME": "Test",
-        "GIT_COMMITTER_EMAIL": "test@example.test",
-    }
-    return (
-        subprocess.check_output(["git", "-C", str(repo), *args], env=env)
-        .decode()
-        .strip()
-    )
 
 
 class PipelineTest(unittest.TestCase):
@@ -871,39 +857,7 @@ class PipelineTest(unittest.TestCase):
 
     def test_compare_cold_warm_incremental_and_worker_count_equality(self):
         root = Path(self.temp.name)
-        scorer = root / "fake-scorer.py"
-        scorer.write_text("""#!/usr/bin/env python3
-import hashlib,json,sys
-language=sys.argv[sys.argv.index('--lang')+1]
-model=sys.argv[sys.argv.index('--model')+1]
-paths=sys.argv[sys.argv.index('--include-headers')+1:]
-print(json.dumps({'type':'configuration','model_sha256':hashlib.sha256(open(model,'rb').read()).hexdigest(),'model_size':len(open(model,'rb').read()),'language':language,'no_download':True,'no_ignore':True,'include_headers':True}))
-score=tokens=0
-for path in paths:
- data=open(path,'rb').read(); value=float(sum(data)); count=len(data); score+=value; tokens+=count
- print(json.dumps({'type':'file','path':path,'language':language,'llm_cc':value,'token_count':count}))
-print(json.dumps({'type':'totals','discovered':len(paths),'analyzed':len(paths),'failed':0,'partial':False,'llm_cc':score,'token_count':tokens}))
-""")
-        scorer.chmod(0o755)
-        model = root / "model.gguf"
-        model.write_bytes(b"model")
-        profile = {
-            "scoring": {"expected_configuration": {}},
-            "build": {
-                "installed_files": {
-                    scorer.name: __import__("hashlib")
-                    .sha256(scorer.read_bytes())
-                    .hexdigest()
-                },
-                "source_commit": "4646123",
-                "inference_abi": "test",
-                "execution_image": "sha256:test",
-                "container_environment_policy": "sanitized-v1",
-                "model_sha256": __import__("hashlib").sha256(b"model").hexdigest(),
-                "model_bytes": 5,
-            },
-            "max_file_bytes": 65536,
-        }
+        scorer, model, profile = synthetic_scorer(root)
         cache = ResultCache(FilesystemStore(root / "cache"))
         cold = compare(
             self.repo,

@@ -1,0 +1,202 @@
+# Advisory llm-cc complexity comparison for GitHub pull requests, run from a
+# GitLab mirror of the GitHub repository. See tools/comparison/CI_RECIPE.md in
+# llm-cc for the walkthrough.
+#
+#   prepare  discover the PR and its actual target, inventory both revisions,
+#            check the result cache and generate the child pipeline
+#   score    child pipeline: zero to four GPU workers, then aggregation
+#   publish  store-backed ordering, PR re-check, one upserted comment
+#
+# CI/CD variables to add (Settings > CI/CD > Variables), all masked:
+#   GITHUB_READ_TOKEN     read-only GitHub token: Pull requests and Contents read
+#   GITHUB_COMMENT_TOKEN  Pull requests write; give it the environment scope
+#                         "llm-cc-publisher" so only the publish job receives it
+#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (or your store's credentials)
+#
+# Include this file from an existing .gitlab-ci.yml, or use it as one. Every
+# comparison job may fail without failing the pipeline: the report is advisory.
+
+variables:
+  COMPARISON_REPOSITORY: "OWNER/REPO"
+  # One digest pins the comparison code, the scoring profile and, through
+  # that profile, the GPU scorer image. The comparison-images job prints it.
+  COMPARISON_COORDINATOR_IMAGE: "registry.example.com/llm-cc/coordinator@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  COMPARISON_STORE: "s3://YOUR_BUCKET/llm-cc"
+  # Optional files in this repository; leave empty to use the defaults.
+  COMPARISON_STORE_OPTIONS: ""
+  COMPARISON_CONFIG: ""
+  # GitHub login that owns GITHUB_COMMENT_TOKEN: only its comments are updated.
+  COMPARISON_COMMENT_AUTHOR: "llm-cc-bot"
+  # GPU workers per pipeline, capped by max_workers in COMPARISON_CONFIG,
+  # which the generated child pipeline enforces.
+  COMPARISON_MAX_WORKERS: "4"
+
+workflow:
+  rules:
+    - if: $COMPARISON_BUILD_IMAGES == "1"
+    # Default-branch pushes seed the baseline; other branches compare against
+    # their current open pull request or skip scoring.
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH
+  auto_cancel:
+    on_new_commit: interruptible
+
+stages:
+  - images
+  - prepare
+  - score
+  - publish
+
+.comparison-job:
+  image: $COMPARISON_COORDINATOR_IMAGE
+  interruptible: true
+  allow_failure: true
+  rules:
+    - if: $COMPARISON_BUILD_IMAGES == "1"
+      when: never
+    - when: on_success
+
+# Run a pipeline with COMPARISON_BUILD_IMAGES=1 (for example from the web UI)
+# whenever LLM_CC_COMMIT or the model changes, then copy the printed
+# COORDINATOR_IMAGE into COMPARISON_COORDINATOR_IMAGE above. Needs a runner
+# that can run podman builds.
+comparison-images:
+  stage: images
+  image: quay.io/podman/stable:latest
+  rules:
+    - if: $COMPARISON_BUILD_IMAGES == "1"
+  variables:
+    REGISTRY: $CI_REGISTRY_IMAGE/llm-cc
+    LLM_CC_COMMIT: "FULL_40_HEX_LLM_CC_COMMIT"
+    LLM_CC_VERSION: "LLM_CC_VERSION_AT_THAT_COMMIT"
+    MODEL_URL: "https://huggingface.co/bartowski/DeepSeek-Coder-V2-Lite-Base-GGUF/resolve/babc004c32d74af2553661d912673f1d22dcb3f1/DeepSeek-Coder-V2-Lite-Base-Q6_K.gguf"
+    MODEL_SHA256: "5a2e25280075d769abdb111de8211d9d3367f2ae0d0e6166a288ee6e8ed0345d"
+    MODEL_BYTES: "14066972416"
+    BAZELISK_URL: "https://github.com/bazelbuild/bazelisk/releases/download/PINNED_VERSION/bazelisk-linux-amd64"
+    BAZELISK_SHA256: "SHA256_OF_THAT_RELEASE_ASSET"
+    # Registry-only trust; prefer COSIGN_PUBLIC_KEY/COSIGN_PRIVATE_KEY.
+    TRUST_REGISTRY: "1"
+  script:
+    - dnf install -y --quiet git skopeo tar
+    - printf '%s' "$CI_REGISTRY_PASSWORD" | podman login --username "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - git clone --quiet https://github.com/pawelchcki/llm-cc.git llm-cc
+    - git -C llm-cc checkout --quiet --detach "$LLM_CC_COMMIT"
+    - OUTPUT="$CI_PROJECT_DIR/comparison" llm-cc/tools/comparison/recipe/images/build.sh
+  artifacts:
+    paths:
+      - comparison/images.env
+      - comparison/profile.json
+
+comparison-prepare:
+  extends: .comparison-job
+  stage: prepare
+  variables:
+    GIT_DEPTH: "0"
+  script:
+    - mkdir -p comparison
+    # Discovery reads GitHub with the read-only token and fetches the actual
+    # target into this checkout.
+    - >-
+      python3 -m tools.comparison discover
+      --repository "$COMPARISON_REPOSITORY" --head "$CI_COMMIT_SHA"
+      --branch "$CI_COMMIT_BRANCH" --default-branch "$CI_DEFAULT_BRANCH"
+      --pipeline-id "$CI_PIPELINE_ID" --token-env GITHUB_READ_TOKEN
+      --repo . --output comparison/identity.json --dotenv comparison/discover.env
+    - . ./comparison/discover.env
+    - |
+      if [ "$COMPARISON_SKIP" = 1 ]; then
+        python3 -m tools.comparison ci gitlab-child ${COMPARISON_CONFIG:+--config "$COMPARISON_CONFIG"} \
+          --coordinator-image "$COMPARISON_COORDINATOR_IMAGE" \
+          --skipped "No open pull request for this branch; nothing to score." \
+          --output comparison/child.yml
+        exit 0
+      fi
+    - >-
+      python3 -m tools.comparison prepare
+      --repo . --head "$CI_COMMIT_SHA" --target "$COMPARISON_TARGET_SHA"
+      --identity comparison/identity.json
+      --profile /opt/llm-cc-comparison/profile.json
+      --rules /opt/llm-cc-comparison/rules.json
+      --cache "$COMPARISON_STORE" ${COMPARISON_STORE_OPTIONS:+--store-options "$COMPARISON_STORE_OPTIONS"}
+      --max-workers "$COMPARISON_MAX_WORKERS" ${COMPARISON_CONFIG:+--config "$COMPARISON_CONFIG"}
+      --output-dir comparison/prep
+    # Zero to four GPU jobs, one per planned worker; a fully cached plan
+    # yields only the aggregation job.
+    - >-
+      python3 -m tools.comparison ci gitlab-child
+      --plan comparison/prep/plan.json ${COMPARISON_CONFIG:+--config "$COMPARISON_CONFIG"}
+      --coordinator-image "$COMPARISON_COORDINATOR_IMAGE"
+      --cache "$COMPARISON_STORE" ${COMPARISON_STORE_OPTIONS:+--store-options "$COMPARISON_STORE_OPTIONS"}
+      --output comparison/child.yml
+  artifacts:
+    when: always
+    expire_in: 14 days
+    paths:
+      - comparison/
+    reports:
+      dotenv: comparison/discover.env
+
+comparison-score:
+  stage: score
+  needs:
+    - comparison-prepare
+  allow_failure: true
+  rules:
+    - if: $COMPARISON_BUILD_IMAGES == "1"
+      when: never
+    - when: on_success
+  variables:
+    # Child jobs download the plan and blobs from the parent's prepare job.
+    PARENT_PIPELINE_ID: $CI_PIPELINE_ID
+  trigger:
+    include:
+      - artifact: comparison/child.yml
+        job: comparison-prepare
+    strategy: depend
+
+# Runs even when earlier jobs failed, so failures reach the pull request.
+# The resource group serializes publication per branch, which overlapping
+# publishers require; store-backed ordinals still reject a delayed older
+# pipeline that publishes after a newer one.
+comparison-publish:
+  stage: publish
+  image: $COMPARISON_COORDINATOR_IMAGE
+  interruptible: true
+  allow_failure: true
+  resource_group: comparison-$CI_COMMIT_REF_SLUG
+  environment:
+    name: llm-cc-publisher
+    action: prepare
+  needs:
+    - job: comparison-prepare
+      artifacts: true
+    - job: comparison-score
+      artifacts: false
+  rules:
+    - if: $COMPARISON_BUILD_IMAGES == "1"
+      when: never
+    - when: always
+  script:
+    - |
+      if [ "${COMPARISON_SKIP:-}" = 1 ]; then
+        echo "No open pull request for this branch; nothing to publish."
+        exit 0
+      fi
+      if [ ! -f comparison/identity.json ]; then
+        # Preparation failed before discovery. Discover now so the failure
+        # still reaches the pull request.
+        mkdir -p comparison
+        python3 -m tools.comparison discover \
+          --repository "$COMPARISON_REPOSITORY" --head "$CI_COMMIT_SHA" \
+          --branch "$CI_COMMIT_BRANCH" --default-branch "$CI_DEFAULT_BRANCH" \
+          --pipeline-id "$CI_PIPELINE_ID" --token-env GITHUB_READ_TOKEN \
+          --output comparison/identity.json --dotenv comparison/late.env
+        . ./comparison/late.env
+        if [ "$COMPARISON_SKIP" = 1 ]; then exit 0; fi
+      fi
+    - >-
+      python3 -m tools.comparison publish
+      --cache "$COMPARISON_STORE" ${COMPARISON_STORE_OPTIONS:+--store-options "$COMPARISON_STORE_OPTIONS"}
+      --repository "$COMPARISON_REPOSITORY" --pipeline-id "$CI_PIPELINE_ID"
+      --head "$CI_COMMIT_SHA" --ordinal "$CI_PIPELINE_IID"
+      --identity comparison/identity.json
+      --token-env GITHUB_COMMENT_TOKEN --comment-author "$COMPARISON_COMMENT_AUTHOR"

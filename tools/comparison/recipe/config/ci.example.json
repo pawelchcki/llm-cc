@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "max_workers": 4,
+  "cache_concurrency": 8,
+  "worker_timeout": "120m",
+  "aggregate_timeout": "30m",
+  "artifact_expiry": "14 days",
+  "gitlab": {
+    "prepare_job": "comparison-prepare",
+    "cpu_tags": ["linux"],
+    "gpu_tags": ["linux", "gpu", "cuda-sm86"]
+  }
+}
