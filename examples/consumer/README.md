@@ -19,8 +19,9 @@ against the source and exercises a renamed dependency in a separate Git reposito
 Use `tools/check_consumer.sh --tests-only` to run installer, CLI, language, TLS,
 and comparison regressions without building an installation. The harness cleans
 up its own Bazel output directory; `CONSUMER_ROOT` optionally names a directory
-whose output base is kept for the next run, and `CONSUMER_OUTPUT_BASE` supplies
-the output base directly. Universal payload validation remains a separate GPU build.
+whose output base is kept for the next run. Alternatively,
+`CONSUMER_OUTPUT_BASE` supplies the output base directly; the two cannot be
+combined. Universal payload validation remains a separate GPU build.
 
 Toolchain registration is explicit. The public `toolchains` extension creates
 LLVM, the portable sysroot, and pinned CUDA repositories. `override_repo` routes

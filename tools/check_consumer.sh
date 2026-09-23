@@ -7,6 +7,10 @@ source_root="$(cd -- "$(dirname -- "$0")/.." && pwd)"
 # Bazel records toolchain inputs relative to it, and moving it would miss the
 # shared repository contents cache and extract the LLVM toolchain again.
 if [[ -n "${CONSUMER_ROOT:-}" ]]; then
+  if [[ -n "${CONSUMER_OUTPUT_BASE:-}" ]]; then
+    echo "CONSUMER_ROOT keeps its own output base; unset CONSUMER_OUTPUT_BASE" >&2
+    exit 2
+  fi
   consumer="$CONSUMER_ROOT"
   mkdir -p "$consumer"
 else
