@@ -117,8 +117,11 @@ def _store_arguments(store, options):
     """Store flags for generated jobs; options travel inline, never secrets."""
     if not isinstance(store, str) or not store:
         raise ValueError("generated jobs need a store location")
+    # Credential keys come in any case (AWS_SECRET_ACCESS_KEY, SessionToken).
     if not isinstance(options, dict) or any(
-        "secret" in key or "access_key" in key or "token" in key for key in options
+        word in key.lower()
+        for key in options
+        for word in ("secret", "access_key", "token")
     ):
         raise ValueError(
             "store options must not carry credentials; use CI secret variables"

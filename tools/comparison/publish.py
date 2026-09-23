@@ -190,10 +190,12 @@ def comment_body(comment, pipeline_id, ordinal):
 
 def _own_comment(comments, author, preferred_id):
     """The comment this publisher owns; other authors' copies of the marker are ignored."""
+    # GitHub logins are case-insensitive; --comment-author may differ in case.
+    author = author.lower()
     ours = [
         comment
         for comment in comments
-        if (comment.get("user") or {}).get("login") == author
+        if ((comment.get("user") or {}).get("login") or "").lower() == author
         and isinstance(comment.get("body"), str)
         # Editing a comment in the web UI switches it to CRLF line endings.
         and comment["body"].split("\n", 1)[0].rstrip("\r") == COMMENT_MARKER

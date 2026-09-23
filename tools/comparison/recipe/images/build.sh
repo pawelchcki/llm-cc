@@ -90,10 +90,13 @@ existing() {
 }
 
 # publish NAME TAG CONTEXT CONTAINERFILE [build options]: build, push, sign.
+# The signed image labels the tag it was built for, so a tag later moved to
+# another signed image from the same revision is not mistaken for it.
 publish() {
   name=$1 tag=$2 context=$3 file=$4
   shift 4
-  "$ENGINE" build --file "$file" --tag "$name:$tag" "$@" "$context" >&2
+  "$ENGINE" build --file "$file" --tag "$name:$tag" --label "io.llm-cc.input-key=$tag" \
+    "$@" "$context" >&2
   "$ENGINE" push --digestfile "$OUTPUT/.digest" "$name:$tag" >&2
   reference="$name@$(cat "$OUTPUT/.digest")"
   if [ -n "${COSIGN_PRIVATE_KEY:-}" ]; then
@@ -133,7 +136,8 @@ if [ -n "${BUILDER_IMAGE:-}" ]; then set -- "$@" --build-arg "BUILDER_IMAGE=$BUI
 if [ -n "${RUNTIME_IMAGE:-}" ]; then set -- "$@" --build-arg "RUNTIME_IMAGE=$RUNTIME_IMAGE"; fi
 # Remote-cache credentials reach Bazel only as a build secret.
 if [ -n "${BAZELRC:-}" ]; then set -- "$@" --secret "id=bazelrc,src=$BAZELRC"; fi
-scorer="$(existing "$scorer_name" "$scorer_tag" org.opencontainers.image.revision "$LLM_CC_COMMIT")" ||
+scorer="$(existing "$scorer_name" "$scorer_tag" org.opencontainers.image.revision "$LLM_CC_COMMIT" \
+  io.llm-cc.input-key "$scorer_tag")" ||
   scorer="$(publish "$scorer_name" "$scorer_tag" "$LLM_CC_SOURCE" \
     "$recipe/images/scorer.Containerfile" "$@")"
 
@@ -145,7 +149,7 @@ coordinator_tag="$(
     key
 )"
 if ! coordinator="$(existing "$coordinator_name" "$coordinator_tag" \
-  org.opencontainers.image.revision "$LLM_CC_COMMIT")"; then
+  org.opencontainers.image.revision "$LLM_CC_COMMIT" io.llm-cc.input-key "$coordinator_tag")"; then
   context="$OUTPUT/coordinator-context"
   rm -rf "$context"
   mkdir -p "$context/tools/comparison"

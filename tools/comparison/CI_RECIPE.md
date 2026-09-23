@@ -117,9 +117,10 @@ the scorer image from the plan's profile and reject a mismatching configured one
 
 `build.sh` treats content-derived tags only as lookup hints. A tag found in the
 registry is reused after its labels match the producer's source identity
-(`org.opencontainers.image.revision`, or the model digest and size) and its
-signature verifies with `COSIGN_PUBLIC_KEY`; `TRUST_REGISTRY=1` accepts a
-registry only CI can push to. A fresh build uses the digest `podman push --digestfile` reports,
+(`org.opencontainers.image.revision`, or the model digest and size), the scorer
+and coordinator also record the tag they were built for
+(`io.llm-cc.input-key`), and its signature verifies with `COSIGN_PUBLIC_KEY`;
+`TRUST_REGISTRY=1` accepts a registry only CI can push to. A fresh build uses the digest `podman push --digestfile` reports,
 never a tag resolved afterwards, and signs it when `COSIGN_PRIVATE_KEY` is set.
 The output is `images.env` with `MODEL_IMAGE`, `SCORER_IMAGE` and
 `COORDINATOR_IMAGE`, all `name@sha256:<digest>`, plus the generated

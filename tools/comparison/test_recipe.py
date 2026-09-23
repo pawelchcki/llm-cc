@@ -493,14 +493,18 @@ class TemplateTest(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("sha256sum"), "build.sh needs sha256sum")
     def test_build_script_reuses_images_only_for_the_same_inputs(self):
-        # Every tag exists as digest 5, labelled with the pinned inputs except
-        # for the model size, which the registry reports as REGISTRY_BYTES.
+        # Every tag exists as digest 5, labelled with the pinned inputs and the
+        # tag it was built for, except for the model size, which the registry
+        # reports as REGISTRY_BYTES, and a tag moved to another image.
         source, environment = self.image_build(
             '#!/bin/sh\necho "$4" >> "$REGISTRY_LOG"\ncase "$3" in\n'
-            "  '{{.Digest}}') printf 'sha256:%064d\\n' 5 ;;\n"
+            '  \'{{.Digest}}\') echo "${4##*:}" > "$REGISTRY_LOG.tag"\n'
+            "    printf 'sha256:%064d\\n' 5 ;;\n"
             '  *model.sha256*) echo "$MODEL_SHA256" ;;\n'
             '  *model.bytes*) echo "$REGISTRY_BYTES" ;;\n'
-            '  *revision*) echo "$LLM_CC_COMMIT" ;;\nesac\n'
+            '  *revision*) echo "$LLM_CC_COMMIT" ;;\n'
+            '  *input-key*) if [ -n "${REGISTRY_MOVED:-}" ]; then echo moved;\n'
+            '    else cat "$REGISTRY_LOG.tag"; fi ;;\nesac\n'
         )
         registry = Path(environment["HOME"]) / "registry.log"
         engine = Path(environment["ENGINE_LOG"])
@@ -539,6 +543,23 @@ class TemplateTest(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         first, _, changed = scorer_tags()
         self.assertNotEqual(first, changed)
+        # A tag moved to another signed image of the same revision is rebuilt,
+        # and the rebuilt images record the tags they were built for.
+        engine.write_text("")
+        environment["REGISTRY_MOVED"] = "1"
+        completed = self.build_images(source, environment)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("io.llm-cc.input-key is 'moved'", completed.stderr)
+        builds = [
+            line
+            for line in engine.read_text().splitlines()
+            if line.startswith("build ")
+        ]
+        self.assertEqual(len(builds), 2)
+        for line, containerfile in zip(builds, ("scorer", "coordinator")):
+            self.assertIn(containerfile + ".Containerfile", line)
+            tag = line.split("--tag ", 1)[1].split(" ", 1)[0].rsplit(":", 1)[1]
+            self.assertIn("--label io.llm-cc.input-key=" + tag, line)
 
     def test_gitlab_parent_serializes_publication_and_always_reports(self):
         parent = self.read("gitlab", ".gitlab-ci.yml")

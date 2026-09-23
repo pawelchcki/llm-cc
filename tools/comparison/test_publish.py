@@ -193,6 +193,15 @@ class PublishTest(PublishFixture):
         self.assertEqual(comment["id"], own["id"])
         self.assertIn("updated", comment["body"])
 
+    def test_comment_author_matches_the_login_in_any_case(self):
+        self.stored("101", head(1), "first push")
+        self.publish("101", head(1), 1, comment_author=self.github.login.upper())
+        self.pull["head"]["sha"] = head(2)
+        self.stored("102", head(2), "second push")
+        self.publish("102", head(2), 2, comment_author=self.github.login.upper())
+        [comment] = self.comments()
+        self.assertIn("second push", comment["body"])
+
     def test_tampered_comment_is_rejected(self):
         self.stored("101", head(1))
         prefix = pipeline_prefix({"repository": REPOSITORY, "pipeline_id": "101"})

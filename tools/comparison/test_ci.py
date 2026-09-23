@@ -161,15 +161,12 @@ class GitLabChildTest(unittest.TestCase):
                     gitlab_child(
                         plan(1), path, self.config, STORE, coordinator=COORDINATOR
                     )
-        with self.assertRaisesRegex(ValueError, "credentials"):
-            gitlab_child(
-                plan(1),
-                PLAN_PATH,
-                self.config,
-                STORE,
-                {"aws_secret_access_key": "x"},
-                COORDINATOR,
-            )
+        for key in ("aws_secret_access_key", "AWS_SECRET_ACCESS_KEY", "SessionToken"):
+            with self.subTest(key=key):
+                with self.assertRaisesRegex(ValueError, "credentials"):
+                    gitlab_child(
+                        plan(1), PLAN_PATH, self.config, STORE, {key: "x"}, COORDINATOR
+                    )
         child = gitlab_child(
             plan(1), PLAN_PATH, self.config, STORE, {"region_name": "it's"}, COORDINATOR
         )
