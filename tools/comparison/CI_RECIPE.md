@@ -95,7 +95,7 @@ profile is a separate experiment with a separate fingerprint.
 | Role | Containerfile | Contents | Tag (lookup hint) |
 |---|---|---|---|
 | Model | [model.Containerfile](recipe/images/model.Containerfile) | `/models/model.gguf` on `scratch`, size and SHA-256 verified | the weights' SHA-256 |
-| Scorer | [scorer.Containerfile](recipe/images/scorer.Containerfile) | the model image by digest, plus one layer: `/opt/llm-cc`, Python, the worker package, user 10001 | hash of commit, version, archs, model digest, Containerfile |
+| Scorer | [scorer.Containerfile](recipe/images/scorer.Containerfile) | the model image by digest, plus one layer: `/opt/llm-cc`, Python, the worker package, user 10001 | hash of commit, version, archs, model digest, base images, Bazelisk pin, Containerfile |
 | Coordinator | [coordinator.Containerfile](recipe/images/coordinator.Containerfile) | Git, boto3, the comparison package, `profile.json`, default `rules.json`, user 10001 | hash of commit, scorer digest, scoring settings, Containerfile |
 
 The scorer's final stage starts `FROM` the model image by digest and adds the
@@ -116,10 +116,10 @@ through the profile, the exact scorer every GPU job runs. The CI adapters take
 the scorer image from the plan's profile and reject a mismatching configured one.
 
 `build.sh` treats content-derived tags only as lookup hints. A tag found in the
-registry is reused after its label matches the producer's source identity
-(`org.opencontainers.image.revision`, or the model digest) and its signature
-verifies with `COSIGN_PUBLIC_KEY`; `TRUST_REGISTRY=1` accepts a registry only CI
-can push to. A fresh build uses the digest `podman push --digestfile` reports,
+registry is reused after its labels match the producer's source identity
+(`org.opencontainers.image.revision`, or the model digest and size) and its
+signature verifies with `COSIGN_PUBLIC_KEY`; `TRUST_REGISTRY=1` accepts a
+registry only CI can push to. A fresh build uses the digest `podman push --digestfile` reports,
 never a tag resolved afterwards, and signs it when `COSIGN_PRIVATE_KEY` is set.
 The output is `images.env` with `MODEL_IMAGE`, `SCORER_IMAGE` and
 `COORDINATOR_IMAGE`, all `name@sha256:<digest>`, plus the generated

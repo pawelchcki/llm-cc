@@ -61,19 +61,24 @@ verify_signature() {
   fi
 }
 
-# existing NAME TAG LABEL VALUE: the digest reference of NAME:TAG when it is
-# signed and its LABEL records VALUE, the producer's source identity.
+# existing NAME TAG [LABEL VALUE]...: the digest reference of NAME:TAG when it
+# is signed and each LABEL records its VALUE, the producer's source identity.
 existing() {
-  digest="$(skopeo inspect --format '{{.Digest}}' "docker://$1:$2" 2>/dev/null)" ||
+  name=$1 tag=$2
+  shift 2
+  digest="$(skopeo inspect --format '{{.Digest}}' "docker://$name:$tag" 2>/dev/null)" ||
     return 1
-  label="$(skopeo inspect --format "{{index .Labels \"$3\"}}" "docker://$1@$digest")"
-  if [ "$label" != "$4" ]; then
-    echo "not reusing $1@$digest: $3 is '$label', expected '$4'" >&2
-    return 1
-  fi
-  verify_signature "$1@$digest" || return 1
-  echo "reusing $1:$2" >&2
-  echo "$1@$digest"
+  while [ "$#" -gt 0 ]; do
+    label="$(skopeo inspect --format "{{index .Labels \"$1\"}}" "docker://$name@$digest")"
+    if [ "$label" != "$2" ]; then
+      echo "not reusing $name@$digest: $1 is '$label', expected '$2'" >&2
+      return 1
+    fi
+    shift 2
+  done
+  verify_signature "$name@$digest" || return 1
+  echo "reusing $name:$tag" >&2
+  echo "$name@$digest"
 }
 
 # publish NAME TAG CONTEXT CONTAINERFILE [build options]: build, push, sign.
@@ -96,7 +101,10 @@ set -- --build-arg "MODEL_URL=$MODEL_URL" \
   --build-arg "MODEL_SHA256=$MODEL_SHA256" \
   --build-arg "MODEL_BYTES=$MODEL_BYTES"
 if [ -n "${FETCH_IMAGE:-}" ]; then set -- "$@" --build-arg "FETCH_IMAGE=$FETCH_IMAGE"; fi
-model="$(existing "$model_name" "$MODEL_SHA256" io.llm-cc.model.sha256 "$MODEL_SHA256")" ||
+# The size goes into the profile, so a reused image must confirm it just as a
+# fresh build's size check would.
+model="$(existing "$model_name" "$MODEL_SHA256" io.llm-cc.model.sha256 "$MODEL_SHA256" \
+  io.llm-cc.model.bytes "$MODEL_BYTES")" ||
   model="$(publish "$model_name" "$MODEL_SHA256" "$recipe/images" \
     "$recipe/images/model.Containerfile" "$@")"
 
@@ -104,7 +112,7 @@ model="$(existing "$model_name" "$MODEL_SHA256" io.llm-cc.model.sha256 "$MODEL_S
 scorer_name="$REGISTRY/scorer"
 scorer_tag="$(
   printf '%s\n' "$LLM_CC_COMMIT" "$LLM_CC_VERSION" "$CUDA_ARCHS" "$model" \
-    "${BUILDER_IMAGE:-}" "${RUNTIME_IMAGE:-}" |
+    "${BUILDER_IMAGE:-}" "${RUNTIME_IMAGE:-}" "$BAZELISK_URL" "$BAZELISK_SHA256" |
     cat - "$recipe/images/scorer.Containerfile" | key
 )"
 set -- --build-arg "MODEL_IMAGE=$model" \

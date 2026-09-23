@@ -376,8 +376,9 @@ class TemplateTest(unittest.TestCase):
             self.assertRegex(image, r"(?m)^\s+PYTHONSAFEPATH=1 \\$")
             self.assertIn("sys.version_info < (3, 11)", image)
 
-    @unittest.skipUnless(shutil.which("sha256sum"), "build.sh needs sha256sum")
-    def test_build_script_reruns_in_the_checkout_and_forwards_pins(self):
+    def image_build(self, skopeo):
+        """A pinned llm-cc checkout, a fake engine and registry, and build.sh's
+        environment; the engine pushes every image as digest 0."""
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         root = Path(temp.name)
@@ -391,9 +392,7 @@ class TemplateTest(unittest.TestCase):
         )
         tools = root / "bin"
         tools.mkdir()
-        log = root / "engine.log"
-        # An empty registry, so every run builds, pushes and generates.
-        (tools / "skopeo").write_text("#!/bin/sh\nexit 1\n")
+        (tools / "skopeo").write_text(skopeo)
         (tools / "podman").write_text(
             '#!/bin/sh\necho "$*" >> "$ENGINE_LOG"\ncase "$1" in\n'
             "  push) printf 'sha256:%064d' 0 > \"$3\" ;;\n"
@@ -401,11 +400,10 @@ class TemplateTest(unittest.TestCase):
         )
         for tool in tools.iterdir():
             tool.chmod(0o755)
-        fetch = "registry.example/alpine@sha256:" + "4" * 64
         environment = {
             "PATH": str(tools) + os.pathsep + os.environ["PATH"],
             "HOME": str(root),
-            "ENGINE_LOG": str(log),
+            "ENGINE_LOG": str(root / "engine.log"),
             "REGISTRY": "registry.example/llm-cc",
             "LLM_CC_COMMIT": commit,
             "LLM_CC_VERSION": "0.0.0",
@@ -415,18 +413,28 @@ class TemplateTest(unittest.TestCase):
             "MODEL_BYTES": "1",
             "BAZELISK_URL": "https://bazelisk.example/bazelisk",
             "BAZELISK_SHA256": "3" * 64,
-            "FETCH_IMAGE": fetch,
         }
+        return source, environment
+
+    def build_images(self, source, environment):
+        return subprocess.run(
+            ["sh", str(RECIPE / "images" / "build.sh")],
+            cwd=source,
+            env=environment,
+            capture_output=True,
+            text=True,
+        )
+
+    @unittest.skipUnless(shutil.which("sha256sum"), "build.sh needs sha256sum")
+    def test_build_script_reruns_in_the_checkout_and_forwards_pins(self):
+        # An empty registry, so every run builds, pushes and generates.
+        source, environment = self.image_build("#!/bin/sh\nexit 1\n")
+        fetch = "registry.example/alpine@sha256:" + "4" * 64
+        environment["FETCH_IMAGE"] = fetch
         # The default OUTPUT lands inside the checkout; a rerun must still
         # pass the clean-source check.
         for _ in range(2):
-            completed = subprocess.run(
-                ["sh", str(RECIPE / "images" / "build.sh")],
-                cwd=source,
-                env=environment,
-                capture_output=True,
-                text=True,
-            )
+            completed = self.build_images(source, environment)
             self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn(
             "COORDINATOR_IMAGE=registry.example/llm-cc/coordinator@sha256:" + "0" * 64,
@@ -434,7 +442,7 @@ class TemplateTest(unittest.TestCase):
         )
         models = [
             line
-            for line in log.read_text().splitlines()
+            for line in Path(environment["ENGINE_LOG"]).read_text().splitlines()
             if line.startswith("build ") and "model.Containerfile" in line
         ]
         self.assertEqual(len(models), 2)
@@ -442,15 +450,58 @@ class TemplateTest(unittest.TestCase):
             self.assertIn("--build-arg FETCH_IMAGE=" + fetch, line)
         # Only the outputs are exempt: an edited source still refuses to build.
         (source / "tools" / "__init__.py").write_text("# edited\n")
-        completed = subprocess.run(
-            ["sh", str(RECIPE / "images" / "build.sh")],
-            cwd=source,
-            env=environment,
-            capture_output=True,
-            text=True,
-        )
+        completed = self.build_images(source, environment)
         self.assertEqual(completed.returncode, 1)
         self.assertIn("is not a clean checkout", completed.stderr)
+
+    @unittest.skipUnless(shutil.which("sha256sum"), "build.sh needs sha256sum")
+    def test_build_script_reuses_images_only_for_the_same_inputs(self):
+        # Every tag exists as digest 5, labelled with the pinned inputs except
+        # for the model size, which the registry reports as REGISTRY_BYTES.
+        source, environment = self.image_build(
+            '#!/bin/sh\necho "$4" >> "$REGISTRY_LOG"\ncase "$3" in\n'
+            "  '{{.Digest}}') printf 'sha256:%064d\\n' 5 ;;\n"
+            '  *model.sha256*) echo "$MODEL_SHA256" ;;\n'
+            '  *model.bytes*) echo "$REGISTRY_BYTES" ;;\n'
+            '  *revision*) echo "$LLM_CC_COMMIT" ;;\nesac\n'
+        )
+        registry = Path(environment["HOME"]) / "registry.log"
+        engine = Path(environment["ENGINE_LOG"])
+        environment |= {
+            "REGISTRY_LOG": str(registry),
+            "REGISTRY_BYTES": "1",
+            "TRUST_REGISTRY": "1",
+        }
+
+        def scorer_tags():
+            return [
+                line.rsplit(":", 1)[1]
+                for line in registry.read_text().splitlines()
+                if "/scorer:" in line
+            ]
+
+        completed = self.build_images(source, environment)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertFalse(
+            [
+                line
+                for line in engine.read_text().splitlines()
+                if line.startswith("build ")
+            ]
+        )
+        # The profile records MODEL_BYTES, so an image recording another size
+        # is rebuilt, and the build's own size check decides.
+        environment["REGISTRY_BYTES"] = "2"
+        completed = self.build_images(source, environment)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("io.llm-cc.model.bytes is '2', expected '1'", completed.stderr)
+        self.assertIn("model.Containerfile", engine.read_text())
+        # A new Bazelisk pin is a new scorer, not a reused one.
+        environment |= {"REGISTRY_BYTES": "1", "BAZELISK_SHA256": "6" * 64}
+        completed = self.build_images(source, environment)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        first, _, changed = scorer_tags()
+        self.assertNotEqual(first, changed)
 
     def test_gitlab_parent_serializes_publication_and_always_reports(self):
         parent = self.read("gitlab", ".gitlab-ci.yml")
