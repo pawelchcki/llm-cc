@@ -152,20 +152,37 @@ llm-cc --version
 
 ### Prebuilt releases
 
-Download an executable from [GitHub Releases](https://github.com/pawelchcki/llm-cc/releases),
-or use the included installer with Python 3.9+ on macOS or Linux:
+On Linux or macOS, install the latest release with one command:
 
 ```sh
-python3 tools/install_release.py
+curl -fsSL https://github.com/pawelchcki/llm-cc/releases/latest/download/install.sh | sh
+```
+
+`wget -qO- <url> | sh` works the same way. The script selects your platform,
+verifies SHA-256, installs `llm-cc` into `$HOME/.local/bin`, and on Linux
+x86-64 fetches the matching CUDA or ROCm bundle when it detects that GPU.
+Options follow `sh -s --`: `--version X.Y.Z`, `--bin-dir PATH`, and
+`--backend cuda|rocm|auto|none`. Every release also ships the script as
+`install.sh`, so a pinned version can use its own copy:
+
+```sh
+curl -fsSL https://github.com/pawelchcki/llm-cc/releases/download/v0.2.0/install.sh | sh -s -- --version 0.2.0
+```
+
+Alternatively, download an executable from [GitHub Releases](https://github.com/pawelchcki/llm-cc/releases),
+or use the Python installer (3.9+) shipped with each release:
+
+```sh
+python3 install_release.py
 ```
 
 On Windows, use the Python launcher:
 
 ```powershell
-py -3 tools/install_release.py
+py -3 install_release.py
 ```
 
-The installer selects your platform, verifies SHA-256, and installs into
+The Python installer selects your platform, verifies SHA-256, and installs into
 `$HOME/.local/bin` (or `%USERPROFILE%\.local\bin` on Windows). Ensure that
 directory is on `PATH` before running `llm-cc`; pass `--bin-dir PATH` to choose
 another location. Linux x86-64 releases require glibc 2.28 or newer and can
