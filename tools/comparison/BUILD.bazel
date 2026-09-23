@@ -5,7 +5,7 @@ package(default_visibility = ["//visibility:public"])
 
 filegroup(
     name = "sources",
-    srcs = glob(["*.py"]) + glob(["consumer/*"]) + ["//tools:__init__.py"],
+    srcs = glob(["*.py"]) + glob(["consumer/*"]) + glob(["recipe/**"]) + ["//tools:__init__.py"],
 )
 
 [
@@ -15,7 +15,16 @@ filegroup(
         args = ["$(rlocationpath :__main__.py)", stage],
         data = [":sources", ":__main__.py"],
     )
-    for stage in ["prepare", "worker", "aggregate", "compare"]
+    for stage in [
+        "prepare",
+        "worker",
+        "aggregate",
+        "compare",
+        "discover",
+        "store-report",
+        "publish",
+        "ci",
+    ]
 ]
 
 sh_test(

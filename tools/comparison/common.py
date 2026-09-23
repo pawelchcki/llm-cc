@@ -36,6 +36,14 @@ def digest(value):
     return hashlib.sha256(canonical_bytes(value)).hexdigest()
 
 
+def pipeline_prefix(identity):
+    """The store prefix for one pipeline's transport objects and reports."""
+    # Pipeline IDs are opaque input, never filesystem paths.
+    return (
+        "pipelines/" + digest([identity["repository"], identity["pipeline_id"]]) + "/"
+    )
+
+
 def write_json(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)

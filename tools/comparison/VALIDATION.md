@@ -85,9 +85,10 @@ and device access, not model inference or device access inside an immutable
 container image. Scoring jobs must serialize access to the shared discrete GPU
 across both executors.
 
-The comparison workflow remains manual while generated-comment publication awaits
-the companion ci-toolkit release. The Bazzite worker setup now uses a separately
-fingerprinted ROCm profile, described below. Existing Linux GitHub Actions consumer
+At this point the comparison workflow was still manual, pending the companion
+ci-toolkit release; see [automatic publication](#automatic-publication-2026-09-12).
+The Bazzite worker setup now uses a separately fingerprinted ROCm profile,
+described below. Existing Linux GitHub Actions consumer
 coverage remains until the corresponding BuildBuddy CPU workflow passes.
 
 On 2026-09-12, both host executors received the GPU labels documented in
@@ -164,8 +165,8 @@ Portability-only test adjustments passed separately and in the final root suite.
 
 Host assets and manual submission are active through
 `/var/lib/llm-cc/comparison.json`; see [BAZZITE.md](BAZZITE.md). Automatic workflow
-triggers and generated PR comments remain disabled pending the companion
-publisher's normal release and PR publication acceptance.
+triggers and generated PR comments were still disabled at this point, pending
+the companion publisher's release; they were enabled later that day.
 
 Before opening the PR, independent review added cache-corruption, Git submodule,
 case-sensitive path classification, malformed-worker-artifact and rendered-path
@@ -213,6 +214,64 @@ runner credential, and public GitHub PR discovery required no local GitHub token
 
 These runs validate manual report generation and retention, including the real
 PR-target lookup and fully cached CPU path. They do **not** establish publication
-of a generated PR comment. Automatic comparison triggers remain disabled;
-ci-toolkit deployment, one-comment update acceptance, delayed/failed publication,
-and retargeted/closed PR publication checks remain the separate live rollout.
+of a generated PR comment. Automatic comparison triggers were still disabled
+when they ran.
+
+## Automatic publication, 2026-09-12
+
+[#40](https://github.com/pawelchcki/llm-cc/pull/40) enabled the `Complexity
+comparison` triggers in `buildbuddy.yaml` for `main` pushes and pull requests
+targeting `main`, and [#41](https://github.com/pawelchcki/llm-cc/pull/41) added
+the ci-toolkit publication policy to `.ci-toolkit.yml` on `main`. On PR #40 head
+`95a5ea550935`, the update automatically started
+[comparison `79c97a2a`](https://pawel.buildbuddy.io/invocation/79c97a2a-5db2-45cb-80b0-268a5bd16c02),
+which completed with 130 cache hits, zero GPU workers and 100% supported-file
+coverage, and ci-toolkit advanced
+[its comment](https://github.com/pawelchcki/llm-cc/pull/40#issuecomment-5647344287)
+from pending to the complete table. Delayed or failed publication and
+retargeted or closed pull requests have not been exercised live in this flow.
+
+## CI recipe, 2026-09-23
+
+Checked on Linux x86_64 for [CI_RECIPE.md](CI_RECIPE.md). These results
+establish local correctness only.
+
+- All **193** comparison tests pass directly and through
+  `bazel test //tools/comparison:comparison_test`. The 54 new tests cover GitHub
+  discovery and comment pagination (17), publication ordering, suppression and
+  validation (17), the CI adapters (10), conditional store writes and concurrent
+  native publication (5), and the offline recipe with template invariants (5).
+- The offline recipe run (`test_recipe`) executes every generated GitLab child
+  job in a real shell, in its own directory with only its declared artifacts,
+  against a local repository, an in-memory GitHub and a filesystem store. It
+  seeds the default-branch baseline, skips a branch without a pull request,
+  scores exactly two new contents on two workers for the cold PR run, and
+  handles a rename and a duplicate on the second push with an aggregation-only
+  child that updates the same comment. It then rejects the delayed older
+  pipeline, reports an oversized file as unmeasured, and suppresses publication
+  after a retarget. The warm path, from discovery through publication including
+  the aggregation job's subprocesses, took **0.173 to 0.181 seconds** over five
+  runs, against the issue's 60-second budget. Object-store latency is not
+  included; see the cache concurrency table above.
+- The renamed consumer's `BACKEND=cpu tools/check_consumer.sh --tests-only`
+  passed all five targets, and all eight stage launchers (`prepare`, `worker`,
+  `aggregate`, `compare`, `discover`, `store-report`, `publish`, `ci`) resolved
+  their runfiles.
+- `tools/check_format.sh` and Ruff's pyflakes rules pass. The GitLab template
+  parses as YAML; ShellCheck is clean on each of its job scripts and on
+  `build.sh`; actionlint reports only the workflow's custom self-hosted `gpu`
+  runner label.
+- The coordinator image built with podman from a context assembled as
+  `build.sh` does, with a synthetic profile. It runs as uid 10001 with Python
+  3.12.14, Git 2.47.3 and boto3 1.42.84, and contains no model files. The
+  recipe, publisher, GitHub, cache, pipeline and BuildBuddy tests pass inside
+  it, and it reads a checkout owned by another uid. One existing worker test
+  fails in that image only because its inline synthetic scorer starts with
+  `#!/usr/bin/env python3`, which the worker's sanitized `PATH` cannot resolve
+  in `python:3.12-slim`; the shared fixture scorer now names its interpreter
+  exactly.
+
+Not verified here: building the model and scorer images (the 14 GB download and
+the CUDA build), model-layer reuse across scorer builds, GPU scoring inside the
+scorer image, S3 conditional writes against a real service, and a live GitLab or
+GitHub Actions rollout.

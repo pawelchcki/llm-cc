@@ -1,0 +1,209 @@
+# Advisory llm-cc complexity comparison for pull requests as a GitHub Actions
+# workflow. Copy to .github/workflows/llm-cc-comparison.yml. See
+# tools/comparison/CI_RECIPE.md in llm-cc for the walkthrough.
+#
+#   prepare    discover the PR and its actual target, inventory, plan misses
+#   score      zero to four GPU workers from a dynamic matrix
+#   aggregate  validate every worker and store the report
+#   publish    store-backed ordering, PR re-check, one upserted comment
+#
+# Repository variables (Settings > Secrets and variables > Actions):
+#   LLM_CC_COORDINATOR_IMAGE  coordinator image by digest; build.sh prints it
+#   LLM_CC_STORE              result store, for example s3://bucket/llm-cc
+# Repository secrets: LLM_CC_STORE_ACCESS_KEY_ID, LLM_CC_STORE_SECRET_ACCESS_KEY
+#
+# GPU jobs need self-hosted runners with Docker and the NVIDIA container
+# toolkit, labelled as in `runs-on` below. Pin each action to a full commit
+# SHA in production. Do not make this workflow a required check: it is advisory.
+name: llm-cc comparison
+
+on:
+  push:
+    branches: ["**"]
+
+permissions: {}
+
+# One comparison per branch. A new push cancels the older run, GPU jobs
+# included; stored ordinals still reject a delayed older publication.
+concurrency:
+  group: llm-cc-comparison-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  COMPARISON_STORE: ${{ vars.LLM_CC_STORE }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.LLM_CC_STORE_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.LLM_CC_STORE_SECRET_ACCESS_KEY }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # The coordinator image runs as a non-root user; run it as the hosted
+    # runner's user so the mounted workspace stays writable.
+    container:
+      image: ${{ vars.LLM_CC_COORDINATOR_IMAGE }}
+      options: --user 1001
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      skip: ${{ steps.discover.outputs.COMPARISON_SKIP }}
+      has_workers: ${{ steps.plan.outputs.has_workers }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      scorer_image: ${{ steps.plan.outputs.scorer_image }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: discover
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          mkdir -p comparison
+          python3 -m tools.comparison discover \
+            --repository "$GITHUB_REPOSITORY" --head "$GITHUB_SHA" \
+            --branch "$GITHUB_REF_NAME" --default-branch "$DEFAULT_BRANCH" \
+            --pipeline-id "$GITHUB_RUN_ID" --repo . \
+            --output comparison/identity.json --dotenv comparison/discover.env
+          cat comparison/discover.env >> "$GITHUB_OUTPUT"
+          cat comparison/discover.env >> "$GITHUB_ENV"
+      - id: plan
+        if: steps.discover.outputs.COMPARISON_SKIP == '0'
+        run: |
+          python3 -m tools.comparison prepare \
+            --repo . --head "$GITHUB_SHA" --target "$COMPARISON_TARGET_SHA" \
+            --identity comparison/identity.json \
+            --profile /opt/llm-cc-comparison/profile.json \
+            --rules /opt/llm-cc-comparison/rules.json \
+            --cache "$COMPARISON_STORE" --output-dir comparison/prep
+          python3 -m tools.comparison ci github-matrix --plan comparison/prep/plan.json
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: comparison-prep
+          path: comparison/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # A fully cached plan has no workers, and this job never starts.
+  score:
+    needs: prepare
+    if: needs.prepare.outputs.has_workers == 'true'
+    runs-on: [self-hosted, linux, x64, gpu]
+    timeout-minutes: 120
+    permissions: {}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: comparison-prep
+          path: comparison
+      - name: Score worker ${{ matrix.worker_id }}
+        env:
+          SCORER_IMAGE: ${{ needs.prepare.outputs.scorer_image }}
+          WORKER_ID: ${{ matrix.worker_id }}
+        run: |
+          mkdir -p "comparison/workers/$WORKER_ID"
+          # The exact image the profile fingerprints, as the runner's own
+          # unprivileged user so its outputs stay writable.
+          docker run --rm --gpus all --user "$(id -u):$(id -g)" \
+            --env AWS_ACCESS_KEY_ID --env AWS_SECRET_ACCESS_KEY \
+            --volume "$PWD/comparison:/work/comparison" --workdir /work \
+            "$SCORER_IMAGE" \
+            python3 -m tools.comparison worker \
+              --plan comparison/prep/plan.json --worker-id "$WORKER_ID" \
+              --cache "$COMPARISON_STORE" --output-dir "comparison/workers/$WORKER_ID" \
+              --scorer /opt/llm-cc/bin/llm-cc --model /models/model.gguf \
+              --installed-root /opt/llm-cc
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: comparison-worker-${{ matrix.worker_id }}
+          path: comparison/workers/
+          retention-days: 14
+
+  # Runs after failed workers too (but not after cancellation): aggregation
+  # reports each missing or invalid worker explicitly.
+  aggregate:
+    needs: [prepare, score]
+    if: ${{ !cancelled() && needs.prepare.outputs.skip == '0' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container:
+      image: ${{ vars.LLM_CC_COORDINATOR_IMAGE }}
+      options: --user 1001
+    permissions: {}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: comparison-prep
+          path: comparison
+      # Each worker's files live under its own directory, so merging the
+      # downloads never overwrites a completed result.
+      - if: needs.prepare.outputs.has_workers == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: comparison-worker-*
+          path: comparison/workers
+          merge-multiple: true
+      - run: |
+          set --
+          for artifact in comparison/workers/*/worker-*.json; do
+            if [ -f "$artifact" ]; then set -- "$@" --worker "$artifact"; fi
+          done
+          status=0
+          python3 -m tools.comparison aggregate --plan comparison/prep/plan.json \
+            "$@" --output-dir comparison/report || status=$?
+          python3 -m tools.comparison store-report \
+            --cache "$COMPARISON_STORE" --report-dir comparison/report
+          exit "$status"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: comparison-report
+          path: comparison/report/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # The only job that can write to pull requests.
+  publish:
+    needs: [prepare, aggregate]
+    if: ${{ !cancelled() && needs.prepare.outputs.skip != '1' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    container:
+      image: ${{ vars.LLM_CC_COORDINATOR_IMAGE }}
+      options: --user 1001
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: comparison-prep
+          path: comparison
+      - env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [ ! -f comparison/identity.json ]; then
+            # Preparation failed before discovery. Discover now so the
+            # failure still reaches the pull request.
+            mkdir -p comparison
+            python3 -m tools.comparison discover \
+              --repository "$GITHUB_REPOSITORY" --head "$GITHUB_SHA" \
+              --branch "$GITHUB_REF_NAME" --default-branch "$DEFAULT_BRANCH" \
+              --pipeline-id "$GITHUB_RUN_ID" \
+              --output comparison/identity.json --dotenv comparison/late.env
+            . ./comparison/late.env
+            if [ "$COMPARISON_SKIP" = 1 ]; then exit 0; fi
+          fi
+          python3 -m tools.comparison publish \
+            --cache "$COMPARISON_STORE" --repository "$GITHUB_REPOSITORY" \
+            --pipeline-id "$GITHUB_RUN_ID" --head "$GITHUB_SHA" \
+            --ordinal "$GITHUB_RUN_NUMBER" --identity comparison/identity.json \
+            --comment-author 'github-actions[bot]'

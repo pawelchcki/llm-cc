@@ -54,7 +54,7 @@ bazel test "${args[@]}" --test_output=errors \
   @renamed_engine//:install_test @renamed_engine//:cli_test \
   @renamed_engine//:lang_test @renamed_engine//:tls_integration_test \
   @renamed_engine//tools/comparison:comparison_test
-for stage in prepare worker aggregate compare; do
+for stage in prepare worker aggregate compare discover store-report publish ci; do
   bazel run "${args[@]}" "@renamed_engine//tools/comparison:$stage" -- --help
 done
 # Discover the transitive repository's canonical label through Bazel rather

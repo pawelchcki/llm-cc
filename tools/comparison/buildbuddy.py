@@ -7,7 +7,6 @@ BuildBuddyService. Credentials remain environment inputs, never plan artifacts.
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -16,119 +15,24 @@ import re
 import shlex
 import signal
 import string
-import subprocess
 import tempfile
 import time
 import urllib.parse
-import urllib.request
 
 from .cache import ResultCache, open_store
 from .common import (
     canonical_bytes,
     digest,
+    pipeline_prefix,
     read_json,
     validate_execution_policy,
     write_json,
 )
 from .deadline import Deadline, DeadlineExceeded
+from .discover import discover_identity, fetch_target, new_identity
+from .github import GitHub, api_request
 from .pipeline import REPOSITORY_RULES_PATH, aggregate, prepare
-
-
-def _request(
-    url,
-    token,
-    payload=None,
-    token_header="Authorization",
-    content_type="application/json",
-):
-    headers = {"Accept": "application/json", "Content-Type": content_type}
-    if token:
-        headers[token_header] = (
-            "Bearer " if token_header == "Authorization" else ""
-        ) + token
-    data = (
-        payload
-        if isinstance(payload, bytes)
-        else canonical_bytes(payload)
-        if payload is not None
-        else None
-    )
-    request = urllib.request.Request(url, data=data, headers=headers)
-    with urllib.request.urlopen(request, timeout=45) as response:
-        body = response.read()
-    return json.loads(body) if content_type == "application/json" else body
-
-
-class GitHub:
-    def __init__(self, repository, token=""):
-        if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
-            raise ValueError("repository must be owner/name")
-        self.repository, self.token = repository, token
-
-    def get(self, suffix):
-        return _request(
-            "https://api.github.com/repos/" + self.repository + suffix, self.token
-        )
-
-    def discover(self, head, branch, default_branch):
-        if branch == default_branch:
-            current = self.get(
-                "/commits/" + urllib.parse.quote(default_branch, safe="")
-            )["sha"]
-            if current != head:
-                raise ValueError("default-branch push was superseded")
-            return {
-                "head_sha": head,
-                "target_sha": head,
-                "target_branch": default_branch,
-                "pr_number": None,
-            }
-        pulls = []
-        page = 1
-        while True:
-            batch = self.get(f"/commits/{head}/pulls?per_page=100&page={page}")
-            pulls.extend(
-                p
-                for p in batch
-                if p["state"] == "open"
-                and p["head"]["sha"] == head
-                and p["head"]["ref"] == branch
-                and p["base"]["repo"]["full_name"] == self.repository
-            )
-            if len(batch) < 100:
-                break
-            page += 1
-        if not pulls:
-            return None
-        if len(pulls) != 1:
-            raise ValueError(
-                "multiple open PRs match this head; provide an unambiguous PR identity"
-            )
-        pull = self.get(f"/pulls/{pulls[0]['number']}")
-        if pull["state"] != "open" or pull["head"]["sha"] != head:
-            raise ValueError("PR changed during discovery")
-        return {
-            "head_sha": head,
-            "target_sha": pull["base"]["sha"],
-            "target_branch": pull["base"]["ref"],
-            "pr_number": pull["number"],
-        }
-
-    def current(self, identity):
-        if identity["pr_number"] is None:
-            return (
-                self.get(
-                    "/commits/" + urllib.parse.quote(identity["target_branch"], safe="")
-                )["sha"]
-                == identity["head_sha"]
-            )
-        pull = self.get(f"/pulls/{identity['pr_number']}")
-        return (
-            pull["state"] == "open"
-            and pull["head"]["sha"] == identity["head_sha"]
-            and pull["base"]["sha"] == identity["target_sha"]
-            and pull["base"]["ref"] == identity["target_branch"]
-        )
+from .publish import store_report
 
 
 class BuildBuddy:
@@ -138,7 +42,7 @@ class BuildBuddy:
         self.endpoint, self.api_key = endpoint.rstrip("/"), api_key
 
     def api(self, method, payload):
-        return _request(
+        return api_request(
             self.endpoint + "/api/v1/" + method,
             self.api_key,
             payload,
@@ -173,7 +77,7 @@ class BuildBuddy:
         encoded = invocation.encode("ascii")
         if not re.fullmatch(rb"[0-9a-f-]{36}", encoded):
             raise ValueError("invalid cancellation invocation ID")
-        return _request(
+        return api_request(
             self.endpoint + "/rpc/BuildBuddyService/CancelExecutions",
             self.api_key,
             b"\x12" + bytes([len(encoded)]) + encoded,
@@ -182,17 +86,10 @@ class BuildBuddy:
         )
 
 
-def _pipeline_prefix(identity):
-    # Pipeline IDs are opaque input, never filesystem paths.
-    return (
-        "pipelines/" + digest([identity["repository"], identity["pipeline_id"]]) + "/"
-    )
-
-
 def upload_plan(store, plan_path):
     plan_path = Path(plan_path)
     plan = read_json(plan_path)
-    prefix = _pipeline_prefix(plan["identity"])
+    prefix = pipeline_prefix(plan["identity"])
     for worker in plan["workers"]:
         for key in worker["keys"]:
             item = plan["items"][key]
@@ -349,6 +246,7 @@ def worker_request(config, plan, worker, prefix, plan_digest):
         ]
     return request
 
+
 REPORT_LINK_PLACEHOLDERS = ("repository", "target_sha", "target_branch")
 
 
@@ -494,16 +392,7 @@ def run_prepared(
             plan["fingerprint"],
             errors + report.get("errors", []),
         )
-    prefix = _pipeline_prefix(plan["identity"])
-    for name in (
-        "report.json",
-        "report.md",
-        "comment.md",
-        "publication.json",
-        "baseline.md",
-        "baseline.json",
-    ):
-        store.put(prefix + name, (output / name).read_bytes())
+    store_report(store, output, plan["identity"])
     return report
 
 
@@ -530,7 +419,7 @@ def remote_worker(args):
                 if raw is None or hashlib.sha256(raw).hexdigest() != args.plan_sha256:
                     raise ValueError("preparation digest mismatch or missing plan")
                 plan = json.loads(raw)
-                if args.prefix != _pipeline_prefix(plan["identity"]):
+                if args.prefix != pipeline_prefix(plan["identity"]):
                     raise ValueError("preparation belongs to another pipeline")
                 plan_path = directory / "plan.json"
                 plan_path.write_bytes(raw)
@@ -608,16 +497,7 @@ def coordinate(args):
     from .pipeline import failure_report
 
     output = Path(args.output_dir)
-    identity = {
-        "repository": args.repository,
-        "pipeline_id": args.pipeline_id,
-        "head_sha": args.head,
-        "target_sha": None,
-        "base_sha": None,
-        "target_branch": None,
-        "pr_number": None,
-        "started_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-    }
+    identity = new_identity(args.repository, args.pipeline_id, args.head)
     fingerprint = "0" * 64
     try:
         config = read_json(args.config)
@@ -625,14 +505,14 @@ def coordinate(args):
             args.repository,
             os.environ.get(config.get("github_token_env", "GITHUB_TOKEN"), ""),
         )
-        resolved = github.discover(args.head, args.branch, args.default_branch)
+        resolved = discover_identity(github, identity, args.branch, args.default_branch)
         if resolved is None:
             write_json(
                 output / "skipped.json",
                 {"reason": "branch has no current open PR", "identity": identity},
             )
             return 0
-        identity.update(resolved)
+        identity = resolved
         profile = read_json(config["profile"])
         fingerprint = digest({"scoring": profile["scoring"], "build": profile["build"]})
         store = open_store(config["cache"], **config.get("store_options", {}))
@@ -640,17 +520,7 @@ def coordinate(args):
             store, config.get("refresh_days", 20), config.get("expire_days", 30)
         )
         # Fetch actual PR target, then full history if this checkout is shallow.
-        subprocess.run(
-            ["git", "-C", args.repo, "fetch", "origin", identity["target_sha"]],
-            check=True,
-        )
-        shallow = subprocess.check_output(
-            ["git", "-C", args.repo, "rev-parse", "--is-shallow-repository"], text=True
-        ).strip()
-        if shallow == "true":
-            subprocess.run(
-                ["git", "-C", args.repo, "fetch", "--unshallow", "origin"], check=True
-            )
+        fetch_target(args.repo, identity["target_sha"])
         plan = prepare(
             args.repo,
             args.head,

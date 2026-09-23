@@ -110,6 +110,44 @@ class FilesystemStore:
                 except OSError:
                     pass
 
+    def get_versioned(self, key: str) -> tuple[bytes | None, str | None]:
+        """Read an object with a version token for `put_if`: its SHA-256."""
+        value = self.get(key)
+        return value, None if value is None else hashlib.sha256(value).hexdigest()
+
+    def put_if(self, key: str, value: bytes, expected: str | None) -> str | None:
+        """Replace `key` only while it is still at version `expected`.
+
+        `expected=None` creates an absent object. Returns the new version
+        token, or None when another writer changed the object first. Writers
+        serialize on a per-key `flock`, so the store must be local or on a
+        filesystem with working advisory locks; readers stay lock-free because
+        the replacement itself is atomic.
+        """
+        try:
+            import fcntl
+        except ImportError as error:
+            raise CacheError(
+                "conditional filesystem writes need POSIX flock"
+            ) from error
+        self._path(key)
+        lock = (
+            self.root / ".locks" / (hashlib.sha256(key.encode()).hexdigest() + ".lock")
+        )
+        try:
+            lock.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o660)
+        except OSError as error:
+            raise CacheError("cannot lock cache entry %s: %s" % (key, error)) from error
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            if self.get_versioned(key)[1] != expected:
+                return None
+            self.put(key, value)
+            return hashlib.sha256(value).hexdigest()
+        finally:
+            os.close(fd)
+
     def list(self, prefix: str) -> list[str]:
         try:
             if not self.root.exists():
@@ -171,6 +209,43 @@ class S3Store:
         except self._errors as error:
             raise CacheError(
                 "cannot write S3 cache entry %s: %s" % (key, error)
+            ) from error
+
+    def get_versioned(self, key: str) -> tuple[bytes | None, str | None]:
+        """Read an object with a version token for `put_if`: its ETag."""
+        try:
+            response = self.client.get_object(Bucket=self.bucket, Key=self._key(key))
+            return response["Body"].read(), response["ETag"]
+        except self._errors as error:
+            code = getattr(error, "response", {}).get("Error", {}).get("Code")
+            if code in ("NoSuchKey", "404", "NotFound"):
+                return None, None
+            raise CacheError(
+                "cannot read S3 cache entry %s: %s" % (key, error)
+            ) from error
+
+    def put_if(self, key: str, value: bytes, expected: str | None) -> str | None:
+        """Conditional PutObject: If-None-Match to create, If-Match to replace.
+
+        Returns the new ETag, or None when the object changed first. Stores
+        without conditional writes fail loudly instead of silently racing.
+        """
+        condition = {"IfNoneMatch": "*"} if expected is None else {"IfMatch": expected}
+        try:
+            return self.client.put_object(
+                Bucket=self.bucket, Key=self._key(key), Body=value, **condition
+            )["ETag"]
+        except self._errors as error:
+            code = getattr(error, "response", {}).get("Error", {}).get("Code")
+            # NoSuchKey answers If-Match when the object was deleted meanwhile.
+            if code in (
+                "PreconditionFailed",
+                "ConditionalRequestConflict",
+                "NoSuchKey",
+            ):
+                return None
+            raise CacheError(
+                "cannot conditionally write S3 cache entry %s: %s" % (key, error)
             ) from error
 
     def list(self, prefix: str) -> list[str]:

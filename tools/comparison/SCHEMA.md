@@ -100,7 +100,13 @@ Artifacts' blob paths are relative to plan directory. Plans are immutable.
 Result: `{schema_version: 1, key, fingerprint, content_sha256, language,
 llm_cc, token_count}`. Nonnegative finite llm_cc and nonnegative integer tokens.
 Stored results are provenance checked against requested item and fingerprint.
-Store interface `get(key)->bytes|None`, `put(key,bytes)`, `list(prefix)->[key]`.
+Store interface `get(key)->bytes|None`, `put(key,bytes)`, `list(prefix)->[key]`,
+plus conditional writes for publication markers: `get_versioned(key)->(bytes|None,
+token|None)` and `put_if(key, bytes, expected_token|None)->token|None`, which
+creates only an absent key when `expected_token` is None and returns None when
+another writer changed the key first. Filesystem tokens are the object's SHA-256
+under a per-key `flock` in `.locks/`; S3 tokens are ETags used with
+`If-Match`/`If-None-Match: *`.
 ResultCache interface `get(item,fingerprint)->result|None`,
 `put(result)`. Implement in cache.py; `open_store(location, **options)` and
 `ResultCache(store, refresh_days=20, expire_days=30)`.
@@ -142,15 +148,34 @@ default-branch copies retained by the publisher are the repository baseline.
 
 Failure reports are mandatory, scores advisory.
 CLI `python -m tools.comparison {prepare,worker,aggregate,compare}` exposes the
-same stages through independently schedulable commands.
+same stages through independently schedulable commands; `discover`,
+`store-report`, `publish` and `ci {gitlab-child,github-matrix}` complete a CI
+pipeline around them (see [CI_RECIPE.md](CI_RECIPE.md)).
+
+Discovery writes the identity above with `base_sha: null` (preparation fills
+it), or `skipped.json` `{reason, identity}` for a branch without a current PR.
+`--dotenv` appends `COMPARISON_SKIP=0|1` and, unless skipped,
+`COMPARISON_PR_NUMBER` (omitted for the default branch) and
+`COMPARISON_TARGET_SHA`. Recipe configuration for `ci` is optional:
+`{schema_version: 1, images: {coordinator?, scorer?}, scorer: {executable,
+installed_root, model}, max_workers, cache_concurrency, worker_timeout,
+aggregate_timeout, artifact_expiry, gitlab: {prepare_job, cpu_tags, gpu_tags}}`;
+images must be `name@sha256:<64 hex>` and the GPU image always comes from the
+plan's `profile.build.execution_image`.
 
 Cache object paths: `results/<file_key>.json` contains a checksum envelope over
 the result, fingerprint, and refresh timestamp; `entropy/<fingerprint>/<name>.cbor`
 contains an envelope with base64 payload, name, fingerprint, checksum, and time.
-Workers restore only CBOR entries. BuildBuddy transport uses
-`pipelines/<SHA256([repository,pipeline_id])>/` for the plan, blobs, per-worker
-outputs and final reports (report.json, report.md, comment.md, publication.json,
-baseline.md, baseline.json). The submitted request pins the plan's SHA-256.
+Workers restore only CBOR entries. `pipelines/<SHA256([repository,pipeline_id])>/`
+holds a pipeline's final reports (report.json, report.md, comment.md,
+publication.json, baseline.md, baseline.json), written by `store-report` under
+the identity inside the report, so a child pipeline stores under its parent's
+ID. BuildBuddy transport also keeps the plan, blobs and per-worker outputs
+there, and the submitted request pins the plan's SHA-256.
+`publications/<SHA256([repository,pr_number])>.json` is the publication marker
+`{schema_version: 1, ordinal, pipeline_id, head_sha,
+state: "reserved"|"published"|"suppressed", comment_id: int|null}`, replaced
+only through `put_if`.
 
 Publication envelope: `{schema_version:1, identity, fingerprint,
 status:"complete"|"failed"|"incomplete", comment:{path:"comment.md",sha256,bytes}}`.
@@ -158,3 +183,8 @@ Identity has repository (`owner/repo`), pipeline_id (parent invocation UUID),
 head_sha, target_sha, base_sha, target_branch, pr_number (null for baseline),
 started_at (UTC ISO8601). Bound comment to 24 KiB UTF-8. Publisher validates
 identity against its trusted event/publication set, owns marker and ordering.
+The native `publish` command trusts `--repository`, `--pipeline-id` and
+`--head` from CI, and posts `<!-- llm-cc-comparison -->`, then
+`<!-- llm-cc-comparison pipeline=<id> ordinal=<n> -->`, then `comment.md`. It
+updates only a comment by `--comment-author` whose first line is that marker,
+and never one whose recorded ordinal exceeds its own.

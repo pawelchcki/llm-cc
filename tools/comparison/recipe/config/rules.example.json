@@ -1,0 +1,7 @@
+{
+  "exclude": ["third_party/**", "vendor/**", "**/vendor/**", "**/generated/**", "**/*.pb.*"],
+  "tests": ["test/**", "tests/**", "**/test/**", "**/tests/**", "testdata/**", "**/testdata/**", "**/fixtures/**", "**/fuzz/**", "**/benchmarks/**", "*_test.*", "test_*.*", "**/*_test.*", "**/test_*.*"],
+  "tooling": ["tools/**", "scripts/**", "examples/**", ".github/**", ".gitlab/**"],
+  "extensions": {},
+  "paths": []
+}

@@ -13,15 +13,19 @@ import unittest
 from unittest.mock import patch
 
 from .buildbuddy import (
-    GitHub,
     bundle_command,
-    _pipeline_prefix,
     remote_worker,
     run_prepared,
     worker_request,
 )
 from .cache import FilesystemStore
-from .common import CONTAINER_ENVIRONMENT_POLICY, digest, write_json
+from .common import (
+    CONTAINER_ENVIRONMENT_POLICY,
+    digest,
+    pipeline_prefix,
+    write_json,
+)
+from .github import GitHub
 from .pipeline import failure_report
 
 
@@ -128,7 +132,7 @@ class BuildBuddyTest(unittest.TestCase):
         self.assertEqual(api.submissions, [])
         self.assertEqual(api.cancelled, [])
         self.assertIsNotNone(
-            self.store.get(_pipeline_prefix(self.identity) + "report.json")
+            self.store.get(pipeline_prefix(self.identity) + "report.json")
         )
 
     def test_miss_submits_immutable_worker_and_collects_parent_artifact(self):
@@ -154,7 +158,7 @@ class BuildBuddyTest(unittest.TestCase):
 
         def publish():
             self.store.put(
-                _pipeline_prefix(self.identity) + "workers/0/worker-0.json",
+                pipeline_prefix(self.identity) + "workers/0/worker-0.json",
                 json.dumps(artifact).encode(),
             )
 
@@ -168,7 +172,7 @@ class BuildBuddyTest(unittest.TestCase):
         self.assertEqual(request["platform_properties"]["Pool"], "a10")
         self.assertEqual(request["platform_properties"]["container-image"], self.image)
         self.assertIn("--plan-sha256", request["steps"][0]["run"])
-        self.assertIn(_pipeline_prefix(self.identity), request["steps"][0]["run"])
+        self.assertIn(pipeline_prefix(self.identity), request["steps"][0]["run"])
 
     def test_missing_artifact_is_explicit_failure(self):
         self.miss()
@@ -359,7 +363,7 @@ class BuildBuddyTest(unittest.TestCase):
         self.config = {}
         report = self.run_plan(api)
         self.assertEqual(report["status"], "complete")
-        prefix = _pipeline_prefix(self.identity)
+        prefix = pipeline_prefix(self.identity)
         for name in (
             "report.json",
             "report.md",
@@ -381,7 +385,7 @@ class BuildBuddyTest(unittest.TestCase):
 
     def test_pipeline_identity_cannot_escape_store(self):
         identity = dict(self.identity, pipeline_id="../../etc/passwd")
-        self.assertRegex(_pipeline_prefix(identity), r"^pipelines/[0-9a-f]{64}/$")
+        self.assertRegex(pipeline_prefix(identity), r"^pipelines/[0-9a-f]{64}/$")
 
     def test_discovery_uses_actual_target_and_rejects_retargeting(self):
         github = GitHub("owner/repo")
