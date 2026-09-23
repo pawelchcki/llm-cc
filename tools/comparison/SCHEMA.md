@@ -161,7 +161,8 @@ it), or `skipped.json` `{reason, identity}` for a branch without a current PR.
 installed_root, model}, max_workers, cache_concurrency, worker_timeout,
 aggregate_timeout, artifact_expiry, gitlab: {prepare_job, cpu_tags, gpu_tags}}`;
 images must be `name@sha256:<64 hex>` and the GPU image always comes from the
-plan's `profile.build.execution_image`.
+plan's `profile.build.execution_image`. `prepare --config` takes the same file
+and caps the plan at its `max_workers`, which `ci gitlab-child` enforces.
 
 Cache object paths: `results/<file_key>.json` contains a checksum envelope over
 the result, fingerprint, and refresh timestamp; `entropy/<fingerprint>/<name>.cbor`

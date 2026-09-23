@@ -27,6 +27,8 @@ variables:
   COMPARISON_CONFIG: ""
   # GitHub login that owns GITHUB_COMMENT_TOKEN: only its comments are updated.
   COMPARISON_COMMENT_AUTHOR: "llm-cc-bot"
+  # GPU workers per pipeline, capped by max_workers in COMPARISON_CONFIG,
+  # which the generated child pipeline enforces.
   COMPARISON_MAX_WORKERS: "4"
 
 workflow:
@@ -115,7 +117,8 @@ comparison-prepare:
       --profile /opt/llm-cc-comparison/profile.json
       --rules /opt/llm-cc-comparison/rules.json
       --cache "$COMPARISON_STORE" ${COMPARISON_STORE_OPTIONS:+--store-options "$COMPARISON_STORE_OPTIONS"}
-      --max-workers "$COMPARISON_MAX_WORKERS" --output-dir comparison/prep
+      --max-workers "$COMPARISON_MAX_WORKERS" ${COMPARISON_CONFIG:+--config "$COMPARISON_CONFIG"}
+      --output-dir comparison/prep
     # Zero to four GPU jobs, one per planned worker; a fully cached plan
     # yields only the aggregation job.
     - >-

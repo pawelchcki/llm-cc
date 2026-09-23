@@ -40,7 +40,11 @@ def _common(parser):
 def parser():
     result = argparse.ArgumentParser(prog="python -m tools.comparison")
     commands = result.add_subparsers(dest="command", required=True)
-    _common(commands.add_parser("prepare"))
+    preparation = commands.add_parser("prepare")
+    _common(preparation)
+    preparation.add_argument(
+        "--config", help="recipe configuration JSON; its max_workers caps the plan"
+    )
     worker = commands.add_parser("worker")
     worker.add_argument("--plan", required=True)
     worker.add_argument("--worker-id", type=int, required=True)
@@ -178,6 +182,12 @@ def _run(args):
         )
         return 0 if artifact["status"] == "complete" else 1
     cache = ResultCache(store, args.refresh_days, args.expire_days)
+    max_workers = args.max_workers
+    if getattr(args, "config", None):
+        from .ci import load_config
+
+        # `ci gitlab-child` rejects a plan with more workers than this.
+        max_workers = min(max_workers, load_config(args.config)["max_workers"])
     kwargs = dict(
         repo=args.repo,
         head=args.head,
@@ -187,7 +197,7 @@ def _run(args):
         rules=validate_rules(_json(args.rules)),
         cache=cache,
         output_dir=args.output_dir,
-        max_workers=args.max_workers,
+        max_workers=max_workers,
         cache_concurrency=args.cache_concurrency,
     )
     if args.command == "prepare":

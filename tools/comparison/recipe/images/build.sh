@@ -29,20 +29,28 @@ LLM_CC_SOURCE="$(CDPATH='' cd -- "${LLM_CC_SOURCE:-$recipe/../../..}" && pwd -P)
 mkdir -p "$OUTPUT"
 OUTPUT="$(CDPATH='' cd -- "$OUTPUT" && pwd -P)"
 
-# The images must describe exactly the pinned, unmodified source tree. Our own
-# outputs are not source: the default OUTPUT lies inside the checkout, and a
-# rerun must still get past this check to verify and reuse its images.
-case "$OUTPUT" in
-  "$LLM_CC_SOURCE")
-    echo "OUTPUT must not be the llm-cc checkout itself" >&2
-    exit 1
+# The images must describe exactly the pinned, unmodified source tree. The
+# default OUTPUT lies inside the checkout, so the files this script writes
+# there are exempt, and a rerun can still verify and reuse its images; they
+# must not be tracked, and every other change, under OUTPUT or not, counts.
+# Values are assigned before testing them so that a failing git command stops
+# the script (set -e) instead of reading as a clean tree.
+set --
+case "$OUTPUT/" in
+  "$LLM_CC_SOURCE"/*)
+    prefix="${OUTPUT#"$LLM_CC_SOURCE"}/"
+    prefix="${prefix#/}"
+    for name in .digest coordinator-context images.env profile.json; do
+      tracked="$(git -C "$LLM_CC_SOURCE" ls-files -- ":(literal)$prefix$name")"
+      if [ -n "$tracked" ]; then
+        echo "OUTPUT would overwrite tracked source $prefix$name" >&2
+        exit 1
+      fi
+      set -- "$@" ":(exclude,literal)$prefix$name"
+    done
     ;;
-  "$LLM_CC_SOURCE"/*) outputs=":(exclude,literal)${OUTPUT#"$LLM_CC_SOURCE"/}" ;;
-  *) outputs= ;;
 esac
-# Assigned first so that a failing `git status` stops the script (set -e)
-# instead of reading as a clean tree.
-changes="$(git -C "$LLM_CC_SOURCE" status --porcelain -- . ${outputs:+"$outputs"})"
+changes="$(git -C "$LLM_CC_SOURCE" status --porcelain -- . "$@")"
 if [ "$(git -C "$LLM_CC_SOURCE" rev-parse HEAD)" != "$LLM_CC_COMMIT" ] || [ -n "$changes" ]; then
   echo "$LLM_CC_SOURCE is not a clean checkout of $LLM_CC_COMMIT" >&2
   exit 1

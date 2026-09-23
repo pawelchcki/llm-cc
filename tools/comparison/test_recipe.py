@@ -180,6 +180,8 @@ class RecipeTest(unittest.TestCase):
             self.rules,
             "--cache",
             self.store,
+            "--config",
+            self.config,
             "--output-dir",
             output / "prep",
         )
@@ -230,6 +232,20 @@ class RecipeTest(unittest.TestCase):
 
     def workers(self, run):
         return [name for name in run.child if name.startswith("comparison-worker-")]
+
+    def test_configured_capacity_alone_bounds_the_plan(self):
+        # Only the configuration lowers capacity; COMPARISON_MAX_WORKERS keeps
+        # its default, and child generation must still accept the plan.
+        config = read_json(self.config)
+        write_json(self.config, dict(config, max_workers=1))
+        base = self.push(
+            "main",
+            {"src/%s.cc" % name: "int %s;\n" % name for name in "abcdef"},
+            "six distinct contents",
+        )
+        run = self.pipeline("main", base)
+        self.assertEqual(self.workers(run), ["comparison-worker-0"])
+        self.assertEqual(self.report(run)["status"], "complete")
 
     def test_recipe_from_baseline_to_retargeted_pull_request(self):
         engine = "int engine() { return 1; }\n"
@@ -453,6 +469,27 @@ class TemplateTest(unittest.TestCase):
         completed = self.build_images(source, environment)
         self.assertEqual(completed.returncode, 1)
         self.assertIn("is not a clean checkout", completed.stderr)
+
+    @unittest.skipUnless(shutil.which("sha256sum"), "build.sh needs sha256sum")
+    def test_build_script_exempts_only_the_files_it_writes(self):
+        # An OUTPUT holding tracked source: edits to that source still count.
+        source, environment = self.image_build("#!/bin/sh\nexit 1\n")
+        environment["OUTPUT"] = str(source / "tools" / "comparison")
+        completed = self.build_images(source, environment)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        (source / "tools" / "comparison" / "__init__.py").write_text("# edited\n")
+        completed = self.build_images(source, environment)
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn("is not a clean checkout", completed.stderr)
+        # Nor may an output replace a tracked file.
+        source, environment = self.image_build("#!/bin/sh\nexit 1\n")
+        environment["LLM_CC_COMMIT"] = commit_files(
+            source, {"tools/profile.json": "{}\n"}, "a tracked profile"
+        )
+        environment["OUTPUT"] = str(source / "tools")
+        completed = self.build_images(source, environment)
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn("overwrite tracked source tools/profile.json", completed.stderr)
 
     @unittest.skipUnless(shutil.which("sha256sum"), "build.sh needs sha256sum")
     def test_build_script_reuses_images_only_for_the_same_inputs(self):
