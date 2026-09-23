@@ -21,13 +21,15 @@ from .cache import CacheError
 from .common import canonical_bytes, digest, pipeline_prefix, read_json
 from .pipeline import COMMENT_LIMIT, failure_report
 
+# Stored in this order: the publication envelope comes last, because its
+# presence is what tells `publish` that the report is complete.
 REPORT_FILES = (
     "report.json",
     "report.md",
     "comment.md",
-    "publication.json",
     "baseline.md",
     "baseline.json",
+    "publication.json",
 )
 COMMENT_MARKER = "<!-- llm-cc-comparison -->"
 _ORDER = re.compile(r"<!-- llm-cc-comparison pipeline=(\S+) ordinal=(\d+) -->")

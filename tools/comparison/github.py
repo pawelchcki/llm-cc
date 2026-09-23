@@ -72,6 +72,9 @@ class GitHub:
                 "target_branch": default_branch,
                 "pr_number": None,
             }
+        # GitHub repository names are case-insensitive, and a configured
+        # repository may differ from the canonical full_name in case.
+        repository = self.repository.lower()
         pulls = []
         page = 1
         while True:
@@ -82,10 +85,11 @@ class GitHub:
                 if p["state"] == "open"
                 and p["head"]["sha"] == head
                 and p["head"]["ref"] == branch
-                and p["base"]["repo"]["full_name"] == self.repository
+                and p["base"]["repo"]["full_name"].lower() == repository
                 # A fork can propose the same commit under the same branch
                 # name; a deleted fork has no head repository at all.
-                and (p["head"]["repo"] or {}).get("full_name") == self.repository
+                and ((p["head"]["repo"] or {}).get("full_name") or "").lower()
+                == repository
             )
             if len(batch) < 100:
                 break

@@ -71,6 +71,13 @@ class DiscoveryTest(unittest.TestCase):
         self.github.open_pull(7, "feature", HEAD)
         self.assertEqual(self.github.discover(HEAD, "feature", "main")["pr_number"], 7)
 
+    def test_repository_names_match_in_any_case(self):
+        # GitHub's canonical full_name may differ in case from the configured one.
+        self.github.open_pull(
+            7, "feature", HEAD, base_repo="Owner/Repo", head_repo="OWNER/repo"
+        )
+        self.assertEqual(self.github.discover(HEAD, "feature", "main")["pr_number"], 7)
+
     def test_current_rechecks_state_head_and_target(self):
         pull = self.github.open_pull(7, "feature", HEAD)
         identity = self.github.discover(HEAD, "feature", "main")

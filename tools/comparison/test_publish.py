@@ -18,6 +18,7 @@ from .publish import (
     COMMENT_MARKER,
     PublicationError,
     comment_body,
+    load_publication,
     marker_key,
     publish,
     store_report,
@@ -201,6 +202,22 @@ class PublishTest(PublishFixture):
         self.publish("102", head(2), 2, comment_author=self.github.login.upper())
         [comment] = self.comments()
         self.assertIn("second push", comment["body"])
+
+    def test_interrupted_report_storage_is_never_published(self):
+        identity = self.identity("101", head(1))
+        directory = self.root / "report-101"
+        failure_report(directory, identity, "0" * 64, ["analysis finished"])
+        store = self.store
+
+        class Interrupted:
+            def put(self, key, value):
+                if key.endswith("baseline.json"):
+                    raise OSError("store went away")
+                store.put(key, value)
+
+        with self.assertRaisesRegex(OSError, "went away"):
+            store_report(Interrupted(), directory)
+        self.assertIsNone(load_publication(self.store, pipeline_prefix(identity)))
 
     def test_tampered_comment_is_rejected(self):
         self.stored("101", head(1))
