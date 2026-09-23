@@ -22,7 +22,9 @@ from .common import canonical_bytes, digest, pipeline_prefix, read_json
 from .pipeline import COMMENT_LIMIT, failure_report
 
 # Stored in this order: the publication envelope comes last, because its
-# presence is what tells `publish` that the report is complete.
+# presence is what tells `publish` that the report is complete. Storing first
+# replaces any envelope with INCOMPLETE, so a retry that fails part-way under
+# the same pipeline ID never leaves an earlier attempt's report looking current.
 REPORT_FILES = (
     "report.json",
     "report.md",
@@ -31,6 +33,7 @@ REPORT_FILES = (
     "baseline.json",
     "publication.json",
 )
+INCOMPLETE = b'{"incomplete":true}\n'
 COMMENT_MARKER = "<!-- llm-cc-comparison -->"
 _ORDER = re.compile(r"<!-- llm-cc-comparison pipeline=(\S+) ordinal=(\d+) -->")
 PIPELINE_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
@@ -91,15 +94,16 @@ def store_report(store, report_dir, identity=None):
             {name: identity[name] for name in ("repository", "pipeline_id")},
         )
     prefix = pipeline_prefix(identity or report_identity)
+    store.put(prefix + "publication.json", INCOMPLETE)
     for name in REPORT_FILES:
         store.put(prefix + name, (directory / name).read_bytes())
     return prefix
 
 
 def load_publication(store, prefix):
-    """The stored publication envelope and comment, or None when absent."""
+    """The stored envelope and comment, or None when absent or incomplete."""
     raw = store.get(prefix + "publication.json")
-    if raw is None:
+    if raw is None or raw == INCOMPLETE:
         return None
     try:
         publication = json.loads(raw)

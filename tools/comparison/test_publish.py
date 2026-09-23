@@ -204,20 +204,25 @@ class PublishTest(PublishFixture):
         self.assertIn("second push", comment["body"])
 
     def test_interrupted_report_storage_is_never_published(self):
-        identity = self.identity("101", head(1))
-        directory = self.root / "report-101"
-        failure_report(directory, identity, "0" * 64, ["analysis finished"])
+        # A complete earlier attempt under the same pipeline ID, then a retry
+        # whose storage fails part-way: neither report may look current.
         store = self.store
+        for failing in ("report.json", "baseline.json"):
+            with self.subTest(failing=failing):
+                identity = self.stored("101", head(1), "first attempt")
+                directory = self.root / "report-101"
+                failure_report(directory, identity, "0" * 64, ["retried attempt"])
 
-        class Interrupted:
-            def put(self, key, value):
-                if key.endswith("baseline.json"):
-                    raise OSError("store went away")
-                store.put(key, value)
+                class Interrupted:
+                    def put(self, key, value):
+                        if key.endswith(failing):
+                            raise OSError("store went away")
+                        store.put(key, value)
 
-        with self.assertRaisesRegex(OSError, "went away"):
-            store_report(Interrupted(), directory)
-        self.assertIsNone(load_publication(self.store, pipeline_prefix(identity)))
+                with self.assertRaisesRegex(OSError, "went away"):
+                    store_report(Interrupted(), directory)
+                prefix = pipeline_prefix(identity)
+                self.assertIsNone(load_publication(self.store, prefix))
 
     def test_tampered_comment_is_rejected(self):
         self.stored("101", head(1))
