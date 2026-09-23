@@ -40,8 +40,10 @@ case "$OUTPUT" in
   "$LLM_CC_SOURCE"/*) outputs=":(exclude,literal)${OUTPUT#"$LLM_CC_SOURCE"/}" ;;
   *) outputs= ;;
 esac
-if [ "$(git -C "$LLM_CC_SOURCE" rev-parse HEAD)" != "$LLM_CC_COMMIT" ] ||
-  [ -n "$(git -C "$LLM_CC_SOURCE" status --porcelain -- . ${outputs:+"$outputs"})" ]; then
+# Assigned first so that a failing `git status` stops the script (set -e)
+# instead of reading as a clean tree.
+changes="$(git -C "$LLM_CC_SOURCE" status --porcelain -- . ${outputs:+"$outputs"})"
+if [ "$(git -C "$LLM_CC_SOURCE" rev-parse HEAD)" != "$LLM_CC_COMMIT" ] || [ -n "$changes" ]; then
   echo "$LLM_CC_SOURCE is not a clean checkout of $LLM_CC_COMMIT" >&2
   exit 1
 fi
