@@ -25,13 +25,23 @@ SCORING="${SCORING:---backend cuda --gpu-layers -1 --context 131072 --batch-size
 ENGINE="${ENGINE:-podman}"
 OUTPUT="${OUTPUT:-comparison}"
 recipe="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
-LLM_CC_SOURCE="${LLM_CC_SOURCE:-$(CDPATH='' cd -- "$recipe/../../.." && pwd)}"
+LLM_CC_SOURCE="$(CDPATH='' cd -- "${LLM_CC_SOURCE:-$recipe/../../..}" && pwd -P)"
 mkdir -p "$OUTPUT"
-OUTPUT="$(CDPATH='' cd -- "$OUTPUT" && pwd)"
+OUTPUT="$(CDPATH='' cd -- "$OUTPUT" && pwd -P)"
 
-# The images must describe exactly the pinned, unmodified source tree.
+# The images must describe exactly the pinned, unmodified source tree. Our own
+# outputs are not source: the default OUTPUT lies inside the checkout, and a
+# rerun must still get past this check to verify and reuse its images.
+case "$OUTPUT" in
+  "$LLM_CC_SOURCE")
+    echo "OUTPUT must not be the llm-cc checkout itself" >&2
+    exit 1
+    ;;
+  "$LLM_CC_SOURCE"/*) outputs=":(exclude,literal)${OUTPUT#"$LLM_CC_SOURCE"/}" ;;
+  *) outputs= ;;
+esac
 if [ "$(git -C "$LLM_CC_SOURCE" rev-parse HEAD)" != "$LLM_CC_COMMIT" ] ||
-  [ -n "$(git -C "$LLM_CC_SOURCE" status --porcelain)" ]; then
+  [ -n "$(git -C "$LLM_CC_SOURCE" status --porcelain -- . ${outputs:+"$outputs"})" ]; then
   echo "$LLM_CC_SOURCE is not a clean checkout of $LLM_CC_COMMIT" >&2
   exit 1
 fi
@@ -77,14 +87,16 @@ publish() {
   echo "$reference"
 }
 
-# 1. Model: keyed by the weights themselves.
+# 1. Model: keyed by the weights themselves. The fetch stage never reaches the
+# image, so FETCH_IMAGE pins the download tooling without changing the key.
 model_name="$REGISTRY/model"
+set -- --build-arg "MODEL_URL=$MODEL_URL" \
+  --build-arg "MODEL_SHA256=$MODEL_SHA256" \
+  --build-arg "MODEL_BYTES=$MODEL_BYTES"
+if [ -n "${FETCH_IMAGE:-}" ]; then set -- "$@" --build-arg "FETCH_IMAGE=$FETCH_IMAGE"; fi
 model="$(existing "$model_name" "$MODEL_SHA256" io.llm-cc.model.sha256 "$MODEL_SHA256")" ||
   model="$(publish "$model_name" "$MODEL_SHA256" "$recipe/images" \
-    "$recipe/images/model.Containerfile" \
-    --build-arg "MODEL_URL=$MODEL_URL" \
-    --build-arg "MODEL_SHA256=$MODEL_SHA256" \
-    --build-arg "MODEL_BYTES=$MODEL_BYTES")"
+    "$recipe/images/model.Containerfile" "$@")"
 
 # 2. Scorer: keyed by every build input, including the model digest.
 scorer_name="$REGISTRY/scorer"

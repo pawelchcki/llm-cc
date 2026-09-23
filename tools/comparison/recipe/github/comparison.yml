@@ -202,8 +202,10 @@ jobs:
             . ./comparison/late.env
             if [ "$COMPARISON_SKIP" = 1 ]; then exit 0; fi
           fi
+          # Order by run ID: run numbers restart at 1 when the workflow file
+          # is renamed, which would make every later run look stale.
           python3 -m tools.comparison publish \
             --cache "$COMPARISON_STORE" --repository "$GITHUB_REPOSITORY" \
             --pipeline-id "$GITHUB_RUN_ID" --head "$GITHUB_SHA" \
-            --ordinal "$GITHUB_RUN_NUMBER" --identity comparison/identity.json \
+            --ordinal "$GITHUB_RUN_ID" --identity comparison/identity.json \
             --comment-author 'github-actions[bot]'

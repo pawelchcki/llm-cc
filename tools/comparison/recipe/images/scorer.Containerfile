@@ -66,6 +66,9 @@ RUN apt-get update \
       ca-certificates python3 python3-boto3 \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --uid 10001 --user-group --home-dir /home/llm-cc --create-home llm-cc
+# PYTHONSAFEPATH below needs Python 3.11 or newer.
+RUN python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' \
+ || { echo "RUNTIME_IMAGE must provide Python 3.11 or newer" >&2; exit 1; }
 COPY --from=build /opt/llm-cc /opt/llm-cc
 COPY --from=build /src/tools/__init__.py /opt/llm-cc-comparison/tools/__init__.py
 COPY --from=build /src/tools/comparison/*.py /opt/llm-cc-comparison/tools/comparison/
@@ -78,9 +81,12 @@ ARG LLM_CC_COMMIT
 ARG LLM_CC_VERSION
 ARG CUDA_ARCHS=compute_86:sm_86
 COPY --from=runtime / /
+# A GitLab job without a fresh checkout still starts in the build directory,
+# which may hold an earlier checkout; only the pinned package may load.
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     HOME=/home/llm-cc \
     PYTHONPATH=/opt/llm-cc-comparison \
+    PYTHONSAFEPATH=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility

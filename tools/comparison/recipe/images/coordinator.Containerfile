@@ -15,6 +15,9 @@ ARG LLM_CC_COMMIT
 ARG BOTO3_VERSION=1.42.84
 RUN echo "$LLM_CC_COMMIT" | grep -Eq '^[0-9a-f]{40}$' \
  || { echo "LLM_CC_COMMIT must name the pinned revision" >&2; exit 1; }
+# PYTHONSAFEPATH below needs Python 3.11 or newer.
+RUN python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' \
+ || { echo "PYTHON_IMAGE must provide Python 3.11 or newer" >&2; exit 1; }
 # CI checkouts belong to the runner's user, not this one.
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates git \
@@ -24,8 +27,12 @@ RUN apt-get update \
  && useradd --uid 10001 --user-group --home-dir /home/llm-cc --create-home llm-cc
 COPY tools/ /opt/llm-cc-comparison/tools/
 COPY profile.json rules.json /opt/llm-cc-comparison/
+# Jobs run `python3 -m tools.comparison` inside the project checkout.
+# PYTHONSAFEPATH keeps the working directory off sys.path, so a checkout with
+# its own tools/ package (llm-cc itself) cannot replace the pinned code.
 ENV HOME=/home/llm-cc \
     PYTHONPATH=/opt/llm-cc-comparison \
+    PYTHONSAFEPATH=1 \
     PYTHONDONTWRITEBYTECODE=1
 LABEL org.opencontainers.image.revision="${LLM_CC_COMMIT}"
 WORKDIR /home/llm-cc

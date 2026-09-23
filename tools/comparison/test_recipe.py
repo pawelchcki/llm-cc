@@ -371,6 +371,86 @@ class TemplateTest(unittest.TestCase):
         self.assertNotIn("gguf", coordinator.lower())
         self.assertNotIn("MODEL_IMAGE", coordinator)
         self.assertRegex(coordinator, r"(?m)^USER [1-9][0-9]*")
+        # Jobs run from a checkout; its own tools/ must not replace the pinned one.
+        for image in (scorer, coordinator):
+            self.assertRegex(image, r"(?m)^\s+PYTHONSAFEPATH=1 \\$")
+            self.assertIn("sys.version_info < (3, 11)", image)
+
+    @unittest.skipUnless(shutil.which("sha256sum"), "build.sh needs sha256sum")
+    def test_build_script_reruns_in_the_checkout_and_forwards_pins(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        source = root / "llm-cc"
+        source.mkdir()
+        git(source, "init", "-q", "-b", "main")
+        commit = commit_files(
+            source,
+            {"tools/__init__.py": "", "tools/comparison/__init__.py": ""},
+            "pinned",
+        )
+        tools = root / "bin"
+        tools.mkdir()
+        log = root / "engine.log"
+        # An empty registry, so every run builds, pushes and generates.
+        (tools / "skopeo").write_text("#!/bin/sh\nexit 1\n")
+        (tools / "podman").write_text(
+            '#!/bin/sh\necho "$*" >> "$ENGINE_LOG"\ncase "$1" in\n'
+            "  push) printf 'sha256:%064d' 0 > \"$3\" ;;\n"
+            "  run) echo '{}' ;;\nesac\n"
+        )
+        for tool in tools.iterdir():
+            tool.chmod(0o755)
+        fetch = "registry.example/alpine@sha256:" + "4" * 64
+        environment = {
+            "PATH": str(tools) + os.pathsep + os.environ["PATH"],
+            "HOME": str(root),
+            "ENGINE_LOG": str(log),
+            "REGISTRY": "registry.example/llm-cc",
+            "LLM_CC_COMMIT": commit,
+            "LLM_CC_VERSION": "0.0.0",
+            "LLM_CC_SOURCE": str(source),
+            "MODEL_URL": "https://models.example/model.gguf",
+            "MODEL_SHA256": "1" * 64,
+            "MODEL_BYTES": "1",
+            "BAZELISK_URL": "https://bazelisk.example/bazelisk",
+            "BAZELISK_SHA256": "3" * 64,
+            "FETCH_IMAGE": fetch,
+        }
+        # The default OUTPUT lands inside the checkout; a rerun must still
+        # pass the clean-source check.
+        for _ in range(2):
+            completed = subprocess.run(
+                ["sh", str(RECIPE / "images" / "build.sh")],
+                cwd=source,
+                env=environment,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn(
+            "COORDINATOR_IMAGE=registry.example/llm-cc/coordinator@sha256:" + "0" * 64,
+            (source / "comparison" / "images.env").read_text(),
+        )
+        models = [
+            line
+            for line in log.read_text().splitlines()
+            if line.startswith("build ") and "model.Containerfile" in line
+        ]
+        self.assertEqual(len(models), 2)
+        for line in models:
+            self.assertIn("--build-arg FETCH_IMAGE=" + fetch, line)
+        # Only the outputs are exempt: an edited source still refuses to build.
+        (source / "tools" / "__init__.py").write_text("# edited\n")
+        completed = subprocess.run(
+            ["sh", str(RECIPE / "images" / "build.sh")],
+            cwd=source,
+            env=environment,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn("is not a clean checkout", completed.stderr)
 
     def test_gitlab_parent_serializes_publication_and_always_reports(self):
         parent = self.read("gitlab", ".gitlab-ci.yml")
@@ -414,7 +494,7 @@ class TemplateTest(unittest.TestCase):
             "contents: read",
             "tools.comparison publish",
             "github-actions[bot]",
-            "GITHUB_RUN_NUMBER",
+            '--ordinal "$GITHUB_RUN_ID"',
         ):
             with self.subTest(required=required):
                 self.assertIn(required, workflow)

@@ -266,8 +266,9 @@ carried in the plan, which is where the parent's publisher looks. `publish` then
 3. Reads the pull request's marker. A larger stored ordinal means a newer
    pipeline has reserved or completed publication: the older one exits as
    `stale`. Otherwise it conditionally writes a `reserved` record, re-reading on
-   conflict. Ordinals are `CI_PIPELINE_IID` on GitLab and `github.run_number` on
-   GitHub, which increase with pipeline creation.
+   conflict. Ordinals are `CI_PIPELINE_IID` on GitLab and `github.run_id` on
+   GitHub, which increase with pipeline creation and, unlike
+   `github.run_number`, do not restart when the workflow file is renamed.
 4. Re-reads the pull request: open state, head, target branch and target commit.
    A closed, updated or retargeted pull request is marked `suppressed`.
 5. Updates the single comment that starts with `<!-- llm-cc-comparison -->` and
