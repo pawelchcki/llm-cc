@@ -43,19 +43,30 @@ struct BundleResult {
 
 using Digest = llmcc::tools::Sha256;
 
-void Write(std::ofstream& output, std::span<const char> bytes,
+// Every written byte also feeds the whole-file digest, so the checksum of a
+// multi-gigabyte output does not need a second read after it is closed.
+struct Output {
+  explicit Output(const fs::path& path)
+      : stream(path, std::ios::binary | std::ios::trunc) {}
+
+  std::ofstream stream;
+  Digest file_digest;
+};
+
+void Write(Output& output, std::span<const char> bytes,
            Digest* digest = nullptr) {
-  output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-  if (!output) {
+  output.stream.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+  if (!output.stream) {
     throw std::runtime_error("cannot write output");
   }
+  output.file_digest.Update(bytes);
   if (digest != nullptr) {
     digest->Update(bytes);
   }
 }
 
 template <typename Integer>
-void WriteLittleEndian(std::ofstream& output, Integer value,
+void WriteLittleEndian(Output& output, Integer value,
                        Digest* digest = nullptr) {
   std::array<char, sizeof(Integer)> bytes{};
   for (std::size_t index = 0; index < bytes.size(); ++index) {
@@ -64,7 +75,7 @@ void WriteLittleEndian(std::ofstream& output, Integer value,
   Write(output, bytes, digest);
 }
 
-std::uint64_t CopyFile(const fs::path& source, std::ofstream& output,
+std::uint64_t CopyFile(const fs::path& source, Output& output,
                        Digest* digest = nullptr) {
   std::ifstream input(source, std::ios::binary);
   if (!input) {
@@ -156,7 +167,7 @@ std::array<unsigned char, llmcc::payload::kSha256Size> HashFile(
 }
 
 void WriteFooterEntry(
-    std::ofstream& output, std::string_view name, std::uint64_t offset,
+    Output& output, std::string_view name, std::uint64_t offset,
     std::uint64_t length,
     const std::array<unsigned char, llmcc::payload::kSha256Size>& hash) {
   if (name.size() >= llmcc::payload::kPayloadNameSize) {
@@ -184,10 +195,11 @@ bool SafeDestination(std::string_view path) {
   return true;
 }
 
-BundleResult WriteBundle(std::ofstream& output, std::span<const char, 8> magic,
+BundleResult WriteBundle(Output& output, std::span<const char, 8> magic,
                          std::span<const BundleEntry> entries,
                          std::string_view kind) {
-  const std::uint64_t offset = static_cast<std::uint64_t>(output.tellp());
+  const std::uint64_t offset =
+      static_cast<std::uint64_t>(output.stream.tellp());
   Digest digest;
   Write(output, magic, &digest);
   WriteLittleEndian(output, static_cast<std::uint32_t>(entries.size()),
@@ -213,7 +225,7 @@ BundleResult WriteBundle(std::ofstream& output, std::span<const char, 8> magic,
     }
   }
   return {.offset = offset,
-          .length = static_cast<std::uint64_t>(output.tellp()) - offset,
+          .length = static_cast<std::uint64_t>(output.stream.tellp()) - offset,
           .hash = digest.Finish()};
 }
 
@@ -365,8 +377,8 @@ int main(int argc, char** argv) {
       }
       CheckDuplicateDestinations(bundle_entries, "bundle");
 
-      std::ofstream bundle(bundle_output, std::ios::binary | std::ios::trunc);
-      if (!bundle) {
+      Output bundle(bundle_output);
+      if (!bundle.stream) {
         throw std::runtime_error("cannot create " + bundle_output.string());
       }
       const std::span<const char, 8> magic = name == "cuda"
@@ -376,12 +388,12 @@ int main(int argc, char** argv) {
           bundle, magic, std::span<const BundleEntry>(bundle_entries),
           name == "cuda" ? "CUDA" : "ROCm");
       WriteFooterEntry(bundle, name, result.offset, result.length, result.hash);
-      bundle.close();
-      if (!bundle) {
+      bundle.stream.close();
+      if (!bundle.stream) {
         throw std::runtime_error("cannot finish " + bundle_output.string());
       }
 
-      const auto bundle_hash = HashFile(bundle_output);
+      const auto bundle_hash = bundle.file_digest.Finish();
       if (!checksum_output.empty()) {
         WriteChecksum(checksum_output, bundle_output, bundle_hash);
       }
@@ -421,8 +433,8 @@ int main(int argc, char** argv) {
       }
     }
 
-    std::ofstream combined(output, std::ios::binary | std::ios::trunc);
-    if (!combined) {
+    Output combined(output);
+    if (!combined.stream) {
       throw std::runtime_error("cannot create " + output.string());
     }
     CopyFile(binary, combined);
@@ -447,8 +459,8 @@ int main(int argc, char** argv) {
                      cuda_bundle.hash);
     WriteFooterEntry(combined, "rocm", rocm_bundle.offset, rocm_bundle.length,
                      rocm_bundle.hash);
-    combined.close();
-    if (!combined) {
+    combined.stream.close();
+    if (!combined.stream) {
       throw std::runtime_error("cannot finish " + output.string());
     }
     if (chmod(output.string().c_str(), 0755) != 0) {
@@ -456,7 +468,7 @@ int main(int argc, char** argv) {
                                std::string(std::strerror(errno)));
     }
 
-    const auto combined_hash = HashFile(output);
+    const auto combined_hash = combined.file_digest.Finish();
     WriteChecksum(checksum_output, output, combined_hash);
     return 0;
   } catch (const std::exception& error) {

@@ -32,9 +32,9 @@
 #include <type_traits>
 #include <vector>
 
-#include "generated/version.h"
 #include "src/analyze.h"
 #include "src/backend_fetch.h"
+#include "src/build_info.h"
 #include "src/cache.h"
 #include "src/download.h"
 #include "src/entropy_cache.h"
@@ -391,7 +391,7 @@ AnalyzeArguments ParseAnalyzeArguments(int argc, char** argv) {
       Usage();
     }
     if (option == "-V" || option == "--version") {
-      std::cout << "llm-cc " << LLM_CC_VERSION << '\n';
+      std::cout << "llm-cc " << llmcc::build_info::Version() << '\n';
       std::exit(0);
     }
     if (option == "--force-cpu") {
@@ -741,9 +741,10 @@ void PrintCacheJson(
       // External verifiers (tools/comparison) pin an installation to the
       // commit this executable was built from; the backend manifest only
       // describes the backend bundle.
-      {"source_commit", LLM_CC_GIT_SHA},
+      {"source_commit", std::string(llmcc::build_info::GitSha())},
       {"analysis_version", llmcc::kAnalysisVersion},
-      {"backend_configuration", LLM_CC_BACKEND_CONFIGURATION},
+      {"backend_configuration",
+       std::string(llmcc::build_info::BackendConfiguration())},
       {"entries", status.entries},
       {"bytes", status.bytes},
       {"limit_bytes", status.limit},
@@ -777,9 +778,10 @@ void PrintCacheText(
             << "directory: " << PathUtf8(status.directory) << '\n'
             << "storage version: " << status.storage_version << '\n'
             << "inference ABI: " << llmcc::InferenceAbi() << '\n'
-            << "source commit: " << LLM_CC_GIT_SHA << '\n'
+            << "source commit: " << llmcc::build_info::GitSha() << '\n'
             << "analysis version: " << llmcc::kAnalysisVersion << '\n'
-            << "backend configuration: " << LLM_CC_BACKEND_CONFIGURATION << '\n'
+            << "backend configuration: "
+            << llmcc::build_info::BackendConfiguration() << '\n'
             << "entries: " << status.entries << '\n'
             << "bytes: " << status.bytes << '\n'
             << "limit bytes: " << status.limit << '\n'
@@ -1338,9 +1340,9 @@ llmcc::BackendKind ResolveAnalysisBackend(const AnalyzeArguments& arguments,
   }
   llmcc::BackendLogCapture backend_log;
   try {
-    llmcc::BackendRuntime runtime(arguments.backend, arguments.gpu_layers,
-                                  LLM_CC_VERSION, arguments.backend_directory,
-                                  arguments.no_download, fetch_backend);
+    llmcc::BackendRuntime runtime(
+        arguments.backend, arguments.gpu_layers, llmcc::build_info::Version(),
+        arguments.backend_directory, arguments.no_download, fetch_backend);
     return runtime.selected();
   } catch (const std::exception& error) {
     // The capture swallows the loader's diagnostics, so re-attach them to the

@@ -335,6 +335,7 @@ def run_prepared(
                 )
                 pending[invocation] = worker["worker_id"]
                 write_json(output / "submissions.json", pending)
+            reported_count, reported_at = 0, 0.0
             while pending:
                 if time.monotonic() - started >= timeout_seconds:
                     raise TimeoutError(
@@ -367,7 +368,11 @@ def run_prepared(
                         )
                     del pending[invocation]
                 if pending:
-                    print(f"Waiting for {len(pending)} GPU workers", flush=True)
+                    # Report changes, plus a heartbeat, without a line per poll.
+                    now = time.monotonic()
+                    if len(pending) != reported_count or now - reported_at >= 60:
+                        print(f"Waiting for {len(pending)} GPU workers", flush=True)
+                        reported_count, reported_at = len(pending), now
                     time.sleep(poll_seconds)
         # Completion can occur between periodic checks, including on a fully
         # cached run. Never publish a success based on a cached freshness check.
@@ -546,6 +551,9 @@ def coordinate(args):
             api,
             output,
             current=lambda: github.current(plan["identity"]),
+            # A completion poll is one BuildBuddy read per pending worker, so a
+            # short interval stops the coordinator idling after workers finish.
+            poll_seconds=2,
             # Anonymous GitHub REST reads share a 60/hour IP quota. Poll PR
             # freshness separately (20/hour), leaving room for discovery and
             # final checks while BuildBuddy completion remains responsive.

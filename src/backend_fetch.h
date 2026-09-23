@@ -7,7 +7,7 @@
 #include <string>
 #include <string_view>
 
-#include "generated/version.h"
+#include "src/build_info.h"
 #include "src/download.h"
 #include "src/payload.h"
 
@@ -15,12 +15,11 @@ namespace llmcc {
 
 struct BackendFetchOptions {
   std::string_view name;
-  std::string_view version = LLM_CC_VERSION;
-  std::string_view git_sha{LLM_CC_GIT_SHA, sizeof(LLM_CC_GIT_SHA) - 1};
+  std::string_view version = build_info::Version();
+  std::string_view git_sha = build_info::GitSha();
   std::string_view build_identity;
-  std::string_view configuration = LLM_CC_BACKEND_CONFIGURATION;
-  std::string_view base_url{LLM_CC_ARTIFACT_BASE_URL,
-                            sizeof(LLM_CC_ARTIFACT_BASE_URL) - 1};
+  std::string_view configuration = build_info::BackendConfiguration();
+  std::string_view base_url = build_info::ArtifactBaseUrl();
   std::optional<std::string> explicit_url;
   std::filesystem::path runtime_root = RuntimeRoot();
 };

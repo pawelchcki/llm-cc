@@ -33,4 +33,7 @@ sh_test(
     args = ["$(rlocationpath :__main__.py)", "test"],
     data = [":sources", ":__main__.py"],
     env_inherit = ["PATH"],
+    # The suite is dominated by subprocess and git fixtures; shards run in
+    # parallel and each takes every fourth test.
+    shard_count = 4,
 )

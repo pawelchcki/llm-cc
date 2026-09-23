@@ -33,6 +33,43 @@ root="$(dirname -- "$(dirname -- "$package")")"
 export PYTHONPATH="$root${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONDONTWRITEBYTECODE=1
 if [[ "$stage" == test ]]; then
+  if [[ -n "${TEST_TOTAL_SHARDS:-}" ]]; then
+    if [[ -n "${TEST_SHARD_STATUS_FILE:-}" ]]; then
+      touch "$TEST_SHARD_STATUS_FILE"
+    fi
+    # Explicit unittest arguments (for example -k) select their own tests;
+    # run that selection once rather than splitting it.
+    if (($# > 0)); then
+      if [[ "${TEST_SHARD_INDEX:-0}" != 0 ]]; then
+        exit 0
+      fi
+      exec python3 -m unittest discover -s "$package" -t "$root" -p 'test_*.py' "$@"
+    fi
+    # Bazel runs shards in parallel; each takes every Nth test in id order.
+    exec python3 - "$package" "$root" "$TEST_TOTAL_SHARDS" "${TEST_SHARD_INDEX:-0}" <<'PY'
+import sys
+import unittest
+
+package, root, total, index = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
+
+
+def flatten(suite):
+    for test in suite:
+        if isinstance(test, unittest.TestSuite):
+            yield from flatten(test)
+        else:
+            yield test
+
+
+tests = sorted(
+    flatten(unittest.defaultTestLoader.discover(package, "test_*.py", root)),
+    key=lambda test: test.id(),
+)
+shard = unittest.TestSuite(tests[index::total])
+result = unittest.TextTestRunner(verbosity=2).run(shard)
+sys.exit(0 if result.wasSuccessful() else 1)
+PY
+  fi
   exec python3 -m unittest discover -s "$package" -t "$root" -p 'test_*.py' "$@"
 fi
 # bazel run starts inside runfiles; explicit paths should resolve in the caller.
