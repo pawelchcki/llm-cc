@@ -25,6 +25,7 @@ from tools.comparison.pipeline import (
     _changed_files,
     _code,
     _delta,
+    _rankings,
     _render,
     _safe,
     aggregate,
@@ -170,7 +171,7 @@ class PipelineTest(unittest.TestCase):
         self.assertIn("- `empty.cc`: +3.0 LM-CC\n", markdown)
         self.assertIn("- repository 1.0 → 2.0 LM-CC (+100%)", markdown)
         self.assertIn("| repository | 1.0 | 2.0 | +1.0 | +100% |", markdown)
-        self.assertIn("- `a.cc`: +2.5 LM-CC (+1 per token)", markdown)
+        self.assertIn("- `a.cc`: +2.5 LM-CC (+1 LM-CC/token)", markdown)
         self.assertIn("- `legacy.cc`: +0.5 LM-CC/token", markdown)
 
     def test_leading_paths_rank_by_raw_lm_cc(self):
@@ -235,15 +236,18 @@ class PipelineTest(unittest.TestCase):
                         "old_path": path,
                         "new_path": path,
                         "path": path,
-                        "base": {"category": "runtime", "score": 1.0},
+                        "base": {"category": "runtime", "score": 1.0, "llm_cc": 1.0},
                         "head": {
                             "category": "runtime",
                             "score": 2.0,
+                            "llm_cc": 2.0,
                             "rank": 3,
                             "category_rank": 2,
                         },
                         "delta": 1.0,
                         "percent": 100.0,
+                        "raw_delta": 1.0,
+                        "raw_percent": 100.0,
                     }
                 ],
                 rankings={
@@ -326,15 +330,18 @@ class PipelineTest(unittest.TestCase):
                 "old_path": path,
                 "new_path": path,
                 "path": path,
-                "base": {"category": "runtime", "score": 1.0},
+                "base": {"category": "runtime", "score": 1.0, "llm_cc": 1.0},
                 "head": {
                     "category": "runtime",
                     "score": 2.0 + index,
+                    "llm_cc": 2.0 + index,
                     "rank": index + 1,
                     "category_rank": index + 1,
                 },
                 "delta": 1.0 + index,
                 "percent": 100.0,
+                "raw_delta": 1.0 + index,
+                "raw_percent": 100.0,
             }
             for index, path in enumerate(paths)
         ]
@@ -398,7 +405,7 @@ class PipelineTest(unittest.TestCase):
         head = report["rankings"]["head"]
         self.assertEqual([entry["rank"] for entry in head], list(range(1, len(head) + 1)))
         self.assertEqual(
-            head, sorted(head, key=lambda entry: (-entry["score"], entry["path"]))
+            head, sorted(head, key=lambda entry: (-entry["llm_cc"], entry["path"]))
         )
         for category in ("runtime", "tests", "tooling"):
             selected = [x["category_rank"] for x in head if x["category"] == category]
@@ -418,6 +425,59 @@ class PipelineTest(unittest.TestCase):
         row = _delta(0.0, 1.0)
         self.assertIsNone(row["percent"])
         self.assertEqual(row["absolute"], 1.0)
+
+    def test_file_tables_and_rankings_follow_total_lm_cc_when_density_rises(self):
+        def file(path, key):
+            return dict(path=path, key=key, category="tests", language="c",
+                        size=100, scorable=True)
+
+        base = file("test_url_parse.c", "base")
+        head = file("test_url_parse.c", "head")
+        small = file("small.c", "small")
+        large = file("large.c", "large")
+        empty = file("empty.c", "empty")
+        results = {
+            "base": {"llm_cc": 48.2, "token_count": 1431},
+            "head": {"llm_cc": 45.4, "token_count": 663},
+            "small": {"llm_cc": 2.0, "token_count": 2},
+            "large": {"llm_cc": 100.0, "token_count": 10000},
+            "empty": {"llm_cc": 0.0, "token_count": 0},
+        }
+        paths = {"test_url_parse.c"}
+        rankings = {
+            "base": _rankings([base, small, large, empty], results, paths),
+            "head": _rankings([head, small, large, empty], results, paths),
+        }
+        self.assertEqual([r["path"] for r in rankings["head"]],
+                         ["large.c", "test_url_parse.c", "small.c", "empty.c"])
+        self.assertIsNone(rankings["head"][-1]["score"])
+        rows = _changed_files(
+            [{"status": "M", "old_path": base["path"], "new_path": head["path"]}],
+            {base["path"]: base}, {head["path"]: head}, results, rankings["head"],
+        )
+        self.assertAlmostEqual(rows[0]["raw_delta"], -2.8)
+        self.assertGreater(rows[0]["delta"], 0)
+        markdown = _render(self._report(changed_files=rows, rankings=rankings))
+        self.assertIn("| LM-CC base | LM-CC head | LM-CC Δ | LM-CC Δ% |", markdown)
+        self.assertIn("| `test_url_parse.c` | tests | 48.2 | 45.4 | -2.8 | -5.81% | #2/4 |",
+                      markdown)
+        self.assertIn("| 1 | `large.c` | tests | 100.0 |", markdown)
+        self.assertIn("| # | Path | Category | LM-CC | Touched |", markdown)
+
+    def test_changed_file_raw_metrics_preserve_missing_and_zero_token_states(self):
+        def side(key):
+            return {"key": key, "path": key, "category": "tests"}
+
+        old, new = side("base"), side("head")
+        change = {"status": "M", "old_path": "base", "new_path": "head"}
+        rows = _changed_files(
+            [change], {"base": old}, {"head": new},
+            {"head": {"llm_cc": 0.0, "token_count": 0}}, [],
+        )
+        self.assertIsNone(rows[0]["base"]["llm_cc"])
+        self.assertEqual(rows[0]["head"]["llm_cc"], 0.0)
+        self.assertIsNone(rows[0]["raw_delta"])
+        self.assertIsNone(rows[0]["head"]["score"])
 
     def test_repository_rules_come_from_the_target_commit(self):
         (self.repo / ".llm-cc").mkdir()

@@ -45,6 +45,12 @@ Missing or invalid analysis does.
 
 ## What the report contains
 
+Total LM-CC is the primary metric throughout the report: category summaries,
+changed-file values and deltas, leading improvements/regressions, and file ranks.
+Rankings sort by descending total LM-CC, with paths breaking ties. LM-CC/token
+remains a separately labeled secondary metric; it can rise while total LM-CC
+falls when a refactor removes proportionally more tokens than complexity.
+
 `comment.md` is the bounded pull-request comment, at most 24 KiB. It opens with
 the status and one headline line per category, then the category table, the cache
 line and any errors, a **Changed files** table of the paths this comparison
