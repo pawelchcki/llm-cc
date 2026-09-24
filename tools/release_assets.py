@@ -115,9 +115,11 @@ def verify(args):
         "platforms": platforms,
     }, indent=2) + "\n", encoding="utf-8")
     expected.add(manifest.name)
-    installer = args.output / "install_release.py"
-    shutil.copyfile(Path(__file__).with_name("install_release.py"), installer)
-    expected.add(installer.name)
+    tools = Path(__file__).resolve().parent
+    for installer in ("install_release.py", "install.sh"):
+        source = tools / installer if installer.endswith(".py") else tools.parent / installer
+        shutil.copyfile(source, args.output / installer)
+        expected.add(installer)
     (args.output / "SHA256SUMS").write_text(
         "".join(f"{digest(args.output / name)}  {name}\n" for name in sorted(expected)),
         encoding="utf-8",

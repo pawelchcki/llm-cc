@@ -25,7 +25,7 @@ load(
 
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["version.txt", "MODULE.bazel", "extensions.bzl"])
+exports_files(["version.txt", "MODULE.bazel", "extensions.bzl", "install.sh"])
 
 config_setting(name = "stamping", values = {"stamp": "1"})
 string_flag(name = "source_version", build_setting_default = "")
@@ -959,6 +959,20 @@ sh_test(
     }),
 )
 
+sh_test(
+    name = "install_sh_test",
+    srcs = ["//tools:install_sh_test.sh"],
+    args = ["$(rlocationpath :install.sh)"],
+    data = [":install.sh"],
+    # The public curl/wget installer serves a fake release over local HTTP.
+    size = "small",
+    tags = ["requires-network"],
+    target_compatible_with = select({
+        ":host_windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+)
+
 alias(
     name = "install_payload",
     actual = "//dist:linux_x86_64",
@@ -1279,6 +1293,7 @@ test_suite(
     tags = ["manual"],
     tests = [
         ":cli_test",
+        ":install_sh_test",
         ":install_test",
         ":payload_integration_test",
     ],

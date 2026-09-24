@@ -284,3 +284,18 @@ jobs:
             "$RUNNER_TEMP/installed/llm-cc" backends fetch "$backend" --assume-yes
             "$RUNNER_TEMP/installed/llm-cc" backends fetch "$backend" --no-download
           done
+      - name: Install with the published curl installer, pinned and latest
+        env:
+          LLM_CC_RUNTIME_DIR: ${{ runner.temp }}/curl-runtime
+        run: |
+          base="https://github.com/$GH_REPO/releases/download/$TAG"
+          sh -c "$(curl -fsSL --retry 5 --retry-all-errors "$base/install.sh" || echo exit 1)" -- --version "$TAG" \
+            --bin-dir "$RUNNER_TEMP/curl-installed" --backend cuda
+          "$RUNNER_TEMP/curl-installed/llm-cc" backends fetch cuda --no-download
+          # The tag just published is the latest release only when it is the highest version.
+          latest="$(gh release view --json tagName --jq .tagName)"
+          if [[ "$latest" == "$TAG" ]]; then
+            sh -c "$(wget -qO- "https://github.com/$GH_REPO/releases/latest/download/install.sh" || echo exit 1)" -- \
+              --bin-dir "$RUNNER_TEMP/wget-installed" --backend none
+            "$RUNNER_TEMP/wget-installed/llm-cc" --version | grep -Fx "llm-cc ${TAG#v}"
+          fi

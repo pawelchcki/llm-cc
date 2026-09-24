@@ -41,9 +41,13 @@ class ReleaseTests(unittest.TestCase):
         metadata = json.loads((self.root / "release-manifest.json").read_text())
         self.assertEqual(metadata["base_url"], "https://github.com/pawelchcki/llm-cc/releases/download/v1.2.3")
         self.assertEqual(len(metadata["platforms"]), 5)
+        names = set()
         for line in (self.root / "SHA256SUMS").read_text().splitlines():
             digest, name = line.split()
+            names.add(name)
             self.assertEqual(digest, assets.digest(self.root / name))
+        self.assertTrue({"install.sh", "install_release.py", "release-manifest.json"} <= names)
+        self.assertTrue((self.root / "install.sh").read_text().startswith("#!/bin/sh"))
 
     def test_missing_platform_fails(self):
         self.prepare()
