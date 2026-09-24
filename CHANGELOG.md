@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.3.0](https://github.com/pawelchcki/llm-cc/compare/v0.2.0...v0.3.0) (2026-09-24)
+
+
+### Features
+
+* add a curl/wget installer shipped with every release ([#49](https://github.com/pawelchcki/llm-cc/issues/49)) ([76d4ffe](https://github.com/pawelchcki/llm-cc/commit/76d4ffef538f9f331c4367f2454321f0a550cef0))
+* **comparison:** add a reproducible CI recipe for cached GPU scoring ([#47](https://github.com/pawelchcki/llm-cc/issues/47)) ([10ee9f4](https://github.com/pawelchcki/llm-cc/commit/10ee9f4268bacf28ea51a4acf525f2c6081209df))
+* **comparison:** generalize profiles, complete provenance, and speed up cache reads ([#46](https://github.com/pawelchcki/llm-cc/issues/46)) ([abaf02f](https://github.com/pawelchcki/llm-cc/commit/abaf02f0f9113415b5f68bc7146dbba2fce7fbd6))
+* report paper-scale LM-CC with per-model calibrated tau ([#45](https://github.com/pawelchcki/llm-cc/issues/45)) ([526b40d](https://github.com/pawelchcki/llm-cc/commit/526b40d2a4d9a88c2aa87d494de0f44bd3c0a4b5))
+* rank comparison files and support consumer repositories ([#43](https://github.com/pawelchcki/llm-cc/issues/43)) ([6011717](https://github.com/pawelchcki/llm-cc/commit/60117176d67b41ce23e96ac5a32518a3d3bff1df))
+* score large files with overlapping context windows ([#42](https://github.com/pawelchcki/llm-cc/issues/42)) ([e72466c](https://github.com/pawelchcki/llm-cc/commit/e72466ca4d0236a68bb13e4fb75050fad71266da))
+* add cached complexity comparisons and Radeon dogfooding ([#39](https://github.com/pawelchcki/llm-cc/issues/39)) ([08d0f79](https://github.com/pawelchcki/llm-cc/commit/08d0f79aa59807a7ba48543703eed0ba3bb9341a))
+
+### Bug Fixes
+
+* scale large-model inference and hashing ([#36](https://github.com/pawelchcki/llm-cc/issues/36)) ([4646123](https://github.com/pawelchcki/llm-cc/commit/4646123b274005c587dfeb614f17ddf5fd36aef6))
+
+### Performance Improvements
+
+* cut CI time by reusing caches, isolating stamps, and hashing faster ([#48](https://github.com/pawelchcki/llm-cc/issues/48)) ([2b73bf6](https://github.com/pawelchcki/llm-cc/commit/2b73bf6e3ab4396e277454022a1648659bd3f820))
+
 ## Unreleased
 
 ### Added
