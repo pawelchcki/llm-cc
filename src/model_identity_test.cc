@@ -106,19 +106,24 @@ int main() {  // NOLINT(bugprone-exception-escape)
     struct stat details{};
     llmcc::test::Expect(stat(external.c_str(), &details) == 0,
                         "stat external model");
+#if defined(__APPLE__)
+    const auto& modified = details.st_mtimespec;
+    const auto& changed = details.st_ctimespec;
+#else
+    const auto& modified = details.st_mtim;
+    const auto& changed = details.st_ctim;
+#endif
     std::ostringstream memo_json;
     memo_json << R"({"format":"llm-cc-model-digest-memo-v1","size":)"
               << static_cast<std::uint64_t>(details.st_size) << R"(,"mtime":)"
-              << (static_cast<std::int64_t>(details.st_mtim.tv_sec) *
-                      1000000000LL +
-                  details.st_mtim.tv_nsec)
+              << (static_cast<std::int64_t>(modified.tv_sec) * 1000000000LL +
+                  modified.tv_nsec)
               << R"(,"device":)" << static_cast<std::uint64_t>(details.st_dev)
               << R"(,"inode":)"
               << (static_cast<std::uint64_t>(details.st_ino) + inode_offset)
               << R"(,"ctime":)"
-              << (static_cast<std::int64_t>(details.st_ctim.tv_sec) *
-                      1000000000LL +
-                  details.st_ctim.tv_nsec + change_time_offset)
+              << (static_cast<std::int64_t>(changed.tv_sec) * 1000000000LL +
+                  changed.tv_nsec + change_time_offset)
               << R"(,"digest":")" << digest << R"("})";
     Write(external_memo, memo_json.str());
   };
