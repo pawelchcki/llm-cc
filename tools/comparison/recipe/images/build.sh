@@ -22,7 +22,7 @@ set -eu
 : "${BAZELISK_SHA256:?bazelisk SHA-256}"
 CUDA_ARCHS="${CUDA_ARCHS:-compute_86:sm_86}"
 # The pinned A10-class CUDA scoring contract; every setting is explicit.
-SCORING="${SCORING:---backend cuda --gpu-layers -1 --context 131072 --batch-size 256 --flash-attn on --kv-cache-type q8_0 --kv-offload on --entropy-reduction device --hierarchy structural --tau 0.67 --alpha 0.8 --score-mode lmcc --max-file-bytes 49152}"
+SCORING="${SCORING:---backend cuda --gpu-layers -1 --context 131072 --batch-size 256 --flash-attn on --kv-cache-type q8_0 --kv-offload on --entropy-reduction device --hierarchy structural --tau 0.67 --alpha 0.8 --score-mode raw --max-file-bytes 49152}"
 ENGINE="${ENGINE:-podman}"
 OUTPUT="${OUTPUT:-comparison}"
 recipe="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"

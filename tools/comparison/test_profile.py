@@ -334,6 +334,16 @@ class ProfileTest(unittest.TestCase):
                     changed.expected_configuration(INFERENCE_ABI),
                 )
 
+    def test_general_profiles_default_to_total_lm_cc(self):
+        settings = ScoringSettings()
+        self.assertEqual(settings.score_mode, "raw")
+        self.assertEqual(settings.expected_configuration(INFERENCE_ABI)["score_mode"], "raw")
+        args = profile_module.parser().parse_args([
+            "generate", "--installed-root", str(self.root), "--backend", "cuda",
+            "--execution-image", self.image, "--output", "profile.json",
+        ])
+        self.assertEqual(args.score_mode, "raw")
+
     def test_every_inference_identity_change_invalidates_fingerprint(self):
         original = self.rocm()
         variants = [

@@ -131,12 +131,16 @@ publication.json, baseline.md and baseline.json, and returns report dict.
 Report `report.json` stays `schema_version: 1`. Alongside the existing keys it
 carries `rankings: {base: [entry], head: [entry]}` where an entry is
 `{path, category, language, size, score, llm_cc, token_count, rank,
-category_rank, changed}` over measured files with a positive token count,
-ordered by descending score then path; `changed_files`, one row per change with a
-score on either side, `{status, old_path, new_path, path, base: {category,
-score} | null, head: {category, score, rank, category_rank} | null, delta,
-percent}`; and the plan's `rules_source` and `presentation`. `leading_regressions`
-and `leading_improvements` are derived from `changed_files`. Failure reports emit
+category_rank, changed}` over measured files, ordered by descending `llm_cc`
+then path; `changed_files`, one row per change with a measurement on either side,
+`{status, old_path, new_path, path, base: {category, score, llm_cc} | null,
+head: {category, score, llm_cc, rank, category_rank} | null, delta, percent,
+raw_delta, raw_percent}`; and the plan's `rules_source` and `presentation`.
+The existing `score`, `delta`, and `percent` fields retain their per-token
+meaning for JSON consumers. They are null where tokens are zero. Tables and
+rankings use total `llm_cc` and `raw_delta`/`raw_percent`, including zero-token
+files. `leading_regressions` and `leading_improvements` use total LM-CC changes.
+Failure reports emit
 empty `rankings` and `changed_files` and still write both baseline artifacts.
 
 Baseline `baseline.json`: `{schema_version: 1, identity, fingerprint, status,

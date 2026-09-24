@@ -185,7 +185,7 @@ class ScoringSettings:
     hierarchy: str = "structural"
     tau: float = 0.67
     alpha: float = 0.8
-    score_mode: str = "lmcc"
+    score_mode: str = "raw"
     hotspots: int = 0
 
     def __post_init__(self):
@@ -676,6 +676,8 @@ def dogfood_profile(
         context=context,
         batch_size=batch_size,
         kv_cache_type=kv_cache_type,
+        # Preserve this historical preset's cache identity.
+        score_mode="lmcc",
     )
     validate_execution(execution_image, execution_host, backend, max_file_bytes)
     installation = inspect_installation(
@@ -741,7 +743,7 @@ def parser():
     general.add_argument("--hierarchy", choices=HIERARCHIES, default="structural")
     general.add_argument("--tau", type=float, default=0.67)
     general.add_argument("--alpha", type=float, default=0.8)
-    general.add_argument("--score-mode", choices=SCORE_MODES, default="lmcc")
+    general.add_argument("--score-mode", choices=SCORE_MODES, default="raw")
     general.add_argument("--hotspots", type=int, default=0)
     return result
 

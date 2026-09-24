@@ -455,7 +455,7 @@ def _path_change(delta):
         return "%+.6g LM-CC/token" % delta["change"]
     if delta["change"] is None:  # Zero tokens on one side.
         return "%+.1f LM-CC" % delta["raw_change"]
-    return "%+.1f LM-CC (%+.3g per token)" % (delta["raw_change"], delta["change"])
+    return "%+.1f LM-CC (%+.3g LM-CC/token)" % (delta["raw_change"], delta["change"])
 
 
 def _headline(report):
@@ -508,8 +508,8 @@ def _changed_rows(report):
     rows = list(report.get("changed_files") or [])
     rows.sort(
         key=lambda row: (
-            0 if row["delta"] is not None else 1,
-            -abs(row["delta"] or 0.0),
+            0 if row["raw_delta"] is not None else 1,
+            -abs(row["raw_delta"] or 0.0),
             row["path"],
         )
     )
@@ -518,7 +518,7 @@ def _changed_rows(report):
 
 def _changed_table_lines(rows, total_head):
     lines = [
-        "| Path | Category | Base | Head | Δ | Δ% | Head rank |",
+        "| Path | Category | LM-CC base | LM-CC head | LM-CC Δ | LM-CC Δ% | Head rank |",
         "|---|---|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
@@ -533,14 +533,14 @@ def _changed_table_lines(rows, total_head):
             % (
                 _code(row["path"], table=True),
                 side.get("category") or "—",
-                "—" if row["base"] is None else _fmt(row["base"]["score"]),
-                "—" if row["head"] is None else _fmt(row["head"]["score"]),
+                "—" if row["base"] is None else _raw(row["base"]["llm_cc"]),
+                "—" if row["head"] is None else _raw(row["head"]["llm_cc"]),
                 "—"
                 if row["base"] is None or row["head"] is None
-                else _fmt(row["delta"]),
+                else _raw(row["raw_delta"], "+"),
                 "—"
                 if row["base"] is None or row["head"] is None
-                else _percent(row["percent"]),
+                else _percent(row["raw_percent"]),
                 rank,
             )
         )
@@ -556,7 +556,10 @@ def _comment_sections(report, full=False):
     sections = [
         (
             1,
-            ["## llm-cc comparison", "", "Status: **%s**" % report["status"], ""]
+            [
+                "## llm-cc comparison", "", "Status: **%s**" % report["status"], "",
+                "Scores and ranks use total LM-CC; LM-CC/token is secondary.", "",
+            ]
             + _headline(report),
         ),
         (2, _category_table(report)),
@@ -612,7 +615,7 @@ def _comment_sections(report, full=False):
             "<details>",
             "<summary>Top offenders on the merge base (%s)</summary>" % _code(base),
             "",
-            "| # | Path | Category | Score | Touched |",
+            "| # | Path | Category | LM-CC | Touched |",
             "|---:|---|---|---:|---|",
         ]
         for entry in offenders:
@@ -622,7 +625,7 @@ def _comment_sections(report, full=False):
                     entry["rank"],
                     _code(entry["path"], table=True),
                     entry["category"],
-                    _fmt(entry["score"]),
+                    _raw(entry["llm_cc"]),
                     "yes" if entry["changed"] else "",
                 )
             )
@@ -764,7 +767,7 @@ def _render_baseline(report, output):
         "",
         "Status: **%s**" % report["status"],
         "",
-        "| Category | Score | Raw LLM | Tokens | Measured paths |",
+        "| Category | LM-CC | LM-CC/token | Tokens | Measured paths |",
         "|---|---:|---:|---:|---:|",
     ]
     for name in ("runtime", "tests", "tooling"):
@@ -773,8 +776,8 @@ def _render_baseline(report, output):
             "| %s | %s | %s | %s | %d/%d |"
             % (
                 name,
+                _raw(values["llm_cc"]),
                 _fmt(values["score"]),
-                _fmt(values["llm_cc"]),
                 _fmt(values["token_count"]),
                 values["measured_paths"],
                 values["supported_paths"],
@@ -784,8 +787,8 @@ def _render_baseline(report, output):
     lines.append(
         "| repository | %s | %s | %s | %d/%d |"
         % (
+            _raw(totals["llm_cc"]),
             _fmt(totals["score"]),
-            _fmt(totals["llm_cc"]),
             _fmt(totals["token_count"]),
             totals["measured_paths"],
             totals["supported_paths"],
@@ -794,7 +797,7 @@ def _render_baseline(report, output):
 
     def table(entries):
         rows = [
-            "| # | Path | Category | Score | LLM | Tokens |",
+            "| # | Path | Category | LM-CC | LM-CC/token | Tokens |",
             "|---:|---|---|---:|---:|---:|",
         ]
         for entry in entries:
@@ -804,8 +807,8 @@ def _render_baseline(report, output):
                     entry["rank"],
                     _code(entry["path"], table=True),
                     entry["category"],
+                    _raw(entry["llm_cc"]),
                     _fmt(entry["score"]),
-                    _fmt(entry["llm_cc"]),
                     entry["token_count"],
                 )
             )
@@ -840,13 +843,13 @@ def _render_baseline(report, output):
 
 
 def _rankings(inventory, results, changed_paths):
-    """Order every measured file by descending score for a stable repository view."""
+    """Order measured files by total LM-CC, retaining per-token data separately."""
     entries = []
     for file in inventory:
         if not file["scorable"]:
             continue
         result = results.get(file["key"])
-        if not result or not result["token_count"]:
+        if result is None:
             continue
         entries.append(
             {
@@ -854,7 +857,10 @@ def _rankings(inventory, results, changed_paths):
                 "category": file["category"],
                 "language": file["language"],
                 "size": file["size"],
-                "score": result["llm_cc"] / result["token_count"],
+                "score": (
+                    result["llm_cc"] / result["token_count"]
+                    if result["token_count"] else None
+                ),
                 "llm_cc": result["llm_cc"],
                 "token_count": result["token_count"],
                 "rank": 0,
@@ -862,7 +868,7 @@ def _rankings(inventory, results, changed_paths):
                 "changed": file["path"] in changed_paths,
             }
         )
-    entries.sort(key=lambda entry: (-entry["score"], entry["path"]))
+    entries.sort(key=lambda entry: (-entry["llm_cc"], entry["path"]))
     seen = {}
     for position, entry in enumerate(entries, 1):
         entry["rank"] = position
@@ -875,21 +881,24 @@ def _changed_files(plan_changes, base_paths, head_paths, results, head_rankings)
     """One row per change that carries a score on either side of the comparison."""
     ranked = {entry["path"]: entry for entry in head_rankings}
 
-    def score(file):
+    def measurement(file):
         result = results.get(file["key"]) if file and file.get("key") else None
-        if not result or not result["token_count"]:
-            return None
-        return result["llm_cc"] / result["token_count"]
+        if result is None:
+            return None, None
+        per_token = result["llm_cc"] / result["token_count"] if result["token_count"] else None
+        return result["llm_cc"], per_token
 
     rows = []
     for change in plan_changes:
         old = base_paths.get(change["old_path"])
         new = head_paths.get(change["new_path"])
-        base_score, head_score = score(old), score(new)
-        if base_score is None and head_score is None:
+        base_raw, base_score = measurement(old)
+        head_raw, head_score = measurement(new)
+        if base_raw is None and head_raw is None:
             continue
         path = change["new_path"] or change["old_path"]
         delta = _delta(base_score, head_score)
+        raw_delta = _delta(base_raw, head_raw)
         rank = ranked.get(new["path"]) if new else None
         rows.append(
             {
@@ -899,17 +908,20 @@ def _changed_files(plan_changes, base_paths, head_paths, results, head_rankings)
                 "path": path,
                 "base": None
                 if old is None
-                else {"category": old["category"], "score": base_score},
+                else {"category": old["category"], "score": base_score, "llm_cc": base_raw},
                 "head": None
                 if new is None
                 else {
                     "category": new["category"],
                     "score": head_score,
+                    "llm_cc": head_raw,
                     "rank": rank["rank"] if rank else None,
                     "category_rank": rank["category_rank"] if rank else None,
                 },
                 "delta": delta["absolute"],
                 "percent": delta["percent"],
+                "raw_delta": raw_delta["absolute"],
+                "raw_percent": raw_delta["percent"],
             }
         )
     rows.sort(key=lambda row: row["path"])
@@ -1053,8 +1065,7 @@ def _aggregate(plan, worker_paths, output):
         return None if result is None else result["llm_cc"]
 
     # Raw LM-CC is the paper's quantity and the displayed headline. It stays
-    # defined for zero-token files, which changed_files omits when neither side
-    # has a per-token score, so candidates come from every change; `change`
+    # defined for zero-token files, so candidates come from every change; `change`
     # keeps the per-token delta (null without tokens) for existing consumers.
     per_token = {(row["old_path"], row["new_path"]): row["delta"] for row in changed_files}
     path_deltas = []
