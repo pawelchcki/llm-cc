@@ -1,12 +1,15 @@
 #!/bin/sh
 # Install a prebuilt llm-cc release on Linux or macOS with curl or wget.
 # Run "sh install.sh --help" or see usage() below.
+# The script is one brace group so a truncated download fails to parse instead
+# of running only its beginning.
+{
 set -eu
 
 usage() {
   cat <<'EOF'
-Usage: sh -c "$(curl -fsSL https://github.com/pawelchcki/llm-cc/releases/latest/download/install.sh)" -- [options]
-       sh -c "$(wget -qO- https://github.com/pawelchcki/llm-cc/releases/latest/download/install.sh)" -- [options]
+Usage: sh -c "$(curl -fsSL https://github.com/pawelchcki/llm-cc/releases/latest/download/install.sh || echo exit 1)" -- [options]
+       sh -c "$(wget -qO- https://github.com/pawelchcki/llm-cc/releases/latest/download/install.sh || echo exit 1)" -- [options]
 
 Downloads the llm-cc release for this platform, verifies SHA-256, and installs
 the executable. Model weights are never installed; llm-cc downloads them on
@@ -28,7 +31,7 @@ EOF
 
 repository="pawelchcki/llm-cc"
 version="${LLM_CC_VERSION:-latest}"
-bin_dir="${LLM_CC_BIN_DIR:-${HOME:?HOME is unset}/.local/bin}"
+bin_dir="${LLM_CC_BIN_DIR:-}"
 backend="${LLM_CC_BACKEND:-auto}"
 modify_path=1
 
@@ -55,6 +58,10 @@ case "$backend" in
   cuda|rocm|auto|none) ;;
   *) fail "--backend must be cuda, rocm, auto, or none" ;;
 esac
+if [ -z "$bin_dir" ]; then
+  [ -n "${HOME:-}" ] || fail "HOME is unset; pass --bin-dir PATH or set LLM_CC_BIN_DIR"
+  bin_dir="$HOME/.local/bin"
+fi
 
 # Downloader: curl preferred, wget accepted. Both follow GitHub redirects.
 if command -v curl >/dev/null 2>&1; then
@@ -152,7 +159,8 @@ printf 'Installed %s to %s\n' "$("$installed" --version)" "$installed"
 if [ "$platform" = linux-x86_64 ] && [ "$backend" != none ]; then
   if [ "$backend" = auto ]; then
     backend=none
-    if [ -e /dev/nvidiactl ] || command -v nvidia-smi >/dev/null 2>&1; then
+    # nvidia-smi can be installed without an accessible GPU; require a listing.
+    if [ -e /dev/nvidiactl ] || nvidia-smi -L >/dev/null 2>&1; then
       backend=cuda
     elif [ -e /dev/kfd ]; then
       backend=rocm
@@ -169,7 +177,7 @@ if [ "$platform" = linux-x86_64 ] && [ "$backend" != none ]; then
       set --
     fi
     "$installed" backends fetch "$backend" "$@" --assume-yes ||
-      fail "backend fetch failed; retry later with: llm-cc backends fetch $backend --assume-yes"
+      fail "backend fetch failed; retry later with: \"$installed\" backends fetch $backend${1:+ $*} --assume-yes"
   fi
 elif [ "$backend" != auto ] && [ "$backend" != none ]; then
   printf 'Note: %s bundles exist only for linux-x86_64; %s uses %s.\n' "$backend" "$platform" \
@@ -182,3 +190,4 @@ if [ "$modify_path" -eq 1 ]; then
     *) printf '\nAdd llm-cc to your PATH, for example in your shell startup file:\n  export PATH="%s:$PATH"\n' "$bin_dir" ;;
   esac
 fi
+}

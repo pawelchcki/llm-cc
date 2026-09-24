@@ -155,20 +155,20 @@ llm-cc --version
 On Linux or macOS, install the latest release with one command:
 
 ```sh
-sh -c "$(curl -fsSL https://github.com/pawelchcki/llm-cc/releases/latest/download/install.sh)"
+sh -c "$(curl -fsSL https://github.com/pawelchcki/llm-cc/releases/latest/download/install.sh || echo exit 1)"
 ```
 
-With wget, substitute `wget -qO- <url>` for the `curl` command. This form
-stops with the downloader's error instead of running an empty script when the
-download fails. The script selects your platform, verifies SHA-256, installs
+With wget, substitute `wget -qO- <url>` for the `curl` command. If the download
+fails, `|| echo exit 1` makes the command exit with an error instead of running
+an empty script. The script selects your platform, verifies SHA-256, installs
 `llm-cc` into `$HOME/.local/bin`, and on Linux x86-64 fetches the matching
 CUDA or ROCm bundle when it detects that GPU. Options follow `--`:
 `--version X.Y.Z`, `--bin-dir PATH`, and `--backend cuda|rocm|auto|none`.
-Every release also ships the script as `install.sh`, so a pinned version can
-use its own copy:
+Every release after 0.2.0 also ships the script as `install.sh`, so a pinned
+version can use its own copy; replace `X.Y.Z` with that release:
 
 ```sh
-sh -c "$(curl -fsSL https://github.com/pawelchcki/llm-cc/releases/download/v0.2.0/install.sh)" -- --version 0.2.0
+sh -c "$(curl -fsSL https://github.com/pawelchcki/llm-cc/releases/download/vX.Y.Z/install.sh || echo exit 1)" -- --version X.Y.Z
 ```
 
 Alternatively, download an executable from [GitHub Releases](https://github.com/pawelchcki/llm-cc/releases),

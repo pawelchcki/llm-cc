@@ -104,6 +104,62 @@ if command -v unshare >/dev/null 2>&1 && unshare -Urm true 2>/dev/null; then
   [[ -x "$TEST_TMPDIR/noexec-bin/llm-cc" ]]
 fi
 
+# The documented one-liner installs, and fails instead of running an empty script.
+if command -v curl >/dev/null 2>&1; then
+  cp "$installer" "$release/install.sh"
+  LLM_CC_RELEASE_BASE="$base" sh -c "$(curl -fsSL "$base/install.sh" || echo exit 1)" -- \
+    --bin-dir "$TEST_TMPDIR/one-liner-bin" --backend none >/dev/null
+  [[ -x "$TEST_TMPDIR/one-liner-bin/llm-cc" ]]
+  if sh -c "$(curl -fsSL "$base/missing.sh" 2>/dev/null || echo exit 1)"; then
+    echo "a failed download must not succeed" >&2
+    exit 1
+  fi
+fi
+
+# A truncated download fails to parse instead of running its first commands.
+sed '/^mkdir -p "\$bin_dir"$/q' "$installer" > "$TEST_TMPDIR/truncated.sh"
+grep -qx 'mkdir -p "$bin_dir"' "$TEST_TMPDIR/truncated.sh"
+if LLM_CC_RELEASE_BASE="$base" sh -c "$(cat "$TEST_TMPDIR/truncated.sh"; echo exit 1)" -- \
+  --bin-dir "$TEST_TMPDIR/truncated-bin" --backend none >/dev/null 2>&1; then
+  echo "a truncated installer must not succeed" >&2
+  exit 1
+fi
+[[ ! -e "$TEST_TMPDIR/truncated-bin" ]]
+
+# HOME is required only when no destination is given.
+env -u HOME sh "$installer" --help | grep -q -- '--bin-dir PATH'
+env -u HOME LLM_CC_RELEASE_BASE="$base" sh "$installer" --bin-dir "$TEST_TMPDIR/homeless" --backend none >/dev/null
+[[ -x "$TEST_TMPDIR/homeless/llm-cc" ]]
+! env -u HOME LLM_CC_RELEASE_BASE="$base" sh "$installer" --backend none 2>"$TEST_TMPDIR/err"
+grep -q 'HOME is unset' "$TEST_TMPDIR/err"
+
+if [[ "$platform" == linux-x86_64 ]]; then
+  # A failed backend fetch suggests a retry that works before PATH is updated.
+  ! FAIL_FETCH=1 LLM_CC_RELEASE_BASE="$base" sh "$installer" --bin-dir "$bin" --backend rocm \
+    >/dev/null 2>"$TEST_TMPDIR/err"
+  grep -qF "retry later with: \"$bin/llm-cc\" backends fetch rocm --url $base/llm-cc-backend-rocm-linux-x86_64.bundle --assume-yes" \
+    "$TEST_TMPDIR/err"
+
+  # Automatic selection needs nvidia-smi to list a GPU, not merely to exist.
+  fake_gpu="$TEST_TMPDIR/fake-gpu"
+  mkdir -p "$fake_gpu"
+  printf '#!/bin/sh\nexit "${NVIDIA_SMI_STATUS:?}"\n' > "$fake_gpu/nvidia-smi"
+  chmod 0755 "$fake_gpu/nvidia-smi"
+  : > "$FETCH_LOG"
+  PATH="$fake_gpu:$PATH" NVIDIA_SMI_STATUS=0 LLM_CC_RELEASE_BASE="$base" sh "$installer" --bin-dir "$bin" >/dev/null
+  grep -q '^cuda ' "$FETCH_LOG"
+  if [[ ! -e /dev/nvidiactl ]]; then
+    : > "$FETCH_LOG"
+    output="$(PATH="$fake_gpu:$PATH" NVIDIA_SMI_STATUS=9 LLM_CC_RELEASE_BASE="$base" sh "$installer" --bin-dir "$bin")"
+    if [[ -e /dev/kfd ]]; then
+      grep -q '^rocm ' "$FETCH_LOG"
+    else
+      [[ ! -s "$FETCH_LOG" ]]
+      grep -q 'No NVIDIA or AMD GPU detected' <<<"$output"
+    fi
+  fi
+fi
+
 # Bad arguments.
 ! sh "$installer" --backend opencl 2>"$TEST_TMPDIR/err"
 grep -q -- '--backend must be' "$TEST_TMPDIR/err"
