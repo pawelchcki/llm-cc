@@ -27,6 +27,10 @@ build:macos --macos_minimum_os=14.0
 build:windows --cxxopt=/std:c++20
 # C++ fixture tests and Bash integration tests use the runfiles directory.
 build:windows --enable_runfiles
+# Without symlink support, Bazel copies a runfile that exists and makes a
+# directory junction for one that does not, which then cannot be read as a
+# file. Materialize cached outputs so every runfile target exists.
+build:windows --remote_download_outputs=all
 # The standalone Windows executable includes the MSVC runtime.
 build:windows --features=static_link_msvcrt
 
