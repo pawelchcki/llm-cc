@@ -4,7 +4,10 @@ set -euo pipefail
 
 cd "$TEST_SRCDIR/$TEST_WORKSPACE"
 
-python3 - "$@" <<'PY'
+# Windows runners provide python, not python3.
+python=python3
+command -v python3 >/dev/null 2>&1 || python=python
+"$python" - "$@" <<'PY'
 import os
 import re
 import shutil
