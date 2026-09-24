@@ -24,7 +24,8 @@ case "${1:-}" in
   --version) echo 'llm-cc 1.2.3' ;;
   backends)
     [[ "$2" == fetch ]]
-    echo "$3 ${4:-}" >> "${FETCH_LOG:?}"
+    shift 2
+    echo "$*" >> "${FETCH_LOG:?}"
     [[ "${FAIL_FETCH:-}" != 1 ]]
     ;;
   *) exit 2 ;;
@@ -68,7 +69,7 @@ grep -q "Installed llm-cc 1.2.3 to $bin/llm-cc" <<<"$output"
 grep -q 'export PATH=' <<<"$output"
 [[ -x "$bin/llm-cc" ]]
 if [[ "$platform" == linux-x86_64 ]]; then
-  grep -qx 'cuda --assume-yes' "$FETCH_LOG"
+  grep -qx "cuda --url $base/llm-cc-backend-cuda-linux-x86_64.bundle --assume-yes" "$FETCH_LOG"
 else
   [[ ! -s "$FETCH_LOG" ]]
   grep -q 'bundles exist only for linux-x86_64' <<<"$output"
@@ -89,6 +90,19 @@ echo corrupt >> "$release/$asset"
 grep -q 'SHA-256 mismatch' "$TEST_TMPDIR/err"
 cmp "$bin/llm-cc" "$TEST_TMPDIR/before"
 [[ -z "$(find "$bin" -name '.llm-cc.*')" ]]
+cp "$TEST_TMPDIR/before" "$release/$asset"
+
+# Help works when the script arrives on stdin, the documented streamed form.
+sh -s -- --help < "$installer" | grep -q -- '--backend NAME'
+
+# A noexec temporary directory must not block the pre-installation probe.
+noexec="$TEST_TMPDIR/noexec"
+mkdir -p "$noexec"
+if command -v unshare >/dev/null 2>&1 && unshare -Urm true 2>/dev/null; then
+  TMPDIR="$noexec" unshare -Urm sh -c 'mount -t tmpfs -o noexec none "$0" && LLM_CC_RELEASE_BASE="$1" sh "$2" --bin-dir "$3" --backend none' \
+    "$noexec" "$base" "$installer" "$TEST_TMPDIR/noexec-bin" >/dev/null
+  [[ -x "$TEST_TMPDIR/noexec-bin/llm-cc" ]]
+fi
 
 # Bad arguments.
 ! sh "$installer" --backend opencl 2>"$TEST_TMPDIR/err"
