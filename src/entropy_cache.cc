@@ -27,7 +27,6 @@ std::atomic<bool> g_delete_failure{false};
 // to the DOM encoder but is not a claim about nlohmann::json memory use.
 constexpr std::uint64_t kCacheSerializationAdmissionLimit = 64ULL * 1024 * 1024;
 constexpr std::uint64_t kAdmissionBytesPerRecord = 256;
-constexpr std::uint64_t kMaxEntropyCacheEntryBytes = 16ULL * 1024 * 1024;
 
 bool CanSerializeCacheEntry(std::string_view source,
                             std::span<const EntropyRecord> records) {

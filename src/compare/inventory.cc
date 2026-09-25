@@ -3,11 +3,14 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <nlohmann/json.hpp>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "src/compare/identity.h"
 #include "src/input_limits.h"
@@ -93,11 +96,46 @@ std::string PrintablePath(std::string_view path) {
   return result;
 }
 
+namespace {
+
+// Whether the tree root or a directory above `path` holds a pyvenv.cfg, the
+// Python virtual environments local discovery skips.
+bool InVirtualEnvironment(std::string_view path,
+                          const std::set<std::string, std::less<>>& roots) {
+  if (roots.contains("")) {
+    return true;
+  }
+  for (std::size_t slash = path.find('/'); slash != std::string_view::npos;
+       slash = path.find('/', slash + 1)) {
+    if (roots.contains(path.substr(0, slash))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+}  // namespace
+
 json BuildInventory(const git::Repository& repository, std::string_view commit,
                     const Rules& rules, std::uint64_t max_file_bytes,
                     std::string_view fingerprint) {
+  const std::vector<git::TreeEntry> tree = repository.ListTree(commit);
+  std::set<std::string, std::less<>> environments;
+  for (const git::TreeEntry& entry : tree) {
+    const std::size_t slash = entry.path.rfind('/');
+    const std::string_view name =
+        slash == std::string::npos
+            ? std::string_view(entry.path)
+            : std::string_view(entry.path).substr(slash + 1);
+    if (name == "pyvenv.cfg" &&
+        (entry.mode == "100644" || entry.mode == "100755")) {
+      environments.insert(slash == std::string::npos
+                              ? std::string()
+                              : entry.path.substr(0, slash));
+    }
+  }
   json entries = json::array();
-  for (const git::TreeEntry& entry : repository.ListTree(commit)) {
+  for (const git::TreeEntry& entry : tree) {
     const bool valid_path = ValidUtf8(entry.path);
     // Rules match the name itself; the plan records its escaped spelling.
     const std::string path = PrintablePath(entry.path);
@@ -112,7 +150,9 @@ json BuildInventory(const git::Repository& repository, std::string_view commit,
       reason = "symlink";
     } else if (!blob || !valid_path) {  // NOLINT(bugprone-branch-clone)
       reason = "unsupported";
-    } else if (AlwaysExcluded(matched) || rules.Excluded(matched)) {
+    } else if (AlwaysExcluded(matched) ||
+               InVirtualEnvironment(entry.path, environments) ||
+               rules.Excluded(matched)) {
       reason = "excluded";
     } else if (!language.has_value()) {
       reason = "unsupported";

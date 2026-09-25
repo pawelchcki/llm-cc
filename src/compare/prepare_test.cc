@@ -372,6 +372,22 @@ int main() {  // NOLINT(bugprone-exception-escape)
              repository.base,
          "a discovered identity names the commits it knows");
 
+  // Committed virtual environments are skipped, as local discovery does.
+  const fs::path environment = root / "environment";
+  fs::create_directories(environment);
+  llmcc::compare::test::Git(environment, {"init", "-q"});
+  llmcc::compare::test::Write(environment / "app.py", "x = 1\n");
+  llmcc::compare::test::Write(environment / "env/pyvenv.cfg", "home = /usr\n");
+  llmcc::compare::test::Write(environment / "env/lib/site.py", "x = 2\n");
+  const std::string environment_head =
+      llmcc::compare::test::Commit(environment, "environment");
+  const auto environment_files = ByPath(llmcc::compare::Prepare(
+      Options(environment, environment_head, environment_head,
+              root / "environment-plan"))["inventories"]["head"]);
+  Expect(environment_files.at("env/lib/site.py")["reason"] == "excluded" &&
+             environment_files.at("app.py")["scorable"] == true,
+         "files inside a committed virtual environment are excluded");
+
   // Settings are validated even when no worker will ever read them.
   json unscorable = llmcc::compare::Prepare(
       Options(repo, repository.head, repository.base, root / "settings"));

@@ -164,5 +164,11 @@ int main() {  // NOLINT(bugprone-exception-escape)
            std::string("2024-02-29T23:59:59Z"), "timestamps round-trip");
   Expect(!llmcc::compare::ParseTimestamp("2023-02-29T00:00:00Z").has_value(),
          "impossible dates are rejected");
+  // An oversized object under a result key is a miss, never buffered.
+  store.Put(
+      llmcc::compare::ResultCache::ObjectKey(item["key"].get<std::string>()),
+      std::string(std::size_t{128} * 1024, ' '));
+  Expect(!cache.Get(item, fingerprint).has_value(),
+         "an oversized envelope is a miss");
   return 0;
 }

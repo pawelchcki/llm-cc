@@ -1,6 +1,7 @@
 #ifndef LLM_CC_COMPARE_STORE_H_
 #define LLM_CC_COMPARE_STORE_H_
 
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <nlohmann/json.hpp>
@@ -15,6 +16,12 @@ namespace llmcc::compare {
 class StoreError : public std::runtime_error {
  public:
   using std::runtime_error::runtime_error;
+};
+
+// An object exceeded the size its reader accepts; it was not buffered.
+class StoreEntryTooLarge : public StoreError {
+ public:
+  using StoreError::StoreError;
 };
 
 // A flat object store of '/'-separated keys. Writes replace whole objects
@@ -32,6 +39,11 @@ class Store {
   // The object's bytes, or nullopt when it does not exist. Throws StoreError
   // for any other failure, so a broken store never reads as a cache miss.
   virtual std::optional<std::string> Get(std::string_view key) = 0;
+  // Get for readers that know how large a valid object can be: throws
+  // StoreEntryTooLarge for a larger one. Stores that can tell before reading
+  // the whole object override this so a corrupt one is never buffered.
+  virtual std::optional<std::string> GetAtMost(std::string_view key,
+                                               std::uint64_t max_bytes);
   virtual void Put(std::string_view key, std::string_view value) = 0;
   // Where the store keeps objects, for messages.
   [[nodiscard]] virtual std::string Describe() const = 0;
@@ -51,11 +63,15 @@ class FilesystemStore : public Store {
  public:
   explicit FilesystemStore(std::filesystem::path root);
   std::optional<std::string> Get(std::string_view key) override;
+  std::optional<std::string> GetAtMost(std::string_view key,
+                                       std::uint64_t max_bytes) override;
   void Put(std::string_view key, std::string_view value) override;
   [[nodiscard]] std::string Describe() const override;
 
  private:
   [[nodiscard]] std::filesystem::path PathOf(std::string_view key) const;
+  std::optional<std::string> Read(std::string_view key,
+                                  std::optional<std::uint64_t> max_bytes);
   std::filesystem::path root_;
 };
 

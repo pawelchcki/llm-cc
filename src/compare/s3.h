@@ -2,6 +2,7 @@
 #define LLM_CC_COMPARE_S3_H_
 
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -24,6 +25,8 @@ struct HttpRequest {
   std::string sigv4;
   std::string access_key_id;
   std::string secret_access_key;
+  // A longer response body is abandoned with ResponseTooLarge.
+  std::optional<std::uint64_t> max_body_bytes;
 };
 
 struct HttpResponse {
@@ -35,6 +38,12 @@ struct HttpResponse {
 class TransportError : public std::runtime_error {
  public:
   using std::runtime_error::runtime_error;
+};
+
+// The response body exceeded the request's max_body_bytes.
+class ResponseTooLarge : public TransportError {
+ public:
+  using TransportError::TransportError;
 };
 
 class HttpTransport {
@@ -73,13 +82,18 @@ class S3Store : public Store {
   S3Store(S3Settings settings, std::unique_ptr<HttpTransport> transport,
           Sleep sleep = {});
   std::optional<std::string> Get(std::string_view key) override;
+  std::optional<std::string> GetAtMost(std::string_view key,
+                                       std::uint64_t max_bytes) override;
   void Put(std::string_view key, std::string_view value) override;
   [[nodiscard]] std::string Describe() const override;
   [[nodiscard]] std::string ObjectUrl(std::string_view key) const;
 
  private:
   HttpResponse Send(std::string_view method, std::string_view key,
-                    std::string_view body);
+                    std::string_view body,
+                    std::optional<std::uint64_t> max_body_bytes = {});
+  std::optional<std::string> Read(std::string_view key,
+                                  std::optional<std::uint64_t> max_bytes);
   S3Settings settings_;
   std::unique_ptr<HttpTransport> transport_;
   Sleep sleep_;

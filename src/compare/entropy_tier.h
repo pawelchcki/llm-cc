@@ -7,6 +7,7 @@
 
 #include "src/analyze.h"
 #include "src/compare/store.h"
+#include "src/entropy_cache.h"
 
 namespace llmcc::compare {
 
@@ -19,7 +20,11 @@ class StoreEntropyTier : public EntropyTier {
   explicit StoreEntropyTier(compare::Store& store) : store_(store) {}
 
   std::optional<std::string> Fetch(std::string_view key) override {
-    return store_.Get(ObjectKey(key));
+    try {
+      return store_.GetAtMost(ObjectKey(key), kMaxEntropyCacheEntryBytes);
+    } catch (const StoreEntryTooLarge&) {
+      return std::nullopt;  // No valid entry is this large.
+    }
   }
   void Store(std::string_view key, std::string_view entry) override {
     store_.Put(ObjectKey(key), entry);

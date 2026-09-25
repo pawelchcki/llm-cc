@@ -61,6 +61,13 @@ bool IsCanonicalLanguage(const json& value) {
   }
 }
 
+// A file has no more tokens, branches or nesting levels than bytes, and
+// bounding each count keeps the report's signed sums far from overflowing.
+bool IsCount(const json& value) {
+  return value.is_number_unsigned() &&
+         value.get<std::uint64_t>() <= kMaxSourceBytes;
+}
+
 bool IsFiniteNonNegative(const json& value) {
   return value.is_number() && std::isfinite(value.get<double>()) &&
          value.get<double>() >= 0;
@@ -195,13 +202,12 @@ bool ValidResult(const json& result, const json& item,
          result["language"] == Field(item, "language") &&
          result["fingerprint"] == fingerprint &&
          IsFiniteNonNegative(result["llm_cc"]) &&
-         result["token_count"].is_number_unsigned() &&
-         result["high_entropy_tokens"].is_number_unsigned() &&
+         IsCount(result["token_count"]) &&
+         IsCount(result["high_entropy_tokens"]) &&
          result["high_entropy_tokens"].get<std::uint64_t>() <=
              result["token_count"].get<std::uint64_t>() &&
          IsFiniteNonNegative(result["entropy_sum"]) &&
-         result["total_branch"].is_number_unsigned() &&
-         result["total_comp_level"].is_number_unsigned();
+         IsCount(result["total_branch"]) && IsCount(result["total_comp_level"]);
 }
 
 std::vector<WorkerAssignment> Partition(std::vector<json> items,

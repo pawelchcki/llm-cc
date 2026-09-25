@@ -2,6 +2,7 @@
 
 #include <curl/curl.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -43,6 +44,7 @@ void SetOption(CURL* curl, CURLoption option, Value value) {
 
 struct ResponseBuffer {
   std::string body;
+  std::uint64_t limit = kMaxObjectBytes;
   bool overflow = false;
 };
 
@@ -50,7 +52,7 @@ std::size_t WriteBody(char* data, std::size_t size, std::size_t count,
                       void* context) {
   auto* buffer = static_cast<ResponseBuffer*>(context);
   const std::size_t bytes = size * count;
-  if (buffer->body.size() + bytes > kMaxObjectBytes) {
+  if (buffer->body.size() + bytes > buffer->limit) {
     buffer->overflow = true;
     return 0;
   }
@@ -69,6 +71,8 @@ class CurlTransport : public HttpTransport {
     }
     std::array<char, CURL_ERROR_SIZE> error{};
     ResponseBuffer response;
+    response.limit = std::min<std::uint64_t>(
+        kMaxObjectBytes, request.max_body_bytes.value_or(kMaxObjectBytes));
     std::unique_ptr<curl_slist, decltype(&curl_slist_free_all)> headers(
         nullptr, curl_slist_free_all);
     const auto append = [&headers](const std::string& header) {
@@ -119,8 +123,8 @@ class CurlTransport : public HttpTransport {
     }
     const CURLcode result = curl_easy_perform(handle);
     if (response.overflow) {
-      throw TransportError("response exceeds " +
-                           std::to_string(kMaxObjectBytes) + " bytes");
+      throw ResponseTooLarge("response exceeds " +
+                             std::to_string(response.limit) + " bytes");
     }
     if (result != CURLE_OK) {
       const std::string detail =
@@ -218,7 +222,8 @@ std::string S3Store::Describe() const {
 }
 
 HttpResponse S3Store::Send(std::string_view method, std::string_view key,
-                           std::string_view body) {
+                           std::string_view body,
+                           std::optional<std::uint64_t> max_body_bytes) {
   ValidateStoreKey(key);
   HttpRequest request{.method = std::string(method),
                       .url = ObjectUrl(key),
@@ -226,7 +231,8 @@ HttpResponse S3Store::Send(std::string_view method, std::string_view key,
                       .body = std::string(body),
                       .sigv4 = "aws:amz:" + settings_.region + ":s3",
                       .access_key_id = settings_.access_key_id,
-                      .secret_access_key = settings_.secret_access_key};
+                      .secret_access_key = settings_.secret_access_key,
+                      .max_body_bytes = max_body_bytes};
   if (settings_.session_token.has_value()) {
     request.headers.push_back("x-amz-security-token: " +
                               *settings_.session_token);
@@ -238,11 +244,20 @@ HttpResponse S3Store::Send(std::string_view method, std::string_view key,
     }
     try {
       HttpResponse response = transport_->Perform(request);
+      // An oversized object stays oversized; it is not worth a retry.
+      if (max_body_bytes.has_value() && response.status == 200 &&
+          response.body.size() > *max_body_bytes) {
+        throw ResponseTooLarge("response exceeds " +
+                               std::to_string(*max_body_bytes) + " bytes");
+      }
       if (!Retryable(response.status)) {
         return response;
       }
       last_failure = "HTTP " + std::to_string(response.status) + ": " +
                      Excerpt(response.body);
+    } catch (const ResponseTooLarge& error) {
+      throw StoreEntryTooLarge(Describe() + "/" + std::string(key) + ": " +
+                               error.what());
     } catch (const TransportError& error) {
       last_failure = error.what();
     }
@@ -254,7 +269,17 @@ HttpResponse S3Store::Send(std::string_view method, std::string_view key,
 }
 
 std::optional<std::string> S3Store::Get(std::string_view key) {
-  HttpResponse response = Send("GET", key, {});
+  return Read(key, std::nullopt);
+}
+
+std::optional<std::string> S3Store::GetAtMost(std::string_view key,
+                                              std::uint64_t max_bytes) {
+  return Read(key, max_bytes);
+}
+
+std::optional<std::string> S3Store::Read(
+    std::string_view key, std::optional<std::uint64_t> max_bytes) {
+  HttpResponse response = Send("GET", key, {}, max_bytes);
   if (response.status == 200) {
     return std::move(response.body);
   }

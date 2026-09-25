@@ -238,6 +238,16 @@ Descriptor OpenParent(const std::filesystem::path& root, std::string_view key,
 
 }  // namespace
 
+std::optional<std::string> Store::GetAtMost(std::string_view key,
+                                            std::uint64_t max_bytes) {
+  std::optional<std::string> value = Get(key);
+  if (value.has_value() && value->size() > max_bytes) {
+    throw StoreEntryTooLarge("store entry " + std::string(key) + " exceeds " +
+                             std::to_string(max_bytes) + " bytes");
+  }
+  return value;
+}
+
 FilesystemStore::FilesystemStore(std::filesystem::path root)
     : root_(std::move(root)) {}
 
@@ -247,6 +257,20 @@ std::filesystem::path FilesystemStore::PathOf(std::string_view key) const {
 }
 
 std::optional<std::string> FilesystemStore::Get(std::string_view key) {
+  return Read(key, std::nullopt);
+}
+
+std::optional<std::string> FilesystemStore::GetAtMost(std::string_view key,
+                                                      std::uint64_t max_bytes) {
+  return Read(key, max_bytes);
+}
+
+std::optional<std::string> FilesystemStore::Read(
+    std::string_view key, std::optional<std::uint64_t> max_bytes) {
+  const auto too_large = [&] {
+    return StoreEntryTooLarge("store entry " + std::string(key) + " exceeds " +
+                              std::to_string(*max_bytes) + " bytes");
+  };
 #ifdef _WIN32
   const std::filesystem::path path = PathOf(key);
   if (!CheckedParents(root_, key, false)) {
@@ -265,6 +289,11 @@ std::optional<std::string> FilesystemStore::Get(std::string_view key) {
   if (error || status.type() != std::filesystem::file_type::regular) {
     throw StoreError("cannot read store entry " + std::string(key) + ": " +
                      (error ? error.message() : "not a regular file"));
+  }
+  if (max_bytes.has_value() &&
+      std::cmp_greater(std::filesystem::file_size(path, error), *max_bytes) &&
+      !error) {
+    throw too_large();
   }
   std::ifstream input(path, std::ios::binary);
   if (!input.is_open()) {
@@ -300,6 +329,10 @@ std::optional<std::string> FilesystemStore::Get(std::string_view key) {
   if (fstat(file.get(), &information) != 0 || !S_ISREG(information.st_mode)) {
     throw StoreError("cannot read store entry " + std::string(key) +
                      ": not a regular file");
+  }
+  if (max_bytes.has_value() &&
+      std::cmp_greater(information.st_size, *max_bytes)) {
+    throw too_large();
   }
   std::string contents;
   std::array<char, std::size_t{64} * 1024> buffer{};

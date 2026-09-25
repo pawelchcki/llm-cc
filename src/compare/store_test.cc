@@ -118,6 +118,23 @@ int main() {  // NOLINT(bugprone-exception-escape)
   }
   llmcc::compare::ValidateStoreKey("results/v2/abc.json");
 
+  // Bounded reads refuse oversized objects without buffering them.
+  {
+    llmcc::compare::FilesystemStore bounded(root / "bounded");
+    bounded.Put("k", "0123456789");
+    ExpectEq(bounded.GetAtMost("k", 10),
+             std::optional<std::string>("0123456789"),
+             "an object at the bound is read");
+    Expect(!bounded.GetAtMost("missing", 1).has_value(),
+           "a bounded read of a missing object is a miss");
+    try {
+      static_cast<void>(bounded.GetAtMost("k", 9));
+      Expect(false, "an object past the bound is refused");
+    } catch (const llmcc::compare::
+                 StoreEntryTooLarge&) {  // NOLINT(bugprone-empty-catch)
+    }
+  }
+
   // Filesystem objects round-trip and absent objects are misses.
   llmcc::compare::FilesystemStore filesystem(root);
   Expect(!filesystem.Get("results/v2/missing.json").has_value(),
@@ -267,6 +284,16 @@ int main() {  // NOLINT(bugprone-exception-escape)
     Expect(!fixture.store->Get("k").has_value(), "404 is a miss");
     fixture.transport->Then(404, "<Error><Code>NoSuchKey</Code></Error>");
     Expect(!fixture.store->Get("k").has_value(), "NoSuchKey is a miss");
+    fixture.transport->Then(200, "0123456789");
+    try {
+      static_cast<void>(fixture.store->GetAtMost("k", 9));
+      Expect(false, "an S3 object past the bound is refused");
+    } catch (const llmcc::compare::
+                 StoreEntryTooLarge&) {  // NOLINT(bugprone-empty-catch)
+    }
+    Expect(fixture.requests.back().max_body_bytes ==
+               std::optional<std::uint64_t>(9),
+           "the transport is told the bound");
     fixture.transport->Then(404, "<Error><Code>NoSuchBucket</Code></Error>");
     Expect(StoreFailure([&] {
              static_cast<void>(fixture.store->Get("k"));

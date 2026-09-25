@@ -13,6 +13,7 @@
 #include "src/compare/aggregate.h"
 #include "src/compare/json_util.h"
 #include "src/compare/markdown.h"
+#include "src/compare/plan.h"
 #include "src/compare/report_model.h"
 #include "src/compare/report_render.h"
 #include "src/test_util.h"
@@ -386,5 +387,22 @@ int main() {  // NOLINT(bugprone-exception-escape)
              failure["identity"]["repository"] == "o/r" &&
              !failure["identity"].contains("extra"),
          "failure identities are normalized");
+
+  // Counts beyond any file's size never reach the signed report totals.
+  const json item = {{"key", "k"},
+                     {"blob_id", std::string(40, 'b')},
+                     {"language", "cpp"},
+                     {"size", 3}};
+  const json valid = llmcc::compare::ResultRecord(
+      item, "f", {.llm_cc = 1.5, .token_count = 3});
+  Expect(llmcc::compare::ValidResult(valid, item, "f"),
+         "a plausible result is valid");
+  for (const char* field : {"token_count", "high_entropy_tokens",
+                            "total_branch", "total_comp_level"}) {
+    json oversized = valid;
+    oversized[field] = json::parse("18446744073709551615");
+    Expect(!llmcc::compare::ValidResult(oversized, item, "f"),
+           std::string("a count past the source limit is invalid: ") + field);
+  }
   return 0;
 }

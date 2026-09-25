@@ -3,6 +3,7 @@
 #include <array>
 #include <charconv>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <nlohmann/json.hpp>
 #include <optional>
@@ -20,6 +21,9 @@ namespace {
 
 using nlohmann::json;
 using std::chrono::days;
+
+// A result envelope is well under a kilobyte; anything this large is corrupt.
+constexpr std::uint64_t kMaxEnvelopeBytes = std::uint64_t{64} * 1024;
 using std::chrono::system_clock;
 
 json Envelope(const json& result, system_clock::time_point stored_at) {
@@ -101,7 +105,12 @@ std::string ResultCache::ObjectKey(std::string_view key) {
 std::optional<json> ResultCache::Get(const json& item,
                                      const std::string& fingerprint) {
   const std::string key = item.at("key").get<std::string>();
-  const std::optional<std::string> raw = store_.Get(ObjectKey(key));
+  std::optional<std::string> raw;
+  try {
+    raw = store_.GetAtMost(ObjectKey(key), kMaxEnvelopeBytes);
+  } catch (const StoreEntryTooLarge&) {
+    return std::nullopt;  // No valid envelope is this large.
+  }
   if (!raw.has_value()) {
     return std::nullopt;
   }

@@ -60,6 +60,9 @@ void WriteEntropyCache(std::string_view preprocessed_source,
                        const ModelIdentity& model,
                        std::span<const EntropyRecord> records);
 
+// No encoded entry is larger; a larger one is corrupt.
+inline constexpr std::uint64_t kMaxEntropyCacheEntryBytes = 16ULL * 1024 * 1024;
+
 // The native CBOR entry the cache stores under EntropyCacheKey, or nullopt
 // when records exceed the bounded cache-work policy. Throws
 // std::invalid_argument for records that do not cover the source.
