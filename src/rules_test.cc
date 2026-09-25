@@ -247,6 +247,17 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
     std::filesystem::permissions(temporary / "unreadable/.llm-cc",
                                  std::filesystem::perms::owner_all);
   }
+  // A dangling or empty .llm-cc link is refused, not read as no rules.
+  const std::filesystem::path dangling = temporary / "dangling";
+  std::filesystem::create_directories(dangling);
+  std::filesystem::create_symlink(temporary / "absent", dangling / ".llm-cc");
+  try {
+    static_cast<void>(Rules::LoadFromWorktree(dangling));
+    Expect(false, "a dangling .llm-cc link fails");
+  } catch (const llmcc::RulesError& error) {
+    Expect(std::string(error.what()).find("symlink") != std::string::npos,
+           "a dangling .llm-cc link is named as a symlink");
+  }
   // Rules must be the committed file itself, never a link out of the tree.
   Write(temporary / "outside.json", R"({"tests": ["copy.cc"]})");
   for (const auto& [name, link, target] :

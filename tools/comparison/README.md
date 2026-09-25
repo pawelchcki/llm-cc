@@ -97,10 +97,8 @@ reads the same file; see
 [selection and classification rules](../../README.md#selection-and-classification-rules).
 A pull request cannot reclassify its own files, and rules that
 fail validation fail the run instead of silently reverting to the host defaults.
-Until the comparison core moves into `llm-cc`, this package still matches
-globs with Python's `fnmatch`, whose `*` also crosses `/`; write patterns that
-mean the same under both, as llm-cc's own `.llm-cc/rules.json` does
-(`tools/**` together with `**/*_test.*` rather than a bare `*_test.*`).
+This package matches globs with a port of llm-cc's own segment-aware matcher,
+so a rules file selects and classifies the same files in CI as locally.
 Accepted keys are `exclude`, `tests`, `tooling`, `extensions` and `paths`; glob
 lists hold non-empty patterns of at most 256 characters, at most 512 patterns in
 total including `paths`, and the canonical document must stay under 64 KiB.
