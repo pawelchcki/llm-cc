@@ -1,7 +1,6 @@
 #include "src/compare/json_util.h"
 
 #include <array>
-#include <atomic>
 #include <charconv>
 #include <cmath>
 #include <cstdint>
@@ -15,12 +14,7 @@
 #include <string_view>
 #include <system_error>
 
-#if defined(_WIN32)
-#include <process.h>
-#else
-#include <unistd.h>
-#endif
-
+#include "src/cache_io.h"
 #include "src/sha256.h"
 
 namespace llmcc::compare {
@@ -236,16 +230,6 @@ void AppendCanonical(std::string& output, const nlohmann::json& value) {
   throw std::invalid_argument("value has no JSON encoding");
 }
 
-std::string ProcessTag() {
-  static std::atomic<unsigned int> counter{0};
-#if defined(_WIN32)
-  const int process = _getpid();
-#else
-  const int process = static_cast<int>(getpid());
-#endif
-  return std::to_string(process) + "." + std::to_string(++counter);
-}
-
 }  // namespace
 
 std::string CanonicalJson(const nlohmann::json& value) {
@@ -283,30 +267,8 @@ nlohmann::json ReadJsonFile(const std::filesystem::path& path) {
 
 void WriteFileAtomic(const std::filesystem::path& path,
                      std::string_view contents) {
-  if (path.has_parent_path()) {
-    std::filesystem::create_directories(path.parent_path());
-  }
-  std::filesystem::path temporary = path;
-  temporary += ".tmp." + ProcessTag();
-  {
-    std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-    output.write(contents.data(),
-                 static_cast<std::streamsize>(contents.size()));
-    output.flush();
-    if (!output) {
-      std::error_code ignored;
-      std::filesystem::remove(temporary, ignored);
-      throw std::runtime_error("cannot write " + path.string());
-    }
-  }
-  std::error_code error;
-  std::filesystem::rename(temporary, path, error);
-  if (error) {
-    std::error_code ignored;
-    std::filesystem::remove(temporary, ignored);
-    throw std::runtime_error("cannot replace " + path.string() + ": " +
-                             error.message());
-  }
+  // Replaces an existing file on every platform, and never a symlink.
+  cache_io::AtomicWriteFile(path, contents, 0666);
 }
 
 void WriteJsonFile(const std::filesystem::path& path,

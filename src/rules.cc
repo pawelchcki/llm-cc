@@ -263,9 +263,15 @@ LoadedRules Rules::LoadFromWorktree(const std::filesystem::path& root) {
   for (const std::string_view relative : {kRulesPath, kLegacyRulesPath}) {
     const std::filesystem::path path = root / std::filesystem::path(relative);
     std::error_code error;
-    const auto status = std::filesystem::status(path, error);
+    const auto status = std::filesystem::symlink_status(path, error);
     if (error || status.type() == std::filesystem::file_type::not_found) {
       continue;
+    }
+    // Git records a symlink itself, so following one would read rules the
+    // committed tree does not contain, possibly from outside the repository.
+    if (status.type() == std::filesystem::file_type::symlink ||
+        std::filesystem::is_symlink(path.parent_path(), error)) {
+      throw RulesError(std::string(relative) + " must not be a symlink");
     }
     if (status.type() != std::filesystem::file_type::regular) {
       throw RulesError(std::string(relative) + " is not a regular file");

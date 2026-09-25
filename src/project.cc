@@ -164,9 +164,12 @@ void AddFile(const std::filesystem::path& path, std::string relative,
   if (InCacheDirectory(canonical)) {
     return;
   }
-  std::optional<Language> language = context.options.language;
-  if (!language.has_value()) {
-    language = rules.ResolveLanguage(relative);
+  std::optional<Language> language = rules.ResolveLanguage(relative);
+  // A forced language changes how selected files are parsed; it selects
+  // unsupported files only when they are named explicitly.
+  if (context.options.language.has_value() &&
+      (language.has_value() || explicit_file)) {
+    language = context.options.language;
   }
   if (!language.has_value()) {
     if (explicit_file) {
@@ -232,7 +235,8 @@ void FilesystemWalk(const std::filesystem::path& directory,
       if (SkipDirectory(entry.path(), relative, rules, no_ignore)) {
         iterator.disable_recursion_pending();
       }
-    } else if (entry.is_regular_file(error) && !error) {
+    } else if (!entry.is_symlink(error) && entry.is_regular_file(error) &&
+               !error) {
       const auto canonical = std::filesystem::canonical(entry.path(), error);
       if (!error && IsWithin(canonical, directory) &&
           (no_ignore || !rules.Excluded(relative))) {
@@ -264,6 +268,11 @@ bool GitWalk(const std::filesystem::path& input,
     const std::filesystem::path candidate =
         repository / std::filesystem::u8path(relative);
     std::error_code error;
+    // A symlink would lend its own path, and so its language and rules, to
+    // its target; the target is discovered through its own entry.
+    if (std::filesystem::is_symlink(candidate, error)) {
+      continue;
+    }
     const auto canonical = std::filesystem::canonical(candidate, error);
     if (error || !IsWithin(canonical, input)) {
       continue;

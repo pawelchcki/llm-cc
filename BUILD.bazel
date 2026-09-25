@@ -639,6 +639,7 @@ cc_library(
     ],
     textual_hdrs = ["src/compare/unicode_cf.inc"],
     deps = [
+        ":cache_io",
         ":sha256",
         "@nlohmann_json//:json",
     ],

@@ -325,8 +325,9 @@ complete effective rules. `tests` is checked before `tooling`, and anything
 else is `runtime`. A language comes from the first matching `paths` rule, then
 `extensions` (lowercase keys, matched case-insensitively), then the built-in
 extension table. Patterns are at most 256 characters, at most 512 in total, and
-the file stays under 64 KiB. `.git`, `.llm-cc-cache` and Python virtual
-environments (directories containing `pyvenv.cfg`) are never discovered.
+the file stays under 64 KiB. `.git` and `.llm-cc-cache` are never discovered;
+Python virtual environments (directories containing `pyvenv.cfg`) are skipped
+unless `--no-ignore` is given.
 
 Globs are anchored at the repository root and segment-aware, like
 `.gitignore`: `*` and `?` stay within one path segment, `[a-z]` matches one

@@ -3,10 +3,12 @@
 #include <cstdlib>
 #include <deque>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -84,6 +86,11 @@ bool HasHeader(const HttpRequest& request, const std::string& header) {
   return std::ranges::find(request.headers, header) != request.headers.end();
 }
 
+void WriteText(const fs::path& path, std::string_view text) {
+  fs::create_directories(path.parent_path());
+  std::ofstream(path, std::ios::binary) << text;
+}
+
 template <typename Function>
 std::string StoreFailure(Function function) {
   try {
@@ -132,6 +139,24 @@ int main() {  // NOLINT(bugprone-exception-escape)
          "an unreadable object is an error, not a miss");
 
 #if !defined(_WIN32)
+  // Entries never resolve through a symlink out of the store.
+  const fs::path outside = fs::path(temporary) / "outside";
+  fs::create_directories(outside);
+  WriteText(outside / "x.json", "outside");
+  fs::create_symlink(outside, root / "linked");
+  WriteText(root / "results/v2/entry.json", "inside");
+  fs::create_symlink(root / "results/v2/entry.json", root / "alias.json");
+  for (const char* key : {"linked/x.json", "alias.json"}) {
+    Expect(StoreFailure([&] { filesystem.Get(key); }).find("symlink") !=
+               std::string::npos,
+           std::string("a read through a symlink is refused: ") + key);
+  }
+  Expect(!StoreFailure([&] {
+            filesystem.Put("linked/y.json", "escaped");
+          }).empty() &&
+             !fs::exists(outside / "y.json"),
+         "a write through a symlinked directory is refused");
+
   // Concurrent writers of one key always leave one complete value.
   std::vector<std::thread> writers;
   for (int writer = 0; writer < 8; ++writer) {
