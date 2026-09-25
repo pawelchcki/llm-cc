@@ -13,14 +13,12 @@ from tools.comparison.cache import CacheError, FilesystemStore, ResultCache
 from tools.comparison.common import aggregate_report, write_json
 from tools.comparison.fixtures import git, synthetic_scorer
 from tools.comparison.inventory import (
-    DEFAULT_RULES,
     GitError,
     _classify,
     inventory,
     merge_base,
     resolve_language,
     validate_rules,
-    with_defaults,
 )
 from tools.comparison.pipeline import (
     REPOSITORY_RULES_PATH,
@@ -96,9 +94,7 @@ class PipelineTest(unittest.TestCase):
         rules, source = resolve_rules(
             self.repo, target, {"tests": ["nothing"]}, ".llm-cc/comparison-rules.json"
         )
-        self.assertEqual(rules, with_defaults({"tooling": ["copy.cc"]}))
-        # Omitted keys keep llm-cc's built-in defaults, as local analysis does.
-        self.assertEqual(rules["exclude"], DEFAULT_RULES["exclude"])
+        self.assertEqual(rules, {"tooling": ["copy.cc"]})
         self.assertEqual(source["source"], "repository")
         self.assertEqual(source["commit"], target)
         plan = prepare(
@@ -117,7 +113,30 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(by_path["copy.cc"]["category"], "tooling")
         missing, host = resolve_rules(self.repo, target, {"tests": ["x"]}, "absent.json")
         self.assertEqual(host, {"source": "host"})
-        self.assertEqual(missing, with_defaults({"tests": ["x"]}))
+        self.assertEqual(missing, {"tests": ["x"]})
+
+    def test_rules_match_like_llm_cc(self):
+        # Globs are segment-aware, and omitted lists keep llm-cc's defaults.
+        partial = {"tooling": ["src/*.cc"]}
+        self.assertEqual(_classify("src/a.cc", partial), "tooling")
+        self.assertEqual(_classify("src/nested/a.cc", partial), "runtime")
+        self.assertEqual(_classify("src/a_test.cc", partial), "tests")
+        self.assertEqual(_classify("tools/gen.py", {"tests": []}), "tooling")
+        (self.repo / "node_modules").mkdir()
+        (self.repo / "node_modules/dep.js").write_text("x;\n")
+        (self.repo / "keep.js").write_text("x;\n")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "dependencies")
+        head = git(self.repo, "rev-parse", "HEAD")
+        by_path = {
+            x["path"]: x for x in inventory(self.repo, head, "f" * 64, partial)[0]
+        }
+        self.assertEqual(by_path["node_modules/dep.js"]["reason"], "excluded")
+        self.assertIsNone(by_path["keep.js"]["reason"])
+        overridden, _ = inventory(self.repo, head, "f" * 64, {"exclude": []})
+        self.assertIsNone(
+            {x["path"]: x for x in overridden}["node_modules/dep.js"]["reason"]
+        )
 
     def test_repository_rules_prefer_the_shared_file_name(self):
         (self.repo / ".llm-cc").mkdir()
@@ -131,13 +150,13 @@ class PipelineTest(unittest.TestCase):
         git(self.repo, "commit", "-qm", "both rules files")
         target = git(self.repo, "rev-parse", "HEAD")
         rules, source = resolve_rules(self.repo, target, {}, REPOSITORY_RULES_PATH)
-        self.assertEqual(rules, with_defaults({"tests": ["copy.cc"]}))
+        self.assertEqual(rules, {"tests": ["copy.cc"]})
         self.assertEqual(source["path"], ".llm-cc/rules.json")
         git(self.repo, "rm", "-q", ".llm-cc/rules.json")
         git(self.repo, "commit", "-qm", "legacy rules only")
         legacy = git(self.repo, "rev-parse", "HEAD")
         rules, source = resolve_rules(self.repo, legacy, {}, REPOSITORY_RULES_PATH)
-        self.assertEqual(rules, with_defaults({"tooling": ["copy.cc"]}))
+        self.assertEqual(rules, {"tooling": ["copy.cc"]})
         self.assertEqual(source["path"], ".llm-cc/comparison-rules.json")
 
     def test_invalid_repository_rules_fail_the_run(self):

@@ -9,6 +9,10 @@
 #include <string_view>
 #include <tuple>
 
+#ifndef _WIN32
+#include <unistd.h>
+#endif
+
 #include "src/test_util.h"
 
 namespace {
@@ -161,6 +165,14 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
   ExpectRejected(R"({"tests": [""]})", "non-empty globs");
   ExpectRejected(R"({"tests": [")" + std::string(257, 'a') + R"("]})",
                  "at most 256 characters");
+  // The limit counts characters, not UTF-8 bytes, as Python's len() does.
+  std::string accented;
+  for (int index = 0; index < 256; ++index) {
+    accented += "\u00e9";
+  }
+  static_cast<void>(Rules::Parse(R"({"tests": [")" + accented + R"("]})"));
+  ExpectRejected(R"({"tests": [")" + accented + R"(e"]})",
+                 "at most 256 characters");
   ExpectRejected(R"({"exclude": ["/rooted"]})", "relative to the repository");
   ExpectRejected(R"({"paths": [{"pattern": "a/**"}]})", "{pattern, language}");
   ExpectRejected(R"({"paths": [{"pattern": "a/**", "language": "zig"}]})",
@@ -219,6 +231,22 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
            "worktree rule errors name the file");
   }
 #ifndef _WIN32
+  // Unreadable rules are an error, never a silent fallback to other rules.
+  if (geteuid() != 0) {
+    Write(temporary / "unreadable/.llm-cc/rules.json", R"({"tests": []})");
+    std::filesystem::permissions(temporary / "unreadable/.llm-cc",
+                                 std::filesystem::perms::none);
+    try {
+      static_cast<void>(Rules::LoadFromWorktree(temporary / "unreadable"));
+      Expect(false, "unreadable worktree rules fail");
+    } catch (const llmcc::RulesError& error) {
+      Expect(
+          std::string(error.what()).find("cannot inspect") != std::string::npos,
+          "unreadable worktree rules name the problem");
+    }
+    std::filesystem::permissions(temporary / "unreadable/.llm-cc",
+                                 std::filesystem::perms::owner_all);
+  }
   // Rules must be the committed file itself, never a link out of the tree.
   Write(temporary / "outside.json", R"({"tests": ["copy.cc"]})");
   for (const auto& [name, link, target] :
