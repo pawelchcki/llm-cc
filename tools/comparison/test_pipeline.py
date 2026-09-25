@@ -13,12 +13,14 @@ from tools.comparison.cache import CacheError, FilesystemStore, ResultCache
 from tools.comparison.common import write_json
 from tools.comparison.fixtures import git, synthetic_scorer
 from tools.comparison.inventory import (
+    DEFAULT_RULES,
     GitError,
     _classify,
     inventory,
     merge_base,
     resolve_language,
     validate_rules,
+    with_defaults,
 )
 from tools.comparison.pipeline import (
     REPOSITORY_RULES_PATH,
@@ -497,7 +499,9 @@ class PipelineTest(unittest.TestCase):
         rules, source = resolve_rules(
             self.repo, target, {"tests": ["nothing"]}, ".llm-cc/comparison-rules.json"
         )
-        self.assertEqual(rules, {"tooling": ["copy.cc"]})
+        self.assertEqual(rules, with_defaults({"tooling": ["copy.cc"]}))
+        # Omitted keys keep llm-cc's built-in defaults, as local analysis does.
+        self.assertEqual(rules["exclude"], DEFAULT_RULES["exclude"])
         self.assertEqual(source["source"], "repository")
         self.assertEqual(source["commit"], target)
         plan = prepare(
@@ -516,7 +520,7 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(by_path["copy.cc"]["category"], "tooling")
         missing, host = resolve_rules(self.repo, target, {"tests": ["x"]}, "absent.json")
         self.assertEqual(host, {"source": "host"})
-        self.assertEqual(missing, {"tests": ["x"]})
+        self.assertEqual(missing, with_defaults({"tests": ["x"]}))
 
     def test_repository_rules_prefer_the_shared_file_name(self):
         (self.repo / ".llm-cc").mkdir()
@@ -530,13 +534,13 @@ class PipelineTest(unittest.TestCase):
         git(self.repo, "commit", "-qm", "both rules files")
         target = git(self.repo, "rev-parse", "HEAD")
         rules, source = resolve_rules(self.repo, target, {}, REPOSITORY_RULES_PATH)
-        self.assertEqual(rules, {"tests": ["copy.cc"]})
+        self.assertEqual(rules, with_defaults({"tests": ["copy.cc"]}))
         self.assertEqual(source["path"], ".llm-cc/rules.json")
         git(self.repo, "rm", "-q", ".llm-cc/rules.json")
         git(self.repo, "commit", "-qm", "legacy rules only")
         legacy = git(self.repo, "rev-parse", "HEAD")
         rules, source = resolve_rules(self.repo, legacy, {}, REPOSITORY_RULES_PATH)
-        self.assertEqual(rules, {"tooling": ["copy.cc"]})
+        self.assertEqual(rules, with_defaults({"tooling": ["copy.cc"]}))
         self.assertEqual(source["path"], ".llm-cc/comparison-rules.json")
 
     def test_invalid_repository_rules_fail_the_run(self):

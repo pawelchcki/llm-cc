@@ -7,6 +7,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <tuple>
 
 #include "src/test_util.h"
 
@@ -217,6 +218,24 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
     Expect(std::string(error.what()).starts_with(".llm-cc/rules.json: "),
            "worktree rule errors name the file");
   }
+#ifndef _WIN32
+  // Rules must be the committed file itself, never a link out of the tree.
+  Write(temporary / "outside.json", R"({"tests": ["copy.cc"]})");
+  for (const auto& [name, link, target] :
+       {std::tuple{"file", ".llm-cc/rules.json", temporary / "outside.json"},
+        std::tuple{"directory", ".llm-cc", temporary / "legacy/.llm-cc"}}) {
+    const std::filesystem::path repository = temporary / "linked" / name;
+    std::filesystem::create_directories((repository / link).parent_path());
+    std::filesystem::create_symlink(target, repository / link);
+    try {
+      static_cast<void>(Rules::LoadFromWorktree(repository));
+      Expect(false, std::string("a symlinked rules ") + name + " fails");
+    } catch (const llmcc::RulesError& error) {
+      Expect(std::string(error.what()).find("symlink") != std::string::npos,
+             std::string("a symlinked rules ") + name + " is refused");
+    }
+  }
+#endif
 
   Expect(llmcc::AlwaysExcluded(".git/config") &&
              llmcc::AlwaysExcluded("a/.llm-cc-cache/b.rs") &&

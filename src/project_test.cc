@@ -172,6 +172,19 @@ int main() {  // NOLINT(bugprone-exception-escape)
       {repository / "src/a.rs"}, {.language = llmcc::Language::kCpp});
   llmcc::test::ExpectEq(forced.sources[0].language, llmcc::Language::kCpp,
                         "language is forced");
+  const fs::path mixed = fs::path(temporary) / "mixed";
+  Write(mixed / "notes.md", "# notes\n");
+  Write(mixed / "code.c", "int code;\n");
+  const auto forced_directory =
+      llmcc::DiscoverSources({mixed}, {.language = llmcc::Language::kCpp});
+  llmcc::test::Expect(
+      forced_directory.sources.size() == 1 &&
+          forced_directory.sources[0].language == llmcc::Language::kCpp,
+      "a forced language does not select unsupported files");
+  const auto forced_file = llmcc::DiscoverSources(
+      {mixed / "notes.md"}, {.language = llmcc::Language::kCpp});
+  llmcc::test::ExpectEq(forced_file.sources.size(), std::size_t{1},
+                        "an explicit file takes the forced language");
 
   const auto all = llmcc::DiscoverSources({repository}, {.no_ignore = true});
   llmcc::test::ExpectEq(all.sources.size(), std::size_t{34},

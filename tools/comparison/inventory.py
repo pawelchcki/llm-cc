@@ -52,6 +52,38 @@ def _git(repo, args, data=None):
     return completed.stdout
 
 
+# llm-cc's built-in rules (src/rules.cc) as fnmatch patterns, where `*`
+# crosses `/` and a leading `**/` needs a slash, so each directory pattern
+# also appears anchored at the top level. A rules file keeps the default of
+# every key it omits, exactly as llm-cc applies it.
+DEFAULT_RULES = {
+    "exclude": [
+        pattern
+        for directory in (
+            ".hg", ".svn", "target", "node_modules", ".gradle", ".venv",
+            "__pycache__", ".tox", ".nox", ".mypy_cache", ".pytest_cache",
+            ".ruff_cache", "vendor", "third_party", "build", "build-out",
+            ".nuget", "dist", "deps", "_build", "cmake-build-debug",
+            "cmake-build-release", "bazel-*",
+        )
+        for pattern in (directory + "/*", "*/" + directory + "/*")
+    ]
+    + ["out/*", "bin/*.cs", "*/bin/*.cs", "obj/*.cs", "*/obj/*.cs"],
+    "tests": [
+        pattern
+        for directory in ("test", "tests", "testdata", "fixtures", "fuzz", "fuzzers")
+        for pattern in (directory + "/*", "*/" + directory + "/*")
+    ]
+    + ["*_test.*", "test_*.*", "*/test_*.*"],
+    "tooling": ["tools/*", "examples/*", "example/*", "scripts/*", "benchmarks/*"],
+}
+
+
+def with_defaults(rules):
+    """`rules` with every omitted exclude, tests or tooling list defaulted."""
+    return {**DEFAULT_RULES, **rules}
+
+
 def validate_rules(rules):
     """Reject classification rules that a repository could use to hide work."""
     if not isinstance(rules, dict):

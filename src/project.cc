@@ -164,9 +164,12 @@ void AddFile(const std::filesystem::path& path, std::string relative,
   if (InCacheDirectory(canonical)) {
     return;
   }
-  std::optional<Language> language = context.options.language;
-  if (!language.has_value()) {
-    language = rules.ResolveLanguage(relative);
+  std::optional<Language> language = rules.ResolveLanguage(relative);
+  // A forced language changes how selected files are parsed; it selects
+  // unsupported files only when they are named explicitly.
+  if (context.options.language.has_value() &&
+      (language.has_value() || explicit_file)) {
+    language = context.options.language;
   }
   if (!language.has_value()) {
     if (explicit_file) {
