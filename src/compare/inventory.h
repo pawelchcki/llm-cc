@@ -22,6 +22,11 @@ nlohmann::json BuildInventory(const git::Repository& repository,
                               std::uint64_t max_file_bytes,
                               std::string_view fingerprint);
 
+// Plans are JSON, so a Git path that is not UTF-8 is recorded with its
+// invalid bytes spelled \xHH, in inventories and changes alike, and is never
+// scored.
+std::string PrintablePath(std::string_view path);
+
 struct TargetRules {
   Rules rules;
   // {source: repository, path, commit}, {source: host} or {source: builtin}.

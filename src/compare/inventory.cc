@@ -68,9 +68,9 @@ bool ValidUtf8(std::string_view text) {
   return true;
 }
 
-// Plans are JSON, so a path that is not UTF-8 is recorded with its invalid
-// bytes spelled \xHH and never scored.
-std::string Printable(std::string_view path) {
+}  // namespace
+
+std::string PrintablePath(std::string_view path) {
   static constexpr std::string_view kHex = "0123456789abcdef";
   std::string result;
   for (std::size_t index = 0; index < path.size();) {
@@ -88,15 +88,14 @@ std::string Printable(std::string_view path) {
   return result;
 }
 
-}  // namespace
-
 json BuildInventory(const git::Repository& repository, std::string_view commit,
                     const Rules& rules, std::uint64_t max_file_bytes,
                     std::string_view fingerprint) {
   json entries = json::array();
   for (const git::TreeEntry& entry : repository.ListTree(commit)) {
     const bool valid_path = ValidUtf8(entry.path);
-    const std::string path = valid_path ? entry.path : Printable(entry.path);
+    const std::string path =
+        valid_path ? entry.path : PrintablePath(entry.path);
     const bool blob = entry.type == "blob";
     const std::optional<Language> language =
         blob && valid_path ? rules.ResolveLanguage(path) : std::nullopt;

@@ -370,5 +370,26 @@ int main() {  // NOLINT(bugprone-exception-escape)
   Expect(llmcc::compare::Prepare(discovered)["identity"]["base_sha"] ==
              repository.base,
          "a discovered identity names the commits it knows");
+
+#ifndef _WIN32
+  // A path that is not UTF-8 is spelled the same, escaped, in the inventory
+  // and the changes, and is never scored.
+  const fs::path bytes = root / "bytes";
+  fs::create_directories(bytes);
+  llmcc::compare::test::Git(bytes, {"init", "-q"});
+  llmcc::compare::test::Write(bytes / "a.cc", "int a;\n");
+  const std::string bytes_base = llmcc::compare::test::Commit(bytes, "base");
+  llmcc::compare::test::Write(bytes / fs::path(std::string("bad\xff.py")),
+                              "x = 1\n");
+  const std::string bytes_head = llmcc::compare::test::Commit(bytes, "head");
+  const json escaped = llmcc::compare::Prepare(
+      Options(bytes, bytes_head, bytes_base, root / "bytes-plan"));
+  const auto escaped_head = ByPath(escaped["inventories"]["head"]);
+  Expect(escaped_head.contains("bad\\xff.py") &&
+             escaped_head.at("bad\\xff.py")["reason"] == "unsupported",
+         "a non-UTF-8 path is escaped and unscored");
+  ExpectEq(escaped["changes"][0]["new_path"], json("bad\\xff.py"),
+           "changes spell the path as the inventory does");
+#endif
   return 0;
 }

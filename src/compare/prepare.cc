@@ -84,12 +84,12 @@ json Changes(const git::Repository& repository, const std::string& base,
              const std::string& head) {
   json changes = json::array();
   for (const git::Change& change : repository.Diff(base, head)) {
-    changes.push_back(
-        {{"status", change.status},
-         {"old_path",
-          change.old_path.has_value() ? json(*change.old_path) : json()},
-         {"new_path",
-          change.new_path.has_value() ? json(*change.new_path) : json()}});
+    const auto path = [](const std::optional<std::string>& value) {
+      return value.has_value() ? json(PrintablePath(*value)) : json();
+    };
+    changes.push_back({{"status", change.status},
+                       {"old_path", path(change.old_path)},
+                       {"new_path", path(change.new_path)}});
   }
   return changes;
 }
