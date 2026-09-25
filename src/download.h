@@ -27,6 +27,9 @@ std::string DownloadFailureMessage(std::string_view url, long status,
 void StreamDownload(std::istream& input, const std::filesystem::path& target,
                     std::uint64_t resume_offset,
                     std::optional<std::uint64_t> total_length);
+// The CA bundle curl should trust: SSL_CERT_FILE, else a distribution
+// bundle, else nullopt for the TLS library's own default.
+std::optional<std::filesystem::path> CertificateBundle();
 void DownloadFile(std::string_view url, const std::filesystem::path& target,
                   const DownloadOptions& options);
 void DownloadModel(std::string_view url, const std::filesystem::path& target);

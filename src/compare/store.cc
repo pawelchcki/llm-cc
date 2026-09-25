@@ -1,0 +1,212 @@
+#include "src/compare/store.h"
+
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <memory>
+#include <nlohmann/json.hpp>
+#include <optional>
+#include <sstream>
+#include <string>
+#include <string_view>
+#include <system_error>
+
+#if !defined(_WIN32)
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
+#include "src/cache_io.h"
+#include "src/compare/json_util.h"
+#include "src/compare/s3.h"
+
+namespace llmcc::compare {
+namespace {
+
+std::optional<std::string> Environment(const char* name) {
+  const char* value = std::getenv(name);  // NOLINT(concurrency-mt-unsafe)
+  if (value == nullptr || *value == '\0') {
+    return std::nullopt;
+  }
+  return std::string(value);
+}
+
+std::string PathUtf8(const std::filesystem::path& path) {
+#if defined(_WIN32)
+  const std::u8string value = path.u8string();
+  return std::string(reinterpret_cast<const char*>(value.data()), value.size());
+#else
+  return path.string();
+#endif
+}
+
+// A crash between rename and a later power loss must not lose the entry
+// name; the file data itself was synced before the rename.
+void SyncDirectory(const std::filesystem::path& directory) {
+#if !defined(_WIN32)
+  const int descriptor = open(directory.c_str(), O_RDONLY | O_CLOEXEC);
+  if (descriptor >= 0) {
+    static_cast<void>(fsync(descriptor));
+    close(descriptor);
+  }
+#else
+  static_cast<void>(directory);
+#endif
+}
+
+std::unique_ptr<Store> OpenS3(std::string_view rest,
+                              const StoreOptions& options) {
+  const std::size_t slash = rest.find('/');
+  S3Settings settings;
+  settings.bucket = std::string(rest.substr(0, slash));
+  if (settings.bucket.empty()) {
+    throw StoreError("S3 store location needs a bucket");
+  }
+  if (slash != std::string_view::npos) {
+    std::string_view prefix = rest.substr(slash + 1);
+    while (!prefix.empty() && prefix.front() == '/') {
+      prefix.remove_prefix(1);
+    }
+    while (!prefix.empty() && prefix.back() == '/') {
+      prefix.remove_suffix(1);
+    }
+    settings.prefix = std::string(prefix);
+  }
+  settings.endpoint = options.endpoint_url;
+  if (!settings.endpoint.has_value()) {
+    settings.endpoint = Environment("AWS_ENDPOINT_URL_S3");
+  }
+  if (!settings.endpoint.has_value()) {
+    settings.endpoint = Environment("AWS_ENDPOINT_URL");
+  }
+  settings.region = options.region_name.value_or(
+      Environment("AWS_REGION")
+          .value_or(Environment("AWS_DEFAULT_REGION").value_or("us-east-1")));
+  const auto access_key_id = Environment("AWS_ACCESS_KEY_ID");
+  const auto secret_access_key = Environment("AWS_SECRET_ACCESS_KEY");
+  if (!access_key_id.has_value() || !secret_access_key.has_value()) {
+    throw StoreError(
+        "S3 store needs AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in the "
+        "environment");
+  }
+  settings.access_key_id = *access_key_id;
+  settings.secret_access_key = *secret_access_key;
+  settings.session_token = Environment("AWS_SESSION_TOKEN");
+  return std::make_unique<S3Store>(std::move(settings), MakeCurlTransport());
+}
+
+}  // namespace
+
+void ValidateStoreKey(std::string_view key) {
+  if (key.empty() || key.front() == '/') {
+    throw StoreError("invalid store key '" + std::string(key) + "'");
+  }
+  std::string_view remaining = key;
+  while (true) {
+    const std::size_t end = remaining.find('/');
+    const std::string_view segment = remaining.substr(0, end);
+    if (segment.empty() || segment == "." || segment == ".." ||
+        segment.find('\\') != std::string_view::npos ||
+        segment.find('\0') != std::string_view::npos) {
+      throw StoreError("invalid store key '" + std::string(key) + "'");
+    }
+    if (end == std::string_view::npos) {
+      return;
+    }
+    remaining.remove_prefix(end + 1);
+  }
+}
+
+FilesystemStore::FilesystemStore(std::filesystem::path root)
+    : root_(std::move(root)) {}
+
+std::filesystem::path FilesystemStore::PathOf(std::string_view key) const {
+  ValidateStoreKey(key);
+  return root_ / std::filesystem::u8path(key);
+}
+
+std::optional<std::string> FilesystemStore::Get(std::string_view key) {
+  const std::filesystem::path path = PathOf(key);
+  std::error_code error;
+  const auto status = std::filesystem::status(path, error);
+  if (error == std::errc::no_such_file_or_directory ||
+      status.type() == std::filesystem::file_type::not_found) {
+    return std::nullopt;
+  }
+  if (error || status.type() != std::filesystem::file_type::regular) {
+    throw StoreError("cannot read store entry " + std::string(key) + ": " +
+                     (error ? error.message() : "not a regular file"));
+  }
+  std::ifstream input(path, std::ios::binary);
+  if (!input.is_open()) {
+    throw StoreError("cannot open store entry " + std::string(key));
+  }
+  std::ostringstream contents;
+  contents << input.rdbuf();
+  if (input.bad()) {
+    throw StoreError("cannot read store entry " + std::string(key));
+  }
+  return contents.str();
+}
+
+void FilesystemStore::Put(std::string_view key, std::string_view value) {
+  const std::filesystem::path path = PathOf(key);
+  try {
+    cache_io::AtomicWriteFile(path, value, 0660);
+  } catch (const std::exception& error) {
+    throw StoreError("cannot write store entry " + std::string(key) + ": " +
+                     error.what());
+  }
+  SyncDirectory(path.parent_path());
+}
+
+std::string FilesystemStore::Describe() const { return PathUtf8(root_); }
+
+StoreOptions ParseStoreOptions(const nlohmann::json& options) {
+  if (!options.is_object()) {
+    throw StoreError("store options must be a JSON object");
+  }
+  StoreOptions parsed;
+  for (const auto& [name, value] : options.items()) {
+    if (value.is_null()) {
+      continue;
+    }
+    if (name == "endpoint_url" && value.is_string()) {
+      parsed.endpoint_url = value.get<std::string>();
+    } else if (name == "region_name" && value.is_string()) {
+      parsed.region_name = value.get<std::string>();
+    } else {
+      throw StoreError("unsupported store option " + name +
+                       "; only endpoint_url and region_name are read, and "
+                       "credentials come from the environment");
+    }
+  }
+  return parsed;
+}
+
+StoreOptions ReadStoreOptions(
+    const std::optional<std::filesystem::path>& path) {
+  if (!path.has_value()) {
+    return {};
+  }
+  try {
+    return ParseStoreOptions(ReadJsonFile(*path));
+  } catch (const StoreError&) {
+    throw;
+  } catch (const std::exception& error) {
+    throw StoreError(std::string("cannot read store options: ") + error.what());
+  }
+}
+
+std::unique_ptr<Store> OpenStore(std::string_view location,
+                                 const StoreOptions& options) {
+  if (location.starts_with("s3://")) {
+    return OpenS3(location.substr(5), options);
+  }
+  if (location.empty() || location.find("://") != std::string_view::npos) {
+    throw StoreError("unsupported store location: " + std::string(location));
+  }
+  return std::make_unique<FilesystemStore>(std::filesystem::u8path(location));
+}
+
+}  // namespace llmcc::compare

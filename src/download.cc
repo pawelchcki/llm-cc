@@ -206,32 +206,6 @@ std::size_t WriteBytes(char* contents, std::size_t size, std::size_t count,
   return bytes;
 }
 
-std::optional<std::filesystem::path> CertificateBundle() {
-#if defined(_WIN32)
-  const wchar_t* configured = _wgetenv(L"SSL_CERT_FILE");
-  if (configured != nullptr && *configured != L'\0') {
-#else
-  const char* configured = std::getenv("SSL_CERT_FILE");
-  if (configured != nullptr && *configured != '\0') {
-#endif
-    std::filesystem::path path(configured);
-    if (std::filesystem::is_regular_file(path)) {
-      return path;
-    }
-  }
-  for (const char* candidate : {
-           "/etc/ssl/certs/ca-certificates.crt",
-           "/etc/pki/tls/certs/ca-bundle.crt",
-           "/etc/ssl/ca-bundle.pem",
-           "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
-       }) {
-    if (std::filesystem::is_regular_file(candidate)) {
-      return std::filesystem::path(candidate);
-    }
-  }
-  return std::nullopt;
-}
-
 void SetOption(CURL* curl, CURLoption option, long value) {
   if (curl_easy_setopt(curl, option, value) != CURLE_OK) {
     throw std::runtime_error("failed to configure libcurl");
@@ -259,6 +233,32 @@ void FinishOutput(std::ofstream& output, const std::filesystem::path& partial) {
 }
 
 }  // namespace
+
+std::optional<std::filesystem::path> CertificateBundle() {
+#if defined(_WIN32)
+  const wchar_t* configured = _wgetenv(L"SSL_CERT_FILE");
+  if (configured != nullptr && *configured != L'\0') {
+#else
+  const char* configured = std::getenv("SSL_CERT_FILE");
+  if (configured != nullptr && *configured != '\0') {
+#endif
+    std::filesystem::path path(configured);
+    if (std::filesystem::is_regular_file(path)) {
+      return path;
+    }
+  }
+  for (const char* candidate : {
+           "/etc/ssl/certs/ca-certificates.crt",
+           "/etc/pki/tls/certs/ca-bundle.crt",
+           "/etc/ssl/ca-bundle.pem",
+           "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
+       }) {
+    if (std::filesystem::is_regular_file(candidate)) {
+      return std::filesystem::path(candidate);
+    }
+  }
+  return std::nullopt;
+}
 
 void StreamDownload(std::istream& input, const std::filesystem::path& target,
                     std::uint64_t resume_offset,

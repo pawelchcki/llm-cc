@@ -649,13 +649,45 @@ cc_library(
 )
 
 cc_library(
+    name = "compare_store",
+    srcs = [
+        "src/compare/s3.cc",
+        "src/compare/store.cc",
+    ],
+    hdrs = [
+        "src/compare/s3.h",
+        "src/compare/store.h",
+    ],
+    deps = [
+        ":cache_io",
+        ":compare_report",
+        ":curl",
+        ":download",
+        ":sha256",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_library(
     name = "compare_cli",
     srcs = ["src/compare/cli.cc"],
     hdrs = ["src/compare/cli.h"],
     deps = [
         ":compare_report",
+        ":compare_store",
+        ":input_limits",
         ":progress",
         "@nlohmann_json//:json",
+    ],
+)
+
+cc_test(
+    name = "compare_store_test",
+    srcs = ["src/compare/store_test.cc"],
+    deps = [
+        ":compare_store",
+        ":sha256",
+        ":test_util",
     ],
 )
 
@@ -1533,6 +1565,7 @@ test_suite(
         ":cache_test",
         ":compare_golden_test",
         ":compare_report_test",
+        ":compare_store_test",
         ":core_test",
         ":download_test",
         ":entropy_cache_test",
@@ -1598,5 +1631,21 @@ sh_test(
         "$(rlocationpath testdata/tls/README.md)",
     ],
     data = ["//tools:tls_integration_test.py", "//tools:tls_download_probe"] + glob(["testdata/tls/*"]),
+    tags = ["requires-network"],
+)
+
+sh_test(
+    name = "s3_integration_test",
+    srcs = ["//tools:s3_integration_test.sh"],
+    # A local server verifies the SigV4 signatures libcurl computes.
+    env_inherit = ["PATH"],
+    args = [
+        "$(rlocationpath //tools:s3_fake_server.py)",
+        "$(rlocationpath :llm-cc-compare-fake)",
+    ],
+    data = [
+        ":llm-cc-compare-fake",
+        "//tools:s3_fake_server.py",
+    ],
     tags = ["requires-network"],
 )

@@ -166,9 +166,11 @@ class FileLock {
 #endif
 };
 
+// `mode` is the POSIX permission requested before the umask applies.
 inline void WritePrivateFile(const std::filesystem::path& path,
-                             std::string_view bytes) {
+                             std::string_view bytes, unsigned int mode = 0600) {
 #if defined(_WIN32)
+  static_cast<void>(mode);
   HANDLE handle = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr,
                               CREATE_NEW, FILE_ATTRIBUTE_HIDDEN, nullptr);
   if (handle == INVALID_HANDLE_VALUE)
@@ -183,8 +185,9 @@ inline void WritePrivateFile(const std::filesystem::path& path,
   CloseHandle(handle);
   if (!ok) throw std::runtime_error("cannot write " + path.string());
 #else
-  const int fd = open(
-      path.c_str(), O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC | O_NOFOLLOW, 0600);
+  const int fd =
+      open(path.c_str(), O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC | O_NOFOLLOW,
+           static_cast<mode_t>(mode));
   if (fd < 0)
     throw std::system_error(errno, std::system_category(),
                             "cannot create " + path.string());
@@ -211,8 +214,10 @@ inline void WritePrivateFile(const std::filesystem::path& path,
 #endif
 }
 
+// Replaces `target` atomically. The default mode keeps cache entries
+// private; a store shared by a group passes 0660.
 inline void AtomicWriteFile(const std::filesystem::path& target,
-                            std::string_view bytes) {
+                            std::string_view bytes, unsigned int mode = 0600) {
   if (!target.parent_path().empty()) {
     std::filesystem::create_directories(target.parent_path());
   }
@@ -222,7 +227,7 @@ inline void AtomicWriteFile(const std::filesystem::path& target,
     temporary = target;
     temporary += std::filesystem::path(UniqueSuffix());
     try {
-      WritePrivateFile(temporary, bytes);
+      WritePrivateFile(temporary, bytes, mode);
       break;
     } catch (const std::system_error& error) {
       if (error.code() == std::errc::file_exists) {

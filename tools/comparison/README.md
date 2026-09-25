@@ -33,6 +33,13 @@ llm-cc compare aggregate \
   --output-dir artifacts/report
 ```
 
+`llm-cc compare store get|put KEY --cache LOCATION` reads or writes one object
+of a filesystem or `s3://bucket/prefix` store for operators. S3 requests are
+signed with SigV4 from `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and
+`AWS_SESSION_TOKEN`; `--store-options` may set `endpoint_url` and
+`region_name`, which otherwise come from `AWS_ENDPOINT_URL[_S3]` and
+`AWS_REGION`.
+
 Each `--error MESSAGE` turns the report into a failure; without `--plan`,
 `--identity FILE` names the pipeline the failure belongs to. The Python stages
 that write failure reports run `$LLM_CC`, or `llm-cc` from `PATH`.
