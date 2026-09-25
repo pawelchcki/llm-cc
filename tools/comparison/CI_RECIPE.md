@@ -38,7 +38,7 @@ CPU   publish (always, serialized per branch): order -> re-check PR -> one comme
 | Prepare | `prepare` | CPU, store read | `plan.json` and `blobs/` for misses |
 | Plan jobs | `ci gitlab-child` / `ci github-matrix` | CPU | child pipeline YAML / matrix outputs |
 | Score | `worker` | one GPU each | `worker-<id>.json`, logs; results and native entries in the store |
-| Aggregate | `aggregate`, `store-report` | CPU, store write | reports under the pipeline prefix |
+| Aggregate | `llm-cc compare aggregate`, `store-report` | CPU, store write | reports under the pipeline prefix |
 | Publish | `publish` | CPU, comment token | one comment and a publication marker |
 
 Default-branch pushes compare the head with itself, which seeds and refreshes the
@@ -98,7 +98,7 @@ profile is a separate experiment with a separate fingerprint.
 |---|---|---|---|
 | Model | [model.Containerfile](recipe/images/model.Containerfile) | `/models/model.gguf` on `scratch`, size and SHA-256 verified | the weights' SHA-256 |
 | Scorer | [scorer.Containerfile](recipe/images/scorer.Containerfile) | the model image by digest, plus one layer: `/opt/llm-cc`, Python, the worker package, user 10001 | hash of commit, version, archs, model digest, base images, Bazelisk pin, Containerfile |
-| Coordinator | [coordinator.Containerfile](recipe/images/coordinator.Containerfile) | Git, boto3, the comparison package, `profile.json`, default `rules.json`, user 10001 | hash of commit, scorer digest, scoring settings, Containerfile |
+| Coordinator | [coordinator.Containerfile](recipe/images/coordinator.Containerfile) | Git, boto3, the comparison package, the scorer's `llm-cc` for aggregation, `profile.json`, default `rules.json`, user 10001 | hash of commit, scorer digest, scoring settings, Containerfile |
 
 The scorer's final stage starts `FROM` the model image by digest and adds the
 whole runtime as one layer above it, so every scorer rebuild on the same weights

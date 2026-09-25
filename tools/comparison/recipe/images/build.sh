@@ -152,7 +152,8 @@ if ! scorer="$(existing "$scorer_name" "$scorer_tag" \
   rm -rf "$context"
 fi
 
-# 3. Coordinator: the comparison code plus the profile that names the scorer.
+# 3. Coordinator: the comparison code, the scorer's llm-cc for aggregation, and
+# the profile that names the scorer.
 coordinator_name="$REGISTRY/coordinator"
 coordinator_tag="$(
   printf '%s\n' "$LLM_CC_COMMIT" "$scorer" "$MODEL_URL" "$SCORING" "${PYTHON_IMAGE:-}" |
@@ -175,7 +176,7 @@ if ! coordinator="$(existing "$coordinator_name" "$coordinator_tag" \
     --execution-image "$scorer" --model-sha256 "$MODEL_SHA256" \
     --model-bytes "$MODEL_BYTES" --model-url "$MODEL_URL" $SCORING \
     --output /dev/stdout >"$context/profile.json"
-  set -- --build-arg "LLM_CC_COMMIT=$LLM_CC_COMMIT"
+  set -- --build-arg "LLM_CC_COMMIT=$LLM_CC_COMMIT" --build-arg "SCORER_IMAGE=$scorer"
   if [ -n "${PYTHON_IMAGE:-}" ]; then set -- "$@" --build-arg "PYTHON_IMAGE=$PYTHON_IMAGE"; fi
   coordinator="$(publish "$coordinator_name" "$coordinator_tag" "$context" \
     "$recipe/images/coordinator.Containerfile" "$@")"

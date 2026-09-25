@@ -18,8 +18,14 @@ import tempfile
 import urllib.error
 
 from .cache import CacheError
-from .common import canonical_bytes, digest, pipeline_prefix, read_json
-from .pipeline import COMMENT_LIMIT, failure_report
+from .common import (
+    aggregate_report,
+    canonical_bytes,
+    digest,
+    pipeline_prefix,
+    read_json,
+)
+from .pipeline import COMMENT_LIMIT
 
 # Stored in this order: the publication envelope comes last, because its
 # presence is what tells `publish` that the report is complete. Storing first
@@ -214,7 +220,7 @@ def _own_comment(comments, author, preferred_id):
 
 def _failure(store, prefix, identity, reason):
     with tempfile.TemporaryDirectory(prefix="llm-cc-publish-") as directory:
-        failure_report(directory, identity, None, [reason])
+        aggregate_report(directory, identity=identity, errors=[reason])
         store_report(store, directory)
     return load_publication(store, prefix)
 

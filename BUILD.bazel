@@ -624,6 +624,76 @@ cc_library(
 )
 
 cc_library(
+    name = "compare_report",
+    srcs = [
+        "src/compare/aggregate.cc",
+        "src/compare/json_util.cc",
+        "src/compare/markdown.cc",
+        "src/compare/plan_v1_reader.cc",
+        "src/compare/report_model.cc",
+        "src/compare/report_render.cc",
+    ],
+    hdrs = [
+        "src/compare/aggregate.h",
+        "src/compare/json_util.h",
+        "src/compare/markdown.h",
+        "src/compare/plan_v1_reader.h",
+        "src/compare/report_model.h",
+        "src/compare/report_render.h",
+    ],
+    textual_hdrs = ["src/compare/unicode_cf.inc"],
+    deps = [
+        ":sha256",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_library(
+    name = "compare_cli",
+    srcs = ["src/compare/cli.cc"],
+    hdrs = ["src/compare/cli.h"],
+    deps = [
+        ":compare_report",
+        ":progress",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_test(
+    name = "compare_golden_test",
+    srcs = ["src/compare/golden_test.cc"],
+    args = ["$(rlocationpath testdata/compare/v1/README.md)"],
+    data = glob(["testdata/compare/v1/**"]),
+    deps = [
+        ":compare_report",
+        ":test_util",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_test(
+    name = "compare_report_test",
+    srcs = ["src/compare/report_test.cc"],
+    deps = [
+        ":compare_report",
+        ":test_util",
+        "@nlohmann_json//:json",
+    ],
+)
+
+# `llm-cc compare` without an inference backend, for tests of the glue.
+cc_binary(
+    name = "llm-cc-compare-fake",
+    testonly = True,
+    srcs = ["src/compare/fake_main.cc"],
+    deps = [":compare_cli"] + select({
+        ":host_macos": [],
+        ":host_windows": [],
+        "//conditions:default": [":linux_compat"],
+    }),
+)
+
+cc_library(
     name = "inference_options",
     srcs = ["src/inference_options.cc"],
     hdrs = ["src/inference_options.h"],
@@ -784,6 +854,7 @@ cc_binary(
         ":lang",
         ":models",
         ":project",
+        ":compare_cli",
         ":rules",
         ":rules_cmd",
         ":score_cmd",
@@ -817,6 +888,7 @@ cc_binary(
         ":lang",
         ":models",
         ":project",
+        ":compare_cli",
         ":rules",
         ":rules_cmd",
         ":score_cmd",
@@ -1459,6 +1531,8 @@ test_suite(
         ":backend_test",
         ":cache_concurrency_test",
         ":cache_test",
+        ":compare_golden_test",
+        ":compare_report_test",
         ":core_test",
         ":download_test",
         ":entropy_cache_test",

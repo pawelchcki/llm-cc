@@ -24,13 +24,18 @@ bazel run //tools/comparison:worker -- \
   --installed-root /opt/llm-cc
 ```
 
-The CPU aggregation stage accepts every produced worker artifact:
+The CPU aggregation stage is `llm-cc compare aggregate`, from the same llm-cc
+build as the scorer. It accepts every produced worker artifact:
 
 ```sh
-bazel run //tools/comparison:aggregate -- \
+llm-cc compare aggregate \
   --plan artifacts/plan.json --worker artifacts/worker-0.json \
   --output-dir artifacts/report
 ```
+
+Each `--error MESSAGE` turns the report into a failure; without `--plan`,
+`--identity FILE` names the pipeline the failure belongs to. The Python stages
+that write failure reports run `$LLM_CC`, or `llm-cc` from `PATH`.
 
 For local execution, `//tools/comparison:compare` accepts the union of the
 prepare and worker flags and runs each planned worker sequentially. Cache

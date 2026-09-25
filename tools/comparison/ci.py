@@ -23,6 +23,8 @@ SCORER_PATHS = {
     "model": "/models/model.gguf",
 }
 DEFAULTS = {
+    # The coordinator image's llm-cc, which aggregates and renders reports.
+    "llm_cc": "llm-cc",
     "max_workers": 4,
     "cache_concurrency": 8,
     "worker_timeout": "120m",
@@ -68,6 +70,8 @@ def load_config(path=None):
             raise ValueError("scorer %s must be an absolute path" % name)
     for name, value in DEFAULTS.items():
         config.setdefault(name, value)
+    if not isinstance(config["llm_cc"], str) or not config["llm_cc"]:
+        raise ValueError("llm_cc must name the coordinator's llm-cc executable")
     if type(config["max_workers"]) is not int or not 1 <= config["max_workers"] <= 4:
         raise ValueError("max_workers must be between 1 and 4")
     if (
@@ -218,13 +222,17 @@ def gitlab_child(plan, plan_path, config, store, store_options=None, coordinator
         "script": setup
         + [
             "status=0",
-            _command(
-                "aggregate",
-                "--plan",
-                plan_path,
-                *worker_arguments,
-                "--output-dir",
-                "comparison/report",
+            shlex.join(
+                [
+                    config["llm_cc"],
+                    "compare",
+                    "aggregate",
+                    "--plan",
+                    plan_path,
+                    *worker_arguments,
+                    "--output-dir",
+                    "comparison/report",
+                ]
             )
             + " || status=$?",
             _command("store-report", *store, "--report-dir", "comparison/report"),

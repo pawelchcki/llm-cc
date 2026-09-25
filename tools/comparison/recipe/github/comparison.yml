@@ -155,7 +155,7 @@ jobs:
             if [ -f "$artifact" ]; then set -- "$@" --worker "$artifact"; fi
           done
           status=0
-          python3 -m tools.comparison aggregate --plan comparison/prep/plan.json \
+          llm-cc compare aggregate --plan comparison/prep/plan.json \
             "$@" --output-dir comparison/report || status=$?
           python3 -m tools.comparison store-report \
             --cache "$COMPARISON_STORE" --report-dir comparison/report

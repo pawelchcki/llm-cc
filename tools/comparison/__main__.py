@@ -6,10 +6,10 @@ import unittest
 from pathlib import Path
 
 from .cache import ResultCache, open_store
-from .common import digest
+from .common import aggregate_report
 from .github import API_URL, GitHub
 from .inventory import validate_rules
-from .pipeline import aggregate, compare, failure_report, prepare
+from .pipeline import compare, prepare
 from .worker import run_worker
 
 # Stages that run around the comparison rather than producing its report;
@@ -56,10 +56,6 @@ def parser():
     worker.add_argument("--deadline-seconds", type=int, default=6600)
     worker.add_argument("--cache-concurrency", type=int, default=8)
     worker.add_argument("--store-options")
-    aggregation = commands.add_parser("aggregate")
-    aggregation.add_argument("--plan", required=True)
-    aggregation.add_argument("--worker", action="append", default=[])
-    aggregation.add_argument("--output-dir", required=True)
     comparison = commands.add_parser("compare")
     _common(comparison)
     comparison.add_argument("--scorer")
@@ -163,9 +159,6 @@ def _run(args):
         return (
             0 if unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful() else 1
         )
-    if args.command == "aggregate":
-        report = aggregate(args.plan, args.worker, args.output_dir)
-        return 1 if report["status"] == "failed" else 0
     options = _json(args.store_options) if args.store_options else {}
     store = open_store(args.cache, **options)
     if args.command == "worker":
@@ -224,19 +217,17 @@ def main(argv=None):
     try:
         return _run(args)
     except Exception as error:
-        identity, fingerprint = {}, None
+        identity = {}
         try:
             if getattr(args, "identity", None):
                 identity = _json(args.identity)
-            if getattr(args, "profile", None):
-                profile = _json(args.profile)
-                fingerprint = digest(
-                    {"scoring": profile["scoring"], "build": profile["build"]}
-                )
-        except (OSError, ValueError, KeyError):
+        except (OSError, ValueError):
             pass
-        failure_report(args.output_dir, identity, fingerprint, [str(error)])
         print(str(error), file=sys.stderr)
+        try:
+            aggregate_report(args.output_dir, identity=identity, errors=[str(error)])
+        except Exception as failure:
+            print("cannot write the failure report: %s" % failure, file=sys.stderr)
         return 1
 
 
