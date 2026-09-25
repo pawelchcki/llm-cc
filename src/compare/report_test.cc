@@ -13,6 +13,7 @@
 #include "src/compare/aggregate.h"
 #include "src/compare/json_util.h"
 #include "src/compare/markdown.h"
+#include "src/compare/plan_v1_reader.h"
 #include "src/compare/report_model.h"
 #include "src/compare/report_render.h"
 #include "src/test_util.h"
@@ -382,5 +383,18 @@ int main() {  // NOLINT(bugprone-exception-escape)
              failure["identity"]["repository"] == "o/r" &&
              !failure["identity"].contains("extra"),
          "failure identities are normalized");
+
+  // Counts beyond any file's size never reach the signed report totals.
+  const json item = {
+      {"key", "k"}, {"content_sha256", "c"}, {"language", "cpp"}};
+  json result = {{"schema_version", 1}, {"key", "k"},
+                 {"fingerprint", "f"},  {"content_sha256", "c"},
+                 {"language", "cpp"},   {"token_count", 3},
+                 {"llm_cc", 1.5}};
+  Expect(llmcc::compare::v1::ValidResult(result, item, "f"),
+         "a plausible result is valid");
+  result["token_count"] = json::parse("18446744073709551615");
+  Expect(!llmcc::compare::v1::ValidResult(result, item, "f"),
+         "a token count past the source limit is invalid");
   return 0;
 }

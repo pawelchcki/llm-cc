@@ -7,6 +7,7 @@
 #include <string>
 
 #include "src/compare/json_util.h"
+#include "src/input_limits.h"
 
 namespace llmcc::compare::v1 {
 namespace {
@@ -71,8 +72,12 @@ bool ValidResult(const nlohmann::json& result, const nlohmann::json& item,
          item.contains("content_sha256") &&
          result["content_sha256"] == item["content_sha256"] &&
          item.contains("language") && result["language"] == item["language"] &&
-         IsInteger(tokens) && tokens.get<double>() >= 0 && IsNumber(score) &&
-         std::isfinite(score.get<double>()) && score.get<double>() >= 0;
+         // A file has no more tokens than bytes, which also keeps report
+         // totals far from overflowing.
+         IsInteger(tokens) && tokens.get<double>() >= 0 &&
+         tokens.get<double>() <= static_cast<double>(kMaxSourceBytes) &&
+         IsNumber(score) && std::isfinite(score.get<double>()) &&
+         score.get<double>() >= 0;
 }
 
 void ValidatePlan(const nlohmann::json& plan) {
