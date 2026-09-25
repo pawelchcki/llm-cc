@@ -273,6 +273,11 @@ std::optional<std::string> FilesystemStore::Get(std::string_view key) {
     throw StoreError("cannot read store entry " + std::string(key) + ": " +
                      (error ? error.message() : "not a regular file"));
   }
+  if (std::filesystem::file_size(path, error) > kMaxStoreObjectBytes &&
+      !error) {
+    throw StoreError("store entry " + std::string(key) + " exceeds " +
+                     std::to_string(kMaxStoreObjectBytes) + " bytes");
+  }
   std::ifstream input(path, std::ios::binary);
   if (!input.is_open()) {
     throw StoreError("cannot open store entry " + std::string(key));
@@ -308,6 +313,15 @@ std::optional<std::string> FilesystemStore::Get(std::string_view key) {
     throw StoreError("cannot read store entry " + std::string(key) +
                      ": not a regular file");
   }
+  // Checked before and while reading, since another writer can still grow
+  // the file.
+  const auto too_large = [&] {
+    return StoreError("store entry " + std::string(key) + " exceeds " +
+                      std::to_string(kMaxStoreObjectBytes) + " bytes");
+  };
+  if (std::cmp_greater(information.st_size, kMaxStoreObjectBytes)) {
+    throw too_large();
+  }
   std::string contents;
   std::array<char, std::size_t{64} * 1024> buffer{};
   while (true) {
@@ -320,6 +334,10 @@ std::optional<std::string> FilesystemStore::Get(std::string_view key) {
     }
     if (count == 0) {
       return contents;
+    }
+    if (contents.size() + static_cast<std::size_t>(count) >
+        kMaxStoreObjectBytes) {
+      throw too_large();
     }
     contents.append(buffer.data(), static_cast<std::size_t>(count));
   }

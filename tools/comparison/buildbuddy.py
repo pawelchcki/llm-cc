@@ -23,6 +23,7 @@ from .cache import ResultCache, open_store
 from .common import (
     aggregate_report,
     canonical_bytes,
+    digest,
     pipeline_prefix,
     read_json,
     validate_execution_policy,
@@ -500,6 +501,7 @@ def coordinate(args):
     output = Path(args.output_dir)
     identity = new_identity(args.repository, args.pipeline_id, args.head)
     config = {}
+    fingerprint = None
     try:
         config = read_json(args.config)
         github = GitHub(
@@ -515,6 +517,7 @@ def coordinate(args):
             return 0
         identity = resolved
         profile = read_json(config["profile"])
+        fingerprint = digest({"scoring": profile["scoring"], "build": profile["build"]})
         store = open_store(config["cache"], **config.get("store_options", {}))
         cache = ResultCache(
             store, config.get("refresh_days", 20), config.get("expire_days", 30)
@@ -561,6 +564,7 @@ def coordinate(args):
             identity=identity,
             errors=[str(error)],
             executable=config.get("llm_cc") if isinstance(config, dict) else None,
+            fingerprint=fingerprint,
         )
         return 1
 

@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .common import bounded_map
+from .common import bounded_map, valid_result
 
 
 class CacheError(RuntimeError):
@@ -336,18 +336,8 @@ class ResultCache:
             age = (_now() - when).total_seconds() / 86400
             if age < 0 or age > self.expire_days:
                 return None
-            if (
-                isinstance(result["token_count"], bool)
-                or not isinstance(result["token_count"], int)
-                or result["token_count"] < 0
-            ):
-                return None
-            if (
-                isinstance(result["llm_cc"], bool)
-                or not isinstance(result["llm_cc"], (int, float))
-                or not math.isfinite(result["llm_cc"])
-                or result["llm_cc"] < 0
-            ):
+            # An entry llm-cc's aggregation would reject is a miss here.
+            if not valid_result(result, item, fingerprint):
                 return None
             # Refreshing a validated entry extends retention without changing
             # its provenance. A store failure is deliberately surfaced: it is

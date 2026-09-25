@@ -119,6 +119,12 @@ def aggregate_report(
     return read_json(output / "report.json")
 
 
+# llm-cc's aggregation limits: a file has no more tokens than bytes, and a
+# score past 2^53 is not an exact double.
+MAX_SOURCE_BYTES = 1 << 30
+MAX_EXACT_SCORE = 2**53
+
+
 def valid_result(result, item, fingerprint):
     try:
         return (
@@ -129,11 +135,11 @@ def valid_result(result, item, fingerprint):
             and result["language"] == item["language"]
             and isinstance(result["token_count"], int)
             and not isinstance(result["token_count"], bool)
-            and result["token_count"] >= 0
+            and 0 <= result["token_count"] <= MAX_SOURCE_BYTES
             and isinstance(result["llm_cc"], (int, float))
             and not isinstance(result["llm_cc"], bool)
             and math.isfinite(result["llm_cc"])
-            and result["llm_cc"] >= 0
+            and 0 <= result["llm_cc"] <= MAX_EXACT_SCORE
         )
     except (KeyError, TypeError):
         return False

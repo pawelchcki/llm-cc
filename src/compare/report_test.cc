@@ -400,5 +400,6 @@ int main() {  // NOLINT(bugprone-exception-escape)
   result["llm_cc"] = json::parse("18446744073709551615");
   Expect(!llmcc::compare::v1::ValidResult(result, item, "f"),
          "a score past 2^53 is invalid");
+
   return 0;
 }

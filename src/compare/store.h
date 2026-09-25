@@ -1,6 +1,7 @@
 #ifndef LLM_CC_COMPARE_STORE_H_
 #define LLM_CC_COMPARE_STORE_H_
 
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <nlohmann/json.hpp>
@@ -16,6 +17,9 @@ class StoreError : public std::runtime_error {
  public:
   using std::runtime_error::runtime_error;
 };
+
+// No object is read whole beyond this, whatever the backend.
+inline constexpr std::uint64_t kMaxStoreObjectBytes = std::uint64_t{1} << 30U;
 
 // A flat object store of '/'-separated keys. Writes replace whole objects
 // atomically and the last writer wins; there is no listing and no
