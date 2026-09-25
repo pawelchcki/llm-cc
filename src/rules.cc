@@ -82,9 +82,18 @@ nlohmann::json PatternsJson(const std::vector<Glob>& globs) {
   return patterns;
 }
 
+// JSON strings are valid UTF-8, so every byte but a continuation byte starts
+// a character.
+std::size_t CharacterCount(std::string_view text) {
+  return static_cast<std::size_t>(std::ranges::count_if(text, [](char byte) {
+    return (static_cast<unsigned char>(byte) & 0xC0U) != 0x80U;
+  }));
+}
+
 Glob CompileRulePattern(std::string_view name, const nlohmann::json& value) {
   if (!value.is_string() || value.get_ref<const std::string&>().empty() ||
-      value.get_ref<const std::string&>().size() > kMaxRulePatternLength) {
+      CharacterCount(value.get_ref<const std::string&>()) >
+          kMaxRulePatternLength) {
     throw RulesError("classification rule " + std::string(name) +
                      " needs non-empty globs of at most " +
                      std::to_string(kMaxRulePatternLength) + " characters");
@@ -264,8 +273,13 @@ LoadedRules Rules::LoadFromWorktree(const std::filesystem::path& root) {
     const std::filesystem::path path = root / std::filesystem::path(relative);
     std::error_code error;
     const auto status = std::filesystem::symlink_status(path, error);
-    if (error || status.type() == std::filesystem::file_type::not_found) {
+    if (status.type() == std::filesystem::file_type::not_found) {
       continue;
+    }
+    // Anything but absence must not silently fall back to other rules.
+    if (error) {
+      throw RulesError("cannot inspect " + std::string(relative) + ": " +
+                       error.message());
     }
     // Git records a symlink itself, so following one would read rules the
     // committed tree does not contain, possibly from outside the repository.

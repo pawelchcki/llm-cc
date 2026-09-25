@@ -209,6 +209,14 @@ int main() {  // NOLINT(bugprone-exception-escape)
       "unknown schemes are rejected");
   Expect(!StoreFailure([] { llmcc::compare::OpenStore("s3://"); }).empty(),
          "an S3 location needs a bucket");
+  for (const char* location :
+       {"s3://bucket/a/../b", "s3://bucket/./a", "s3://bucket/a//b"}) {
+    Expect(StoreFailure([&] {
+             llmcc::compare::OpenStore(location);
+           }).find("invalid S3 store prefix") != std::string::npos,
+           std::string("an S3 prefix with empty or dot segments is refused: ") +
+               location);
+  }
   Expect(
       StoreFailure([] {
         llmcc::compare::ParseStoreOptions({{"aws_secret_access_key", "leak"}});
@@ -256,6 +264,13 @@ int main() {  // NOLINT(bugprone-exception-escape)
                        .session_token = "token"});
     fixture.transport->Then(404);
     Expect(!fixture.store->Get("k").has_value(), "404 is a miss");
+    fixture.transport->Then(404, "<Error><Code>NoSuchKey</Code></Error>");
+    Expect(!fixture.store->Get("k").has_value(), "NoSuchKey is a miss");
+    fixture.transport->Then(404, "<Error><Code>NoSuchBucket</Code></Error>");
+    Expect(StoreFailure([&] {
+             static_cast<void>(fixture.store->Get("k"));
+           }).find("NoSuchBucket") != std::string::npos,
+           "a missing bucket is an error, not a miss");
     ExpectEq(fixture.requests.at(0).url,
              std::string("https://plain.s3.us-east-2.amazonaws.com/k"),
              "AWS buckets use virtual-hosted URLs");
