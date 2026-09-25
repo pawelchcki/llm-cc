@@ -20,6 +20,7 @@ from .inventory import (
     read_tree_file,
     resolve_commit,
     validate_rules,
+    with_defaults,
 )
 
 # `llm-cc compare aggregate` renders reports; comments stay within this.
@@ -53,10 +54,10 @@ def resolve_rules(repo, target, rules, repository_rules_path):
                 % (path, error)
             ) from None
         return (
-            validate_rules(candidate),
+            with_defaults(validate_rules(candidate)),
             {"source": "repository", "path": path, "commit": target},
         )
-    return validate_rules(rules or {}), {"source": "host"}
+    return with_defaults(validate_rules(rules or {})), {"source": "host"}
 
 
 def _lookup_results(cache, items, fingerprint, concurrency):
