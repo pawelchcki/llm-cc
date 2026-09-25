@@ -56,7 +56,7 @@ constexpr std::string_view kUsage =
     "      [--deadline-seconds N] [--execution-host FILE] [--progress MODE]\n"
     "  llm-cc compare aggregate --output-dir DIR [--plan PLAN] "
     "[--worker FILE]...\n"
-    "      [--identity FILE] [--error MESSAGE]...\n"
+    "      [--identity FILE] [--fingerprint HEX] [--error MESSAGE]...\n"
     "  llm-cc compare identity MODEL SCORING\n"
     "  llm-cc compare store get KEY --cache LOCATION [--store-options FILE]\n"
     "      [--output FILE]\n"
@@ -74,8 +74,9 @@ constexpr std::string_view kUsage =
     "worker-N.json; aggregate validates everything and writes report.json,\n"
     "report.md, comment.md, baseline.md, baseline.json and publication.json.\n"
     "Each --error makes the report a failure; without a plan, --identity\n"
-    "names the pipeline it belongs to. identity prints the scorer, model,\n"
-    "scoring and fingerprint a plan would use.\n\n"
+    "and --fingerprint name the pipeline and experiment it belongs to.\n"
+    "identity prints the scorer, model, scoring and fingerprint a plan would\n"
+    "use.\n\n"
     "MODEL is --model GGUF, --model-name NAME, or --model-sha256 HEX with\n"
     "--model-bytes N to pin weights this machine does not have. SCORING takes\n"
     "the analysis options (--backend, --gpu-layers, --context, --batch-size,\n"
@@ -611,6 +612,7 @@ struct AggregateArguments {
   std::vector<std::string> workers;
   fs::path output;
   std::optional<fs::path> identity;
+  std::optional<std::string> fingerprint;
   std::vector<std::string> errors;
 };
 
@@ -628,6 +630,12 @@ AggregateArguments ParseAggregate(const std::vector<std::string_view>& args) {
       parsed.output = fs::u8path(value);
     } else if (option == "--identity") {
       parsed.identity = fs::u8path(value);
+    } else if (option == "--fingerprint") {
+      if (!IsHexDigest(value, 64)) {
+        throw CompareUsageError(
+            "--fingerprint must be 64 lowercase hex digits");
+      }
+      parsed.fingerprint = value;
     } else if (option == "--error") {
       parsed.errors.push_back(value);
     } else {
@@ -661,9 +669,11 @@ int RunAggregate(const std::vector<std::string_view>& args) {
   json report;
   const std::optional<fs::path>& plan = arguments.plan;
   if (!plan.has_value()) {
-    report =
-        WriteFailureReport(arguments.output, ReadIdentity(arguments.identity),
-                           nullptr, arguments.errors);
+    report = WriteFailureReport(
+        arguments.output, ReadIdentity(arguments.identity),
+        arguments.fingerprint.has_value() ? json(*arguments.fingerprint)
+                                          : json(),
+        arguments.errors);
   } else if (arguments.errors.empty()) {
     report = AggregatePlan(*plan, arguments.workers, arguments.output);
   } else {

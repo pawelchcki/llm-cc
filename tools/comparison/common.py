@@ -42,7 +42,13 @@ def llm_cc():
 
 
 def aggregate_report(
-    output_dir, plan=None, workers=(), identity=None, errors=(), executable=None
+    output_dir,
+    plan=None,
+    workers=(),
+    identity=None,
+    errors=(),
+    executable=None,
+    fingerprint=None,
 ):
     """Write a report set with `llm-cc compare aggregate`; returns report.json.
 
@@ -61,6 +67,8 @@ def aggregate_report(
     ]
     if plan is not None:
         command += ["--plan", str(plan)]
+    elif fingerprint is not None:
+        command += ["--fingerprint", fingerprint]
     for worker in workers:
         command += ["--worker", str(worker)]
     for error in errors:

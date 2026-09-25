@@ -29,6 +29,11 @@ _DESCRIPTORS = (
 )
 
 
+def _check_size(key: str, size: int, max_bytes: int | None) -> None:
+    if max_bytes is not None and size > max_bytes:
+        raise StoreError("store object %s exceeds %d bytes" % (key, max_bytes))
+
+
 class FilesystemStore:
     """A small atomic object store rooted at a directory."""
 
@@ -90,9 +95,10 @@ class FilesystemStore:
             ) from error
         return descriptor, parts[-1]
 
-    def get(self, key: str) -> bytes | None:
+    def get(self, key: str, max_bytes: int | None = None) -> bytes | None:
+        """The object, or None when absent; larger than `max_bytes` fails."""
         if not _DESCRIPTORS:
-            return self._get_by_path(key)
+            return self._get_by_path(key, max_bytes)
         directory, name = self._parent(key, create=False)
         if directory is None:
             return None
@@ -110,8 +116,10 @@ class FilesystemStore:
         finally:
             os.close(directory)
         try:
-            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            information = os.fstat(descriptor)
+            if not stat.S_ISREG(information.st_mode):
                 raise StoreError("cannot read store object %s: not a file" % key)
+            _check_size(key, information.st_size, max_bytes)
             with os.fdopen(descriptor, "rb") as stream:
                 descriptor = None
                 return stream.read()
@@ -165,9 +173,11 @@ class FilesystemStore:
                     pass
             os.close(directory)
 
-    def _get_by_path(self, key: str) -> bytes | None:
+    def _get_by_path(self, key: str, max_bytes: int | None) -> bytes | None:
         try:
-            return self._path(key).read_bytes()
+            path = self._path(key)
+            _check_size(key, path.stat().st_size, max_bytes)
+            return path.read_bytes()
         except FileNotFoundError:
             return None
         except OSError as error:
@@ -221,12 +231,25 @@ class FilesystemStore:
                 "conditional filesystem writes need POSIX flock"
             ) from error
         self._path(key)
-        lock = (
-            self.root / ".locks" / (hashlib.sha256(key.encode()).hexdigest() + ".lock")
-        )
+        lock = ".locks/%s.lock" % hashlib.sha256(key.encode()).hexdigest()
         try:
-            lock.parent.mkdir(parents=True, exist_ok=True)
-            fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o660)
+            if _DESCRIPTORS:
+                # Like objects, the lock never resolves through a symlink, so
+                # every publisher locks the same inode.
+                directory, name = self._parent(lock, create=True)
+                try:
+                    fd = os.open(
+                        name,
+                        os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW,
+                        0o660,
+                        dir_fd=directory,
+                    )
+                finally:
+                    os.close(directory)
+            else:
+                path = self._path(lock)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o660)
         except OSError as error:
             raise StoreError(
                 "cannot lock store object %s: %s" % (key, error)
@@ -263,11 +286,16 @@ class S3Store:
             raise StoreError("invalid store key")
         return "/".join(part for part in (self.prefix, key) if part)
 
-    def get(self, key: str) -> bytes | None:
+    def get(self, key: str, max_bytes: int | None = None) -> bytes | None:
+        """The object, or None when absent; larger than `max_bytes` fails."""
         try:
-            return self.client.get_object(Bucket=self.bucket, Key=self._key(key))[
-                "Body"
-            ].read()
+            response = self.client.get_object(Bucket=self.bucket, Key=self._key(key))
+            if max_bytes is None:
+                return response["Body"].read()
+            _check_size(key, response.get("ContentLength", 0), max_bytes)
+            value = response["Body"].read(max_bytes + 1)
+            _check_size(key, len(value), max_bytes)
+            return value
         except self._errors as error:
             code = getattr(error, "response", {}).get("Error", {}).get("Code")
             if code in ("NoSuchKey", "404", "NotFound"):
@@ -317,6 +345,9 @@ class S3Store:
 
 
 def open_store(location: str, **options: Any) -> FilesystemStore | S3Store:
+    # An unset store variable must not fall back to the working directory.
+    if not location:
+        raise StoreError("store location is empty")
     if location.startswith("s3://"):
         rest = location[5:]
         bucket, _, prefix = rest.partition("/")

@@ -79,6 +79,30 @@ class FilesystemStoreTest(unittest.TestCase):
             self.assertFalse((outside / "y.json").exists())
             self.assertEqual(store.get("reports/r.json"), b"inside")
 
+    def test_bounded_reads_and_empty_locations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = FilesystemStore(directory)
+            store.put("pipelines/plan.json", b"0123456789")
+            self.assertEqual(store.get("pipelines/plan.json", max_bytes=10), b"0123456789")
+            with self.assertRaises(StoreError):
+                store.get("pipelines/plan.json", max_bytes=9)
+            self.assertIsNone(store.get("pipelines/absent.json", max_bytes=1))
+        with self.assertRaises(StoreError):
+            open_store("")
+
+    @unittest.skipUnless(os.name == "posix", "POSIX symlinks")
+    def test_publication_locks_never_resolve_through_a_symlink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory, "store")
+            outside = Path(directory, "outside")
+            outside.mkdir()
+            root.mkdir()
+            (root / ".locks").symlink_to(outside)
+            store = FilesystemStore(root)
+            with self.assertRaises(StoreError):
+                store.put_if("publications/p.json", b"{}", None)
+            self.assertEqual(list(outside.iterdir()), [])
+
     def test_locations_select_a_store(self):
         with tempfile.TemporaryDirectory() as directory:
             self.assertIsInstance(open_store(directory), FilesystemStore)

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <nlohmann/json.hpp>
 #include <set>
@@ -108,12 +109,17 @@ void ValidateIdentity(const json& identity) {
 }
 
 void ValidateItem(const std::string& key, const json& item,
-                  const std::string& fingerprint) {
+                  const std::string& fingerprint,
+                  std::uint64_t max_file_bytes) {
   if (!item.is_object() || item.size() != 4 || Field(item, "key") != key ||
       !IsBlobId(Field(item, "blob_id")) ||
       !IsCanonicalLanguage(Field(item, "language")) ||
       !Field(item, "size").is_number_unsigned()) {
     Invalid("plan item " + key + " is malformed");
+  }
+  // Only files within the plan's limit were planned for scoring.
+  if (item["size"].get<std::uint64_t>() > max_file_bytes) {
+    Invalid("plan item " + key + " exceeds the plan's max_file_bytes");
   }
   if (key != ResultKey(item["blob_id"].get<std::string>(),
                        item["language"].get<std::string>(), fingerprint)) {
@@ -144,7 +150,11 @@ std::set<std::string> ValidateInventory(const json& inventory,
     const json& size = Field(file, "size");
     const json& blob_id = Field(file, "blob_id");
     if ((!language.is_null() && !IsCanonicalLanguage(language)) ||
-        (!size.is_null() && !size.is_number_unsigned()) ||
+        (!size.is_null() &&
+         (!size.is_number_unsigned() ||
+          size.get<std::uint64_t>() >
+              static_cast<std::uint64_t>(
+                  std::numeric_limits<std::int64_t>::max()))) ||
         (!blob_id.is_null() && !IsBlobId(blob_id)) ||
         !Field(file, "scorable").is_boolean()) {
       Invalid("inventory entry " + file["path"].get<std::string>() +
@@ -201,7 +211,10 @@ bool ValidResult(const json& result, const json& item,
          result["blob_id"] == Field(item, "blob_id") &&
          result["language"] == Field(item, "language") &&
          result["fingerprint"] == fingerprint &&
+         // Past 2^53 a score is not an exact double, and an integral one
+         // could not be subtracted as int64 by the report.
          IsFiniteNonNegative(result["llm_cc"]) &&
+         result["llm_cc"].get<double>() <= 9007199254740992.0 &&
          IsCount(result["token_count"]) &&
          IsCount(result["high_entropy_tokens"]) &&
          result["high_entropy_tokens"].get<std::uint64_t>() <=
@@ -275,7 +288,8 @@ void ValidatePlan(const json& plan) {
   }
   std::set<std::string> item_keys;
   for (const auto& [key, item] : items.items()) {
-    ValidateItem(key, item, fingerprint);
+    ValidateItem(key, item, fingerprint,
+                 plan["max_file_bytes"].get<std::uint64_t>());
     item_keys.insert(key);
   }
   const json& inventories = Field(plan, "inventories");

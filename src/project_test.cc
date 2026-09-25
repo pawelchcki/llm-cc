@@ -229,7 +229,23 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::ExpectEq(included_environment.sources.size(), std::size_t{1},
                         "no-ignore includes a virtual environment input root");
 
+  // Git metadata is never analyzed, even when named explicitly.
+  Write(repository / ".git/hooks/check.py", "def check(): pass\n");
+  llmcc::test::ExpectEq(
+      llmcc::DiscoverSources({repository / ".git/hooks/check.py"})
+          .sources.size(),
+      std::size_t{0}, "an explicit file under .git is never analyzed");
+
 #ifndef _WIN32
+  // Only a regular pyvenv.cfg marks a virtual environment, as in a commit.
+  const fs::path linked_marker = fs::path(temporary) / "linked-marker";
+  Write(linked_marker / "real.cfg", "home = /usr\n");
+  Write(linked_marker / "env/lib/site.py", "x = 1\n");
+  fs::create_symlink("../real.cfg", linked_marker / "env/pyvenv.cfg");
+  llmcc::test::ExpectEq(
+      llmcc::DiscoverSources({linked_marker}).sources.size(), std::size_t{1},
+      "a symlinked pyvenv.cfg does not mark a virtual environment");
+
   // Recursive discovery skips symlinks, which would otherwise lend their own
   // path, language and rules to the file they point at.
   for (const bool git : {true, false}) {

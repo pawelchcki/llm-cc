@@ -37,6 +37,8 @@ from .store import open_store
 
 # The remote worker's whole budget, including transport and upload.
 WORKER_SECONDS = 6600
+# No plan is larger; a larger object is corrupt and is never buffered whole.
+PLAN_BYTES = 256 * 1024 * 1024
 
 
 class BuildBuddy:
@@ -446,7 +448,7 @@ def remote_worker(args):
         try:
             # SIGALRM interrupts a blocked SDK retry on Linux.
             with Deadline(remaining()) as deadline:
-                raw = store.get(args.prefix + "plan.json")
+                raw = store.get(args.prefix + "plan.json", max_bytes=PLAN_BYTES)
                 deadline.check()
                 if raw is None or hashlib.sha256(raw).hexdigest() != args.plan_sha256:
                     raise ValueError("preparation digest mismatch or missing plan")
@@ -461,8 +463,12 @@ def remote_worker(args):
                 (directory / "blobs").mkdir()
                 for key in worker["keys"]:
                     deadline.check()
-                    object_id = plan["items"][key]["blob_id"]
-                    content = store.get(args.prefix + "blobs/" + object_id)
+                    item = plan["items"][key]
+                    object_id = item["blob_id"]
+                    # A blob can be no larger than the plan says.
+                    content = store.get(
+                        args.prefix + "blobs/" + object_id, max_bytes=item["size"]
+                    )
                     deadline.check()
                     if content is None or blob_id(content, object_id) != object_id:
                         raise ValueError("missing or corrupt source blob")

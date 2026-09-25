@@ -513,7 +513,7 @@ class BuildBuddyTest(unittest.TestCase):
         uploaded = {}
 
         class SlowStore:
-            def get(self, key):
+            def get(self, key, max_bytes=None):
                 time.sleep(0.25)
                 return None
 
