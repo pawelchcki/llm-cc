@@ -264,7 +264,7 @@ std::filesystem::path FilesystemStore::PathOf(std::string_view key) const {
 }
 
 std::optional<std::string> FilesystemStore::Get(std::string_view key) {
-  return Read(key, std::nullopt);
+  return Read(key, kMaxStoreObjectBytes);
 }
 
 std::optional<std::string> FilesystemStore::GetAtMost(std::string_view key,
@@ -353,6 +353,11 @@ std::optional<std::string> FilesystemStore::Read(
     }
     if (count == 0) {
       return contents;
+    }
+    // Checked while reading too, since another writer can still grow it.
+    if (max_bytes.has_value() &&
+        contents.size() + static_cast<std::size_t>(count) > *max_bytes) {
+      throw too_large();
     }
     contents.append(buffer.data(), static_cast<std::size_t>(count));
   }

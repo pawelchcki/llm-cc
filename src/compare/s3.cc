@@ -22,7 +22,7 @@ namespace llmcc::compare {
 namespace {
 
 // An object larger than this is refused rather than buffered.
-constexpr std::size_t kMaxObjectBytes = std::size_t{1} << 30U;
+constexpr std::uint64_t kMaxObjectBytes = kMaxStoreObjectBytes;
 constexpr int kAttempts = 3;
 
 void EnsureCurlInitialized() {

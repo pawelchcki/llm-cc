@@ -125,5 +125,8 @@ int main() {  // NOLINT(bugprone-exception-escape)
              !Matches("?.py", "\xE0\x80\xAF.py"),
          "an overlong form is not one character");
   Expect(Matches("?.py", "\xC3\xA9.py"), "a valid character is one");
+  Expect(!Matches("[\u00c0-\u00ff].cc", "\xE9.cc") &&
+             Matches("[\u00c0-\u00ff].cc", "\xC3\xA9.cc"),
+         "an invalid byte is not the character with its value");
   return 0;
 }

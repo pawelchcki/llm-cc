@@ -408,5 +408,6 @@ int main() {  // NOLINT(bugprone-exception-escape)
   huge_score["llm_cc"] = json::parse("18446744073709551615");
   Expect(!llmcc::compare::ValidResult(huge_score, item, "f"),
          "a score past 2^53 is invalid");
+
   return 0;
 }

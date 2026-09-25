@@ -18,6 +18,9 @@ class StoreError : public std::runtime_error {
   using std::runtime_error::runtime_error;
 };
 
+// No object is read whole beyond this, whatever the backend.
+inline constexpr std::uint64_t kMaxStoreObjectBytes = std::uint64_t{1} << 30U;
+
 // An object exceeded the size its reader accepts; it was not buffered.
 class StoreEntryTooLarge : public StoreError {
  public:

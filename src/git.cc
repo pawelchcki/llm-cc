@@ -278,6 +278,9 @@ std::optional<std::string> Repository::ReadFile(
       slash == std::string_view::npos ? path : path.substr(slash + 1);
   // List the parent tree and match the name exactly: ls-tree reads its path
   // arguments as patterns, and a symbolic link is also a blob.
+  // A revision Git cannot resolve is a failure, never an absent file.
+  static_cast<void>(Run(
+      {"rev-parse", "--verify", "--quiet", std::string(revision) + "^{tree}"}));
   const std::string tree =
       std::string(revision) + (parent.empty() ? "^{tree}" : ":" + parent);
   const ProcessResult exists = RunGit(

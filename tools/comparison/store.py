@@ -122,7 +122,12 @@ class FilesystemStore:
             _check_size(key, information.st_size, max_bytes)
             with os.fdopen(descriptor, "rb") as stream:
                 descriptor = None
-                return stream.read()
+                if max_bytes is None:
+                    return stream.read()
+                # Another writer can grow the object after fstat.
+                value = stream.read(max_bytes + 1)
+                _check_size(key, len(value), max_bytes)
+                return value
         except OSError as error:
             raise StoreError(
                 "cannot read store object %s: %s" % (key, error)
@@ -177,7 +182,12 @@ class FilesystemStore:
         try:
             path = self._path(key)
             _check_size(key, path.stat().st_size, max_bytes)
-            return path.read_bytes()
+            if max_bytes is None:
+                return path.read_bytes()
+            with path.open("rb") as stream:
+                value = stream.read(max_bytes + 1)
+            _check_size(key, len(value), max_bytes)
+            return value
         except FileNotFoundError:
             return None
         except OSError as error:
