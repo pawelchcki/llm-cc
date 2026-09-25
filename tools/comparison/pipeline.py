@@ -53,7 +53,8 @@ def resolve_rules(repo, target, rules, repository_rules_path):
                 "repository classification rules at %s exceed 64 KiB" % path
             )
         try:
-            candidate = json.loads(raw.decode("utf-8"))
+            # llm-cc's JSON parser accepts a leading byte order mark.
+            candidate = json.loads(raw.decode("utf-8-sig"))
         except (UnicodeError, ValueError) as error:
             raise ValueError(
                 "repository classification rules at %s are not valid JSON: %s"

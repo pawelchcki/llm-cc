@@ -1,6 +1,7 @@
 import functools
 import hashlib
 import re
+import string
 import subprocess
 
 from .common import canonical_bytes, digest
@@ -101,15 +102,20 @@ def _segment_regex(segment):
                     index += 1
                 low = segment[index]
                 index += 1
+                high = low
                 if index + 1 < len(segment) and segment[index] == "-" and segment[index + 1] != "]":
                     index += 1
                     if segment[index] == "\\":
                         index += 1
-                    members.append(re.escape(low) + "-" + re.escape(segment[index]))
+                    high = segment[index]
                     index += 1
-                else:
-                    members.append(re.escape(low))
-            out.append("[" + ("^" if negated else "") + "".join(members) + "]")
+                # A reversed range matches nothing, as in llm-cc.
+                if low <= high:
+                    members.append(re.escape(low) + "-" + re.escape(high))
+            if members:
+                out.append("[" + ("^/" if negated else "") + "".join(members) + "]")
+            else:
+                out.append("[^/]" if negated else "(?!)")
         elif character == "\\" and index + 1 < len(segment):
             index += 1
             out.append(re.escape(segment[index]))
@@ -261,7 +267,8 @@ def read_tree_file(repo, revision, path):
         kind = _git(repo, ["cat-file", "-t", target]).strip()
     except GitError:
         return None
-    if kind != b"blob":
+    listing = _git(repo, ["ls-tree", "-z", revision, "--", path]).split(b"\0")[0]
+    if kind != b"blob" or not listing.startswith((b"100644 ", b"100755 ")):
         raise GitError("%s is not a regular file in %s" % (path, revision))
     return _git(repo, ["cat-file", "blob", target])
 
@@ -298,10 +305,30 @@ def resolve_commit(repo, revision):
     return value
 
 
+# llm-cc folds only ASCII letters in extensions.
+_ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
+
+
 def _extension(path):
     name = path.rsplit("/", 1)[-1]
     dot = name.rfind(".")
-    return name[dot:].lower() if dot >= 0 else ""
+    return name[dot:].translate(_ASCII_LOWER) if dot >= 0 else ""
+
+
+def _always_excluded(path):
+    """Git metadata and llm-cc caches, which no rules file can include."""
+    return any(part in (".git", ".llm-cc-cache") for part in path.split("/"))
+
+
+def _in_virtual_environment(path, environments):
+    """Whether the root or a directory above `path` holds a pyvenv.cfg."""
+    if "" in environments:
+        return True
+    directories = path.split("/")[:-1]
+    return any(
+        "/".join(directories[: depth + 1]) in environments
+        for depth in range(len(directories))
+    )
 
 
 def _classify(path, rules):
@@ -328,11 +355,20 @@ def resolve_language(path, rules):
 def inventory(repo, revision, fingerprint, rules=None, max_file_bytes=65536):
     rules = validate_rules(rules or {})
     raw = _git(repo, ["ls-tree", "-rlz", "--full-tree", revision])
+    entries = [entry for entry in raw.split(b"\0") if entry]
+    # llm-cc skips any directory holding a pyvenv.cfg, as it does locally.
+    environments = set()
+    for entry in entries:
+        metadata, path_bytes = entry.split(b"\t", 1)
+        if metadata.split()[0] in (b"100644", b"100755") and (
+            path_bytes.rsplit(b"/", 1)[-1] == b"pyvenv.cfg"
+        ):
+            environments.add(
+                path_bytes.rpartition(b"/")[0].decode("utf-8", "surrogateescape")
+            )
     records = []
     blob_ids = []
-    for entry in raw.split(b"\0"):
-        if not entry:
-            continue
+    for entry in entries:
         metadata, path_bytes = entry.split(b"\t", 1)
         mode, kind, object_id, size_text = metadata.split()
         path = path_bytes.decode("utf-8", "surrogateescape")
@@ -356,7 +392,11 @@ def inventory(repo, revision, fingerprint, rules=None, max_file_bytes=65536):
             record["reason"] = "symlink"
         elif kind != b"blob":
             record["reason"] = "unsupported"
-        elif _matches(path, _patterns(rules, "exclude")):
+        elif (
+            _always_excluded(path)
+            or _in_virtual_environment(path, environments)
+            or _matches(path, _patterns(rules, "exclude"))
+        ):
             record["reason"] = "excluded"
         elif record["language"] is None:
             record["reason"] = "unsupported"

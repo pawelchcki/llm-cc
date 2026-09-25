@@ -41,6 +41,15 @@ char32_t NextCodePoint(std::string_view text, std::size_t& index) {
     }
     value = (value << 6U) | (next & 0x3FU);
   }
+  // Overlong forms, surrogates and values past U+10FFFF are not characters:
+  // each of their bytes stands for itself, as Python's surrogateescape reads
+  // them.
+  if ((length == 3 &&
+       (value < 0x800U || (value >= 0xD800U && value <= 0xDFFFU))) ||
+      (length == 4 && (value < 0x10000U || value > 0x10FFFFU))) {
+    ++index;
+    return lead;
+  }
   index += length;
   return value;
 }
