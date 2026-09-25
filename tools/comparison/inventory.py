@@ -1,4 +1,4 @@
-import fnmatch
+import functools
 import hashlib
 import re
 import subprocess
@@ -52,36 +52,101 @@ def _git(repo, args, data=None):
     return completed.stdout
 
 
-# llm-cc's built-in rules (src/rules.cc) as fnmatch patterns, where `*`
-# crosses `/` and a leading `**/` needs a slash, so each directory pattern
-# also appears anchored at the top level. A rules file keeps the default of
-# every key it omits, exactly as llm-cc applies it.
+# llm-cc's built-in rules (src/rules.cc). A rules file keeps the default of
+# every list it omits, exactly as llm-cc applies it.
 DEFAULT_RULES = {
     "exclude": [
-        pattern
-        for directory in (
-            ".hg", ".svn", "target", "node_modules", ".gradle", ".venv",
-            "__pycache__", ".tox", ".nox", ".mypy_cache", ".pytest_cache",
-            ".ruff_cache", "vendor", "third_party", "build", "build-out",
-            ".nuget", "dist", "deps", "_build", "cmake-build-debug",
-            "cmake-build-release", "bazel-*",
-        )
-        for pattern in (directory + "/*", "*/" + directory + "/*")
-    ]
-    + ["out/*", "bin/*.cs", "*/bin/*.cs", "obj/*.cs", "*/obj/*.cs"],
+        "**/.hg/**", "**/.svn/**", "**/target/**", "**/node_modules/**",
+        "**/.gradle/**", "**/.venv/**", "**/__pycache__/**", "**/.tox/**",
+        "**/.nox/**", "**/.mypy_cache/**", "**/.pytest_cache/**",
+        "**/.ruff_cache/**", "**/vendor/**", "**/third_party/**", "**/build/**",
+        "**/build-out/**", "**/.nuget/**", "**/dist/**", "**/deps/**",
+        "**/_build/**", "**/cmake-build-debug/**", "**/cmake-build-release/**",
+        "**/bazel-*/**", "out/**", "**/bin/**/*.cs", "**/obj/**/*.cs",
+    ],
     "tests": [
-        pattern
-        for directory in ("test", "tests", "testdata", "fixtures", "fuzz", "fuzzers")
-        for pattern in (directory + "/*", "*/" + directory + "/*")
-    ]
-    + ["*_test.*", "test_*.*", "*/test_*.*"],
-    "tooling": ["tools/*", "examples/*", "example/*", "scripts/*", "benchmarks/*"],
+        "**/test/**", "**/tests/**", "**/testdata/**", "**/fixtures/**",
+        "**/fuzz/**", "**/fuzzers/**", "**/*_test.*", "**/test_*.*",
+    ],
+    "tooling": ["tools/**", "examples/**", "example/**", "scripts/**", "benchmarks/**"],
 }
 
 
-def with_defaults(rules):
-    """`rules` with every omitted exclude, tests or tooling list defaulted."""
-    return {**DEFAULT_RULES, **rules}
+def _patterns(rules, name):
+    return rules[name] if name in rules else DEFAULT_RULES[name]
+
+
+def _segment_regex(segment):
+    """One glob segment: `*` and `?` stay within it, `[...]` is a set."""
+    out = []
+    index = 0
+    while index < len(segment):
+        character = segment[index]
+        if character == "*":
+            while index < len(segment) and segment[index] == "*":
+                index += 1
+            out.append("[^/]*")
+            continue
+        if character == "?":
+            out.append("[^/]")
+        elif character == "[":
+            index += 1
+            negated = index < len(segment) and segment[index] in "!^"
+            index += negated
+            members = []
+            first = True
+            while index < len(segment) and (first or segment[index] != "]"):
+                first = False
+                if segment[index] == "\\":
+                    index += 1
+                low = segment[index]
+                index += 1
+                if index + 1 < len(segment) and segment[index] == "-" and segment[index + 1] != "]":
+                    index += 1
+                    if segment[index] == "\\":
+                        index += 1
+                    members.append(re.escape(low) + "-" + re.escape(segment[index]))
+                    index += 1
+                else:
+                    members.append(re.escape(low))
+            out.append("[" + ("^" if negated else "") + "".join(members) + "]")
+        elif character == "\\" and index + 1 < len(segment):
+            index += 1
+            out.append(re.escape(segment[index]))
+        else:
+            out.append(re.escape(character))
+        index += 1
+    return "".join(out)
+
+
+@functools.lru_cache(maxsize=4096)
+def _glob(pattern):
+    """llm-cc's segment-aware glob (src/glob.cc) as a compiled expression.
+
+    Patterns are anchored at the repository root; `*` and `?` never cross
+    `/`; a whole-segment `**` matches zero or more directories, and a
+    trailing `/**` one or more path segments.
+    """
+    segments = pattern.split("/")
+    if segments[-1] == "**":
+        segments[-1:] = ["*", "**"]
+    out = ""
+    separate = False
+    for position, segment in enumerate(segments):
+        if segment == "**":
+            if position == len(segments) - 1:
+                out += "(?:/[^/]+)*"
+            else:
+                out += ("/" if separate else "") + "(?:[^/]+/)*"
+                separate = False
+            continue
+        out += ("/" if separate else "") + _segment_regex(segment)
+        separate = True
+    return re.compile(out, re.DOTALL)
+
+
+def _matches(path, patterns):
+    return any(_glob(pattern).fullmatch(path) for pattern in patterns)
 
 
 def validate_rules(rules):
@@ -205,34 +270,9 @@ def _extension(path):
 
 
 def _classify(path, rules):
-    test_patterns = rules.get(
-        "tests",
-        [
-            "test/**",
-            "tests/**",
-            "testdata/**",
-            "fixtures/**",
-            "fuzz/**",
-            "fuzzers/**",
-            "**/test/**",
-            "**/tests/**",
-            "**/testdata/**",
-            "**/fixtures/**",
-            "**/fuzz/**",
-            "**/fuzzers/**",
-            "*_test.*",
-            "test_*.*",
-            "**/*_test.*",
-            "**/test_*.*",
-        ],
-    )
-    tooling = rules.get(
-        "tooling",
-        ["tools/**", "examples/**", "example/**", "scripts/**", "benchmarks/**"],
-    )
-    if any(fnmatch.fnmatchcase(path, p) for p in test_patterns):
+    if _matches(path, _patterns(rules, "tests")):
         return "tests"
-    if any(fnmatch.fnmatchcase(path, p) for p in tooling):
+    if _matches(path, _patterns(rules, "tooling")):
         return "tooling"
     return "runtime"
 
@@ -245,7 +285,7 @@ def resolve_language(path, rules):
     therefore a different cache key, on each side.
     """
     for override in rules.get("paths", []):
-        if fnmatch.fnmatchcase(path, override["pattern"]):
+        if _glob(override["pattern"]).fullmatch(path):
             return override["language"]
     return (LANGUAGES | rules.get("extensions", {})).get(_extension(path))
 
@@ -281,7 +321,7 @@ def inventory(repo, revision, fingerprint, rules=None, max_file_bytes=65536):
             record["reason"] = "symlink"
         elif kind != b"blob":
             record["reason"] = "unsupported"
-        elif any(fnmatch.fnmatchcase(path, p) for p in rules.get("exclude", [])):
+        elif _matches(path, _patterns(rules, "exclude")):
             record["reason"] = "excluded"
         elif record["language"] is None:
             record["reason"] = "unsupported"

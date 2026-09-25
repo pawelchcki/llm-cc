@@ -23,7 +23,6 @@ from .inventory import (
     read_tree_file,
     resolve_commit,
     validate_rules,
-    with_defaults,
 )
 
 COMMENT_LIMIT = 24 * 1024
@@ -56,10 +55,10 @@ def resolve_rules(repo, target, rules, repository_rules_path):
                 % (path, error)
             ) from None
         return (
-            with_defaults(validate_rules(candidate)),
+            validate_rules(candidate),
             {"source": "repository", "path": path, "commit": target},
         )
-    return with_defaults(validate_rules(rules or {})), {"source": "host"}
+    return validate_rules(rules or {}), {"source": "host"}
 
 
 def _lookup_results(cache, items, fingerprint, concurrency):
