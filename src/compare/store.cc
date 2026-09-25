@@ -105,9 +105,11 @@ void ValidateStoreKey(std::string_view key) {
   while (true) {
     const std::size_t end = remaining.find('/');
     const std::string_view segment = remaining.substr(0, end);
+    // A colon names a drive or an alternate data stream on Windows, where
+    // `root / key` would then leave the store.
     if (segment.empty() || segment == "." || segment == ".." ||
-        segment.find('\\') != std::string_view::npos ||
-        segment.find('\0') != std::string_view::npos) {
+        segment.find_first_of(std::string_view("\\:\0", 3)) !=
+            std::string_view::npos) {
       throw StoreError("invalid store key '" + std::string(key) + "'");
     }
     if (end == std::string_view::npos) {

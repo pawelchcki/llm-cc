@@ -117,8 +117,18 @@ struct Explanation {
 
 Explanation Explain(std::string_view input) {
   const std::filesystem::path given = std::filesystem::u8path(input);
-  const std::filesystem::path absolute =
+  std::filesystem::path absolute =
       std::filesystem::absolute(given).lexically_normal();
+  // Discovery analyzes an explicit symlink as its target and skips one found
+  // in a directory, so explain the file analysis would actually read.
+  std::error_code link_error;
+  const bool symlink = std::filesystem::is_symlink(absolute, link_error);
+  if (symlink) {
+    const auto target = std::filesystem::canonical(absolute, link_error);
+    if (!link_error) {
+      absolute = target;
+    }
+  }
   const WorktreeRules worktree = RulesFor(absolute);
   Explanation result{.input = std::string(input),
                      .repository = worktree.repository,
@@ -133,7 +143,8 @@ Explanation Explain(std::string_view input) {
         ((error ? absolute.parent_path() : directory) / absolute.filename())
             .lexically_relative(*worktree.repository));
   } else {
-    result.relative = PathUtf8(given.lexically_normal());
+    result.relative =
+        PathUtf8(symlink ? absolute.filename() : given.lexically_normal());
   }
   const Rules& rules = worktree.loaded.rules;
   result.language = rules.ResolveLanguage(result.relative);

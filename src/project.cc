@@ -204,6 +204,25 @@ bool SkipDirectory(const std::filesystem::path& path, std::string_view relative,
   return rules.PrunesDirectory(relative) || PythonVirtualEnvironment(path);
 }
 
+bool GitWalk(const std::filesystem::path& input,
+             const std::filesystem::path& repository, WalkContext& context);
+
+// A directory that is itself the root of another Git worktree.
+std::optional<std::filesystem::path> NestedRepositoryRoot(
+    const std::filesystem::path& directory,
+    const std::optional<std::filesystem::path>& enclosing) {
+  std::error_code error;
+  if (!std::filesystem::exists(directory / ".git", error) || error) {
+    return std::nullopt;
+  }
+  const auto root = FindGitRepository(directory);
+  const auto canonical = std::filesystem::canonical(directory, error);
+  if (!root.has_value() || error || *root != canonical || root == enclosing) {
+    return std::nullopt;
+  }
+  return root;
+}
+
 void FilesystemWalk(const std::filesystem::path& directory,
                     const std::optional<std::filesystem::path>& repository,
                     WalkContext& context) {
@@ -234,6 +253,13 @@ void FilesystemWalk(const std::filesystem::path& directory,
     if (directory_entry) {
       if (SkipDirectory(entry.path(), relative, rules, no_ignore)) {
         iterator.disable_recursion_pending();
+      } else if (const auto nested =
+                     NestedRepositoryRoot(entry.path(), repository)) {
+        // A nested repository is discovered with its own rules.
+        iterator.disable_recursion_pending();
+        if (!GitWalk(entry.path(), *nested, context)) {
+          FilesystemWalk(entry.path(), nested, context);
+        }
       }
     } else if (!entry.is_symlink(error) && entry.is_regular_file(error) &&
                !error) {

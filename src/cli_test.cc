@@ -1067,5 +1067,22 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
           deferred_backend_events[3]["entropy_cache_hit"].get<bool>(),
       "the deferred explicit backend analysis reports its cache hit");
 
+  // rules explain reports a symlink as the file discovery would analyze.
+  const fs::path aliased = fs::path(test_tmpdir) / "explain-alias";
+  fs::create_directories(aliased / "src");
+  llmcc::test::ExpectEq(Run("git -C " + Quote(aliased) + " init -q"), 0,
+                        "explain fixture repository initializes");
+  std::ofstream(aliased / "src/main.rs") << "fn main() {}\n";
+  fs::create_symlink("src/main.rs", aliased / "a.py");
+  const fs::path explained = fs::path(test_tmpdir) / "explain.jsonl";
+  llmcc::test::ExpectEq(
+      Run(Quote(binary) + " rules explain " + Quote(aliased / "a.py") +
+          " --format json >" + Quote(explained)),
+      0, "rules explain accepts a symlink");
+  const auto explanation = nlohmann::json::parse(Read(explained));
+  llmcc::test::Expect(explanation["relative_path"] == "src/main.rs" &&
+                          explanation["language"] == "rust",
+                      "rules explain follows a symlink to its target");
+
   return 0;
 }
