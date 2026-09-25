@@ -115,5 +115,15 @@ int main() {  // NOLINT(bugprone-exception-escape)
              !Prunes("**/bin/**/*.cs", "bin"),
          "file globs never prune a directory");
   Expect(Prunes("**", "anything"), "a lone globstar prunes everything");
+
+  // Bytes that are not characters (a UTF-8 surrogate, an overlong form)
+  // match one byte at a time, as Python's surrogateescape reads them.
+  Expect(Matches("???.py", "\xED\xA0\x80.py") &&
+             !Matches("?.py", "\xED\xA0\x80.py"),
+         "an encoded surrogate is three bytes, not one character");
+  Expect(Matches("???.py", "\xE0\x80\xAF.py") &&
+             !Matches("?.py", "\xE0\x80\xAF.py"),
+         "an overlong form is not one character");
+  Expect(Matches("?.py", "\xC3\xA9.py"), "a valid character is one");
   return 0;
 }

@@ -155,6 +155,45 @@ class PipelineTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "64 KiB"):
             resolve_rules(self.repo, target, {}, REPOSITORY_RULES_PATH)
 
+    def test_selection_matches_llm_cc_edge_cases(self):
+        (self.repo / ".llm-cc-cache").mkdir()
+        (self.repo / ".llm-cc-cache/cached.py").write_text("x = 1\n")
+        (self.repo / "project-env/lib").mkdir(parents=True)
+        (self.repo / "project-env/pyvenv.cfg").write_text("home = /usr\n")
+        (self.repo / "project-env/lib/site.py").write_text("x = 1\n")
+        kelvin = "foo.\u212aS"  # a Kelvin sign lowercases to "k" in Unicode
+        (self.repo / kelvin).write_text("x\n")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "edge cases")
+        head = git(self.repo, "rev-parse", "HEAD")
+        rules = {"extensions": {".ks": "python"}}
+        rows = {x["path"]: x for x in inventory(self.repo, head, "f" * 64, rules)[0]}
+        self.assertEqual(rows[".llm-cc-cache/cached.py"]["reason"], "excluded")
+        self.assertEqual(rows["project-env/lib/site.py"]["reason"], "excluded")
+        self.assertIsNone(rows[kelvin]["language"])
+        # A reversed range matches nothing, and its negation any character.
+        self.assertEqual(_classify("q.cc", {"tests": ["[z-a].cc"]}), "runtime")
+        self.assertEqual(_classify("q.cc", {"tests": ["[!z-a].cc"]}), "tests")
+
+    def test_committed_rules_are_read_like_llm_cc(self):
+        (self.repo / ".llm-cc").mkdir()
+        (self.repo / ".llm-cc/rules.json").write_bytes(
+            b'\xef\xbb\xbf{"tests": ["copy.cc"]}'
+        )
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "rules with a byte order mark")
+        target = git(self.repo, "rev-parse", "HEAD")
+        rules, _ = resolve_rules(self.repo, target, {}, REPOSITORY_RULES_PATH)
+        self.assertEqual(rules, {"tests": ["copy.cc"]})
+        (self.repo / ".llm-cc/rules.json").unlink()
+        (self.repo / ".llm-cc/real.json").write_text("{}")
+        (self.repo / ".llm-cc/rules.json").symlink_to("real.json")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-qm", "symlinked rules")
+        linked = git(self.repo, "rev-parse", "HEAD")
+        with self.assertRaises(GitError):
+            resolve_rules(self.repo, linked, {}, REPOSITORY_RULES_PATH)
+
     def test_repository_rules_prefer_the_shared_file_name(self):
         (self.repo / ".llm-cc").mkdir()
         (self.repo / ".llm-cc/comparison-rules.json").write_text(

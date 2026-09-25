@@ -1,6 +1,7 @@
 import functools
 import hashlib
 import re
+import string
 import subprocess
 
 from .common import canonical_bytes, digest
@@ -266,7 +267,8 @@ def read_tree_file(repo, revision, path):
         kind = _git(repo, ["cat-file", "-t", target]).strip()
     except GitError:
         return None
-    if kind != b"blob":
+    listing = _git(repo, ["ls-tree", "-z", revision, "--", path]).split(b"\0")[0]
+    if kind != b"blob" or not listing.startswith((b"100644 ", b"100755 ")):
         raise GitError("%s is not a regular file in %s" % (path, revision))
     return _git(repo, ["cat-file", "blob", target])
 
@@ -303,10 +305,30 @@ def resolve_commit(repo, revision):
     return value
 
 
+# llm-cc folds only ASCII letters in extensions.
+_ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
+
+
 def _extension(path):
     name = path.rsplit("/", 1)[-1]
     dot = name.rfind(".")
-    return name[dot:].lower() if dot >= 0 else ""
+    return name[dot:].translate(_ASCII_LOWER) if dot >= 0 else ""
+
+
+def _always_excluded(path):
+    """Git metadata and llm-cc caches, which no rules file can include."""
+    return any(part in (".git", ".llm-cc-cache") for part in path.split("/"))
+
+
+def _in_virtual_environment(path, environments):
+    """Whether the root or a directory above `path` holds a pyvenv.cfg."""
+    if "" in environments:
+        return True
+    directories = path.split("/")[:-1]
+    return any(
+        "/".join(directories[: depth + 1]) in environments
+        for depth in range(len(directories))
+    )
 
 
 def _classify(path, rules):
@@ -348,11 +370,19 @@ def _path(path_bytes):
 def inventory(repo, revision, fingerprint, rules=None, max_file_bytes=65536):
     rules = validate_rules(rules or {})
     raw = _git(repo, ["ls-tree", "-rlz", "--full-tree", revision])
+    entries = [entry for entry in raw.split(b"\0") if entry]
+    # llm-cc skips any directory holding a pyvenv.cfg, as it does locally.
+    environments = set()
+    for entry in entries:
+        metadata, path_bytes = entry.split(b"\t", 1)
+        if metadata.split()[0] in (b"100644", b"100755") and (
+            path_bytes.rsplit(b"/", 1)[-1] == b"pyvenv.cfg"
+        ):
+            text, printable = _path(path_bytes.rpartition(b"/")[0])
+            environments.add(printable if text is None else text)
     records = []
     blob_ids = []
-    for entry in raw.split(b"\0"):
-        if not entry:
-            continue
+    for entry in entries:
         metadata, path_bytes = entry.split(b"\t", 1)
         mode, kind, object_id, size_text = metadata.split()
         text, path = _path(path_bytes)
@@ -377,7 +407,11 @@ def inventory(repo, revision, fingerprint, rules=None, max_file_bytes=65536):
             record["reason"] = "symlink"
         elif kind != b"blob" or text is None:
             record["reason"] = "unsupported"
-        elif _matches(matched, _patterns(rules, "exclude")):
+        elif (
+            _always_excluded(matched)
+            or _in_virtual_environment(matched, environments)
+            or _matches(matched, _patterns(rules, "exclude"))
+        ):
             record["reason"] = "excluded"
         elif record["language"] is None:
             record["reason"] = "unsupported"
