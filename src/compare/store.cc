@@ -117,6 +117,42 @@ void ValidateStoreKey(std::string_view key) {
   }
 }
 
+namespace {
+
+// Other writers of a shared store could replace a key directory with a
+// symlink and redirect reads or writes outside the root, so every directory
+// between the root and the entry must be a real one. With `create`, missing
+// directories are made one level at a time and checked in turn. Returns false
+// for a missing directory, which a read treats as a miss.
+bool CheckedParents(const std::filesystem::path& root, std::string_view key,
+                    bool create) {
+  std::filesystem::path current = root;
+  std::string_view remaining = key;
+  for (std::size_t end = remaining.find('/'); end != std::string_view::npos;
+       end = remaining.find('/')) {
+    current /= std::filesystem::u8path(remaining.substr(0, end));
+    remaining.remove_prefix(end + 1);
+    std::error_code error;
+    auto status = std::filesystem::symlink_status(current, error);
+    if (status.type() == std::filesystem::file_type::not_found && create) {
+      std::filesystem::create_directory(current, error);
+      status = std::filesystem::symlink_status(current, error);
+    }
+    if (status.type() == std::filesystem::file_type::not_found) {
+      return false;
+    }
+    if (error || status.type() != std::filesystem::file_type::directory) {
+      throw StoreError("store entry " + std::string(key) + " passes through " +
+                       (status.type() == std::filesystem::file_type::symlink
+                            ? "a symlink"
+                            : "something other than a directory"));
+    }
+  }
+  return true;
+}
+
+}  // namespace
+
 FilesystemStore::FilesystemStore(std::filesystem::path root)
     : root_(std::move(root)) {}
 
@@ -127,11 +163,18 @@ std::filesystem::path FilesystemStore::PathOf(std::string_view key) const {
 
 std::optional<std::string> FilesystemStore::Get(std::string_view key) {
   const std::filesystem::path path = PathOf(key);
+  if (!CheckedParents(root_, key, false)) {
+    return std::nullopt;
+  }
   std::error_code error;
-  const auto status = std::filesystem::status(path, error);
+  const auto status = std::filesystem::symlink_status(path, error);
   if (error == std::errc::no_such_file_or_directory ||
       status.type() == std::filesystem::file_type::not_found) {
     return std::nullopt;
+  }
+  if (status.type() == std::filesystem::file_type::symlink) {
+    throw StoreError("cannot read store entry " + std::string(key) +
+                     ": it is a symlink");
   }
   if (error || status.type() != std::filesystem::file_type::regular) {
     throw StoreError("cannot read store entry " + std::string(key) + ": " +
@@ -152,6 +195,8 @@ std::optional<std::string> FilesystemStore::Get(std::string_view key) {
 void FilesystemStore::Put(std::string_view key, std::string_view value) {
   const std::filesystem::path path = PathOf(key);
   try {
+    std::filesystem::create_directories(root_);
+    CheckedParents(root_, key, true);
     cache_io::AtomicWriteFile(path, value, 0660);
   } catch (const std::exception& error) {
     throw StoreError("cannot write store entry " + std::string(key) + ": " +

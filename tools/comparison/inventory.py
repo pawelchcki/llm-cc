@@ -250,6 +250,18 @@ def resolve_language(path, rules):
     return (LANGUAGES | rules.get("extensions", {})).get(_extension(path))
 
 
+def _path(path_bytes):
+    """A Git path as text, and whether its bytes were valid UTF-8.
+
+    Undecodable bytes become `\\xHH`, as in llm-cc, so plans and reports stay
+    valid JSON; such a path is recorded but never scored.
+    """
+    try:
+        return path_bytes.decode("utf-8"), True
+    except UnicodeDecodeError:
+        return path_bytes.decode("utf-8", "backslashreplace"), False
+
+
 def inventory(repo, revision, fingerprint, rules=None, max_file_bytes=65536):
     rules = validate_rules(rules or {})
     raw = _git(repo, ["ls-tree", "-rlz", "--full-tree", revision])
@@ -260,7 +272,7 @@ def inventory(repo, revision, fingerprint, rules=None, max_file_bytes=65536):
             continue
         metadata, path_bytes = entry.split(b"\t", 1)
         mode, kind, object_id, size_text = metadata.split()
-        path = path_bytes.decode("utf-8", "surrogateescape")
+        path, valid = _path(path_bytes)
         size = None if size_text == b"-" else int(size_text)
         record = {
             "path": path,
@@ -273,13 +285,13 @@ def inventory(repo, revision, fingerprint, rules=None, max_file_bytes=65536):
             "reason": None,
             "_object": object_id.decode("ascii"),
         }
-        if kind == b"blob":
+        if kind == b"blob" and valid:
             record["language"] = resolve_language(path, rules)
         if mode == b"160000" or kind == b"commit":
             record["reason"] = "submodule"
         elif mode == b"120000":
             record["reason"] = "symlink"
-        elif kind != b"blob":
+        elif kind != b"blob" or not valid:
             record["reason"] = "unsupported"
         elif any(fnmatch.fnmatchcase(path, p) for p in rules.get("exclude", [])):
             record["reason"] = "excluded"
@@ -356,7 +368,7 @@ def changes(repo, base, head):
             old = new
 
         def decode(p):
-            return p.decode("utf-8", "surrogateescape")
+            return _path(p)[0]
 
         result.append(
             {

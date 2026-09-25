@@ -385,6 +385,42 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(report["status"], "complete")
         self.assertIsNone(report["comparisons"]["repository"]["score"]["head"])
 
+    def test_non_utf8_paths_are_escaped_and_reported(self):
+        # Linux filenames are bytes; llm-cc reads plans as strict JSON.
+        name = os.fsdecode(b"bad\xffname.py")
+        (self.repo / name).write_text("x = 1\n")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "odd bytes")
+        head = git(self.repo, "rev-parse", "HEAD")
+        plan = prepare(
+            self.repo,
+            head,
+            self.base,
+            self.identity,
+            self.profile,
+            {},
+            MemoryCache(),
+            Path(self.temp.name) / "bytes-out",
+            1,
+        )
+        entry = next(
+            x for x in plan["inventories"]["head"] if x["path"] == "bad\\xffname.py"
+        )
+        self.assertEqual(entry["reason"], "unsupported")
+        self.assertIsNone(entry["key"])
+        self.assertIn(
+            "bad\\xffname.py",
+            {change["new_path"] for change in plan["changes"]},
+        )
+        report = aggregate_report(
+            Path(self.temp.name) / "bytes-report",
+            plan=Path(self.temp.name) / "bytes-out/plan.json",
+            workers=[],
+        )
+        self.assertNotIn(
+            "aggregation failed", " ".join(report["errors"]), report["errors"]
+        )
+
     def test_compare_cold_warm_incremental_and_worker_count_equality(self):
         root = Path(self.temp.name)
         scorer, model, profile = synthetic_scorer(root)
