@@ -1,6 +1,7 @@
-import fnmatch
+import functools
 import hashlib
 import re
+import string
 import subprocess
 
 from .common import canonical_bytes, digest
@@ -52,6 +53,162 @@ def _git(repo, args, data=None):
     return completed.stdout
 
 
+# llm-cc's built-in rules (src/rules.cc). A rules file keeps the default of
+# every list it omits, exactly as llm-cc applies it.
+DEFAULT_RULES = {
+    "exclude": [
+        "**/.hg/**", "**/.svn/**", "**/target/**", "**/node_modules/**",
+        "**/.gradle/**", "**/.venv/**", "**/__pycache__/**", "**/.tox/**",
+        "**/.nox/**", "**/.mypy_cache/**", "**/.pytest_cache/**",
+        "**/.ruff_cache/**", "**/vendor/**", "**/third_party/**", "**/build/**",
+        "**/build-out/**", "**/.nuget/**", "**/dist/**", "**/deps/**",
+        "**/_build/**", "**/cmake-build-debug/**", "**/cmake-build-release/**",
+        "**/bazel-*/**", "out/**", "**/bin/**/*.cs", "**/obj/**/*.cs",
+    ],
+    "tests": [
+        "**/test/**", "**/tests/**", "**/testdata/**", "**/fixtures/**",
+        "**/fuzz/**", "**/fuzzers/**", "**/*_test.*", "**/test_*.*",
+    ],
+    "tooling": ["tools/**", "examples/**", "example/**", "scripts/**", "benchmarks/**"],
+}
+
+
+def _patterns(rules, name):
+    return rules[name] if name in rules else DEFAULT_RULES[name]
+
+
+def _check_glob(pattern):
+    """Reject what llm-cc's Glob::Compile rejects, with its reasons."""
+
+    def invalid(reason):
+        raise ValueError("invalid glob %r: %s" % (pattern, reason))
+
+    if pattern.startswith("/") or pattern.endswith("/"):
+        invalid("patterns are relative to the repository root and match files")
+    for segment in pattern.split("/"):
+        if not segment:
+            invalid("empty path segment")
+        if segment in (".", ".."):
+            invalid("'.' and '..' segments never match a repository path")
+        index = 0
+        while index < len(segment):
+            if segment[index] == "\\":
+                index += 1
+                if index >= len(segment):
+                    invalid("trailing backslash")
+            elif segment[index] == "[":
+                end = index + 1
+                if end < len(segment) and segment[end] in "!^":
+                    end += 1
+                if end < len(segment) and segment[end] == "]":
+                    end += 1
+                while end < len(segment) and segment[end] != "]":
+                    end += 2 if segment[end] == "\\" else 1
+                if end >= len(segment):
+                    invalid("unterminated '['")
+                index = end
+            index += 1
+
+
+def _match_class(pattern, index, value):
+    """Match the set starting at pattern[index] == "["; return (hit, end)."""
+    index += 1
+    negated = index < len(pattern) and pattern[index] in "!^"
+    index += negated
+    matched = False
+    first = True
+    while index < len(pattern) and (first or pattern[index] != "]"):
+        first = False
+        if pattern[index] == "\\":
+            index += 1
+        low = high = pattern[index]
+        index += 1
+        if index + 1 < len(pattern) and pattern[index] == "-" and pattern[index + 1] != "]":
+            index += 1
+            if pattern[index] == "\\":
+                index += 1
+            high = pattern[index]
+            index += 1
+        # A reversed range matches nothing.
+        matched = matched or low <= value <= high
+    return matched != negated, index + 1
+
+
+def _match_segment(pattern, text):
+    """One segment, as llm-cc matches it: the last `*` absorbs characters."""
+    position = offset = 0
+    star = None
+    star_offset = 0
+    while offset < len(text):
+        if position < len(pattern) and pattern[position] == "*":
+            while position < len(pattern) and pattern[position] == "*":
+                position += 1
+            star, star_offset = position, offset
+            continue
+        if position < len(pattern):
+            token = pattern[position]
+            if token == "?":
+                hit, following = True, position + 1
+            elif token == "[":
+                hit, following = _match_class(pattern, position, text[offset])
+            else:
+                literal = position + 1 if token == "\\" else position
+                hit, following = pattern[literal] == text[offset], literal + 1
+            if hit:
+                position, offset = following, offset + 1
+                continue
+        if star is None:
+            return False
+        star_offset += 1
+        position, offset = star, star_offset
+    while position < len(pattern) and pattern[position] == "*":
+        position += 1
+    return position == len(pattern)
+
+
+@functools.lru_cache(maxsize=4096)
+def _glob(pattern):
+    """llm-cc's segment-aware glob (src/glob.cc) as its segments.
+
+    Patterns are anchored at the repository root; `*` and `?` never cross
+    `/`; a whole-segment `**` matches zero or more directories, and a
+    trailing `/**` one or more path segments. Matching is linear in the
+    pattern and path, never a backtracking regular expression.
+    """
+    segments = pattern.split("/")
+    if segments[-1] == "**":
+        segments[-1:] = ["*", "**"]
+    return tuple(segments)
+
+
+def _glob_matches(pattern, path):
+    segments = _glob(pattern)
+    parts = [part for part in path.split("/") if part]
+    position = index = 0
+    star = None
+    star_index = 0
+    while index < len(parts):
+        if position < len(segments) and segments[position] == "**":
+            position += 1
+            star, star_index = position, index
+            continue
+        if position < len(segments) and _match_segment(segments[position], parts[index]):
+            position += 1
+            index += 1
+            continue
+        if star is None:
+            return False
+        star_index += 1
+        position, index = star, star_index
+    while position < len(segments) and segments[position] == "**":
+        position += 1
+    return position == len(segments)
+
+
+def _matches(path, patterns):
+    return any(_glob_matches(pattern, path) for pattern in patterns)
+
+
 def validate_rules(rules):
     """Reject classification rules that a repository could use to hide work."""
     if not isinstance(rules, dict):
@@ -76,6 +233,7 @@ def validate_rules(rules):
                     "classification rule %s needs non-empty globs of at most 256 characters"
                     % name
                 )
+            _check_glob(pattern)
     paths = rules.get("paths", [])
     languages = set(LANGUAGES.values())
     if not isinstance(paths, list):
@@ -93,6 +251,7 @@ def validate_rules(rules):
                 "classification rule paths needs {pattern, language} objects with "
                 "non-empty globs of at most 256 characters"
             )
+        _check_glob(override["pattern"])
         if override["language"] not in languages:
             raise ValueError(
                 "classification rule path %s names an unsupported language"
@@ -128,8 +287,22 @@ def read_tree_file(repo, revision, path):
     try:
         kind = _git(repo, ["cat-file", "-t", target]).strip()
     except GitError:
+        # Absent unless a parent exists as something other than a directory,
+        # which llm-cc reports rather than reading as no rules.
+        parts = path.split("/")
+        for depth in range(1, len(parts)):
+            parent = "%s:%s" % (revision, "/".join(parts[:depth]))
+            try:
+                parent_kind = _git(repo, ["cat-file", "-t", parent]).strip()
+            except GitError:
+                return None
+            if parent_kind != b"tree":
+                raise GitError(
+                    "%s is not a directory in %s" % ("/".join(parts[:depth]), revision)
+                )
         return None
-    if kind != b"blob":
+    listing = _git(repo, ["ls-tree", "-z", revision, "--", path]).split(b"\0")[0]
+    if kind != b"blob" or not listing.startswith((b"100644 ", b"100755 ")):
         raise GitError("%s is not a regular file in %s" % (path, revision))
     return _git(repo, ["cat-file", "blob", target])
 
@@ -166,41 +339,36 @@ def resolve_commit(repo, revision):
     return value
 
 
+# llm-cc folds only ASCII letters in extensions.
+_ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
+
+
 def _extension(path):
     name = path.rsplit("/", 1)[-1]
     dot = name.rfind(".")
-    return name[dot:].lower() if dot >= 0 else ""
+    return name[dot:].translate(_ASCII_LOWER) if dot >= 0 else ""
+
+
+def _always_excluded(path):
+    """Git metadata and llm-cc caches, which no rules file can include."""
+    return any(part in (".git", ".llm-cc-cache") for part in path.split("/"))
+
+
+def _in_virtual_environment(path, environments):
+    """Whether the root or a directory above `path` holds a pyvenv.cfg."""
+    if "" in environments:
+        return True
+    directories = path.split("/")[:-1]
+    return any(
+        "/".join(directories[: depth + 1]) in environments
+        for depth in range(len(directories))
+    )
 
 
 def _classify(path, rules):
-    test_patterns = rules.get(
-        "tests",
-        [
-            "test/**",
-            "tests/**",
-            "testdata/**",
-            "fixtures/**",
-            "fuzz/**",
-            "fuzzers/**",
-            "**/test/**",
-            "**/tests/**",
-            "**/testdata/**",
-            "**/fixtures/**",
-            "**/fuzz/**",
-            "**/fuzzers/**",
-            "*_test.*",
-            "test_*.*",
-            "**/*_test.*",
-            "**/test_*.*",
-        ],
-    )
-    tooling = rules.get(
-        "tooling",
-        ["tools/**", "examples/**", "example/**", "scripts/**", "benchmarks/**"],
-    )
-    if any(fnmatch.fnmatchcase(path, p) for p in test_patterns):
+    if _matches(path, _patterns(rules, "tests")):
         return "tests"
-    if any(fnmatch.fnmatchcase(path, p) for p in tooling):
+    if _matches(path, _patterns(rules, "tooling")):
         return "tooling"
     return "runtime"
 
@@ -213,7 +381,7 @@ def resolve_language(path, rules):
     therefore a different cache key, on each side.
     """
     for override in rules.get("paths", []):
-        if fnmatch.fnmatchcase(path, override["pattern"]):
+        if _glob_matches(override["pattern"], path):
             return override["language"]
     return (LANGUAGES | rules.get("extensions", {})).get(_extension(path))
 
@@ -221,11 +389,20 @@ def resolve_language(path, rules):
 def inventory(repo, revision, fingerprint, rules=None, max_file_bytes=65536):
     rules = validate_rules(rules or {})
     raw = _git(repo, ["ls-tree", "-rlz", "--full-tree", revision])
+    entries = [entry for entry in raw.split(b"\0") if entry]
+    # llm-cc skips any directory holding a pyvenv.cfg, as it does locally.
+    environments = set()
+    for entry in entries:
+        metadata, path_bytes = entry.split(b"\t", 1)
+        if metadata.split()[0] in (b"100644", b"100755") and (
+            path_bytes.rsplit(b"/", 1)[-1] == b"pyvenv.cfg"
+        ):
+            environments.add(
+                path_bytes.rpartition(b"/")[0].decode("utf-8", "surrogateescape")
+            )
     records = []
     blob_ids = []
-    for entry in raw.split(b"\0"):
-        if not entry:
-            continue
+    for entry in entries:
         metadata, path_bytes = entry.split(b"\t", 1)
         mode, kind, object_id, size_text = metadata.split()
         path = path_bytes.decode("utf-8", "surrogateescape")
@@ -249,7 +426,11 @@ def inventory(repo, revision, fingerprint, rules=None, max_file_bytes=65536):
             record["reason"] = "symlink"
         elif kind != b"blob":
             record["reason"] = "unsupported"
-        elif any(fnmatch.fnmatchcase(path, p) for p in rules.get("exclude", [])):
+        elif (
+            _always_excluded(path)
+            or _in_virtual_environment(path, environments)
+            or _matches(path, _patterns(rules, "exclude"))
+        ):
             record["reason"] = "excluded"
         elif record["language"] is None:
             record["reason"] = "unsupported"

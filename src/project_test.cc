@@ -98,8 +98,9 @@ int main() {  // NOLINT(bugprone-exception-escape)
       "target/generated.rs");
 
   const auto normal = llmcc::DiscoverSources({repository});
-  llmcc::test::ExpectEq(normal.sources.size(), std::size_t{21},
-                        "Git discovery filters headers and generated files");
+  llmcc::test::ExpectEq(normal.sources.size(), std::size_t{23},
+                        "Git discovery keeps headers and filters generated "
+                        "files");
   llmcc::test::Expect(
       std::ranges::any_of(normal.sources,
                           [](const auto& source) {
@@ -141,6 +142,8 @@ int main() {  // NOLINT(bugprone-exception-escape)
       {"Main.cs", llmcc::Language::kCSharp},
       {"script.csx", llmcc::Language::kCSharp},
       {"kernel.cu", llmcc::Language::kCpp},
+      {"z.h", llmcc::Language::kC},
+      {"kernel.cuh", llmcc::Language::kCpp},
   };
   for (const auto& [filename, language] : expected_languages) {
     const auto source = std::ranges::find_if(
@@ -151,10 +154,10 @@ int main() {  // NOLINT(bugprone-exception-escape)
         "new source extension has canonical language");
   }
 
-  const auto headers = llmcc::DiscoverSources(
-      {repository / "src", repository / "src/a.rs"}, {.include_headers = true});
+  const auto headers =
+      llmcc::DiscoverSources({repository / "src", repository / "src/a.rs"});
   llmcc::test::ExpectEq(headers.sources.size(), std::size_t{17},
-                        "overlap is deduplicated and headers can be included");
+                        "overlap is deduplicated and headers are included");
 
   const auto explicit_header = llmcc::DiscoverSources({repository / "src/z.h"});
   llmcc::test::ExpectEq(explicit_header.sources.size(), std::size_t{1},
@@ -169,9 +172,21 @@ int main() {  // NOLINT(bugprone-exception-escape)
       {repository / "src/a.rs"}, {.language = llmcc::Language::kCpp});
   llmcc::test::ExpectEq(forced.sources[0].language, llmcc::Language::kCpp,
                         "language is forced");
+  const fs::path mixed = fs::path(temporary) / "mixed";
+  Write(mixed / "notes.md", "# notes\n");
+  Write(mixed / "code.c", "int code;\n");
+  const auto forced_directory =
+      llmcc::DiscoverSources({mixed}, {.language = llmcc::Language::kCpp});
+  llmcc::test::Expect(
+      forced_directory.sources.size() == 1 &&
+          forced_directory.sources[0].language == llmcc::Language::kCpp,
+      "a forced language does not select unsupported files");
+  const auto forced_file = llmcc::DiscoverSources(
+      {mixed / "notes.md"}, {.language = llmcc::Language::kCpp});
+  llmcc::test::ExpectEq(forced_file.sources.size(), std::size_t{1},
+                        "an explicit file takes the forced language");
 
-  const auto all = llmcc::DiscoverSources(
-      {repository}, {.include_headers = true, .no_ignore = true});
+  const auto all = llmcc::DiscoverSources({repository}, {.no_ignore = true});
   llmcc::test::ExpectEq(all.sources.size(), std::size_t{34},
                         "no-ignore includes ignored and generated files");
   for (const auto& source : all.sources) {
@@ -213,5 +228,151 @@ int main() {  // NOLINT(bugprone-exception-escape)
       llmcc::DiscoverSources({environment}, {.no_ignore = true});
   llmcc::test::ExpectEq(included_environment.sources.size(), std::size_t{1},
                         "no-ignore includes a virtual environment input root");
+
+  // Git metadata is never analyzed, even when named explicitly.
+  Write(repository / ".git/hooks/check.py", "def check(): pass\n");
+  llmcc::test::ExpectEq(
+      llmcc::DiscoverSources({repository / ".git/hooks/check.py"})
+          .sources.size(),
+      std::size_t{0}, "an explicit file under .git is never analyzed");
+  // A directory named .git above a worktree is not its metadata.
+  const fs::path under_git = fs::path(temporary) / "outer/.git/inner";
+  Write(under_git / "main.py", "def main(): pass\n");
+  Run("git -C " + Quote(under_git) + " init -q");
+  llmcc::test::ExpectEq(llmcc::DiscoverSources({under_git}).sources.size(),
+                        std::size_t{1},
+                        "a worktree below a .git directory is analyzed");
+  llmcc::test::ExpectEq(
+      llmcc::DiscoverSources({under_git / "main.py"}).sources.size(),
+      std::size_t{1}, "an explicit file below a .git directory is analyzed");
+
+#ifndef _WIN32
+  // Only a regular pyvenv.cfg marks a virtual environment, as in a commit.
+  const fs::path linked_marker = fs::path(temporary) / "linked-marker";
+  Write(linked_marker / "real.cfg", "home = /usr\n");
+  Write(linked_marker / "env/lib/site.py", "x = 1\n");
+  fs::create_symlink("../real.cfg", linked_marker / "env/pyvenv.cfg");
+  llmcc::test::ExpectEq(
+      llmcc::DiscoverSources({linked_marker}).sources.size(), std::size_t{1},
+      "a symlinked pyvenv.cfg does not mark a virtual environment");
+
+  // Recursive discovery skips symlinks, which would otherwise lend their own
+  // path, language and rules to the file they point at.
+  for (const bool git : {true, false}) {
+    const fs::path aliased =
+        fs::path(temporary) / (git ? "aliased-git" : "aliased");
+    Write(aliased / "src/main.rs", "fn main() {}\n");
+    fs::create_symlink("src/main.rs", aliased / "a.py");
+    if (git) {
+      Run("git -C " + Quote(aliased) + " init -q");
+    }
+    const auto discovered = llmcc::DiscoverSources({aliased});
+    llmcc::test::Expect(
+        discovered.sources.size() == 1 &&
+            discovered.sources[0].language == llmcc::Language::kRust &&
+            discovered.sources[0].relative_path == "src/main.rs",
+        "a symlink alias does not classify its target");
+  }
+#endif
+
+  // A repository nested in a plain directory keeps its own rules.
+  const fs::path outer = fs::path(temporary) / "outer";
+  const fs::path inner = outer / "inner";
+  fs::create_directories(inner);
+  Run("git -C " + Quote(inner) + " init -q");
+  Write(inner / ".llm-cc/rules.json", R"({"exclude": ["gen/**"]})");
+  Write(inner / "gen/skip.cc", "int skip;\n");
+  Write(inner / "keep.cc", "int keep;\n");
+  Write(outer / "top.cc", "int top;\n");
+  const auto nested_rules = llmcc::DiscoverSources({outer});
+  std::map<std::string, const llmcc::DiscoveredSource*> nested_by_path;
+  for (const auto& source : nested_rules.sources) {
+    nested_by_path[source.relative_path] = &source;
+  }
+  llmcc::test::Expect(
+      nested_by_path.size() == 2 && nested_by_path.contains("top.cc") &&
+          nested_by_path.contains("keep.cc") &&
+          nested_by_path.at("keep.cc")->repository == fs::canonical(inner),
+      "a nested repository is discovered with its own rules");
+
+  // A repository's rules select, name, and classify its sources.
+  const fs::path ruled = fs::path(temporary) / "ruled";
+  fs::create_directories(ruled);
+  Run("git -C " + Quote(ruled) + " init -q");
+  Write(ruled / ".llm-cc/rules.json",
+        R"({"exclude": ["gen/**", "**/*.pb.cc"], "tests": ["qa/**"],
+            "extensions": {".h": "cpp"},
+            "paths": [{"pattern": "legacy/**", "language": "c"}]})");
+  Write(ruled / "src/Upper.H", "int upper;\n");
+  Write(ruled / "src/Other.CPP", "int other;\n");
+  Write(ruled / "src/main.cc", "int main() {}\n");
+  Write(ruled / "src/msg.pb.cc", "int generated;\n");
+  Write(ruled / "legacy/x.h", "int legacy;\n");
+  Write(ruled / "gen/skip.cc", "int skip;\n");
+  Write(ruled / "qa/check.py", "def check(): pass\n");
+  Write(ruled / "third_party/kept.cc", "int kept;\n");
+  const fs::path ruled_nested = ruled / "nested";
+  fs::create_directories(ruled_nested);
+  Run("git -C " + Quote(ruled_nested) + " init -q");
+  Write(ruled_nested / "gen/kept.cc", "int kept;\n");
+  Write(ruled_nested / "third_party/skip.cc", "int skip;\n");
+  const auto ruled_sources = llmcc::DiscoverSources({ruled});
+  std::map<std::string, const llmcc::DiscoveredSource*> by_relative;
+  for (const auto& source : ruled_sources.sources) {
+    const std::string key =
+        (source.repository == fs::canonical(ruled_nested) ? "nested:" : "") +
+        source.relative_path;
+    by_relative[key] = &source;
+  }
+  llmcc::test::ExpectEq(ruled_sources.sources.size(), std::size_t{7},
+                        "repository rules select sources");
+  const auto language_of = [&](const std::string& key) {
+    const auto found = by_relative.find(key);
+    llmcc::test::Expect(found != by_relative.end(), "source found: " + key);
+    return found->second->language;
+  };
+  llmcc::test::ExpectEq(language_of("src/Upper.H"), llmcc::Language::kCpp,
+                        "configured extensions match case-insensitively");
+  llmcc::test::ExpectEq(language_of("src/Other.CPP"), llmcc::Language::kCpp,
+                        "built-in extensions match case-insensitively");
+  llmcc::test::ExpectEq(language_of("legacy/x.h"), llmcc::Language::kC,
+                        "path overrides select a language");
+  llmcc::test::ExpectEq(language_of("third_party/kept.cc"),
+                        llmcc::Language::kCpp,
+                        "a configured exclude replaces the defaults");
+  llmcc::test::ExpectEq(language_of("nested:gen/kept.cc"),
+                        llmcc::Language::kCpp,
+                        "a nested repository uses its own rules");
+  llmcc::test::ExpectEq(by_relative.at("qa/check.py")->category,
+                        llmcc::Category::kTests,
+                        "configured test globs classify sources");
+  llmcc::test::ExpectEq(by_relative.at("src/main.cc")->category,
+                        llmcc::Category::kRuntime,
+                        "unmatched sources are runtime");
+  llmcc::test::ExpectEq(ruled_sources.rules.size(), std::size_t{2},
+                        "each Git root reports its rules");
+  llmcc::test::Expect(
+      ruled_sources.rules[0].repository == fs::canonical(ruled) &&
+          ruled_sources.rules[0].path == std::string(llmcc::kRulesPath) &&
+          ruled_sources.rules[1].repository == fs::canonical(ruled_nested) &&
+          !ruled_sources.rules[1].path.has_value(),
+      "rules sources name the file each root used");
+  const auto ruled_all = llmcc::DiscoverSources({ruled}, {.no_ignore = true});
+  llmcc::test::ExpectEq(ruled_all.sources.size(), std::size_t{10},
+                        "no-ignore includes rule-excluded sources");
+  const auto ruled_explicit = llmcc::DiscoverSources({ruled / "gen/skip.cc"});
+  llmcc::test::Expect(
+      ruled_explicit.sources.size() == 1 &&
+          ruled_explicit.sources[0].relative_path == "gen/skip.cc",
+      "an explicit excluded file is still analyzed");
+  Write(ruled / ".llm-cc/rules.json", R"({"tests": 1})");
+  try {
+    static_cast<void>(llmcc::DiscoverSources({ruled}));
+    llmcc::test::Expect(false, "invalid repository rules fail discovery");
+  } catch (const std::runtime_error& error) {
+    llmcc::test::Expect(
+        std::string(error.what()).find("invalid rules in") != std::string::npos,
+        "invalid rules name their repository");
+  }
   return 0;
 }

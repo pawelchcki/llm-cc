@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -62,10 +63,10 @@ std::vector<FunctionSpan> Functions(std::string_view preprocessed,
                                     Language language,
                                     PreprocessOptions options = {});
 Language ParseLanguage(std::string_view name);
+// Built-in extension table, including the leading dot; case-insensitive.
+std::optional<Language> LanguageForExtension(std::string_view extension);
 Language InferLanguage(std::string_view path);
 std::string_view LanguageName(Language language);
-bool IsHeaderPath(std::string_view path);
-bool IsSourcePath(std::string_view path, bool include_headers);
 
 }  // namespace llmcc
 

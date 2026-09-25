@@ -1645,42 +1645,6 @@ EntropyScoreResult EntropyScorer::ScoreRecordsWithMetadata(
   return implementation_->ScoreRecordsWithMetadata(input);
 }
 
-std::string_view EntropyReductionName(EntropyReduction reduction) {
-  switch (reduction) {
-    case EntropyReduction::kAuto:
-      return "auto";
-    case EntropyReduction::kHost:
-      return "host";
-    case EntropyReduction::kDevice:
-      return "device";
-  }
-  return "unknown";
-}
-
-std::string_view FlashAttentionName(FlashAttention setting) {
-  switch (setting) {
-    case FlashAttention::kAuto:
-      return "auto";
-    case FlashAttention::kOn:
-      return "on";
-    case FlashAttention::kOff:
-      return "off";
-  }
-  return "unknown";
-}
-
-std::string_view KvCacheTypeName(KvCacheType type) {
-  switch (type) {
-    case KvCacheType::kF16:
-      return "f16";
-    case KvCacheType::kQ8_0:
-      return "q8_0";
-    case KvCacheType::kQ4_0:
-      return "q4_0";
-  }
-  return "unknown";
-}
-
 std::uint32_t ContextRequestCapacity(std::uint32_t context_limit,
                                      std::uint32_t batch_size,
                                      std::uint32_t required_tokens) {

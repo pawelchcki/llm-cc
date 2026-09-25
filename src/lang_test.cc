@@ -589,10 +589,10 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
     llmcc::test::ExpectEq(llmcc::InferLanguage(path), language,
                           "source extension is inferred");
   }
-  llmcc::test::Expect(llmcc::IsSourcePath("kernel.cu", false) &&
-                          !llmcc::IsSourcePath("kernel.cuh", false) &&
-                          llmcc::IsSourcePath("kernel.cuh", true),
-                      "CUDA source and header discovery is classified");
+  llmcc::test::Expect(
+      llmcc::LanguageForExtension(".cu") == llmcc::Language::kCpp &&
+          llmcc::LanguageForExtension(".cuh") == llmcc::Language::kCpp,
+      "CUDA sources and headers use the C++ grammar");
   const auto cuda = llmcc::PrepareSource(
       "__global__ void tiny(int *out) { *out = threadIdx.x; }\n"
       "void launch(int *out) { tiny<<<1, 1>>>(out); }\n",
@@ -601,11 +601,15 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
       cuda.functions.size() == 2 && cuda.functions[0].name == "tiny" &&
           cuda.functions[1].name == "launch",
       "CUDA kernel and launch syntax use C++ function extraction");
-  llmcc::test::Expect(!llmcc::IsSourcePath("component.jsx", false) &&
-                          !llmcc::IsSourcePath("component.ts", false) &&
-                          !llmcc::IsSourcePath("component.tsx", false) &&
-                          !llmcc::IsSourcePath("Main.JAVA", false),
-                      "unsupported and case-mismatched extensions are omitted");
+  llmcc::test::Expect(!llmcc::LanguageForExtension(".jsx").has_value() &&
+                          !llmcc::LanguageForExtension(".ts").has_value() &&
+                          !llmcc::LanguageForExtension(".tsx").has_value(),
+                      "unsupported extensions are omitted");
+  llmcc::test::Expect(
+      llmcc::InferLanguage("Main.JAVA") == llmcc::Language::kJava &&
+          llmcc::InferLanguage("src/Foo.PY") == llmcc::Language::kPython &&
+          llmcc::InferLanguage("win\\X.H") == llmcc::Language::kC,
+      "extensions are inferred case-insensitively");
   try {
     static_cast<void>(llmcc::ParseLanguage("typescript"));
     llmcc::test::Expect(false, "unsupported language is rejected");

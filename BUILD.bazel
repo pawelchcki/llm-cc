@@ -548,10 +548,72 @@ cc_library(
 )
 
 cc_library(
+    name = "sha1",
+    hdrs = ["src/sha1.h"],
+)
+
+cc_library(
+    name = "subprocess",
+    srcs = ["src/subprocess.cc"],
+    hdrs = ["src/subprocess.h"],
+    linkopts = select({
+        ":host_windows": [],
+        "//conditions:default": ["-lpthread"],
+    }),
+)
+
+cc_library(
+    name = "git",
+    srcs = ["src/git.cc"],
+    hdrs = ["src/git.h"],
+    deps = [
+        ":sha1",
+        ":sha256",
+        ":subprocess",
+    ],
+)
+
+cc_library(
+    name = "glob",
+    srcs = ["src/glob.cc"],
+    hdrs = ["src/glob.h"],
+)
+
+cc_library(
+    name = "rules",
+    srcs = ["src/rules.cc"],
+    hdrs = ["src/rules.h"],
+    deps = [
+        ":glob",
+        ":input_limits",
+        ":lang",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_library(
+    name = "rules_cmd",
+    srcs = ["src/rules_cmd.cc"],
+    hdrs = ["src/rules_cmd.h"],
+    deps = [
+        ":input_limits",
+        ":lang",
+        ":progress",
+        ":project",
+        ":rules",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_library(
     name = "project",
     srcs = ["src/project.cc"],
     hdrs = ["src/project.h"],
-    deps = [":lang"],
+    deps = [
+        ":git",
+        ":lang",
+        ":rules",
+    ],
 )
 
 cc_library(
@@ -559,6 +621,55 @@ cc_library(
     deps = [":progress"],
     srcs = ["src/inference_guard.cc"],
     hdrs = ["src/inference_guard.h"],
+)
+
+cc_library(
+    name = "inference_options",
+    srcs = ["src/inference_options.cc"],
+    hdrs = ["src/inference_options.h"],
+)
+
+cc_library(
+    name = "scoring_settings",
+    srcs = ["src/scoring_settings.cc"],
+    hdrs = ["src/scoring_settings.h"],
+    deps = [
+        ":backend_policy",
+        ":core",
+        ":entropy_cache",
+        ":inference_options",
+        ":models",
+    ],
+)
+
+cc_library(
+    name = "analysis_totals",
+    srcs = ["src/analysis_totals.cc"],
+    hdrs = ["src/analysis_totals.h"],
+    deps = [
+        ":core",
+        ":jsonl",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_library(
+    name = "analysis_session",
+    srcs = ["src/analysis_session.cc"],
+    hdrs = ["src/analysis_session.h"],
+    deps = [
+        ":analyze",
+        ":backend_runtime",
+        ":build_info",
+        ":cache",
+        ":download",
+        ":entropy_cache",
+        ":models",
+        ":progress",
+        ":score_cmd",
+        ":scoring_settings",
+    ],
+    tags = ["manual"],
 )
 
 cc_library(
@@ -580,6 +691,7 @@ cc_library(
         ":cache",
         ":download",
         ":inference_guard",
+        ":inference_options",
         ":input_limits",
         ":jsonl",
         ":llama",
@@ -659,6 +771,8 @@ cc_binary(
     deps = [
         ":build_info",
         ":progress",
+        ":analysis_session",
+        ":analysis_totals",
         ":analyze",
         ":backend_fetch",
         ":cache",
@@ -670,7 +784,10 @@ cc_binary(
         ":lang",
         ":models",
         ":project",
+        ":rules",
+        ":rules_cmd",
         ":score_cmd",
+        ":scoring_settings",
     ],
     tags = ["manual"],
 )
@@ -688,6 +805,8 @@ cc_binary(
     deps = [
         ":build_info",
         ":progress",
+        ":analysis_session",
+        ":analysis_totals",
         ":analyze",
         ":backend_fetch",
         ":cache",
@@ -698,7 +817,10 @@ cc_binary(
         ":lang",
         ":models",
         ":project",
+        ":rules",
+        ":rules_cmd",
         ":score_cmd",
+        ":scoring_settings",
     ],
     tags = ["manual"],
     target_compatible_with = select({
@@ -1224,9 +1346,65 @@ cc_test(
     }),
 )
 
+cc_binary(
+    name = "subprocess_test_helper",
+    testonly = True,
+    srcs = ["src/subprocess_test_helper.cc"],
+    deps = select({
+        ":host_macos": [],
+        ":host_windows": [],
+        "//conditions:default": [":linux_compat"],
+    }),
+)
+
+cc_test(
+    name = "subprocess_test",
+    srcs = ["src/subprocess_test.cc"],
+    args = ["$(rlocationpath :subprocess_test_helper)"],
+    data = [":subprocess_test_helper"],
+    deps = [
+        ":subprocess",
+        ":test_util",
+    ],
+)
+
+cc_test(
+    name = "git_test",
+    srcs = ["src/git_test.cc"],
+    # Windows test actions otherwise lose the PATH entry that finds git.exe.
+    env_inherit = ["PATH"],
+    deps = [
+        ":git",
+        ":sha1",
+        ":subprocess",
+        ":test_util",
+    ],
+)
+
+cc_test(
+    name = "glob_test",
+    srcs = ["src/glob_test.cc"],
+    deps = [
+        ":glob",
+        ":test_util",
+    ],
+)
+
+cc_test(
+    name = "rules_test",
+    srcs = ["src/rules_test.cc"],
+    args = ["$(rlocationpath testdata/rules/valid.json)"],
+    data = glob(["testdata/rules/*"]) + [".llm-cc/rules.json"],
+    deps = [
+        ":rules",
+        ":test_util",
+    ],
+)
+
 cc_test(
     name = "project_test",
     srcs = ["src/project_test.cc"],
+    env_inherit = ["PATH"],
     deps = [
         ":project",
         ":test_util",
@@ -1242,6 +1420,18 @@ cc_test(
     }),
     deps = [
         ":rocm_topology",
+        ":test_util",
+    ],
+)
+
+cc_test(
+    name = "scoring_settings_test",
+    srcs = ["src/scoring_settings_test.cc"],
+    deps = [
+        ":analysis_totals",
+        ":entropy_cache",
+        ":models",
+        ":scoring_settings",
         ":test_util",
     ],
 )
@@ -1273,6 +1463,8 @@ test_suite(
         ":download_test",
         ":entropy_cache_test",
         ":format_test",
+        ":git_test",
+        ":glob_test",
         ":jsonl_test",
         ":lang_test",
         ":large_file_parse_test",
@@ -1282,10 +1474,13 @@ test_suite(
         ":progress_test",
         ":provenance_test",
         ":rocm_topology_test",
+        ":rules_test",
         ":score_cmd_test",
+        ":scoring_settings_test",
         ":scoring_test",
         ":sha256_test",
         ":starlark_test",
+        ":subprocess_test",
         ":version_test",
     ],
 )

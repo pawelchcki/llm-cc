@@ -16,5 +16,5 @@ digest and `YOUR_*` value before use.
 | [config/rules.example.json](config/rules.example.json) | Default classification rules baked into the coordinator |
 | [config/store-options.example.json](config/store-options.example.json) | Optional S3 client options (never credentials) |
 
-Per-repository rules belong in `.llm-cc/comparison-rules.json` on the target
+Per-repository rules belong in `.llm-cc/rules.json` on the target
 branch; see [README.md](../README.md#per-repository-classification-rules).

@@ -202,14 +202,17 @@ llm-cc src --format text
 ```
 
 Inputs may be files or recursively searched directories. Languages are detected
-per file. Discovery respects Git ignore rules and skips common generated
-folders; add `--include-headers` to discover headers. Explicit headers are always
-accepted. JavaScript support excludes JSX and TypeScript.
+per file from the extension, ignoring case; headers are ordinary sources, and
+`.h` is C unless the repository's rules say otherwise. Discovery respects Git
+ignore rules and the repository's [selection rules](#selection-and-classification-rules);
+`--no-ignore` includes ignored and rule-excluded files. Explicitly named files
+are always accepted. `--include-headers` is still accepted and changes nothing.
+JavaScript support excludes JSX and TypeScript.
 
 Select your own llama.cpp-compatible GGUF:
 
 ```sh
-llm-cc src include/widget.hpp --include-headers --model /path/to/model.gguf --format text
+llm-cc src include/widget.hpp --model /path/to/model.gguf --format text
 ```
 
 Without `--model`, the default is `deepseek-coder-v2-lite-base-q6_k` (about
@@ -294,6 +297,59 @@ this status output.
 The [large-file experiment](experiments/large-files/README.md) records dense
 10 MiB fixtures across all supported languages and 100 MiB C++/Python runs,
 including elapsed preprocessing time and peak host memory.
+
+### Selection and classification rules
+
+One rules engine decides which files are analyzed, which language scores each
+one, and which category (`runtime`, `tests`, or `tooling`) reports it. Local
+analysis and the [CI comparison](tools/comparison/README.md) use the same
+rules. A repository keeps them in `.llm-cc/rules.json` at its Git root;
+`.llm-cc/comparison-rules.json` is still read when the new name is absent. A
+nested repository or submodule uses its own rules.
+
+```json
+{
+  "exclude": ["third_party/**", "**/generated/**", "**/*.pb.*"],
+  "tests": ["**/tests/**", "**/*_test.*"],
+  "tooling": ["tools/**", "scripts/**"],
+  "extensions": {".h": "cpp"},
+  "paths": [{"pattern": "include/legacy/**", "language": "c"}]
+}
+```
+
+Every key is optional. A key that is present replaces its built-in default; an
+absent key keeps it. The default `exclude` list skips common dependency and
+generated trees such as `**/node_modules/**`, `**/third_party/**`,
+`**/bazel-*/**` and a top-level `out/**`; `llm-cc rules show` prints the
+complete effective rules. `tests` is checked before `tooling`, and anything
+else is `runtime`. A language comes from the first matching `paths` rule, then
+`extensions` (lowercase keys, matched case-insensitively), then the built-in
+extension table. Patterns are at most 256 characters, at most 512 in total, and
+the file stays under 64 KiB. `.git` and `.llm-cc-cache` are never discovered;
+Python virtual environments (directories containing `pyvenv.cfg`) are skipped
+unless `--no-ignore` is given.
+
+Globs are anchored at the repository root and segment-aware, like
+`.gitignore`: `*` and `?` stay within one path segment, `[a-z]` matches one
+character from a set, and a whole-segment `**` matches zero or more
+directories. `third_party/**` therefore matches only the top-level directory,
+`**/*_test.*` matches test files at any depth, and matching is case-sensitive.
+
+Inspect decisions without a model:
+
+```sh
+llm-cc rules show                  # effective rules for this worktree
+llm-cc rules check rules.json      # validate a file
+llm-cc rules explain src/a.h tools/gen.py --format json
+```
+
+A file named on the command line is analyzed even when `exclude` matches it,
+so `explain` reports it selected and marks it `excluded` (text: `selected
+(excluded when discovered)`) to show that directory discovery skips it.
+
+JSONL `file` events carry each file's `category`, `totals` adds per-category
+totals under `categories`, and the `configuration` event lists the rules file
+each Git root used.
 
 ## Interpreting scores
 

@@ -559,7 +559,7 @@ class ConsumerTemplateTest(unittest.TestCase):
         self.assertIn("xtask/**", rules["tooling"])
         guide = self.read("README.md")
         self.assertIn("llm-cc-coordinate", guide)
-        self.assertIn(".llm-cc/comparison-rules.json", guide)
+        self.assertIn(".llm-cc/rules.json", guide)
         self.assertIn("GITHUB_TOKEN", guide)
 
 

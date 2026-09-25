@@ -147,7 +147,8 @@ revisions with NUL-delimited `git ls-tree` and batched `git cat-file`. It accept
 tracked regular blobs, headers included, never follows symlinks or submodules,
 and keeps a reason (`unsupported`, `excluded`, `oversized`, `symlink`,
 `submodule`) for every unmeasured path. Classification rules come from
-`.llm-cc/comparison-rules.json` in the **target** commit, so a pull request
+`.llm-cc/rules.json` (or the legacy `.llm-cc/comparison-rules.json`) in the
+**target** commit, so a pull request
 cannot reclassify itself; otherwise from the coordinator's default
 [rules](recipe/config/rules.example.json). Tests take precedence over tooling
 and runtime.

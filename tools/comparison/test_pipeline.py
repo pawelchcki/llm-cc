@@ -21,6 +21,7 @@ from tools.comparison.inventory import (
     validate_rules,
 )
 from tools.comparison.pipeline import (
+    REPOSITORY_RULES_PATH,
     _assemble,
     _changed_files,
     _code,
@@ -516,6 +517,126 @@ class PipelineTest(unittest.TestCase):
         missing, host = resolve_rules(self.repo, target, {"tests": ["x"]}, "absent.json")
         self.assertEqual(host, {"source": "host"})
         self.assertEqual(missing, {"tests": ["x"]})
+
+    def test_rules_match_like_llm_cc(self):
+        # Globs are segment-aware, and omitted lists keep llm-cc's defaults.
+        partial = {"tooling": ["src/*.cc"]}
+        self.assertEqual(_classify("src/a.cc", partial), "tooling")
+        self.assertEqual(_classify("src/nested/a.cc", partial), "runtime")
+        self.assertEqual(_classify("src/a_test.cc", partial), "tests")
+        self.assertEqual(_classify("tools/gen.py", {"tests": []}), "tooling")
+        (self.repo / "node_modules").mkdir()
+        (self.repo / "node_modules/dep.js").write_text("x;\n")
+        (self.repo / "keep.js").write_text("x;\n")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "dependencies")
+        head = git(self.repo, "rev-parse", "HEAD")
+        by_path = {
+            x["path"]: x for x in inventory(self.repo, head, "f" * 64, partial)[0]
+        }
+        self.assertEqual(by_path["node_modules/dep.js"]["reason"], "excluded")
+        self.assertIsNone(by_path["keep.js"]["reason"])
+        overridden, _ = inventory(self.repo, head, "f" * 64, {"exclude": []})
+        self.assertIsNone(
+            {x["path"]: x for x in overridden}["node_modules/dep.js"]["reason"]
+        )
+
+    def test_rules_reject_what_llm_cc_rejects(self):
+        for pattern in ("foo/", "/foo", "foo//bar", "a/./b", "x\\", "[ab"):
+            with self.subTest(pattern=pattern), self.assertRaises(ValueError):
+                validate_rules({"exclude": [pattern]})
+        (self.repo / ".llm-cc").mkdir()
+        (self.repo / ".llm-cc/rules.json").write_text(
+            "{" + " " * (64 * 1024) + '"tests": []}'
+        )
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "padded rules")
+        target = git(self.repo, "rev-parse", "HEAD")
+        with self.assertRaisesRegex(ValueError, "64 KiB"):
+            resolve_rules(self.repo, target, {}, REPOSITORY_RULES_PATH)
+
+    def test_selection_matches_llm_cc_edge_cases(self):
+        (self.repo / ".llm-cc-cache").mkdir()
+        (self.repo / ".llm-cc-cache/cached.py").write_text("x = 1\n")
+        (self.repo / "project-env/lib").mkdir(parents=True)
+        (self.repo / "project-env/pyvenv.cfg").write_text("home = /usr\n")
+        (self.repo / "project-env/lib/site.py").write_text("x = 1\n")
+        kelvin = "foo.\u212aS"  # a Kelvin sign lowercases to "k" in Unicode
+        (self.repo / kelvin).write_text("x\n")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "edge cases")
+        head = git(self.repo, "rev-parse", "HEAD")
+        rules = {"extensions": {".ks": "python"}}
+        rows = {x["path"]: x for x in inventory(self.repo, head, "f" * 64, rules)[0]}
+        self.assertEqual(rows[".llm-cc-cache/cached.py"]["reason"], "excluded")
+        self.assertEqual(rows["project-env/lib/site.py"]["reason"], "excluded")
+        self.assertIsNone(rows[kelvin]["language"])
+        # A reversed range matches nothing, and its negation any character.
+        self.assertEqual(_classify("q.cc", {"tests": ["[z-a].cc"]}), "runtime")
+        self.assertEqual(_classify("q.cc", {"tests": ["[!z-a].cc"]}), "tests")
+        # A set never spans segments, and matching never backtracks forever.
+        self.assertEqual(
+            _classify("foo/bar.py", {"tests": ["foo[.-0]bar.py"]}), "runtime"
+        )
+        started = time.monotonic()
+        self.assertEqual(_classify("a" * 40, {"tests": ["*a" * 15 + "b"]}), "runtime")
+        self.assertLess(time.monotonic() - started, 1)
+
+    def test_committed_rules_are_read_like_llm_cc(self):
+        (self.repo / ".llm-cc").mkdir()
+        (self.repo / ".llm-cc/rules.json").write_bytes(
+            b'\xef\xbb\xbf{"tests": ["copy.cc"]}'
+        )
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "rules with a byte order mark")
+        target = git(self.repo, "rev-parse", "HEAD")
+        rules, _ = resolve_rules(self.repo, target, {}, REPOSITORY_RULES_PATH)
+        self.assertEqual(rules, {"tests": ["copy.cc"]})
+        (self.repo / ".llm-cc/rules.json").unlink()
+        (self.repo / ".llm-cc/real.json").write_text("{}")
+        (self.repo / ".llm-cc/rules.json").symlink_to("real.json")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-qm", "symlinked rules")
+        linked = git(self.repo, "rev-parse", "HEAD")
+        with self.assertRaises(GitError):
+            resolve_rules(self.repo, linked, {}, REPOSITORY_RULES_PATH)
+        # A lone surrogate escape is invalid JSON for llm-cc.
+        (self.repo / ".llm-cc/rules.json").unlink()
+        (self.repo / ".llm-cc/rules.json").write_text('{"exclude": ["\\ud800"]}')
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-qm", "surrogate rules")
+        surrogate = git(self.repo, "rev-parse", "HEAD")
+        with self.assertRaises(ValueError):
+            resolve_rules(self.repo, surrogate, {}, REPOSITORY_RULES_PATH)
+        # A .llm-cc that is not a directory obstructs the rules, never hides them.
+        git(self.repo, "rm", "-rq", ".llm-cc")
+        (self.repo / ".llm-cc").write_text("not a directory\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-qm", "obstructed rules")
+        obstructed = git(self.repo, "rev-parse", "HEAD")
+        with self.assertRaises(GitError):
+            resolve_rules(self.repo, obstructed, {}, REPOSITORY_RULES_PATH)
+
+    def test_repository_rules_prefer_the_shared_file_name(self):
+        (self.repo / ".llm-cc").mkdir()
+        (self.repo / ".llm-cc/comparison-rules.json").write_text(
+            json.dumps({"tooling": ["copy.cc"]})
+        )
+        (self.repo / ".llm-cc/rules.json").write_text(
+            json.dumps({"tests": ["copy.cc"]})
+        )
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "both rules files")
+        target = git(self.repo, "rev-parse", "HEAD")
+        rules, source = resolve_rules(self.repo, target, {}, REPOSITORY_RULES_PATH)
+        self.assertEqual(rules, {"tests": ["copy.cc"]})
+        self.assertEqual(source["path"], ".llm-cc/rules.json")
+        git(self.repo, "rm", "-q", ".llm-cc/rules.json")
+        git(self.repo, "commit", "-qm", "legacy rules only")
+        legacy = git(self.repo, "rev-parse", "HEAD")
+        rules, source = resolve_rules(self.repo, legacy, {}, REPOSITORY_RULES_PATH)
+        self.assertEqual(rules, {"tooling": ["copy.cc"]})
+        self.assertEqual(source["path"], ".llm-cc/comparison-rules.json")
 
     def test_invalid_repository_rules_fail_the_run(self):
         (self.repo / ".llm-cc").mkdir()

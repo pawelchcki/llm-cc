@@ -79,9 +79,14 @@ pull-request comments will link to it.
 
 ## Per-repository classification rules
 
-`prepare` reads `.llm-cc/comparison-rules.json` from the **target** commit's
-tree. A pull request therefore cannot reclassify its own files, and rules that
+`prepare` reads `.llm-cc/rules.json` from the **target** commit's tree, falling
+back to the legacy `.llm-cc/comparison-rules.json`. Local `llm-cc` analysis
+reads the same file; see
+[selection and classification rules](../../README.md#selection-and-classification-rules).
+A pull request cannot reclassify its own files, and rules that
 fail validation fail the run instead of silently reverting to the host defaults.
+This package matches globs with a port of llm-cc's own segment-aware matcher,
+so a rules file selects and classifies the same files in CI as locally.
 Accepted keys are `exclude`, `tests`, `tooling`, `extensions` and `paths`; glob
 lists hold non-empty patterns of at most 256 characters, at most 512 patterns in
 total including `paths`, and the canonical document must stay under 64 KiB.

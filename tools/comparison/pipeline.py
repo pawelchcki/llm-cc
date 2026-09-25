@@ -26,7 +26,8 @@ from .inventory import (
 )
 
 COMMENT_LIMIT = 24 * 1024
-REPOSITORY_RULES_PATH = ".llm-cc/comparison-rules.json"
+# llm-cc reads the same file for local analysis; the legacy name still works.
+REPOSITORY_RULES_PATH = (".llm-cc/rules.json", ".llm-cc/comparison-rules.json")
 
 
 def _utc_now():
@@ -35,26 +36,50 @@ def _utc_now():
     )
 
 
+def _reject_surrogates(value):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            _reject_surrogates(key)
+            _reject_surrogates(item)
+    elif isinstance(value, list):
+        for item in value:
+            _reject_surrogates(item)
+    elif isinstance(value, str) and any(
+        0xD800 <= ord(character) <= 0xDFFF for character in value
+    ):
+        raise ValueError("unpaired surrogate escape")
+
+
 def resolve_rules(repo, target, rules, repository_rules_path):
-    """Prefer the target commit's own rules; a PR cannot reclassify itself."""
-    if repository_rules_path:
-        raw = read_tree_file(repo, target, repository_rules_path)
-        if raw is not None:
-            try:
-                candidate = json.loads(raw.decode("utf-8"))
-            except (UnicodeError, ValueError) as error:
-                raise ValueError(
-                    "repository classification rules at %s are not valid JSON: %s"
-                    % (repository_rules_path, error)
-                ) from None
-            return (
-                validate_rules(candidate),
-                {
-                    "source": "repository",
-                    "path": repository_rules_path,
-                    "commit": target,
-                },
+    """Prefer the target commit's own rules; a PR cannot reclassify itself.
+
+    `repository_rules_path` is one path or a sequence tried in order.
+    """
+    if isinstance(repository_rules_path, str):
+        repository_rules_path = (repository_rules_path,)
+    for path in repository_rules_path or ():
+        raw = read_tree_file(repo, target, path)
+        if raw is None:
+            continue
+        # llm-cc bounds the file itself, whitespace included.
+        if len(raw) > 64 * 1024:
+            raise ValueError(
+                "repository classification rules at %s exceed 64 KiB" % path
             )
+        try:
+            # llm-cc's JSON parser accepts a leading byte order mark and
+            # rejects lone surrogate escapes.
+            candidate = json.loads(raw.decode("utf-8-sig"))
+            _reject_surrogates(candidate)
+        except (UnicodeError, ValueError) as error:
+            raise ValueError(
+                "repository classification rules at %s are not valid JSON: %s"
+                % (path, error)
+            ) from None
+        return (
+            validate_rules(candidate),
+            {"source": "repository", "path": path, "commit": target},
+        )
     return validate_rules(rules or {}), {"source": "host"}
 
 

@@ -202,7 +202,7 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
   fs::create_directories(empty_repository);
   llmcc::test::ExpectEq(Run("git -C " + Quote(empty_repository) + " init -q"),
                         0, "empty analysis repository initialized");
-  Write(empty_repository / "only.h", "int declaration;\n");
+  Write(empty_repository / "notes.txt", "no source here\n");
   const fs::path empty_output = fs::path(test_tmpdir) / "empty.jsonl";
   llmcc::test::ExpectEq(Run(Quote(binary) + " " + Quote(empty_repository) +
                             " --no-download >" + Quote(empty_output)),
@@ -776,6 +776,18 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(
       multi_totals["type"] == "totals" && multi_totals["analyzed"] == 5,
       "multi-language totals include every file");
+  llmcc::test::Expect(
+      multi_totals["categories"].size() == 1 &&
+          multi_totals["categories"]["runtime"]["analyzed"] == 5,
+      "totals break analyzed files down by rules category");
+  const auto multi_configuration =
+      std::ranges::find_if(multi_events, [](const auto& item) {
+        return item.value("type", "") == "configuration";
+      });
+  llmcc::test::Expect(multi_configuration != multi_events.end() &&
+                          (*multi_configuration)["rules"].is_array() &&
+                          (*multi_configuration)["include_headers"] == true,
+                      "configuration reports the rules each root used");
   for (const auto& [filename, specification] : additional_sources) {
     const std::string canonical =
         std::string(llmcc::LanguageName(specification.first));
@@ -786,10 +798,10 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
           return item.value("type", "") == "file" &&
                  fs::path(item.value("path", "")).filename() == filename;
         });
-    llmcc::test::Expect(event != multi_events.end() &&
-                            (*event)["language"] == canonical &&
-                            !(*event)["functions"].empty(),
-                        "file event has canonical language and function data");
+    llmcc::test::Expect(
+        event != multi_events.end() && (*event)["language"] == canonical &&
+            (*event)["category"] == "runtime" && !(*event)["functions"].empty(),
+        "file event has canonical language and function data");
   }
 
   const fs::path alias_output = fs::path(test_tmpdir) / "language-alias.jsonl";
@@ -1054,6 +1066,36 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
       deferred_backend_events.size() == 5 &&
           deferred_backend_events[3]["entropy_cache_hit"].get<bool>(),
       "the deferred explicit backend analysis reports its cache hit");
+
+  // rules explain reports a symlink as the file discovery would analyze.
+  const fs::path aliased = fs::path(test_tmpdir) / "explain-alias";
+  fs::create_directories(aliased / "src");
+  llmcc::test::ExpectEq(Run("git -C " + Quote(aliased) + " init -q"), 0,
+                        "explain fixture repository initializes");
+  std::ofstream(aliased / "src/main.rs") << "fn main() {}\n";
+  fs::create_symlink("src/main.rs", aliased / "a.py");
+  const fs::path explained = fs::path(test_tmpdir) / "explain.jsonl";
+  llmcc::test::ExpectEq(
+      Run(Quote(binary) + " rules explain " + Quote(aliased / "a.py") +
+          " --format json >" + Quote(explained)),
+      0, "rules explain accepts a symlink");
+  const auto explanation = nlohmann::json::parse(Read(explained));
+  llmcc::test::Expect(explanation["relative_path"] == "src/main.rs" &&
+                          explanation["language"] == "rust",
+                      "rules explain follows a symlink to its target");
+  // A named file is analyzed even when exclude matches it.
+  fs::create_directories(aliased / "third_party");
+  std::ofstream(aliased / "third_party/lib.rs") << "fn lib() {}\n";
+  const fs::path excluded = fs::path(test_tmpdir) / "explain-excluded.jsonl";
+  llmcc::test::ExpectEq(Run(Quote(binary) + " rules explain " +
+                            Quote(aliased / "third_party/lib.rs") +
+                            " --format json >" + Quote(excluded)),
+                        0, "rules explain accepts an excluded file");
+  const auto excluded_explanation = nlohmann::json::parse(Read(excluded));
+  llmcc::test::Expect(excluded_explanation["selected"] == true &&
+                          excluded_explanation["excluded"] == true &&
+                          excluded_explanation["reason"].is_null(),
+                      "rules explain selects a named excluded file");
 
   return 0;
 }
