@@ -43,6 +43,10 @@ void ValidateStoreKey(std::string_view key);
 
 // Objects as files under a root directory. New files are group-writable
 // (0660 before the umask), so executors sharing a group can share a store.
+// On POSIX every access goes through no-follow directory descriptors, so
+// another writer cannot redirect it outside the root. On Windows symlinks
+// and junctions are refused by checking each directory, which a concurrent
+// writer could still race; share a Windows store only with trusted writers.
 class FilesystemStore : public Store {
  public:
   explicit FilesystemStore(std::filesystem::path root);

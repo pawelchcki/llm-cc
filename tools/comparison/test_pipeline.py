@@ -122,6 +122,9 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(_classify("src/nested/a.cc", partial), "runtime")
         self.assertEqual(_classify("src/a_test.cc", partial), "tests")
         self.assertEqual(_classify("tools/gen.py", {"tests": []}), "tooling")
+        # A reversed range matches nothing, and its negation any character.
+        self.assertEqual(_classify("q.cc", {"tests": ["[z-a].cc"]}), "runtime")
+        self.assertEqual(_classify("q.cc", {"tests": ["[!z-a].cc"]}), "tests")
         (self.repo / "node_modules").mkdir()
         (self.repo / "node_modules/dep.js").write_text("x;\n")
         (self.repo / "keep.js").write_text("x;\n")

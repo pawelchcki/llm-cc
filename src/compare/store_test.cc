@@ -109,8 +109,9 @@ int main() {  // NOLINT(bugprone-exception-escape)
   const fs::path root = fs::path(temporary) / "store";
 
   // Keys cannot leave the store.
-  for (const char* key : {"", "/rooted", "a//b", "a/./b", "a/../b", "..",
-                          "trailing/", "back\\slash"}) {
+  for (const char* key :
+       {"", "/rooted", "a//b", "a/./b", "a/../b", "..", "trailing/",
+        "back\\slash", "C:/outside", "D:relative", "file.json:stream"}) {
     Expect(
         !StoreFailure([&] { llmcc::compare::ValidateStoreKey(key); }).empty(),
         std::string("invalid key is rejected: ") + key);

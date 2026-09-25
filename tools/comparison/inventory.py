@@ -101,15 +101,20 @@ def _segment_regex(segment):
                     index += 1
                 low = segment[index]
                 index += 1
+                high = low
                 if index + 1 < len(segment) and segment[index] == "-" and segment[index + 1] != "]":
                     index += 1
                     if segment[index] == "\\":
                         index += 1
-                    members.append(re.escape(low) + "-" + re.escape(segment[index]))
+                    high = segment[index]
                     index += 1
-                else:
-                    members.append(re.escape(low))
-            out.append("[" + ("^" if negated else "") + "".join(members) + "]")
+                # A reversed range matches nothing, as in llm-cc.
+                if low <= high:
+                    members.append(re.escape(low) + "-" + re.escape(high))
+            if members:
+                out.append("[" + ("^/" if negated else "") + "".join(members) + "]")
+            else:
+                out.append("[^/]" if negated else "(?!)")
         elif character == "\\" and index + 1 < len(segment):
             index += 1
             out.append(re.escape(segment[index]))

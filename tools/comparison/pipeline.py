@@ -232,8 +232,10 @@ def compare(
         cache_concurrency,
     )
     if plan["workers"] and not all((scorer, model, installed_root)):
+        # Keep the plan's fingerprint and partial analysis with the failure.
         return aggregate_report(
             output_dir,
+            plan=Path(output_dir) / "plan.json",
             identity=plan["identity"],
             errors=["cache misses require --scorer, --model, and --installed-root"],
         )
