@@ -624,6 +624,55 @@ cc_library(
 )
 
 cc_library(
+    name = "inference_options",
+    srcs = ["src/inference_options.cc"],
+    hdrs = ["src/inference_options.h"],
+)
+
+cc_library(
+    name = "scoring_settings",
+    srcs = ["src/scoring_settings.cc"],
+    hdrs = ["src/scoring_settings.h"],
+    deps = [
+        ":backend_policy",
+        ":core",
+        ":entropy_cache",
+        ":inference_options",
+        ":models",
+    ],
+)
+
+cc_library(
+    name = "analysis_totals",
+    srcs = ["src/analysis_totals.cc"],
+    hdrs = ["src/analysis_totals.h"],
+    deps = [
+        ":core",
+        ":jsonl",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_library(
+    name = "analysis_session",
+    srcs = ["src/analysis_session.cc"],
+    hdrs = ["src/analysis_session.h"],
+    deps = [
+        ":analyze",
+        ":backend_runtime",
+        ":build_info",
+        ":cache",
+        ":download",
+        ":entropy_cache",
+        ":models",
+        ":progress",
+        ":score_cmd",
+        ":scoring_settings",
+    ],
+    tags = ["manual"],
+)
+
+cc_library(
     name = "score_cmd",
     srcs = ["src/score_cmd.cc"],
     hdrs = ["src/score_cmd.h"],
@@ -642,6 +691,7 @@ cc_library(
         ":cache",
         ":download",
         ":inference_guard",
+        ":inference_options",
         ":input_limits",
         ":jsonl",
         ":llama",
@@ -721,6 +771,8 @@ cc_binary(
     deps = [
         ":build_info",
         ":progress",
+        ":analysis_session",
+        ":analysis_totals",
         ":analyze",
         ":backend_fetch",
         ":cache",
@@ -735,6 +787,7 @@ cc_binary(
         ":rules",
         ":rules_cmd",
         ":score_cmd",
+        ":scoring_settings",
     ],
     tags = ["manual"],
 )
@@ -752,6 +805,8 @@ cc_binary(
     deps = [
         ":build_info",
         ":progress",
+        ":analysis_session",
+        ":analysis_totals",
         ":analyze",
         ":backend_fetch",
         ":cache",
@@ -765,6 +820,7 @@ cc_binary(
         ":rules",
         ":rules_cmd",
         ":score_cmd",
+        ":scoring_settings",
     ],
     tags = ["manual"],
     target_compatible_with = select({
@@ -1369,6 +1425,18 @@ cc_test(
 )
 
 cc_test(
+    name = "scoring_settings_test",
+    srcs = ["src/scoring_settings_test.cc"],
+    deps = [
+        ":analysis_totals",
+        ":entropy_cache",
+        ":models",
+        ":scoring_settings",
+        ":test_util",
+    ],
+)
+
+cc_test(
     name = "scoring_test",
     srcs = ["src/scoring_test.cc"],
     deps = [":scoring"],
@@ -1408,6 +1476,7 @@ test_suite(
         ":rocm_topology_test",
         ":rules_test",
         ":score_cmd_test",
+        ":scoring_settings_test",
         ":scoring_test",
         ":sha256_test",
         ":starlark_test",
