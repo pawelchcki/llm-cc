@@ -235,6 +235,16 @@ int main() {  // NOLINT(bugprone-exception-escape)
       llmcc::DiscoverSources({repository / ".git/hooks/check.py"})
           .sources.size(),
       std::size_t{0}, "an explicit file under .git is never analyzed");
+  // A directory named .git above a worktree is not its metadata.
+  const fs::path under_git = fs::path(temporary) / "outer/.git/inner";
+  Write(under_git / "main.py", "def main(): pass\n");
+  Run("git -C " + Quote(under_git) + " init -q");
+  llmcc::test::ExpectEq(llmcc::DiscoverSources({under_git}).sources.size(),
+                        std::size_t{1},
+                        "a worktree below a .git directory is analyzed");
+  llmcc::test::ExpectEq(
+      llmcc::DiscoverSources({under_git / "main.py"}).sources.size(),
+      std::size_t{1}, "an explicit file below a .git directory is analyzed");
 
 #ifndef _WIN32
   // Only a regular pyvenv.cfg marks a virtual environment, as in a commit.

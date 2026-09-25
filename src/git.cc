@@ -243,13 +243,16 @@ std::string Repository::MergeBase(std::string_view target,
 }
 
 ObjectFormat Repository::GetObjectFormat() const {
-  // Git before 2.29 knows only SHA-1 and rejects the option.
-  ProcessResult result =
-      RunGit({"-C", PathArgument(root_), "rev-parse", "--show-object-format"});
-  return result.exit_code == 0 &&
-                 TrimLine(std::move(result.stdout_data)) == "sha256"
-             ? ObjectFormat::kSha256
-             : ObjectFormat::kSha1;
+  const std::string format =
+      TrimLine(Run({"rev-parse", "--show-object-format"}));
+  if (format == "sha256") {
+    return ObjectFormat::kSha256;
+  }
+  // Git before 2.29 knows only SHA-1 and echoes the unknown option back.
+  if (format == "sha1" || format == "--show-object-format") {
+    return ObjectFormat::kSha1;
+  }
+  throw GitError("unsupported Git object format: " + format);
 }
 
 std::vector<TreeEntry> Repository::ListTree(std::string_view revision) const {
