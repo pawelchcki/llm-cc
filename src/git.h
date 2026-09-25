@@ -70,9 +70,11 @@ class Repository {
   [[nodiscard]] std::vector<TreeEntry> ListTree(
       std::string_view revision) const;
   // One committed file, or nullopt when the tree has no such path. Throws
-  // when the path names something other than a regular blob.
+  // when the path names something other than a regular blob, and
+  // std::length_error, before reading it, when it exceeds `max_bytes`.
   [[nodiscard]] std::optional<std::string> ReadFile(
-      std::string_view revision, std::string_view path) const;
+      std::string_view revision, std::string_view path,
+      std::optional<std::uint64_t> max_bytes = std::nullopt) const;
   // Streams blob contents to `sink` in request order, reading them with one
   // `git cat-file --batch` per batch of at most `batch_bytes`.
   void ReadBlobs(std::span<const BlobRequest> requests,

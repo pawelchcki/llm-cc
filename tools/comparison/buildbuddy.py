@@ -1,7 +1,10 @@
 """CPU coordinator and remote-worker transport for BuildBuddy.
 
-Run uses the public enterprise API; cancellation uses CancelExecutions from
-BuildBuddyService. Credentials remain environment inputs, never plan artifacts.
+The coordinator plans with `llm-cc compare prepare` and uploads each miss's
+blob; bare-host GPU workers fetch them and score with `llm-cc compare worker`
+under the host's execution contract. Run uses the public enterprise API;
+cancellation uses CancelExecutions from BuildBuddyService. Credentials remain
+environment inputs, never plan artifacts.
 """
 
 from __future__ import annotations
@@ -15,24 +18,27 @@ import re
 import shlex
 import signal
 import string
+import subprocess
 import tempfile
 import time
 import urllib.parse
 
-from .cache import ResultCache, open_store
 from .common import (
-    canonical_bytes,
-    digest,
+    aggregate_report,
     pipeline_prefix,
     read_json,
-    validate_execution_policy,
     write_json,
 )
 from .deadline import Deadline, DeadlineExceeded
 from .discover import discover_identity, fetch_target, new_identity
 from .github import GitHub, api_request
-from .pipeline import REPOSITORY_RULES_PATH, aggregate, prepare
 from .publish import store_report
+from .store import open_store
+
+# The remote worker's whole budget, including transport and upload.
+WORKER_SECONDS = 6600
+# No plan is larger; a larger object is corrupt and is never buffered whole.
+PLAN_BYTES = 256 * 1024 * 1024
 
 
 class BuildBuddy:
@@ -86,18 +92,31 @@ class BuildBuddy:
         )
 
 
+def blob_id(content, object_id):
+    """The Git object ID of `content` in the format `object_id` uses."""
+    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", object_id):
+        raise ValueError("invalid blob ID")
+    algorithm = "sha1" if len(object_id) == 40 else "sha256"
+    return hashlib.new(algorithm, b"blob %d\0" % len(content) + content).hexdigest()
+
+
 def upload_plan(store, plan_path):
+    """Upload every assigned blob, then the plan's exact bytes and digest."""
     plan_path = Path(plan_path)
-    plan = read_json(plan_path)
+    payload = plan_path.read_bytes()
+    plan = json.loads(payload)
     prefix = pipeline_prefix(plan["identity"])
+    uploaded = set()
     for worker in plan["workers"]:
         for key in worker["keys"]:
-            item = plan["items"][key]
-            content = (plan_path.parent / item["blob"]).read_bytes()
-            if hashlib.sha256(content).hexdigest() != item["content_sha256"]:
+            object_id = plan["items"][key]["blob_id"]
+            if object_id in uploaded:
+                continue
+            content = (plan_path.parent / "blobs" / object_id).read_bytes()
+            if blob_id(content, object_id) != object_id:
                 raise ValueError("preparation blob changed before upload")
-            store.put(prefix + item["blob"], content)
-    payload = canonical_bytes(plan)
+            store.put(prefix + "blobs/" + object_id, content)
+            uploaded.add(object_id)
     store.put(prefix + "plan.json", payload)
     return prefix, hashlib.sha256(payload).hexdigest()
 
@@ -130,31 +149,36 @@ def bundle_command(command, bundle, bundle_sha):
     ]
 
 
-# Worker bundles are deployed separately and pinned by checksum, so a bundle
-# predating --cache-concurrency is a normal deployment state. It hard-codes
-# this same default, so only a narrowed bound has to reach the worker at all.
-DEFAULT_CACHE_CONCURRENCY = 8
-
-
 def cache_concurrency(config):
-    """The one validated result-cache bound every stage of a run must share."""
-    value = config.get("cache_concurrency", DEFAULT_CACHE_CONCURRENCY)
+    """The validated bound on concurrent result-cache reads in preparation."""
+    value = config.get("cache_concurrency", 8)
     if type(value) is not int or not 1 <= value <= 64:
         raise ValueError("cache_concurrency must be between 1 and 64")
     return value
 
 
-def worker_request(config, plan, worker, prefix, plan_digest):
-    validate_execution_policy(plan["profile"])
-    image = config["execution_image"]
-    build = plan["profile"]["build"]
-    bare_host = image == "none" and bool(build.get("execution_host"))
-    if image != build["execution_image"] or not (
-        bare_host or re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", image)
-    ):
+def execution_host(config):
+    """The bare-host contract a worker verifies: PCI GPU, lock and runtimes."""
+    path = config.get("execution_host")
+    if config.get("execution_image") != "none" or not path:
+        # Only llm-cc runs in the scorer image, and it cannot fetch a plan
+        # from BuildBuddy's side; workers need the host's Python bundle.
         raise ValueError(
-            "worker execution image does not match the immutable scoring profile"
+            "BuildBuddy workers run on a bare host: set execution_image to "
+            "none and execution_host to its execution-host.json"
         )
+    if not Path(path).is_absolute():
+        raise ValueError("execution_host must be an absolute path")
+    host = read_json(path)
+    if not isinstance(host, dict) or not re.fullmatch(
+        r"[a-z0-9][a-z0-9_-]{0,63}", str(host.get("resource_id", ""))
+    ):
+        raise ValueError("execution host needs a valid resource_id")
+    return host
+
+
+def worker_request(config, plan, worker, prefix, plan_digest):
+    host = execution_host(config)
     commit = config["execution_commit"]
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise ValueError("execution_commit must pin the comparison implementation")
@@ -178,27 +202,20 @@ def worker_request(config, plan, worker, prefix, plan_digest):
         plan_digest,
         "--worker-id",
         str(worker["worker_id"]),
-        "--scorer",
-        config["scorer"],
+        "--llm-cc",
+        config["llm_cc"],
         "--model",
         config["model"],
-        "--installed-root",
-        config["installed_root"],
+        "--execution-host",
+        config["execution_host"],
         "--store-options-json",
         json.dumps(options, sort_keys=True),
     ]
-    bound = cache_concurrency(config)
-    if bound != DEFAULT_CACHE_CONCURRENCY:
-        # Narrowing the bound requires a worker bundle from a commit that
-        # understands the option; the default needs no redeployment.
-        command += ["--cache-concurrency", str(bound)]
     bundle = config.get("execution_bundle")
     if bundle is not None:
         bundle_sha = config.get("execution_bundle_sha256", "")
-        if (
-            not bare_host
-            or not Path(bundle).is_absolute()
-            or not re.fullmatch(r"[0-9a-f]{64}", bundle_sha)
+        if not Path(bundle).is_absolute() or not re.fullmatch(
+            r"[0-9a-f]{64}", bundle_sha
         ):
             raise ValueError(
                 "bare-host execution bundle requires an absolute path and SHA-256"
@@ -210,14 +227,11 @@ def worker_request(config, plan, worker, prefix, plan_digest):
             "OSFamily": "linux",
             "Arch": "amd64",
             "Pool": config["pool"],
-            "container-image": image,
+            "container-image": "none",
+            "workload-isolation-type": "none",
+            "debug-executor-labels": "gpu-resource=" + host["resource_id"],
         }
     )
-    if bare_host:
-        properties["workload-isolation-type"] = "none"
-        properties["debug-executor-labels"] = (
-            "gpu-resource=" + build["execution_host"]["resource_id"]
-        )
     # Secrets travel in remote headers, which BuildBuddy treats as sensitive.
     secret_overrides = []
     for name in config.get("worker_secret_env", []):
@@ -307,8 +321,6 @@ def run_prepared(
     current_check_seconds=0,
 ):
     """Schedule exactly the miss plan, retain failures, and always aggregate."""
-    from .pipeline import failure_report
-
     plan = read_json(plan_path)
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
@@ -388,38 +400,55 @@ def run_prepared(
                 errors.append(f"could not cancel worker {invocation}: {error}")
         for sig, handler in previous.items():
             signal.signal(sig, handler)
-    report = aggregate(plan_path, artifacts, output)
-    if errors:
-        write_json(output / "analysis-report.json", report)
-        report = failure_report(
-            output,
-            plan["identity"],
-            plan["fingerprint"],
-            errors + report.get("errors", []),
-        )
+    # With errors, llm-cc keeps the analysis in analysis-report.json and
+    # publishes a failure carrying both sets of errors.
+    report = aggregate_report(
+        output,
+        plan=plan_path,
+        workers=artifacts,
+        errors=errors,
+        executable=config.get("llm_cc"),
+    )
     store_report(store, output, plan["identity"])
     return report
 
 
-def remote_worker(args):
-    from .worker import run_worker
+def _failed_artifact(worker_id, plan, errors, elapsed):
+    return {
+        "schema_version": 2,
+        "identity": plan.get("identity") if isinstance(plan, dict) else None,
+        "fingerprint": plan.get("fingerprint") if isinstance(plan, dict) else None,
+        "worker_id": worker_id,
+        "status": "failed",
+        "results": {},
+        "errors": errors,
+        "elapsed_seconds": elapsed,
+    }
 
+
+def remote_worker(args):
     started = time.monotonic()
+
+    def remaining():
+        return max(0, WORKER_SECONDS - (time.monotonic() - started))
+
     # Credential providers used by boto can perform network I/O too.
-    with Deadline(6600):
-        store = open_store(args.cache, **json.loads(args.store_options_json))
+    options = json.loads(args.store_options_json)
+    with Deadline(WORKER_SECONDS):
+        store = open_store(args.cache, **options)
     if not re.fullmatch(r"pipelines/[0-9a-f]{64}/", args.prefix):
         raise ValueError("invalid pipeline prefix")
     plan = {}
+    errors = []
     with tempfile.TemporaryDirectory(prefix="llm-cc-worker-") as temporary:
         directory = Path(temporary)
         output = directory / "output"
         output.mkdir()
+        artifact_path = output / f"worker-{args.worker_id}.json"
         try:
-            # This includes object transport, validation, scoring, and cache
-            # publication. SIGALRM interrupts a blocked SDK retry on Linux.
-            with Deadline(max(0, 6600 - (time.monotonic() - started))) as deadline:
-                raw = store.get(args.prefix + "plan.json")
+            # SIGALRM interrupts a blocked SDK retry on Linux.
+            with Deadline(remaining()) as deadline:
+                raw = store.get(args.prefix + "plan.json", max_bytes=PLAN_BYTES)
                 deadline.check()
                 if raw is None or hashlib.sha256(raw).hexdigest() != args.plan_sha256:
                     raise ValueError("preparation digest mismatch or missing plan")
@@ -431,79 +460,153 @@ def remote_worker(args):
                 worker = next(
                     w for w in plan["workers"] if w["worker_id"] == args.worker_id
                 )
+                (directory / "blobs").mkdir()
                 for key in worker["keys"]:
                     deadline.check()
                     item = plan["items"][key]
-                    relative = "blobs/" + item["content_sha256"]
-                    if item["blob"] != relative or not re.fullmatch(
-                        r"blobs/[0-9a-f]{64}", relative
-                    ):
-                        raise ValueError("invalid preparation blob path")
-                    content = store.get(args.prefix + relative)
+                    object_id = item["blob_id"]
+                    # A blob can be no larger than the plan says.
+                    content = store.get(
+                        args.prefix + "blobs/" + object_id, max_bytes=item["size"]
+                    )
                     deadline.check()
-                    if (
-                        content is None
-                        or hashlib.sha256(content).hexdigest() != item["content_sha256"]
-                    ):
+                    if content is None or blob_id(content, object_id) != object_id:
                         raise ValueError("missing or corrupt source blob")
-                    destination = directory / relative
-                    destination.parent.mkdir(exist_ok=True)
-                    destination.write_bytes(content)
-                result = run_worker(
-                    plan_path,
-                    args.worker_id,
-                    store,
-                    output,
-                    args.scorer,
-                    args.model,
-                    args.installed_root,
-                    deadline_seconds=max(0, 6600 - (time.monotonic() - started)),
-                    cache_concurrency=args.cache_concurrency,
+                    (directory / "blobs" / object_id).write_bytes(content)
+            # llm-cc verifies the host, holds the GPU lock, stores each result
+            # as it lands and always writes its artifact. It cannot stop
+            # mid-file, so the process gets a short grace period to finish.
+            command = [
+                args.llm_cc,
+                "compare",
+                "worker",
+                "--plan",
+                str(plan_path),
+                "--worker-id",
+                str(args.worker_id),
+                "--output-dir",
+                str(output),
+                "--cache",
+                args.cache,
+                "--model",
+                args.model,
+                "--execution-host",
+                args.execution_host,
+                "--deadline-seconds",
+                str(int(remaining())),
+                "--progress",
+                "never",
+            ]
+            if options:
+                store_options = directory / "store-options.json"
+                write_json(store_options, options)
+                command += ["--store-options", str(store_options)]
+            completed = subprocess.run(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=remaining() + 300,
+            )
+            if not artifact_path.is_file():
+                errors.append(
+                    "llm-cc compare worker exited %d without an artifact: %s"
+                    % (
+                        completed.returncode,
+                        completed.stderr.decode("utf-8", "replace").strip()[-2000:],
+                    )
                 )
-                deadline.check()
         except BaseException as error:
-            result = {
-                "schema_version": 1,
-                "identity": plan.get("identity") if isinstance(plan, dict) else None,
-                "fingerprint": plan.get("fingerprint")
-                if isinstance(plan, dict)
-                else None,
-                "worker_id": args.worker_id,
-                "status": "failed",
-                "results": {},
-                "errors": [str(error)],
-                "elapsed_seconds": time.monotonic() - started,
-            }
-            write_json(output / f"worker-{args.worker_id}.json", result)
+            errors.append(str(error) or type(error).__name__)
+        if not artifact_path.is_file():
+            write_json(
+                artifact_path,
+                _failed_artifact(
+                    args.worker_id, plan, errors, time.monotonic() - started
+                ),
+            )
+        result = read_json(artifact_path)
         # Failure reporting gets a small, bounded grace period after the main
         # deadline. Private caches and model data stay outside output.
         try:
             with Deadline(30) as cleanup:
-                artifact_path = output / f"worker-{args.worker_id}.json"
-                paths = [artifact_path] if artifact_path.is_file() else []
-                paths.extend(
-                    path for path in sorted(output.rglob("*")) if path != artifact_path
+                cleanup.check()
+                store.put(
+                    args.prefix
+                    + f"workers/{args.worker_id}/worker-{args.worker_id}.json",
+                    artifact_path.read_bytes(),
                 )
-                for path in paths:
-                    if path.is_file() and not path.is_symlink():
-                        cleanup.check()
-                        store.put(
-                            args.prefix
-                            + f"workers/{args.worker_id}/"
-                            + path.relative_to(output).as_posix(),
-                            path.read_bytes(),
-                        )
         except DeadlineExceeded:
             return 1
-        return 0 if result["status"] == "complete" else 1
+        return 0 if result.get("status") == "complete" else 1
+
+
+def prepare_plan(config, repo, head, identity, output):
+    """Plan the comparison with `llm-cc compare prepare`; returns plan.json."""
+    output = Path(output)
+    output.mkdir(parents=True, exist_ok=True)
+    identity_path = output / "identity.json"
+    write_json(identity_path, identity)
+    command = [
+        config["llm_cc"],
+        "compare",
+        "prepare",
+        "--repo",
+        str(repo),
+        "--head",
+        head,
+        "--target",
+        identity["target_sha"],
+        "--identity",
+        str(identity_path),
+        "--output-dir",
+        str(output),
+        "--cache",
+        config["cache"],
+        "--max-workers",
+        str(config.get("max_workers", 4)),
+        "--cache-concurrency",
+        str(cache_concurrency(config)),
+        "--refresh-days",
+        str(config.get("refresh_days", 20)),
+        "--expire-days",
+        str(config.get("expire_days", 30)),
+    ]
+    if config.get("default_rules"):
+        command += ["--default-rules", config["default_rules"]]
+    with tempfile.TemporaryDirectory(prefix="llm-cc-prepare-") as temporary:
+        presentation = Path(temporary) / "presentation.json"
+        write_json(presentation, {"report_links": report_links(config, identity)})
+        command += ["--presentation", str(presentation)]
+        options = config.get("store_options", {})
+        if options:
+            store_options = Path(temporary) / "store-options.json"
+            write_json(store_options, options)
+            command += ["--store-options", str(store_options)]
+        # The pinned scorer, model and scoring settings, one argument per line.
+        command.append("@" + config["scoring_args"])
+        try:
+            completed = subprocess.run(
+                command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+        except OSError as error:
+            raise RuntimeError(
+                "cannot run %s compare prepare: %s" % (command[0], error)
+            ) from error
+    if completed.returncode != 0:
+        raise RuntimeError(
+            "llm-cc compare prepare failed (exit %d): %s"
+            % (
+                completed.returncode,
+                completed.stderr.decode("utf-8", "replace").strip(),
+            )
+        )
+    return read_json(output / "plan.json")
 
 
 def coordinate(args):
-    from .pipeline import failure_report
-
     output = Path(args.output_dir)
     identity = new_identity(args.repository, args.pipeline_id, args.head)
-    fingerprint = "0" * 64
+    config = {}
     try:
         config = read_json(args.config)
         github = GitHub(
@@ -518,28 +621,10 @@ def coordinate(args):
             )
             return 0
         identity = resolved
-        profile = read_json(config["profile"])
-        fingerprint = digest({"scoring": profile["scoring"], "build": profile["build"]})
         store = open_store(config["cache"], **config.get("store_options", {}))
-        cache = ResultCache(
-            store, config.get("refresh_days", 20), config.get("expire_days", 30)
-        )
         # Fetch actual PR target, then full history if this checkout is shallow.
-        fetch_target(args.repo, identity["target_sha"])
-        plan = prepare(
-            args.repo,
-            args.head,
-            identity["target_sha"],
-            identity,
-            profile,
-            read_json(config["rules"]),
-            cache,
-            output,
-            config.get("max_workers", 4),
-            config.get("repository_rules_path", REPOSITORY_RULES_PATH),
-            {"report_links": report_links(config, identity)},
-            cache_concurrency(config),
-        )
+        fetch_target(args.repo, identity["target_sha"], identity.get("target_branch"))
+        plan = prepare_plan(config, args.repo, args.head, identity, output)
         api = BuildBuddy(
             config.get("endpoint", "https://pawel.buildbuddy.io"),
             os.environ.get(config.get("api_key_env", "BUILDBUDDY_API_KEY"), ""),
@@ -561,7 +646,12 @@ def coordinate(args):
         )
         return 1 if report["status"] == "failed" else 0
     except Exception as error:
-        failure_report(output, identity, fingerprint, [str(error)])
+        aggregate_report(
+            output,
+            identity=identity,
+            errors=[str(error)],
+            executable=config.get("llm_cc") if isinstance(config, dict) else None,
+        )
         return 1
 
 
@@ -569,10 +659,16 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     stages = parser.add_subparsers(dest="stage", required=True)
     worker = stages.add_parser("remote-worker")
-    for name in ("cache", "prefix", "plan-sha256", "scorer", "model", "installed-root"):
+    for name in (
+        "cache",
+        "prefix",
+        "plan-sha256",
+        "llm-cc",
+        "model",
+        "execution-host",
+    ):
         worker.add_argument("--" + name, required=True)
     worker.add_argument("--worker-id", type=int, required=True)
-    worker.add_argument("--cache-concurrency", type=int, default=8)
     worker.add_argument("--store-options-json", default="{}")
     coordinator = stages.add_parser("coordinate")
     for name in ("config", "repository", "head", "branch", "pipeline-id", "output-dir"):

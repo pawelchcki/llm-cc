@@ -1,9 +1,16 @@
-"""Transport tests exercise scheduling without cloud credentials or GPUs."""
+"""Transport tests exercise scheduling without cloud credentials or GPUs.
+
+Plans, workers and reports come from the deterministic llm-cc test build, so
+every object crossing the store is the real schema version 2 artifact.
+"""
 
 import hashlib
 import json
+import os
+import shlex
 import signal
 import subprocess
+import sys
 import zipfile
 import argparse
 from pathlib import Path
@@ -12,21 +19,31 @@ import time
 import unittest
 from unittest.mock import patch
 
+from . import buildbuddy
 from .buildbuddy import (
+    blob_id,
     bundle_command,
+    prepare_plan,
     remote_worker,
     run_prepared,
+    upload_plan,
     worker_request,
 )
-from .cache import FilesystemStore
-from .common import (
-    CONTAINER_ENVIRONMENT_POLICY,
-    digest,
-    pipeline_prefix,
-    write_json,
-)
+from .common import aggregate_report, llm_cc, pipeline_prefix, read_json, write_json
+from .fixtures import commit_files, fake_scoring, git
 from .github import GitHub
-from .pipeline import failure_report
+from .store import FilesystemStore
+
+# Stands in for a bare host that passes llm-cc's execution-host verification:
+# it drops --execution-host and runs the deterministic llm-cc.
+VERIFIED_HOST = """#!{python}
+import os, sys
+arguments = sys.argv[1:]
+if "--execution-host" in arguments:
+    index = arguments.index("--execution-host")
+    del arguments[index : index + 2]
+os.execv({llm_cc!r}, [{llm_cc!r}] + arguments)
+"""
 
 
 class FakeAPI:
@@ -39,7 +56,7 @@ class FakeAPI:
     def submit(self, request):
         self.submissions.append(request)
         if self.on_submit:
-            self.on_submit()
+            self.on_submit(request)
         return "00000000-0000-0000-0000-000000000001"
 
     def complete(self, invocation):
@@ -55,134 +72,223 @@ class BuildBuddyTest(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.store = FilesystemStore(self.root / "store")
+        self.repo = self.root / "repo"
+        self.repo.mkdir()
+        git(self.repo, "init", "-q")
+        target = commit_files(
+            self.repo,
+            {"main.c": "int main(void) { return 0; }\n", "README.md": "docs\n"},
+            "base",
+        )
+        self.head = commit_files(
+            self.repo,
+            {"main.c": "int main(void) { return 1; }\n", "util.py": "x = 1\n"},
+            "head",
+        )
         self.identity = {
             "repository": "owner/repo",
             "pipeline_id": "parent-uuid",
-            "head_sha": "a" * 40,
-            "target_sha": "b" * 40,
-            "base_sha": "c" * 40,
+            "head_sha": self.head,
+            "target_sha": target,
+            "base_sha": None,
             "target_branch": "release",
             "pr_number": 123,
             "started_at": "2026-09-11T00:00:00Z",
         }
-        self.image = "registry.example/scorer@sha256:" + "1" * 64
-        profile = {
-            "scoring": {"tau": 0.67},
-            "build": {
-                "execution_image": self.image,
-                "container_environment_policy": CONTAINER_ENVIRONMENT_POLICY,
+        self.model, self.scoring = fake_scoring(self.root / "scoring")
+        self.host = self.root / "execution-host.json"
+        write_json(
+            self.host,
+            {
+                "gpu_vendor": "amd",
+                "gpu_pci_address": "0000:03:00.0",
+                "gpu_arch": "gfx1100",
+                "gpu_vram_bytes_min": 1,
+                "resource_id": "bazzite-radeon-0",
+                "runtime_files": {"/opt/rocm/lib/libamdhip64.so": "0" * 64},
             },
-        }
-        self.plan = {
-            "schema_version": 1,
-            "identity": self.identity,
-            "fingerprint": digest(profile),
-            "profile": profile,
-            "inventories": {"base": [], "head": []},
-            "changes": [],
-            "items": {},
-            "hits": {},
-            "workers": [],
-            "cache_stats": {"items": 0, "hits": 0, "misses": 0},
-        }
+        )
+        self.verified = self.root / "verified-llm-cc"
+        self.verified.write_text(
+            VERIFIED_HOST.format(
+                python=sys.executable, llm_cc=os.path.abspath(llm_cc())
+            )
+        )
+        self.verified.chmod(0o755)
         self.config = {
+            "llm_cc": str(self.verified),
+            "scoring_args": str(self.scoring),
             "cache": str(self.root / "store"),
-            "execution_image": self.image,
+            "execution_image": "none",
+            "execution_host": str(self.host),
             "execution_commit": "2" * 40,
             "execution_repository": "https://github.com/owner/tool",
-            "pool": "a10",
-            "scorer": "/opt/llm-cc/bin/llm-cc",
-            "model": "/models/model.gguf",
-            "installed_root": "/opt/llm-cc",
+            "pool": "linux-amd64-rocm",
+            "model": str(self.model),
+            "max_workers": 1,
         }
-        self.plan_path = self.root / "plan.json"
+        self.output = self.root / "out"
 
-    def miss(self):
-        data = b"int x;\n"
-        sha = hashlib.sha256(data).hexdigest()
-        key = digest([sha, "c", self.plan["fingerprint"]])
-        item = {
-            "key": key,
-            "content_sha256": sha,
-            "language": "c",
-            "size": len(data),
-            "blob": "blobs/" + sha,
-        }
-        self.plan["items"][key] = item
-        self.plan["workers"] = [{"worker_id": 0, "keys": [key], "bytes": len(data)}]
-        self.plan["cache_stats"].update(items=1, misses=1)
-        self.plan["inventories"]["head"] = [
-            dict(item, path="x.c", category="runtime", reason=None, scorable=True)
-        ]
-        (self.root / "blobs").mkdir()
-        (self.root / item["blob"]).write_bytes(data)
-        return item
-
-    def run_plan(self, api, **kwargs):
-        write_json(self.plan_path, self.plan)
-        return run_prepared(
-            self.plan_path, self.config, self.store, api, self.root / "out", **kwargs
+    def prepare(self):
+        return prepare_plan(
+            self.config, self.repo, self.head, self.identity, self.output
         )
 
+    def score_everything(self):
+        """Seed the store as an earlier comparison would have."""
+        plan = self.prepare()
+        for worker in plan["workers"]:
+            subprocess.run(
+                [
+                    llm_cc(),
+                    "compare",
+                    "worker",
+                    "--plan",
+                    str(self.output / "plan.json"),
+                    "--worker-id",
+                    str(worker["worker_id"]),
+                    "--output-dir",
+                    str(self.root / "seed"),
+                    "--cache",
+                    self.config["cache"],
+                    "--model",
+                    str(self.model),
+                ],
+                check=True,
+                capture_output=True,
+            )
+
+    def run_plan(self, api, config=None, **kwargs):
+        return run_prepared(
+            self.output / "plan.json",
+            self.config if config is None else config,
+            self.store,
+            api,
+            self.output,
+            **kwargs,
+        )
+
+    def run_remote(self, request):
+        """Run a submitted worker request the way the bare host would."""
+        command = shlex.split(request["steps"][0]["run"])
+        index = command.index("remote-worker")
+        return buildbuddy.main(command[index:])
+
+    def test_prepare_plans_misses_with_the_pinned_llm_cc(self):
+        plan = self.prepare()
+        self.assertEqual(plan["schema_version"], 2)
+        self.assertEqual(plan["identity"]["base_sha"], self.identity["target_sha"])
+        self.assertEqual(read_json(self.output / "identity.json")["pr_number"], 123)
+        self.assertEqual(len(plan["workers"]), 1)
+        for key in plan["workers"][0]["keys"]:
+            object_id = plan["items"][key]["blob_id"]
+            content = (self.output / "blobs" / object_id).read_bytes()
+            self.assertEqual(blob_id(content, object_id), object_id)
+        self.config["scoring_args"] = str(self.root / "auto.args")
+        Path(self.config["scoring_args"]).write_text(
+            "--model\n%s\n--backend\nauto\n" % self.model
+        )
+        with self.assertRaisesRegex(RuntimeError, "compare prepare failed"):
+            self.prepare()
+        self.config["cache_concurrency"] = 0
+        with self.assertRaisesRegex(ValueError, "cache_concurrency"):
+            self.prepare()
+
     def test_fully_cached_uses_no_gpu_or_worker_configuration(self):
+        self.score_everything()
+        plan = self.prepare()
+        self.assertEqual(plan["workers"], [])
         api = FakeAPI()
-        self.config = {}  # warm path does not need a GPU image, pool, or credentials
-        report = self.run_plan(api)
-        self.assertEqual(report["status"], "complete")
+        # The warm path needs no GPU host, pool, bundle or credentials.
+        report = self.run_plan(api, config={})
+        self.assertEqual(report["status"], "complete", report["errors"])
         self.assertEqual(api.submissions, [])
         self.assertEqual(api.cancelled, [])
         self.assertIsNotNone(
             self.store.get(pipeline_prefix(self.identity) + "report.json")
         )
 
-    def test_miss_submits_immutable_worker_and_collects_parent_artifact(self):
-        item = self.miss()
-        result = dict(
-            item,
-            schema_version=1,
-            fingerprint=self.plan["fingerprint"],
-            llm_cc=4.0,
-            token_count=2,
+    def test_miss_runs_a_bare_host_worker_and_collects_its_artifact(self):
+        plan = self.prepare()
+        statuses = []
+        api = FakeAPI(
+            on_submit=lambda request: statuses.append(self.run_remote(request))
         )
-        result.pop("blob")
-        result.pop("size")
-        artifact = {
-            "schema_version": 1,
-            "identity": self.identity,
-            "fingerprint": self.plan["fingerprint"],
-            "worker_id": 0,
-            "status": "complete",
-            "errors": [],
-            "results": {item["key"]: result},
-        }
-
-        def publish():
-            self.store.put(
-                pipeline_prefix(self.identity) + "workers/0/worker-0.json",
-                json.dumps(artifact).encode(),
-            )
-
-        api = FakeAPI(on_submit=publish)
         report = self.run_plan(api)
-        self.assertEqual(report["status"], "complete")
+        self.assertEqual(statuses, [0])
+        self.assertEqual(report["status"], "complete", report["errors"])
         self.assertEqual(len(api.submissions), 1)
         request = api.submissions[0]
         self.assertEqual(request["commit_sha"], "2" * 40)
         self.assertEqual(request["timeout"], "2h")
-        self.assertEqual(request["platform_properties"]["Pool"], "a10")
-        self.assertEqual(request["platform_properties"]["container-image"], self.image)
-        self.assertIn("--plan-sha256", request["steps"][0]["run"])
-        self.assertIn(pipeline_prefix(self.identity), request["steps"][0]["run"])
+        properties = request["platform_properties"]
+        self.assertEqual(properties["Pool"], "linux-amd64-rocm")
+        self.assertEqual(properties["container-image"], "none")
+        self.assertEqual(properties["workload-isolation-type"], "none")
+        self.assertEqual(
+            properties["debug-executor-labels"], "gpu-resource=bazzite-radeon-0"
+        )
+        run = request["steps"][0]["run"]
+        self.assertIn("--plan-sha256", run)
+        self.assertIn("--execution-host " + str(self.host), run)
+        self.assertIn(pipeline_prefix(self.identity), run)
+        prefix = pipeline_prefix(self.identity)
+        artifact = json.loads(self.store.get(prefix + "workers/0/worker-0.json"))
+        self.assertEqual(artifact["schema_version"], 2)
+        self.assertEqual(set(artifact["results"]), set(plan["workers"][0]["keys"]))
+        # Each result is also in the shared cache, so the next plan is warm.
+        self.assertEqual(self.prepare()["workers"], [])
+
+    def test_remote_worker_refuses_a_changed_plan_and_still_reports(self):
+        self.prepare()
+        prefix, digest = upload_plan(self.store, self.output / "plan.json")
+        args = argparse.Namespace(
+            cache=self.config["cache"],
+            store_options_json="{}",
+            prefix=prefix,
+            plan_sha256="0" * 64,
+            worker_id=0,
+            llm_cc=str(self.verified),
+            model=str(self.model),
+            execution_host=str(self.host),
+        )
+        self.assertEqual(remote_worker(args), 1)
+        artifact = json.loads(self.store.get(prefix + "workers/0/worker-0.json"))
+        self.assertEqual(artifact["schema_version"], 2)
+        self.assertEqual(artifact["status"], "failed")
+        self.assertIn("digest mismatch", artifact["errors"][0])
+        # A blob that no longer matches its object ID is never scored.
+        plan = read_json(self.output / "plan.json")
+        object_id = plan["items"][plan["workers"][0]["keys"][0]]["blob_id"]
+        self.store.put(prefix + "blobs/" + object_id, b"tampered")
+        args.plan_sha256 = digest
+        self.assertEqual(remote_worker(args), 1)
+        artifact = json.loads(self.store.get(prefix + "workers/0/worker-0.json"))
+        self.assertIn("corrupt source blob", artifact["errors"][0])
+
+    def test_upload_verifies_blobs_against_their_object_ids(self):
+        plan = self.prepare()
+        object_id = plan["items"][plan["workers"][0]["keys"][0]]["blob_id"]
+        (self.output / "blobs" / object_id).write_bytes(b"changed")
+        with self.assertRaisesRegex(ValueError, "changed before upload"):
+            upload_plan(self.store, self.output / "plan.json")
+        hashed = subprocess.run(
+            ["git", "hash-object", "--stdin"],
+            input=b"x = 1\n",
+            capture_output=True,
+            check=True,
+        )
+        self.assertEqual(blob_id(b"x = 1\n", "0" * 40), hashed.stdout.decode().strip())
 
     def test_missing_artifact_is_explicit_failure(self):
-        self.miss()
+        self.prepare()
         report = self.run_plan(FakeAPI(complete=False))
         self.assertEqual(report["status"], "failed")
         self.assertTrue(any("without an artifact" in x for x in report["errors"]))
-        self.assertTrue((self.root / "out/publication.json").is_file())
+        self.assertTrue((self.output / "publication.json").is_file())
 
     def test_superseded_workers_are_cancelled_and_failure_report_retained(self):
-        self.miss()
+        self.prepare()
         api = FakeAPI(complete=None)
         state = iter([True, False])
         report = self.run_plan(api, current=lambda: next(state))
@@ -190,14 +296,14 @@ class BuildBuddyTest(unittest.TestCase):
         self.assertEqual(len(api.cancelled), 1)
 
     def test_timeout_cancels_workers(self):
-        self.miss()
+        self.prepare()
         api = FakeAPI(complete=None)
         report = self.run_plan(api, timeout_seconds=0)
         self.assertEqual(report["status"], "failed")
         self.assertEqual(len(api.cancelled), 1)
 
     def test_long_worker_freshness_checks_fit_anonymous_quota(self):
-        self.miss()
+        self.prepare()
         now = [0]
         checks = []
         polls = []
@@ -231,7 +337,7 @@ class BuildBuddyTest(unittest.TestCase):
         self.assertLess(sum(value < 3600 for value in checks) + 2, 60)
 
     def test_periodic_freshness_check_cancels_superseded_worker(self):
-        self.miss()
+        self.prepare()
         now = [0]
         api = FakeAPI(complete=None)
 
@@ -254,7 +360,7 @@ class BuildBuddyTest(unittest.TestCase):
         self.assertEqual(len(api.cancelled), 1)
 
     def test_final_freshness_check_rejects_change_between_periodic_checks(self):
-        self.miss()
+        self.prepare()
         api = FakeAPI()
         with patch("tools.comparison.buildbuddy.time.monotonic", return_value=0):
             state = iter([True, False])
@@ -267,6 +373,8 @@ class BuildBuddyTest(unittest.TestCase):
         )
 
     def test_final_freshness_check_runs_for_fully_cached_comparison(self):
+        self.score_everything()
+        self.prepare()
         state = iter([True, False])
         report = self.run_plan(
             FakeAPI(), current=lambda: next(state), current_check_seconds=180
@@ -276,69 +384,45 @@ class BuildBuddyTest(unittest.TestCase):
             "comparison superseded before report publication", report["errors"]
         )
 
-    def test_mutable_or_mismatched_execution_is_rejected_before_submit(self):
-        self.miss()
+    def test_container_or_mutable_execution_is_rejected_before_submit(self):
+        plan = self.prepare()
         for field, value in (
-            ("execution_image", "registry.example/scorer:latest"),
+            # The scorer image has no Python to run the remote worker.
+            ("execution_image", "registry.example/scorer@sha256:" + "1" * 64),
+            ("execution_host", None),
+            ("execution_host", "relative/execution-host.json"),
             ("execution_commit", "main"),
+            ("pool", ""),
         ):
-            with self.subTest(field=field):
+            with self.subTest(field=field, value=value):
                 config = dict(self.config, **{field: value})
                 with self.assertRaises(ValueError):
-                    worker_request(
-                        config, self.plan, self.plan["workers"][0], "prefix/", "0" * 64
-                    )
+                    worker_request(config, plan, plan["workers"][0], "p/", "0" * 64)
+        config = dict(self.config, store_options={"aws_secret_access_key": "x"})
+        with self.assertRaisesRegex(ValueError, "worker_secret_env"):
+            worker_request(config, plan, plan["workers"][0], "p/", "0" * 64)
 
     def test_bare_host_request_forces_host_isolation_and_verified_bundle(self):
         self.config.update(
-            execution_image="none",
             execution_bundle="/var/lib/llm-cc/packages/tool.zip",
             execution_bundle_sha256="f" * 64,
         )
         self.config["platform_properties"] = {"workload-isolation-type": "docker"}
-        self.plan["profile"]["build"].update(
-            execution_image="none", execution_host={"resource_id": "bazzite-radeon-0"}
-        )
-        self.miss()
+        plan = self.prepare()
         request = worker_request(
-            self.config, self.plan, self.plan["workers"][0], "prefix/", "0" * 64
+            self.config, plan, plan["workers"][0], "prefix/", "0" * 64
         )
         self.assertTrue(request["skip_auto_checkout"])
         self.assertEqual(
             request["platform_properties"]["workload-isolation-type"], "none"
         )
-        self.assertEqual(
-            request["platform_properties"]["debug-executor-labels"],
-            "gpu-resource=bazzite-radeon-0",
-        )
         command = request["steps"][0]["run"]
         self.assertIn("python3 -I -c", command)
         self.assertIn("checksum mismatch", command)
         self.assertIn("f" * 64, command)
-        self.plan["profile"]["build"].pop("execution_host")
+        self.config["execution_bundle"] = "relative.zip"
         with self.assertRaises(ValueError):
-            worker_request(
-                self.config, self.plan, self.plan["workers"][0], "prefix/", "0" * 64
-            )
-
-    def test_cache_bound_only_reaches_workers_when_narrowed(self):
-        self.miss()
-        default = worker_request(
-            self.config, self.plan, self.plan["workers"][0], "prefix/", "0" * 64
-        )["steps"][0]["run"]
-        # Bundles deployed before the option existed hard-code the default, so
-        # an unchanged bound must not add an argument they would reject.
-        self.assertNotIn("--cache-concurrency", default)
-        self.config["cache_concurrency"] = 2
-        narrowed = worker_request(
-            self.config, self.plan, self.plan["workers"][0], "prefix/", "0" * 64
-        )["steps"][0]["run"]
-        self.assertIn("--cache-concurrency 2", narrowed)
-        self.config["cache_concurrency"] = 0
-        with self.assertRaisesRegex(ValueError, "cache_concurrency"):
-            worker_request(
-                self.config, self.plan, self.plan["workers"][0], "prefix/", "0" * 64
-            )
+            worker_request(self.config, plan, plan["workers"][0], "prefix/", "0" * 64)
 
     def test_bundle_executes_only_verified_bytes_with_expected_arguments(self):
         archive = self.root / "code.zip"
@@ -359,10 +443,10 @@ class BuildBuddyTest(unittest.TestCase):
         self.assertIn("execution bundle checksum mismatch", completed.stderr)
 
     def test_run_prepared_uploads_baseline_artifacts(self):
-        api = FakeAPI()
-        self.config = {}
-        report = self.run_plan(api)
-        self.assertEqual(report["status"], "complete")
+        self.score_everything()
+        self.prepare()
+        report = self.run_plan(FakeAPI(), config={})
+        self.assertEqual(report["status"], "complete", report["errors"])
         prefix = pipeline_prefix(self.identity)
         for name in (
             "report.json",
@@ -374,9 +458,9 @@ class BuildBuddyTest(unittest.TestCase):
         ):
             with self.subTest(name=name):
                 self.assertIsNotNone(self.store.get(prefix + name))
-                self.assertTrue((self.root / "out" / name).is_file())
+                self.assertTrue((self.output / name).is_file())
         baseline = json.loads(self.store.get(prefix + "baseline.json"))
-        self.assertEqual(baseline["identity"], self.identity)
+        self.assertEqual(baseline["identity"], report["identity"])
         self.assertEqual(baseline["rankings"], report["rankings"]["head"])
         self.assertIn(
             "Baseline ranking for owner/repo@",
@@ -416,7 +500,7 @@ class BuildBuddyTest(unittest.TestCase):
         self.assertIsNone(github.discover("a" * 40, "feature", "main"))
 
     def test_failure_envelope_matches_bounded_comment(self):
-        failure_report(self.root, self.identity, "0" * 64, ["analysis failed"])
+        aggregate_report(self.root, identity=self.identity, errors=["analysis failed"])
         publication = json.loads((self.root / "publication.json").read_text())
         body = (self.root / "comment.md").read_bytes()
         self.assertEqual(
@@ -426,13 +510,15 @@ class BuildBuddyTest(unittest.TestCase):
 
     @unittest.skipUnless(hasattr(signal, "setitimer"), "POSIX worker deadline")
     def test_remote_transport_deadline_interrupts_a_slow_store(self):
+        uploaded = {}
+
         class SlowStore:
-            def get(self, key):
+            def get(self, key, max_bytes=None):
                 time.sleep(0.25)
                 return None
 
             def put(self, key, value):
-                pass
+                uploaded[key] = value
 
         args = argparse.Namespace(
             cache="unused",
@@ -440,9 +526,9 @@ class BuildBuddyTest(unittest.TestCase):
             prefix="pipelines/" + "a" * 64 + "/",
             plan_sha256="0" * 64,
             worker_id=0,
-            scorer="/bin/false",
+            llm_cc="/bin/false",
             model="/missing",
-            installed_root="/tmp",
+            execution_host="/missing.json",
         )
         began = time.monotonic()
         # Keep the test short without weakening the production 110-minute limit.
@@ -457,6 +543,9 @@ class BuildBuddyTest(unittest.TestCase):
         ):
             self.assertEqual(remote_worker(args), 1)
         self.assertLess(time.monotonic() - began, 0.2)
+        artifact = json.loads(uploaded[args.prefix + "workers/0/worker-0.json"])
+        self.assertEqual(artifact["status"], "failed")
+        self.assertEqual(artifact["schema_version"], 2)
 
 
 if __name__ == "__main__":

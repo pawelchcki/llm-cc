@@ -3,9 +3,11 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 from .__main__ import main
 from .ci import github_matrix, gitlab_child, gitlab_skipped, load_config
@@ -18,9 +20,9 @@ PLAN_PATH = "comparison/prep/plan.json"
 STORE = "s3://bucket/llm-cc"
 
 
-def plan(workers, image=SCORER):
+def plan(workers):
     return {
-        "profile": {"build": {"execution_image": image}},
+        "schema_version": 2,
         "workers": [
             {"worker_id": worker_id, "keys": ["k%d" % worker_id], "bytes": 1}
             for worker_id in range(workers)
@@ -36,9 +38,17 @@ def read_yaml(path):
     return json.loads(document)
 
 
+def without_scorer_environment():
+    environment = dict(os.environ)
+    environment.pop("LLM_CC_SCORER_IMAGE", None)
+    return mock.patch.dict(os.environ, environment, clear=True)
+
+
 class GitLabChildTest(unittest.TestCase):
     def setUp(self):
-        self.config = load_config(RECIPE / "config" / "ci.example.json")
+        with without_scorer_environment():
+            self.config = load_config(RECIPE / "config" / "ci.example.json")
+        self.config["images"]["scorer"] = SCORER
 
     def jobs(self, document, prefix):
         return {name: job for name, job in document.items() if name.startswith(prefix)}
@@ -66,7 +76,14 @@ class GitLabChildTest(unittest.TestCase):
                             }
                         ],
                     )
+                    # The scorer image has no Python; llm-cc is the worker.
+                    self.assertTrue(
+                        job["script"][-1].startswith(
+                            "/opt/llm-cc/bin/llm-cc compare worker --plan " + PLAN_PATH
+                        )
+                    )
                     self.assertIn("--worker-id %d" % worker_id, job["script"][-1])
+                    self.assertIn("--model /models/model.gguf", job["script"][-1])
                     self.assertEqual(job["artifacts"]["when"], "always")
                     self.assertEqual(
                         job["artifacts"]["paths"],
@@ -80,13 +97,15 @@ class GitLabChildTest(unittest.TestCase):
                     sorted(workers),
                 )
                 script = "\n".join(aggregate["script"])
+                self.assertIn("llm-cc compare aggregate --plan", script)
                 self.assertEqual(script.count("--worker "), count)
                 self.assertIn("store-report --cache s3://bucket/llm-cc", script)
                 self.assertTrue(aggregate["script"][-1].startswith("exit"))
 
     def test_fully_cached_plan_needs_no_scorer_image(self):
+        del self.config["images"]["scorer"]
         child = gitlab_child(
-            plan(0, image="none"),
+            plan(0),
             PLAN_PATH,
             self.config,
             STORE,
@@ -115,9 +134,10 @@ class GitLabChildTest(unittest.TestCase):
             "registry.example/scorer@sha256:" + "A" * 64,
         ):
             with self.subTest(image=image):
+                self.config["images"]["scorer"] = image
                 with self.assertRaisesRegex(ValueError, "digest"):
                     gitlab_child(
-                        plan(1, image),
+                        plan(1),
                         PLAN_PATH,
                         self.config,
                         STORE,
@@ -140,14 +160,22 @@ class GitLabChildTest(unittest.TestCase):
         self.config["images"]["coordinator"] = COORDINATOR
         gitlab_child(plan(0), PLAN_PATH, self.config, STORE)
 
-    def test_configured_scorer_must_match_the_fingerprinted_profile(self):
-        self.config["images"]["scorer"] = "registry.example/other@sha256:" + "2" * 64
-        with self.assertRaisesRegex(ValueError, "fingerprinted"):
+    def test_scorer_image_comes_from_configuration_or_the_coordinator(self):
+        del self.config["images"]["scorer"]
+        with self.assertRaisesRegex(ValueError, "LLM_CC_SCORER_IMAGE"):
             gitlab_child(
                 plan(1), PLAN_PATH, self.config, STORE, coordinator=COORDINATOR
             )
-        self.config["images"]["scorer"] = SCORER
-        gitlab_child(plan(1), PLAN_PATH, self.config, STORE, coordinator=COORDINATOR)
+        with mock.patch.dict(os.environ, {"LLM_CC_SCORER_IMAGE": SCORER}):
+            config = load_config(RECIPE / "config" / "ci.example.json")
+        self.assertEqual(config["images"]["scorer"], SCORER)
+        # An explicit configuration wins over the coordinator's default.
+        other = "registry.example/other@sha256:" + "2" * 64
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "ci.json"
+            write_json(path, {"schema_version": 1, "images": {"scorer": other}})
+            with mock.patch.dict(os.environ, {"LLM_CC_SCORER_IMAGE": SCORER}):
+                self.assertEqual(load_config(path)["images"]["scorer"], other)
 
     def test_capacity_paths_and_store_options_are_validated(self):
         self.config["max_workers"] = 2
@@ -178,7 +206,8 @@ class GitLabChildTest(unittest.TestCase):
         self.assertIn("--store-options store-options.json", worker["script"][1])
 
     def test_configuration_is_optional(self):
-        config = load_config()
+        with mock.patch.dict(os.environ, {"LLM_CC_SCORER_IMAGE": SCORER}):
+            config = load_config()
         self.assertEqual(config["scorer"]["model"], "/models/model.gguf")
         self.assertEqual(config["gitlab"]["prepare_job"], "comparison-prepare")
         self.assertNotIn(
@@ -199,26 +228,37 @@ class GitLabChildTest(unittest.TestCase):
 
 class GitHubMatrixTest(unittest.TestCase):
     def test_matrix_outputs(self):
+        with without_scorer_environment():
+            config = load_config()
         self.assertEqual(
-            github_matrix(plan(0, image="none")),
+            github_matrix(plan(0), config),
             {"matrix": '{"include":[]}', "has_workers": "false"},
         )
+        with self.assertRaisesRegex(ValueError, "LLM_CC_SCORER_IMAGE"):
+            github_matrix(plan(1), config)
+        config["images"]["scorer"] = SCORER
         self.assertEqual(
-            github_matrix(plan(2)),
+            github_matrix(plan(2), config),
             {
                 "matrix": '{"include":[{"worker_id":0},{"worker_id":1}]}',
                 "has_workers": "true",
                 "scorer_image": SCORER,
             },
         )
+        config["images"]["scorer"] = "scorer:latest"
         with self.assertRaisesRegex(ValueError, "digest"):
-            github_matrix(plan(1, image="scorer:latest"))
+            github_matrix(plan(1), config)
 
 
 class CommandTest(unittest.TestCase):
     def run_main(self, *arguments):
         output, errors = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+        # The coordinator image names its scorer image in the environment.
+        with (
+            contextlib.redirect_stdout(output),
+            contextlib.redirect_stderr(errors),
+            mock.patch.dict(os.environ, {"LLM_CC_SCORER_IMAGE": SCORER}),
+        ):
             status = main(list(arguments))
         return status, output.getvalue(), errors.getvalue()
 

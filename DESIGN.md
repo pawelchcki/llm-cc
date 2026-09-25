@@ -120,10 +120,7 @@ operations. A conservative next-expiry timestamp avoids scanning on ordinary
 insertions. Digest memos in `model-digests/` use streaming SHA-256 and a file
 signature checked before and after hashing, retrying once if the file changes.
 Validated hits survive timestamp or maintenance failures. The memo file format
-is documented in `src/model_identity.h` as the supported interface for external
-verifiers: a caller that has already hashed the model under the same signature,
-such as the comparison worker, can write the memo so the scorer reuses that
-digest instead of hashing again.
+is documented in `src/model_identity.h`.
 
 ## Build boundaries
 

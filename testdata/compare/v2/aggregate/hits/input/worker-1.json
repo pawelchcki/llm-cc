@@ -1,0 +1,44 @@
+{
+  "elapsed_seconds": 0,
+  "errors": [],
+  "fingerprint": "3f57f5164c06fa28229af285af15b5b7075b89ef7e30f0ae5d5900f1f2b66ca5",
+  "identity": {
+    "base_sha": "1d43f119f327a404e8f9633434f83e55995f2369",
+    "head_sha": "39be199bcdc7b54f6258e08e4f585fee7eb6e20c",
+    "pipeline_id": "p",
+    "pr_number": 1,
+    "repository": "o/r",
+    "started_at": "2026-01-01T00:00:00Z",
+    "target_branch": "main",
+    "target_sha": "1d43f119f327a404e8f9633434f83e55995f2369"
+  },
+  "results": {
+    "97a80bda8d73ee7723119d2b975ee14a2905c95902d2d813308fb10eddfa7146": {
+      "blob_id": "40164f9b3995aa9ea3c7dd538505d3d184e09e6a",
+      "entropy_sum": 2.5,
+      "fingerprint": "3f57f5164c06fa28229af285af15b5b7075b89ef7e30f0ae5d5900f1f2b66ca5",
+      "high_entropy_tokens": 2,
+      "key": "97a80bda8d73ee7723119d2b975ee14a2905c95902d2d813308fb10eddfa7146",
+      "language": "cpp",
+      "llm_cc": 7.25,
+      "token_count": 5,
+      "total_branch": 1,
+      "total_comp_level": 2
+    },
+    "f68c0e5acd176cb8d818c9980fecb5b688d3564c627bc1bddb70157d88cf74b4": {
+      "blob_id": "2335e7f6688c47312fd72721bd5db533f55dc8aa",
+      "entropy_sum": 2.5,
+      "fingerprint": "3f57f5164c06fa28229af285af15b5b7075b89ef7e30f0ae5d5900f1f2b66ca5",
+      "high_entropy_tokens": 2,
+      "key": "f68c0e5acd176cb8d818c9980fecb5b688d3564c627bc1bddb70157d88cf74b4",
+      "language": "cpp",
+      "llm_cc": 7.25,
+      "token_count": 5,
+      "total_branch": 1,
+      "total_comp_level": 2
+    }
+  },
+  "schema_version": 2,
+  "status": "complete",
+  "worker_id": 1
+}

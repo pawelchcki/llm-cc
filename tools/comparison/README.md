@@ -1,47 +1,96 @@
-# Revision comparison stages
+# Revision comparison
 
-The package compares committed source at two Git revisions. It is independent of
-any CI provider and stores immutable stage artifacts in an explicit output
-directory. All commands are also available as public Bazel launchers.
+`llm-cc compare` compares committed source at two Git revisions: it selects and
+classifies files, plans the work, scores it, caches results and renders the
+report. This package is the provider glue around it: GitHub discovery and
+publication, CI pipeline generation, and the BuildBuddy/Bazzite coordinator.
 
-Create JSON files for the pipeline identity, scoring profile, and classification
-rules, then prepare work:
-
-```sh
-bazel run //tools/comparison:prepare -- \
-  --repo "$PWD" --head HEAD_SHA --target TARGET_SHA \
-  --identity identity.json --profile profile.json --rules rules.json \
-  --cache /shared/llm-cc-cache --output-dir artifacts
-```
-
-`plan.json` contains zero workers on a complete cache hit. Otherwise schedule one
-GPU job per entry in `workers` and run its numeric `worker_id`:
+For a local comparison, one command runs every stage in process:
 
 ```sh
-bazel run //tools/comparison:worker -- \
-  --plan artifacts/plan.json --worker-id 0 --cache /shared/llm-cc-cache \
-  --output-dir artifacts --scorer /opt/llm-cc/bin/llm-cc --model /models/model.gguf \
-  --installed-root /opt/llm-cc
+llm-cc compare run --target main --output-dir comparison \
+  --model /models/model.gguf
 ```
 
-The CPU aggregation stage accepts every produced worker artifact:
+`--head` defaults to `HEAD`, `--backend auto` and `--entropy-reduction auto`
+are resolved on this machine, and results are cached under `compare/` beside
+the model cache unless `--cache DIR|s3://bucket/prefix` names another store.
+A rerun scores nothing that is already cached.
+
+## CI stages
+
+CI splits the same comparison across a CPU coordinator and zero to four GPU
+workers, which must all run the same llm-cc build. Preparation takes the
+scoring settings explicitly, usually from a response file with one argument
+per line:
 
 ```sh
-bazel run //tools/comparison:aggregate -- \
-  --plan artifacts/plan.json --worker artifacts/worker-0.json \
-  --output-dir artifacts/report
+llm-cc compare prepare --repo "$PWD" --head HEAD_SHA --target TARGET_SHA \
+  --identity identity.json --cache s3://bucket/llm-cc --output-dir prep \
+  @scoring.args
 ```
 
-For local execution, `//tools/comparison:compare` accepts the union of the
-prepare and worker flags and runs each planned worker sequentially. Cache
-locations may be filesystem paths or `s3://bucket/prefix`. Pass S3 client
-options as a JSON file with `--store-options`. `--refresh-days` and
-`--expire-days` control result retention.
+`scoring.args` pins the model and every scoring setting, for example:
+
+```text
+--model-sha256
+5a2e25280075d769abdb111de8211d9d3367f2ae0d0e6166a288ee6e8ed0345d
+--model-bytes
+14066972416
+--backend
+cuda
+--entropy-reduction
+device
+--flash-attn
+on
+```
+
+`--model GGUF` or `--model-name NAME` hashes a local model instead; `auto`
+settings are refused, because the coordinator is not the GPU host. Planning
+options are `--max-workers` (at most 4), `--max-file-bytes` (default 65536),
+`--default-rules FILE`, `--presentation FILE`, `--cache-concurrency`,
+`--refresh-days` and `--expire-days`. `llm-cc compare identity @scoring.args`
+prints the scorer, model, scoring and fingerprint a plan would carry.
+
+`prep/plan.json` lists zero workers on a complete cache hit. Otherwise run one
+GPU job per entry in `workers`, in a directory holding the plan and its
+`blobs/`:
+
+```sh
+llm-cc compare worker --plan prep/plan.json --worker-id 0 \
+  --cache s3://bucket/llm-cc --output-dir workers/0 --model /models/model.gguf
+```
+
+The worker takes its scoring settings from the plan and refuses a plan that
+another llm-cc build prepared, a model with other weights, or a backend other
+than the planned one. It loads the model once for every language, verifies each
+blob against its Git object ID, stores each result as soon as it is ready and
+always writes `worker-N.json`, with status `complete` only when every assigned
+file was scored. The deadline defaults to 6600 seconds.
+
+The CPU aggregation stage accepts every worker artifact produced:
+
+```sh
+llm-cc compare aggregate --plan prep/plan.json \
+  --worker workers/0/worker-0.json --output-dir report
+```
+
+Each `--error MESSAGE` turns the report into a failure; without `--plan`,
+`--identity FILE` names the pipeline the failure belongs to. The Python stages
+that write failure reports run `$LLM_CC`, or `llm-cc` from `PATH`.
+
+`llm-cc compare store get|put KEY --cache LOCATION` reads or writes one object
+of a filesystem or `s3://bucket/prefix` store for operators. S3 requests are
+signed with SigV4 from `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and
+`AWS_SESSION_TOKEN`; `--store-options` may set `endpoint_url` and
+`region_name`, which otherwise come from `AWS_ENDPOINT_URL[_S3]` and
+`AWS_REGION`. Store options never carry credentials.
 
 Every aggregation writes `report.json`, `report.md`, `comment.md`,
 `publication.json`, `baseline.md` and `baseline.json`, including on validation
 failure. An increased score is reported but does not make the command fail.
-Missing or invalid analysis does.
+Missing or invalid analysis does. [SCHEMA.md](SCHEMA.md) describes the plan,
+worker, result and report formats.
 
 ## What the report contains
 
@@ -66,8 +115,6 @@ and only then are whole lines cut; nothing is ever split inside a code span.
 
 `report.md` carries the same sections without any truncation, plus the full
 changed-files table, raw totals, coverage details and both inventories.
-`report.json` adds `rankings` and `changed_files` to the existing keys; see
-[SCHEMA.md](SCHEMA.md).
 
 `baseline.md` and `baseline.json` describe the run's head revision on its own:
 category scores, the 50 worst-scoring files overall, the 20 worst per category,
@@ -80,17 +127,20 @@ pull-request comments will link to it.
 ## Per-repository classification rules
 
 `prepare` reads `.llm-cc/rules.json` from the **target** commit's tree, falling
-back to the legacy `.llm-cc/comparison-rules.json`. Local `llm-cc` analysis
-reads the same file; see
+back to the legacy `.llm-cc/comparison-rules.json`, with the same rules engine
+as local `llm-cc` analysis; see
 [selection and classification rules](../../README.md#selection-and-classification-rules).
-A pull request cannot reclassify its own files, and rules that
-fail validation fail the run instead of silently reverting to the host defaults.
-This package matches globs with a port of llm-cc's own segment-aware matcher,
-so a rules file selects and classifies the same files in CI as locally.
+A pull request cannot reclassify its own files, and rules that fail validation
+fail the run instead of silently reverting to the defaults. A target without
+that file uses `--default-rules`, the rules the host publishes, and otherwise
+llm-cc's built-in rules. The report names the source it used.
+
+Globs are anchored and segment-aware, like `.gitignore`: `*` and `?` never
+cross `/`, and a whole-segment `**` matches zero or more directories.
+`llm-cc rules explain PATH...` shows how a rules file classifies paths.
 Accepted keys are `exclude`, `tests`, `tooling`, `extensions` and `paths`; glob
 lists hold non-empty patterns of at most 256 characters, at most 512 patterns in
-total including `paths`, and the canonical document must stay under 64 KiB.
-Repositories without that file use the rules the host publishes.
+total including `paths`, and the document must stay under 64 KiB.
 
 `paths` is an ordered list of `{"pattern": <glob>, "language": <supported>}`
 objects that choose a language by location rather than by extension, for a
@@ -101,20 +151,14 @@ directories:
 {"paths": [{"pattern": "include/legacy/**/*.h", "language": "c"}]}
 ```
 
-Patterns match the full repository path, case-sensitively, like the category
-globs. The first matching `paths` rule wins, then `extensions`, then the
-built-in extension table. The resolved language is part of a file's cache key,
-so the same bytes under two differently overridden directories are scored
-separately. Symlinks and submodules stay unscorable whatever rule matches
-them.
+The first matching `paths` rule wins, then `extensions`, then the built-in
+extension table. The resolved language is part of a file's result key, so the
+same bytes under two differently overridden directories are scored separately.
+Symlinks and submodules stay unscorable whatever rule matches them. See
+[consumer/comparison-rules.json](consumer/comparison-rules.json) for a
+per-repository example.
 
-Run without Bazel using `python3 -m tools.comparison prepare` (Python 3.11+ and
-Git). A consuming module can run `@llm_cc//tools/comparison:prepare`, including
-when its `bazel_dep` uses a different `repo_name`. Each stage accepts explicit
-paths; Bazel launchers resolve those paths in the original working directory.
-
-For GitLab and GitHub Actions pipelines built from these stages, see
-[CI_RECIPE.md](CI_RECIPE.md).
+## Identity, fingerprint and cache
 
 An identity file for a PR looks like:
 
@@ -128,132 +172,63 @@ An identity file for a PR looks like:
 }
 ```
 
-Preparation resolves the supplied head and actual target commits, calculates
-their merge base, and adds all three SHAs to the identity. Fetch full history if
-merge-base resolution fails. The package reads committed Git objects, including
-headers; it neither scores working-tree changes nor follows symlinks/submodules.
-Classification rules use `exclude`, `tests`, and `tooling` glob arrays plus an
-optional extension-to-language map. Tests take precedence over tooling and
-runtime. Every rule set is validated before use. See
-[dogfood-rules.json](dogfood-rules.json) for the host rules and
-[consumer/comparison-rules.json](consumer/comparison-rules.json) for a
-per-repository example.
+`discover` writes one with `head_sha`, `target_sha` and a null `base_sha`;
+preparation fills in the resolved commits and their merge base, and refuses an
+identity naming other commits. Fetch full history if merge-base resolution
+fails. Comparisons read committed Git objects, including headers; they never
+score working-tree changes or follow symlinks and submodules.
 
-The dogfood scorer is pinned to
-`4646123b274005c587dfeb614f17ddf5fd36aef6` for both revisions. Build and install
-that revision in an independent checkout with explicit `source_commit` and
-`source_version`, and the chosen CUDA or ROCm backend. Container workers use a
-digest-pinned GPU image containing that installation and the checksum-pinned
-DeepSeek model. Bazzite workers use the separately fingerprinted bare-host ROCm
-profile described below.
-This package does not provision storage or distribute/cache model weights.
+The fingerprint hashes three objects: the **scorer** (llm-cc version, stamped
+commit or, for an unstamped build, the executable's SHA-256, backend
+configuration, inference ABI and analysis version), the **model** (SHA-256 and
+size) and the **scoring** settings (backend and GPU layers, context, batch,
+entropy reduction, Flash Attention, K/V type and offload, hierarchy, tau and
+alpha). A result's key hashes the file's Git blob ID, its language and the
+fingerprint, so path, category, branch and application revision never change
+it, and every llm-cc release starts a fresh cache. Identical contents in one
+language share inference but each path counts toward reporting.
 
-Materialize the scoring identity from the final installed tree:
-
-```sh
-python3 -m tools.comparison.profile \
-  --installed-root /opt/llm-cc \
-  --execution-image 'registry.example/scorer@sha256:<64-hex-digest>' \
-  --output profile.json
-```
-
-This `dogfood` preset checks the backend manifest's source commit and hashes
-installed files. Any other scorer build uses the `generate` subcommand, which
-derives the same identity instead of pinning it:
-
-```sh
-python3 -m tools.comparison.profile generate \
-  --installed-root /opt/llm-cc --backend rocm \
-  --execution-image 'registry.example/scorer@sha256:<64-hex-digest>' \
-  --model /models/coder.gguf \
-  --context 32768 --kv-cache-type q8_0 --output profile.json
-```
-
-`generate` accepts one flag per scoring setting, and takes the model identity
-either from a local file (`--model`, hashed in place) or from explicit
-`--model-sha256 --model-bytes [--model-url]`. Both subcommands run the installed
-`bin/llm-cc` offline in a sanitized environment with private cache directories
-(`--version` and `cache status --format json`) to read the executable's version,
-its embedded source commit, its backend configuration, its analysis version and
-its inference ABI, and reject a tree whose executable, backend manifest and
-llama.cpp commit disagree. An executable built before it reported its own
-identity is still accepted only for the pinned dogfood commit, whose analysis
-version is known, with the manifest's claim recorded as unverified. A `--model` naming
-one shard of a split GGUF pins the whole set, exactly as the scorer reports it. Neither command downloads anything, but the generator
-must run on a host that can execute the installed binary. `--flash-attn auto` and
-`--entropy-reduction auto` are rejected because the scorer would then resolve
-those settings against the runtime, leaving the expected configuration
-non-deterministic. Optional `--expected-source-commit` and
-`--expected-inference-abi` re-assert operator pins. `setup_bazzite.py` is
-unaffected; it consumes an already generated profile file.
-The CUDA profile pins the model's SHA-256 and 14,066,972,416-byte size, all
-layers on GPU, context 131072, batch 256, Flash Attention on, Q8_0 K/V with
-offload, device entropy reduction, structural hierarchy, tau 0.67 and alpha 0.8.
-The default file limit is **65,536 bytes**; override it with `--max-file-bytes`.
 Oversized supported files remain unmeasured, and affected category/repository
-scores and totals are unavailable. Files are never truncated.
+scores and totals are unavailable. Files are never truncated. The displayed
+repository/category headline is raw LM-CC, `sum(llm_cc)`, printed with one
+decimal; `score` in `report.json` remains `sum(llm_cc) / sum(tokens)` and is
+shown as the LM-CC/token delta. Zero-token scores and zero-baseline percentages
+are unavailable.
 
-Fingerprint inputs are the complete scoring contract and installed/model/image
-identity. Path, category, branch and application revision do not affect per-file
-keys. Identical contents in one language share inference but each path counts
-toward reporting. The displayed repository/category headline is raw LM-CC,
-`sum(llm_cc)`, the paper's quantity printed with one decimal; `score` in
-`report.json` remains `sum(llm_cc) / sum(tokens)` and is shown as the
-LM-CC/token delta.
-Zero-token scores and zero-baseline percentages are unavailable.
+The store holds results under `results/v2/`, native entropy entries under
+`entropy/v2/` (so a new tau or alpha reuses inference), and each pipeline's
+plan, blobs, worker artifacts and report under `pipelines/<digest>/`. Results
+refresh after 20 days and expire after 30 by default; configure the bucket's
+lifecycle accordingly. Corrupt or mismatched entries are misses; read,
+authentication and transport errors fail the run. Preparation reads cached
+results in parallel, bounded by `--cache-concurrency` (default 8, maximum 64);
+the plan does not depend on the bound.
 
 Filesystem writes use atomic replacement with owner/group permissions (`0660`)
 restricted by the writer's umask/default ACL. For executor accounts sharing a
-filesystem cache, provision its root with their shared group and mode `2770`,
-and run each stage with umask `0007` so new
-directories and objects remain accessible to that group. An owner-only deployment
-can use umask `0077`. Preparation reads cached results in
-parallel, bounded by `--cache-concurrency` (default 8, maximum 64); the same
-option on the `worker` stage bounds restoring native entropy entries. The
-coordinator forwards a narrowed `cache_concurrency` to every remote worker, so
-lowering it below the default requires redeploying the execution bundle from a
-commit that accepts the option. Read or
-authentication errors still fail the run, and the plan does not depend on the
-bound. S3 requires the optional `boto3`
-dependency in coordinator and worker environments. A `--store-options` JSON file
-can contain `endpoint_url` and `region_name`; provide credentials through the AWS
-environment/provider chain, never in plan artifacts. Read/authentication/transport
-errors fail analysis; corrupt or mismatched cache entries become misses. Results
-refresh after 20 days and expire after 30 days by default. Configure the bucket's
-lifecycle accordingly. Native entropy entries have a separate namespace and are
-published individually; locks, accounting, temporary files and model memos stay
-private to each worker.
+filesystem store, provision its root with their shared group and mode `2770`,
+and run each stage with umask `0007` so new directories and objects remain
+accessible to that group. An owner-only deployment can use umask `0077`.
 
-Workers verify the scorer, model, and source blobs before running one invocation
-per language. Model verification re-stats the file before and after hashing, and
-the worker then seeds llm-cc's own digest memo with the digest it just verified,
-so the scorer never re-hashes the multi-gigabyte model, not even once, however
-many languages the assignment spans. The memo is written only from a digest that
-matched the profile, lives outside the published namespace, and is deleted with
-the worker's private temporary directory. Complete JSONL configuration, results, totals and process exit must
-validate for every invocation before results are published. Each worker has a
-110-minute deadline within a two-hour job, terminates scorer process groups on
-cancellation, and retains separate JSONL/stderr logs and a structured artifact.
-Linux workers also interrupt blocked store operations at the deadline and allow
-30 seconds to upload their final artifact before logs. Platforms without POSIX
-interval timers use cooperative deadline checks; live GPU workers require Linux.
+## BuildBuddy and Bazzite
 
 The [BuildBuddy adapter](buildbuddy.py) uses the
 [remote-run API](https://www.buildbuddy.io/docs/enterprise-api/#run) to submit only
 planned misses. Configure [buildbuddy.example.json](buildbuddy.example.json) at
-`LLM_CC_COMPARISON_CONFIG` on the CPU coordinator. `execution_commit` pins the
-comparison implementation; `execution_image` must exactly match the scoring
-profile. Bare-host profiles use `execution_image: "none"`, checksummed runtime
-files and explicit GPU identity in `build.execution_host`. A checksummed
-`execution_bundle` can pin a host-staged comparison package independently of
-the repository under analysis. `report_links` holds https URL templates published
-in pull-request comments; only `{repository}`, `{target_sha}` and
-`{target_branch}` may appear, and their values are URL-quoted. Supply a registered GPU pool and shared store. Worker secrets use named
-environment inputs sent as sensitive remote headers. The coordinator discovers
-the current open PR and actual target, cancels obsolete workers, and retains
-reports under a key derived from the **parent invocation** identity. Default-branch
-pushes compare the head to itself and populate the baseline cache. A branch with
-no current PR skips inference.
+`LLM_CC_COMPARISON_CONFIG` on the CPU coordinator: `llm_cc` is the pinned
+executable that prepares, scores and aggregates, `scoring_args` its scoring
+contract, and `execution_host` the bare host's GPU contract. Workers run on a
+bare host (`execution_image: "none"`): a checksummed `execution_bundle` fetches
+the plan and blobs, then runs `llm-cc compare worker --execution-host`.
+`execution_commit` pins the repository BuildBuddy checks out. `report_links`
+holds https URL templates published in pull-request comments; only
+`{repository}`, `{target_sha}` and `{target_branch}` may appear, and their
+values are URL-quoted. Worker secrets use named environment inputs sent as
+sensitive remote headers. The coordinator discovers the current open PR and
+actual target, cancels obsolete workers, and retains reports under a key
+derived from the **parent invocation** identity. Default-branch pushes compare
+the head to itself and populate the baseline cache. A branch with no current PR
+skips inference.
 
 The `Complexity comparison` BuildBuddy action runs on pull requests targeting
 `main` and on `main` pushes. This repository runs the checkout's own coordinator
@@ -261,14 +236,10 @@ through [dogfood.sh](dogfood.sh), so pull requests exercise coordinator changes
 before the host bundle is refreshed; consuming repositories call the published
 launcher instead. The coordinator derives its own head, branch and default branch
 from the checkout, unwrapping BuildBuddy's synthetic merge commit to the actual
-pull-request head. PR updates compare committed source against the merge base of
-the actual target; `main` pushes populate the baseline cache and publish the
-baseline ranking.
-The installed Bazzite runner, store, and pinned scorer provide the execution
-configuration. ci-toolkit consumes the completed BuildBuddy status and publishes
-the generated table and report links using `.ci-toolkit.yml` from the PR's
-target commit. The publication policy must land on the target branch before a
-fresh PR comparison can publish automatically.
+pull-request head. ci-toolkit consumes the completed BuildBuddy status and
+publishes the generated table and report links using `.ci-toolkit.yml` from the
+PR's target commit. The publication policy must land on the target branch before
+a fresh PR comparison can publish automatically.
 
 In this BuildBuddy flow, ci-toolkit owns comment markers, serialization,
 ordering, and PR-state rechecks, and the coordinator never posts comments. See
@@ -281,18 +252,23 @@ Other CI systems can use the native `publish` command instead; see
 [CI_RECIPE.md](CI_RECIPE.md) is the provider-neutral guide to running these
 stages in CI: pinning, the model/scorer/coordinator image roles, the store
 layout, strict workers, reporting and ordered publication, with an acceptance
-checklist. Four more commands complete the pipeline around the core stages:
+checklist. Python commands (`python3 -m tools.comparison`, Python 3.11+ and
+Git, or the matching Bazel launchers) complete the pipeline around
+`llm-cc compare`:
 
 - `discover` resolves the current pull request and its actual target, or skips
   a branch without one, and writes `identity.json` plus dotenv outputs.
-- `ci gitlab-child` and `ci github-matrix` turn a plan into zero to four GPU
-  jobs: a GitLab child pipeline or a GitHub Actions matrix.
+- `ci capacity` caps `--max-workers` by the configured capacity; `ci
+  gitlab-child` and `ci github-matrix` turn a plan into zero to four GPU jobs: a
+  GitLab child pipeline or a GitHub Actions matrix.
 - `store-report` stores a report under the pipeline that produced it.
 - `publish` validates a stored report and maintains one ordered comment per
   pull request, re-checking the pull request before it writes.
 
 Ready-made [GitLab and GitHub Actions templates](recipe/README.md) and
-Containerfiles for the three image roles live under [recipe/](recipe).
+Containerfiles for the three image roles live under [recipe/](recipe). A
+consuming module can run `@llm_cc//tools/comparison:discover` and the other
+launchers, including when its `bazel_dep` uses a different `repo_name`.
 
 ## Adopting in another repository
 
@@ -304,14 +280,13 @@ Execution always happens on the Bazzite host through
 `/var/lib/llm-cc/bin/llm-cc-coordinate`, which pins the verified package and its
 immutable configuration generation.
 
-Local acceptance is `bazel test //tools/comparison:comparison_test` and
-`BACKEND=cpu tools/check_consumer.sh --tests-only`. Tests use synthetic scorers,
-exercise cold/warm/incremental and one/four-worker comparisons, and assert zero
-remote submissions on complete cache hits. A warm local comparison should take
-under one minute; measure remote-store latency separately. Local correctness does
-not establish GPU memory fit or live publication acceptance.
-
-See [VALIDATION.md](VALIDATION.md) for executed checks and remaining live acceptance.
+Local acceptance is `bazel test //:unit //tools/comparison:comparison_test` and
+`BACKEND=cpu tools/check_consumer.sh --tests-only`. The comparison tests run
+`llm-cc-compare-fake`, llm-cc with a deterministic scorer, through the real
+stages: cold, warm and incremental runs, one or four workers, and zero remote
+submissions on complete cache hits. Local correctness does not establish GPU
+memory fit or live publication acceptance. See [VALIDATION.md](VALIDATION.md)
+for executed checks and remaining live acceptance.
 
 ## Bazzite executor labels
 
@@ -330,26 +305,26 @@ gpu-resource: bazzite-radeon-0
 ```
 
 These labels describe the hardware; `gpu-runtime` identifies the required
-backend, without asserting that a particular scorer image has been validated.
+backend, without asserting that a particular scorer build has been validated.
 The matching `gpu-resource` value identifies one physical device across both
-executors. The bare-host worker verifies the actual PCI/KFD device, architecture,
-VRAM, access permissions and runtime hashes before scoring. It selects the
-discrete GPU by ROCr UUID and holds a shared `flock` through all scoring
-invocations. The scorer inherits the lock so abrupt worker death cannot release
-the GPU while inference remains alive. Both executors use the same root-owned
-lock inode under `/var/lib/llm-cc/locks`; setup never replaces it. Lock waiting
-counts against the worker deadline. Other GPU applications must cooperate with
-this lock to participate in serialization.
+executors. With `--execution-host`, `llm-cc compare worker` verifies the actual
+PCI/KFD device, architecture, VRAM, access permissions and runtime hashes
+before scoring, selects the discrete GPU by `ROCR_VISIBLE_DEVICES=GPU-<uuid>`,
+and holds the host-wide `flock` on `/var/lib/llm-cc/locks/<resource_id>.lock`
+while it scores. Both executors use the same root-owned lock inode; setup never
+replaces it, and the worker never creates it. Lock waiting counts against the
+worker deadline. Other GPU applications must cooperate with this lock to
+participate in serialization.
 
 Continue selecting the executor pool explicitly. BuildBuddy's
 [`debug-executor-labels` selector](https://github.com/buildbuddy-io/buildbuddy/blob/master/enterprise/server/scheduling/scheduler_server/scheduler_server.go)
 uses best-effort routing and can fall back when labels do not match; it is not
 a strict GPU eligibility or concurrency constraint.
 
-The Bazzite profile uses ROCm, context **32768**, batch **256**, Flash Attention
-on and **Q8_0** K/V; all other scoring settings and the **64 KiB** file limit
-match the pinned dogfood contract. Context, backend, host runtime and GPU
-identity affect the fingerprint. The host configuration uses one worker because
-the two builders share one Radeon. The CPU coordinator uses `linux-amd64-rocm`
-and the existing host filesystem cache. Follow [Bazzite setup](BAZZITE.md) to
-install the verified assets and publish an atomic configuration generation.
+The Bazzite scoring contract uses ROCm, context **32768**, batch **256**, Flash
+Attention on, **Q8_0** K/V with offload, device entropy reduction, structural
+hierarchy, tau 0.67 and alpha 0.8, with the default **64 KiB** file limit. The
+host configuration uses one worker because the two builders share one Radeon.
+The CPU coordinator uses `linux-amd64-rocm` and the existing host filesystem
+store. Follow [Bazzite setup](BAZZITE.md) to install the verified assets and
+publish an atomic configuration generation.

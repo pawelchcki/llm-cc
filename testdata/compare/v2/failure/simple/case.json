@@ -1,0 +1,1 @@
+{"identity": {"repository": "o/r", "pipeline_id": "p", "target_branch": "main", "pr_number": 1, "started_at": "2026-01-01T00:00:00Z", "head_sha": "h", "target_sha": "t", "base_sha": "b"}, "fingerprint": null, "errors": ["no comparison report was stored for pipeline p"]}

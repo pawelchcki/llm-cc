@@ -1,0 +1,1436 @@
+{
+  "cache_stats": {
+    "hit_bytes": 0,
+    "hits": 0,
+    "items": 61,
+    "miss_bytes": 984,
+    "misses": 61
+  },
+  "changes": [
+    {
+      "new_path": null,
+      "old_path": "src/@team/[file]<tag>‮.cc",
+      "status": "D"
+    },
+    {
+      "new_path": "src/added.cc",
+      "old_path": null,
+      "status": "A"
+    },
+    {
+      "new_path": "src/bidi⁦x⁩.go",
+      "old_path": "src/bidi⁦x⁩.go",
+      "status": "M"
+    },
+    {
+      "new_path": "src/gen00.c",
+      "old_path": "src/gen00.c",
+      "status": "M"
+    },
+    {
+      "new_path": "src/gen02.c",
+      "old_path": "src/gen02.c",
+      "status": "M"
+    },
+    {
+      "new_path": "src/gen04.c",
+      "old_path": "src/gen04.c",
+      "status": "M"
+    },
+    {
+      "new_path": null,
+      "old_path": "src/gen05.c",
+      "status": "D"
+    },
+    {
+      "new_path": "src/gen06.c",
+      "old_path": "src/gen06.c",
+      "status": "M"
+    },
+    {
+      "new_path": "src/gen08.c",
+      "old_path": "src/gen08.c",
+      "status": "M"
+    },
+    {
+      "new_path": null,
+      "old_path": "src/gen10.c",
+      "status": "D"
+    },
+    {
+      "new_path": null,
+      "old_path": "src/gen12.c",
+      "status": "D"
+    },
+    {
+      "new_path": "src/gen14.c",
+      "old_path": "src/gen14.c",
+      "status": "M"
+    },
+    {
+      "new_path": "src/gen16.c",
+      "old_path": "src/gen16.c",
+      "status": "M"
+    },
+    {
+      "new_path": "src/gen18.c",
+      "old_path": "src/gen18.c",
+      "status": "M"
+    },
+    {
+      "new_path": null,
+      "old_path": "src/gen19.c",
+      "status": "D"
+    },
+    {
+      "new_path": "src/gen20.c",
+      "old_path": "src/gen20.c",
+      "status": "M"
+    },
+    {
+      "new_path": "src/gen22.c",
+      "old_path": "src/gen22.c",
+      "status": "M"
+    },
+    {
+      "new_path": "src/gen24.c",
+      "old_path": "src/gen24.c",
+      "status": "M"
+    },
+    {
+      "new_path": null,
+      "old_path": "src/gen26.c",
+      "status": "D"
+    },
+    {
+      "new_path": "src/gen28.c",
+      "old_path": "src/gen28.c",
+      "status": "M"
+    },
+    {
+      "new_path": "src/pipe|name.cc",
+      "old_path": "src/pipe|name.cc",
+      "status": "M"
+    },
+    {
+      "new_path": null,
+      "old_path": "src/star*under_score~.cs",
+      "status": "D"
+    },
+    {
+      "new_path": "src/tick`name``x.cc",
+      "old_path": "src/tick`name``x.cc",
+      "status": "M"
+    },
+    {
+      "new_path": "src/zażółć.py",
+      "old_path": "src/zażółć.py",
+      "status": "M"
+    },
+    {
+      "new_path": "tests/case_test.cc",
+      "old_path": "tests/case_test.cc",
+      "status": "M"
+    },
+    {
+      "new_path": "tests/gen10_test.c",
+      "old_path": null,
+      "status": "A"
+    }
+  ],
+  "fingerprint": "3f57f5164c06fa28229af285af15b5b7075b89ef7e30f0ae5d5900f1f2b66ca5",
+  "hits": {},
+  "identity": {
+    "base_sha": "54f30096430571033eb0bd6d6ef625c21b2adac7",
+    "head_sha": "5bd6c43bad25626035e77c99620273074d8e9100",
+    "pipeline_id": "p",
+    "pr_number": 1,
+    "repository": "o/r",
+    "started_at": "2026-01-01T00:00:00Z",
+    "target_branch": "main",
+    "target_sha": "54f30096430571033eb0bd6d6ef625c21b2adac7"
+  },
+  "inventories": {
+    "base": [
+      {
+        "blob_id": "13081458705a1809b086da2d50dc520d05400e12",
+        "category": "runtime",
+        "key": "eb7b18e5384bedc38298ecc5d52482038293f9899a44bea479247f0336231b53",
+        "language": "cpp",
+        "path": "src/@team/[file]<tag>‮.cc",
+        "reason": null,
+        "scorable": true,
+        "size": 12
+      },
+      {
+        "blob_id": "b76194f8e7c0ce318a1a2b8fd133f6e8e044ae90",
+        "category": "runtime",
+        "key": "1847ca2178532bcec256da68f978fdc1d673beab8eee4cc852474488edaa495f",
+        "language": "cpp",
+        "path": "src/back\\slash|pipe.cc",
+        "reason": null,
+        "scorable": true,
+        "size": 12
+      },
+      {
+        "blob_id": "2858ed8a479a3fb7b8d71a9aa9b86fef33e610a1",
+        "category": "runtime",
+        "key": "a05fe6c8e99ff57a650917ff00389487baf144351fd0e2e783cb14bf5e48ff87",
+        "language": "go",
+        "path": "src/bidi⁦x⁩.go",
+        "reason": null,
+        "scorable": true,
+        "size": 12
+      },
+      {
+        "blob_id": "da57801f47a6a8522c3106c8c6f3ab569596357f",
+        "category": "runtime",
+        "key": "4122ed89f358f2949426ccc10c946aaba3d55b2b288e7c49cce426c0c8a0a7f5",
+        "language": "rust",
+        "path": "src/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/long.rs",
+        "reason": null,
+        "scorable": true,
+        "size": 12
+      },
+      {
+        "blob_id": "fc4ace3674638a59790a1fbb38b27a0a5ffe5d1a",
+        "category": "runtime",
+        "key": "3935d3e6d6ba0c6101d8fbc5d7b2cd9186e770dc4db807ce4c91eb692279ebd0",
+        "language": "javascript",
+        "path": "src/emoji-😀.js",
+        "reason": null,
+        "scorable": true,
+        "size": 12
+      },
+      {
+        "blob_id": "cdde7e60d1f70e02177d21b2c428f68ce43bb280",
+        "category": "runtime",
+        "key": "ea86c1210a855ea71bb97fc6fc968c17cb280cd60ca7b6c78de5a366796e190f",
+        "language": "c",
+        "path": "src/gen00.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "f72803b6860d0f5dccfae2f865d913de44624a34",
+        "category": "runtime",
+        "key": "46bef212fa575327d37767cacc58d4e0f09c20cfda006dc98947c7e9c7f919e1",
+        "language": "c",
+        "path": "src/gen01.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "75fc8b111a0db4c029f3ddfe5e333476b828cfa4",
+        "category": "runtime",
+        "key": "741e501ddc0a2d4669177f8f9d31542a6c232786eddebc0b1040e26b5cb738ef",
+        "language": "c",
+        "path": "src/gen02.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "6fc18bb814ab1d0d87cd5d9d945dd69df24526d3",
+        "category": "runtime",
+        "key": "65a532e6aeeabde08908c6be6a00de545291c7f5e3992c119efb1b9372233f34",
+        "language": "c",
+        "path": "src/gen03.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "95d2621a7f67783992adcd0a3584105ea79abf75",
+        "category": "runtime",
+        "key": "788045e0caffbfb2e0b7488e64be5c81229947309b124d5ddb12368f26ef53c4",
+        "language": "c",
+        "path": "src/gen04.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "f989796c9c98e8e30017017cf918b67b7a87869e",
+        "category": "runtime",
+        "key": "fa339342c33015537886ee0080c8c335a587e1904aa68ed7064f2236ef90045f",
+        "language": "c",
+        "path": "src/gen05.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "39436ef5f52140372f82310421dbf0ec9a3bfbd6",
+        "category": "runtime",
+        "key": "dbd97223271d20356484272cabfca561ee53004fea9714d6dae25f41f2f78a0a",
+        "language": "c",
+        "path": "src/gen06.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "e78ded41c248a5d59963627eca1ff5973272d9c2",
+        "category": "runtime",
+        "key": "9b83b65263fa7654b1283eda5f4fc4abd76e96278ed75f7445a637875d5cea2d",
+        "language": "c",
+        "path": "src/gen07.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "544a8cf11944e43e0ef31869ea5e354a4699c8b8",
+        "category": "runtime",
+        "key": "c9613415c9a1c35bf82e0e16b6547a1ca1eaa6405ea35ace4de318d4e275b9d5",
+        "language": "c",
+        "path": "src/gen08.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "965a8da889a8e28b9de0f317ead449d75e1ef7e9",
+        "category": "runtime",
+        "key": "4573eeda82097de83a2964f3dfde5650f9a1edd5c51691ece00b013ba12cdf76",
+        "language": "c",
+        "path": "src/gen09.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "91a77f140ee1a8aa029cb1bdaf85eb213d030b0c",
+        "category": "runtime",
+        "key": "22c4e82869a5cda87baf9ae49bb2b51c93390e20ff726d490182e1348d8d90f3",
+        "language": "c",
+        "path": "src/gen10.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "e8acb5e6236bf4c0e1ea1cf019d30df14927bf89",
+        "category": "runtime",
+        "key": "a0d0b175391e3e5eb6fa6d60e43bd2846c79f1f8a7c78ec30b0c1a81130b764e",
+        "language": "c",
+        "path": "src/gen11.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "afe1c55656475420bba274d8eb0ed1e9eeadebf3",
+        "category": "runtime",
+        "key": "bbd6e2a48bfce49be652413fa6c74d2ce511ecfed5bd60d1e0461dd2c4d8573d",
+        "language": "c",
+        "path": "src/gen12.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "6cabf22d81cfd85e6fdf29c109f4bc7089692a06",
+        "category": "runtime",
+        "key": "d97fc70c5236e3b31f40b719b66dbc0ffab38397777d1b1e88a1d6b56269a0f3",
+        "language": "c",
+        "path": "src/gen13.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "548407e9f73dd82db7b7114f47cdda98cc3e3148",
+        "category": "runtime",
+        "key": "6e39043989cf11f7d0e899ea1edb68131bea341fea22db26cdbff25c5d708e8a",
+        "language": "c",
+        "path": "src/gen14.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "25340b88bce30735caf1ebf1c9d69a45d7f7a2c4",
+        "category": "runtime",
+        "key": "7ab2cae5005281328de876a5526f4f555eeb9e4d87f0dbcfc30e7e2c95b6c160",
+        "language": "c",
+        "path": "src/gen15.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "95d9a89f91b16f33584d71314e8e569f3068d036",
+        "category": "runtime",
+        "key": "43758b76f6b2482c7d0f586d5c6669fa492edc2a2dfe5dc204b777abfbef87b9",
+        "language": "c",
+        "path": "src/gen16.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "2fe009c65b03efbfdc9f717f2f4c0f64df8f4d2e",
+        "category": "runtime",
+        "key": "6fd9451d83958df6b4ec5057d59dfa937421604baefd00702fbc5ace18dc4c3d",
+        "language": "c",
+        "path": "src/gen17.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "9f072d2edb95e0b3007dfa4b18b4f6693d9ebf12",
+        "category": "runtime",
+        "key": "f153380c82158520540e0dbd0119c01bc718c3ff984b82de19c45c16e6187bb3",
+        "language": "c",
+        "path": "src/gen18.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "456bb61517bbebc4e9f65d8f4711d6eec270f38c",
+        "category": "runtime",
+        "key": "c45164b8ad38707440910ab02d3edc7eb64c3eaac44539d61cfcae8cef50cec3",
+        "language": "c",
+        "path": "src/gen19.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "7e5b603aba85992014c46c81f0fc31da8efd6f5a",
+        "category": "runtime",
+        "key": "b74079a9aac210c176925b5aa85c979904579755ee9eab8b4f6ca76c89193460",
+        "language": "c",
+        "path": "src/gen20.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "ea4be6c490ff07a55f4905a7b8eee7e5bcc63a1f",
+        "category": "runtime",
+        "key": "1a78fe6d03de152cbdf0ee0e89ad664cd46b5b1236857ed827fc9200da9699c8",
+        "language": "c",
+        "path": "src/gen21.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "78db893cfe54cec823b87534fff7fb3e39505b7d",
+        "category": "runtime",
+        "key": "049422633f31e08fb9e7127b681380c0da6e3c7fb78f6e5b11a0e04fb62acee0",
+        "language": "c",
+        "path": "src/gen22.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "3587d5aa2391292876b8728de77c07349536da39",
+        "category": "runtime",
+        "key": "f471775aed87e7ded76f4d049ce2762ea7adc9b9e650ea133ee82bcfd7db5b18",
+        "language": "c",
+        "path": "src/gen23.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "22cf9f2e6c5df7771fa428983d2f2a7639a003d7",
+        "category": "runtime",
+        "key": "911e30c224551450211378104076575ff82cd7c0f9c177b395de9c2180cbaa03",
+        "language": "c",
+        "path": "src/gen24.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "f01ece31af7265010cadc0e75de6dfe0e21d44fa",
+        "category": "runtime",
+        "key": "4e33aa644eab4b40153ade40d2bc1bed6e92098fa5d2c1a28dcf9d25e2dd4a56",
+        "language": "c",
+        "path": "src/gen25.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "881ad296a9f04565cfe64b7d454434928f44c9b6",
+        "category": "runtime",
+        "key": "966d90b1f2409016186828dd8164c354b5f708ee062ba6fa753ac45de913a41a",
+        "language": "c",
+        "path": "src/gen26.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "f80590a9d166804da5a1337c8bef17ff5f48aa6b",
+        "category": "runtime",
+        "key": "e262f6cfb8327211ac9a2ec76ecba91369ee132f53edbb20b129ddb56a47603f",
+        "language": "c",
+        "path": "src/gen27.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "1abf04bdb3e51a387c95132d8b2941b9baae110b",
+        "category": "runtime",
+        "key": "4356a22c82bb68b5a7ab2026d0774c6c34e414c20a025f8519e61d68a2278d96",
+        "language": "c",
+        "path": "src/gen28.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "e58b25e98977706fc4f83541a3beb79e5723363d",
+        "category": "runtime",
+        "key": "40b6b95cc2c963a0659d0c40308cd1febc83c5a2cfc731db9378326aed3d5bb5",
+        "language": "c",
+        "path": "src/gen29.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "1eed55dd8fabbf7a0e5ad8bdfb4633d26802f2ba",
+        "category": "runtime",
+        "key": "abf2f7c15d2c1db0c219ac050727d2758b71a7490557ffd1651c59a4be90d843",
+        "language": "java",
+        "path": "src/line sep.java",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "6cda75a7b8295677b3a67955d37cba41f4b78f78",
+        "category": "runtime",
+        "key": "5c9b83a65a4033de4350bc778278f2237ea38587fd3d2210a64a4d17ad11a1a1",
+        "language": "cpp",
+        "path": "src/pipe|name.cc",
+        "reason": null,
+        "scorable": true,
+        "size": 12
+      },
+      {
+        "blob_id": "21d6e8b94ba99d4be8041ce8e64d79541ef4149a",
+        "category": "runtime",
+        "key": "1e8e46864e79db242d516d8b93d8959a2cfd8f45b5fb1bedb745042ac5649dd9",
+        "language": "csharp",
+        "path": "src/star*under_score~.cs",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "1da60d35dbcd2507462a0cc63f251522aec5ee9f",
+        "category": "runtime",
+        "key": "335211c5459abd83d0e00d5a388eddd36aec2bcd797c9a996e01d0dc93ac7071",
+        "language": "cpp",
+        "path": "src/tick`name``x.cc",
+        "reason": null,
+        "scorable": true,
+        "size": 12
+      },
+      {
+        "blob_id": "4d108d2d67906c23d599ee67b8da7d1933f62a6d",
+        "category": "runtime",
+        "key": "79083d5c62df69c90a13acbba4ed1a072c0359878cd9bad0c154bfe39e5d572a",
+        "language": "python",
+        "path": "src/zażółć.py",
+        "reason": null,
+        "scorable": true,
+        "size": 12
+      },
+      {
+        "blob_id": "0aa9133aecb1d283f241f932bd50e0e02ca79494",
+        "category": "tests",
+        "key": "5ae1737c9e2694d0caef0cd055107dd359a64b7bab141f09fa302f96c5fdbbad",
+        "language": "cpp",
+        "path": "tests/case_test.cc",
+        "reason": null,
+        "scorable": true,
+        "size": 12
+      },
+      {
+        "blob_id": "fe444f737805469698b4ad212eedbd76716739b3",
+        "category": "tooling",
+        "key": "0464fce4ca4b1225cab2d485f179c6d3cc24bf1b5fbb4a70b0c5670b1ac66e5a",
+        "language": "python",
+        "path": "tools/script.py",
+        "reason": null,
+        "scorable": true,
+        "size": 12
+      }
+    ],
+    "head": [
+      {
+        "blob_id": "3012e55c0b982d267c48042c6e4bc6a5c1e0798f",
+        "category": "runtime",
+        "key": "0a89f12b9705c7874ba47c1ce4d9976e7f4eb50148c4ccbe228366dd60f181c1",
+        "language": "cpp",
+        "path": "src/added.cc",
+        "reason": null,
+        "scorable": true,
+        "size": 11
+      },
+      {
+        "blob_id": "b76194f8e7c0ce318a1a2b8fd133f6e8e044ae90",
+        "category": "runtime",
+        "key": "1847ca2178532bcec256da68f978fdc1d673beab8eee4cc852474488edaa495f",
+        "language": "cpp",
+        "path": "src/back\\slash|pipe.cc",
+        "reason": null,
+        "scorable": true,
+        "size": 12
+      },
+      {
+        "blob_id": "236b8e528886f8c541e1bef95b1215b19e3dcd43",
+        "category": "runtime",
+        "key": "90dab365ead55fd336c569754d01031d8785502b36e508a225225f5f11622380",
+        "language": "go",
+        "path": "src/bidi⁦x⁩.go",
+        "reason": null,
+        "scorable": true,
+        "size": 21
+      },
+      {
+        "blob_id": "da57801f47a6a8522c3106c8c6f3ab569596357f",
+        "category": "runtime",
+        "key": "4122ed89f358f2949426ccc10c946aaba3d55b2b288e7c49cce426c0c8a0a7f5",
+        "language": "rust",
+        "path": "src/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/deep/long.rs",
+        "reason": null,
+        "scorable": true,
+        "size": 12
+      },
+      {
+        "blob_id": "fc4ace3674638a59790a1fbb38b27a0a5ffe5d1a",
+        "category": "runtime",
+        "key": "3935d3e6d6ba0c6101d8fbc5d7b2cd9186e770dc4db807ce4c91eb692279ebd0",
+        "language": "javascript",
+        "path": "src/emoji-😀.js",
+        "reason": null,
+        "scorable": true,
+        "size": 12
+      },
+      {
+        "blob_id": "6133955f56a3c8a19018a7dc6f2e0bff424d6aa8",
+        "category": "runtime",
+        "key": "c9c2338861c15723cc28ca7d1750509b44c7c2f2d8c362b2065118cb935ba54c",
+        "language": "c",
+        "path": "src/gen00.c",
+        "reason": null,
+        "scorable": true,
+        "size": 23
+      },
+      {
+        "blob_id": "f72803b6860d0f5dccfae2f865d913de44624a34",
+        "category": "runtime",
+        "key": "46bef212fa575327d37767cacc58d4e0f09c20cfda006dc98947c7e9c7f919e1",
+        "language": "c",
+        "path": "src/gen01.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "ae90d0cd084f2ebc8c51dc61d6181c2212c291dc",
+        "category": "runtime",
+        "key": "6fdc756319cfa012cfb344c4e0f42957bb985c29109a060d0a63613f7c46671f",
+        "language": "c",
+        "path": "src/gen02.c",
+        "reason": null,
+        "scorable": true,
+        "size": 23
+      },
+      {
+        "blob_id": "6fc18bb814ab1d0d87cd5d9d945dd69df24526d3",
+        "category": "runtime",
+        "key": "65a532e6aeeabde08908c6be6a00de545291c7f5e3992c119efb1b9372233f34",
+        "language": "c",
+        "path": "src/gen03.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "798ea5dc10b6b84d6a44a1269677dd4cfcbe0078",
+        "category": "runtime",
+        "key": "7eef7f142b0cc02e864780bc73880cf829ce466214e8dcec014dc7c79b0557c3",
+        "language": "c",
+        "path": "src/gen04.c",
+        "reason": null,
+        "scorable": true,
+        "size": 23
+      },
+      {
+        "blob_id": "309602ee0f9f1ac4fb85091c7dfbd7b9fbb23a74",
+        "category": "runtime",
+        "key": "198fd47147decad6996b19fa1de51797c45a335878893b9ed4cf80bac4dbc8fb",
+        "language": "c",
+        "path": "src/gen06.c",
+        "reason": null,
+        "scorable": true,
+        "size": 23
+      },
+      {
+        "blob_id": "e78ded41c248a5d59963627eca1ff5973272d9c2",
+        "category": "runtime",
+        "key": "9b83b65263fa7654b1283eda5f4fc4abd76e96278ed75f7445a637875d5cea2d",
+        "language": "c",
+        "path": "src/gen07.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "1a70c7399a30166f5b2007ac8a7bbdfbb9747b1f",
+        "category": "runtime",
+        "key": "fec90e6c417222ede98be5c09af04fa509be9c4b82faa3f575b55c1684f479a3",
+        "language": "c",
+        "path": "src/gen08.c",
+        "reason": null,
+        "scorable": true,
+        "size": 23
+      },
+      {
+        "blob_id": "965a8da889a8e28b9de0f317ead449d75e1ef7e9",
+        "category": "runtime",
+        "key": "4573eeda82097de83a2964f3dfde5650f9a1edd5c51691ece00b013ba12cdf76",
+        "language": "c",
+        "path": "src/gen09.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "e8acb5e6236bf4c0e1ea1cf019d30df14927bf89",
+        "category": "runtime",
+        "key": "a0d0b175391e3e5eb6fa6d60e43bd2846c79f1f8a7c78ec30b0c1a81130b764e",
+        "language": "c",
+        "path": "src/gen11.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "6cabf22d81cfd85e6fdf29c109f4bc7089692a06",
+        "category": "runtime",
+        "key": "d97fc70c5236e3b31f40b719b66dbc0ffab38397777d1b1e88a1d6b56269a0f3",
+        "language": "c",
+        "path": "src/gen13.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "1f5b38e16b530c022dfb86d9d044e686aa17075a",
+        "category": "runtime",
+        "key": "a77653c65b3b4472aa0814b89e2929565e80375969fd0c4f65b16914246426cc",
+        "language": "c",
+        "path": "src/gen14.c",
+        "reason": null,
+        "scorable": true,
+        "size": 23
+      },
+      {
+        "blob_id": "25340b88bce30735caf1ebf1c9d69a45d7f7a2c4",
+        "category": "runtime",
+        "key": "7ab2cae5005281328de876a5526f4f555eeb9e4d87f0dbcfc30e7e2c95b6c160",
+        "language": "c",
+        "path": "src/gen15.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "7788d212756d7fcdce26a03acfbadf83f65f36c2",
+        "category": "runtime",
+        "key": "908b450c6a25776661301c36eca6ae3ebcc1c6254bedd017c17490132b5071a4",
+        "language": "c",
+        "path": "src/gen16.c",
+        "reason": null,
+        "scorable": true,
+        "size": 23
+      },
+      {
+        "blob_id": "2fe009c65b03efbfdc9f717f2f4c0f64df8f4d2e",
+        "category": "runtime",
+        "key": "6fd9451d83958df6b4ec5057d59dfa937421604baefd00702fbc5ace18dc4c3d",
+        "language": "c",
+        "path": "src/gen17.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "a3f5262d52ac4faad0fb3f0ac9055382660e0cc0",
+        "category": "runtime",
+        "key": "fc777e22e87a9dbfe74d6d2529e2037d4b1c67cde7eb4330d4a9431f25dcd727",
+        "language": "c",
+        "path": "src/gen18.c",
+        "reason": null,
+        "scorable": true,
+        "size": 23
+      },
+      {
+        "blob_id": "93cb82c86a4fc05551bfabf7a4ac3576b5a4da94",
+        "category": "runtime",
+        "key": "67f153b39d3d18e9f5c996776643a75a48514e3b662cfc495f8408a6b7735a59",
+        "language": "c",
+        "path": "src/gen20.c",
+        "reason": null,
+        "scorable": true,
+        "size": 23
+      },
+      {
+        "blob_id": "ea4be6c490ff07a55f4905a7b8eee7e5bcc63a1f",
+        "category": "runtime",
+        "key": "1a78fe6d03de152cbdf0ee0e89ad664cd46b5b1236857ed827fc9200da9699c8",
+        "language": "c",
+        "path": "src/gen21.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "b978062aa77573bdf9f030d1697bee781146215a",
+        "category": "runtime",
+        "key": "b61a1e9988651ba523469aac5b7dda7b0146c3b8ad3b6cedbbb35e0f0d49fb9c",
+        "language": "c",
+        "path": "src/gen22.c",
+        "reason": null,
+        "scorable": true,
+        "size": 24
+      },
+      {
+        "blob_id": "3587d5aa2391292876b8728de77c07349536da39",
+        "category": "runtime",
+        "key": "f471775aed87e7ded76f4d049ce2762ea7adc9b9e650ea133ee82bcfd7db5b18",
+        "language": "c",
+        "path": "src/gen23.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "1edfe47f641d6d7dae6419625505e246b3d62a3b",
+        "category": "runtime",
+        "key": "879cade63bfb77daf8489b7ac01484fdb357cd322143de8f26fead7635956561",
+        "language": "c",
+        "path": "src/gen24.c",
+        "reason": null,
+        "scorable": true,
+        "size": 24
+      },
+      {
+        "blob_id": "f01ece31af7265010cadc0e75de6dfe0e21d44fa",
+        "category": "runtime",
+        "key": "4e33aa644eab4b40153ade40d2bc1bed6e92098fa5d2c1a28dcf9d25e2dd4a56",
+        "language": "c",
+        "path": "src/gen25.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "f80590a9d166804da5a1337c8bef17ff5f48aa6b",
+        "category": "runtime",
+        "key": "e262f6cfb8327211ac9a2ec76ecba91369ee132f53edbb20b129ddb56a47603f",
+        "language": "c",
+        "path": "src/gen27.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "761bd806ec0d593135483c8c07b25f55f7e21359",
+        "category": "runtime",
+        "key": "7207dc6ec25e7cc98b09e3434d68e00de04ff3ea9be317bb141470d5930b76c2",
+        "language": "c",
+        "path": "src/gen28.c",
+        "reason": null,
+        "scorable": true,
+        "size": 24
+      },
+      {
+        "blob_id": "e58b25e98977706fc4f83541a3beb79e5723363d",
+        "category": "runtime",
+        "key": "40b6b95cc2c963a0659d0c40308cd1febc83c5a2cfc731db9378326aed3d5bb5",
+        "language": "c",
+        "path": "src/gen29.c",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "1eed55dd8fabbf7a0e5ad8bdfb4633d26802f2ba",
+        "category": "runtime",
+        "key": "abf2f7c15d2c1db0c219ac050727d2758b71a7490557ffd1651c59a4be90d843",
+        "language": "java",
+        "path": "src/line sep.java",
+        "reason": null,
+        "scorable": true,
+        "size": 14
+      },
+      {
+        "blob_id": "d95240c5dc4fec3fd7b7258f270b643d84ad1a3f",
+        "category": "runtime",
+        "key": "6fd4bf2c1d1e37effd9f64514511b773579965602ebe946bbd47ae7ab0d53e33",
+        "language": "cpp",
+        "path": "src/pipe|name.cc",
+        "reason": null,
+        "scorable": true,
+        "size": 20
+      },
+      {
+        "blob_id": "3480d0d3942c1af68d6bd46f9ad6e4b545a503b2",
+        "category": "runtime",
+        "key": "36242f705fc03de7ee604710eb5f474443c83475c94b9f6cf732f22fac2463b7",
+        "language": "cpp",
+        "path": "src/tick`name``x.cc",
+        "reason": null,
+        "scorable": true,
+        "size": 20
+      },
+      {
+        "blob_id": "4ae98382089b0b5b773496bc10015fdd73b66327",
+        "category": "runtime",
+        "key": "673d3233d1359706ce763edd5a4eceaf13423ea6da40d419b04e3b7ea3739aa8",
+        "language": "python",
+        "path": "src/zażółć.py",
+        "reason": null,
+        "scorable": true,
+        "size": 21
+      },
+      {
+        "blob_id": "9fc87d4a2f989c1084b2b83acee5d03a179111e2",
+        "category": "tests",
+        "key": "2317366ba67e93cbb2945026c14b25093b20b0dfdbcbad8fa62ab303e5094392",
+        "language": "cpp",
+        "path": "tests/case_test.cc",
+        "reason": null,
+        "scorable": true,
+        "size": 21
+      },
+      {
+        "blob_id": "308a5da600f2fa6a44afd1813dbd19a82af6facd",
+        "category": "tests",
+        "key": "566a7bc7b8f0ae74148d9666ddf093945d5d91dbc9b49c52403dadcead965a07",
+        "language": "c",
+        "path": "tests/gen10_test.c",
+        "reason": null,
+        "scorable": true,
+        "size": 23
+      },
+      {
+        "blob_id": "fe444f737805469698b4ad212eedbd76716739b3",
+        "category": "tooling",
+        "key": "0464fce4ca4b1225cab2d485f179c6d3cc24bf1b5fbb4a70b0c5670b1ac66e5a",
+        "language": "python",
+        "path": "tools/script.py",
+        "reason": null,
+        "scorable": true,
+        "size": 12
+      }
+    ]
+  },
+  "items": {
+    "0464fce4ca4b1225cab2d485f179c6d3cc24bf1b5fbb4a70b0c5670b1ac66e5a": {
+      "blob_id": "fe444f737805469698b4ad212eedbd76716739b3",
+      "key": "0464fce4ca4b1225cab2d485f179c6d3cc24bf1b5fbb4a70b0c5670b1ac66e5a",
+      "language": "python",
+      "size": 12
+    },
+    "049422633f31e08fb9e7127b681380c0da6e3c7fb78f6e5b11a0e04fb62acee0": {
+      "blob_id": "78db893cfe54cec823b87534fff7fb3e39505b7d",
+      "key": "049422633f31e08fb9e7127b681380c0da6e3c7fb78f6e5b11a0e04fb62acee0",
+      "language": "c",
+      "size": 14
+    },
+    "0a89f12b9705c7874ba47c1ce4d9976e7f4eb50148c4ccbe228366dd60f181c1": {
+      "blob_id": "3012e55c0b982d267c48042c6e4bc6a5c1e0798f",
+      "key": "0a89f12b9705c7874ba47c1ce4d9976e7f4eb50148c4ccbe228366dd60f181c1",
+      "language": "cpp",
+      "size": 11
+    },
+    "1847ca2178532bcec256da68f978fdc1d673beab8eee4cc852474488edaa495f": {
+      "blob_id": "b76194f8e7c0ce318a1a2b8fd133f6e8e044ae90",
+      "key": "1847ca2178532bcec256da68f978fdc1d673beab8eee4cc852474488edaa495f",
+      "language": "cpp",
+      "size": 12
+    },
+    "198fd47147decad6996b19fa1de51797c45a335878893b9ed4cf80bac4dbc8fb": {
+      "blob_id": "309602ee0f9f1ac4fb85091c7dfbd7b9fbb23a74",
+      "key": "198fd47147decad6996b19fa1de51797c45a335878893b9ed4cf80bac4dbc8fb",
+      "language": "c",
+      "size": 23
+    },
+    "1a78fe6d03de152cbdf0ee0e89ad664cd46b5b1236857ed827fc9200da9699c8": {
+      "blob_id": "ea4be6c490ff07a55f4905a7b8eee7e5bcc63a1f",
+      "key": "1a78fe6d03de152cbdf0ee0e89ad664cd46b5b1236857ed827fc9200da9699c8",
+      "language": "c",
+      "size": 14
+    },
+    "1e8e46864e79db242d516d8b93d8959a2cfd8f45b5fb1bedb745042ac5649dd9": {
+      "blob_id": "21d6e8b94ba99d4be8041ce8e64d79541ef4149a",
+      "key": "1e8e46864e79db242d516d8b93d8959a2cfd8f45b5fb1bedb745042ac5649dd9",
+      "language": "csharp",
+      "size": 14
+    },
+    "22c4e82869a5cda87baf9ae49bb2b51c93390e20ff726d490182e1348d8d90f3": {
+      "blob_id": "91a77f140ee1a8aa029cb1bdaf85eb213d030b0c",
+      "key": "22c4e82869a5cda87baf9ae49bb2b51c93390e20ff726d490182e1348d8d90f3",
+      "language": "c",
+      "size": 14
+    },
+    "2317366ba67e93cbb2945026c14b25093b20b0dfdbcbad8fa62ab303e5094392": {
+      "blob_id": "9fc87d4a2f989c1084b2b83acee5d03a179111e2",
+      "key": "2317366ba67e93cbb2945026c14b25093b20b0dfdbcbad8fa62ab303e5094392",
+      "language": "cpp",
+      "size": 21
+    },
+    "335211c5459abd83d0e00d5a388eddd36aec2bcd797c9a996e01d0dc93ac7071": {
+      "blob_id": "1da60d35dbcd2507462a0cc63f251522aec5ee9f",
+      "key": "335211c5459abd83d0e00d5a388eddd36aec2bcd797c9a996e01d0dc93ac7071",
+      "language": "cpp",
+      "size": 12
+    },
+    "36242f705fc03de7ee604710eb5f474443c83475c94b9f6cf732f22fac2463b7": {
+      "blob_id": "3480d0d3942c1af68d6bd46f9ad6e4b545a503b2",
+      "key": "36242f705fc03de7ee604710eb5f474443c83475c94b9f6cf732f22fac2463b7",
+      "language": "cpp",
+      "size": 20
+    },
+    "3935d3e6d6ba0c6101d8fbc5d7b2cd9186e770dc4db807ce4c91eb692279ebd0": {
+      "blob_id": "fc4ace3674638a59790a1fbb38b27a0a5ffe5d1a",
+      "key": "3935d3e6d6ba0c6101d8fbc5d7b2cd9186e770dc4db807ce4c91eb692279ebd0",
+      "language": "javascript",
+      "size": 12
+    },
+    "40b6b95cc2c963a0659d0c40308cd1febc83c5a2cfc731db9378326aed3d5bb5": {
+      "blob_id": "e58b25e98977706fc4f83541a3beb79e5723363d",
+      "key": "40b6b95cc2c963a0659d0c40308cd1febc83c5a2cfc731db9378326aed3d5bb5",
+      "language": "c",
+      "size": 14
+    },
+    "4122ed89f358f2949426ccc10c946aaba3d55b2b288e7c49cce426c0c8a0a7f5": {
+      "blob_id": "da57801f47a6a8522c3106c8c6f3ab569596357f",
+      "key": "4122ed89f358f2949426ccc10c946aaba3d55b2b288e7c49cce426c0c8a0a7f5",
+      "language": "rust",
+      "size": 12
+    },
+    "4356a22c82bb68b5a7ab2026d0774c6c34e414c20a025f8519e61d68a2278d96": {
+      "blob_id": "1abf04bdb3e51a387c95132d8b2941b9baae110b",
+      "key": "4356a22c82bb68b5a7ab2026d0774c6c34e414c20a025f8519e61d68a2278d96",
+      "language": "c",
+      "size": 14
+    },
+    "43758b76f6b2482c7d0f586d5c6669fa492edc2a2dfe5dc204b777abfbef87b9": {
+      "blob_id": "95d9a89f91b16f33584d71314e8e569f3068d036",
+      "key": "43758b76f6b2482c7d0f586d5c6669fa492edc2a2dfe5dc204b777abfbef87b9",
+      "language": "c",
+      "size": 14
+    },
+    "4573eeda82097de83a2964f3dfde5650f9a1edd5c51691ece00b013ba12cdf76": {
+      "blob_id": "965a8da889a8e28b9de0f317ead449d75e1ef7e9",
+      "key": "4573eeda82097de83a2964f3dfde5650f9a1edd5c51691ece00b013ba12cdf76",
+      "language": "c",
+      "size": 14
+    },
+    "46bef212fa575327d37767cacc58d4e0f09c20cfda006dc98947c7e9c7f919e1": {
+      "blob_id": "f72803b6860d0f5dccfae2f865d913de44624a34",
+      "key": "46bef212fa575327d37767cacc58d4e0f09c20cfda006dc98947c7e9c7f919e1",
+      "language": "c",
+      "size": 14
+    },
+    "4e33aa644eab4b40153ade40d2bc1bed6e92098fa5d2c1a28dcf9d25e2dd4a56": {
+      "blob_id": "f01ece31af7265010cadc0e75de6dfe0e21d44fa",
+      "key": "4e33aa644eab4b40153ade40d2bc1bed6e92098fa5d2c1a28dcf9d25e2dd4a56",
+      "language": "c",
+      "size": 14
+    },
+    "566a7bc7b8f0ae74148d9666ddf093945d5d91dbc9b49c52403dadcead965a07": {
+      "blob_id": "308a5da600f2fa6a44afd1813dbd19a82af6facd",
+      "key": "566a7bc7b8f0ae74148d9666ddf093945d5d91dbc9b49c52403dadcead965a07",
+      "language": "c",
+      "size": 23
+    },
+    "5ae1737c9e2694d0caef0cd055107dd359a64b7bab141f09fa302f96c5fdbbad": {
+      "blob_id": "0aa9133aecb1d283f241f932bd50e0e02ca79494",
+      "key": "5ae1737c9e2694d0caef0cd055107dd359a64b7bab141f09fa302f96c5fdbbad",
+      "language": "cpp",
+      "size": 12
+    },
+    "5c9b83a65a4033de4350bc778278f2237ea38587fd3d2210a64a4d17ad11a1a1": {
+      "blob_id": "6cda75a7b8295677b3a67955d37cba41f4b78f78",
+      "key": "5c9b83a65a4033de4350bc778278f2237ea38587fd3d2210a64a4d17ad11a1a1",
+      "language": "cpp",
+      "size": 12
+    },
+    "65a532e6aeeabde08908c6be6a00de545291c7f5e3992c119efb1b9372233f34": {
+      "blob_id": "6fc18bb814ab1d0d87cd5d9d945dd69df24526d3",
+      "key": "65a532e6aeeabde08908c6be6a00de545291c7f5e3992c119efb1b9372233f34",
+      "language": "c",
+      "size": 14
+    },
+    "673d3233d1359706ce763edd5a4eceaf13423ea6da40d419b04e3b7ea3739aa8": {
+      "blob_id": "4ae98382089b0b5b773496bc10015fdd73b66327",
+      "key": "673d3233d1359706ce763edd5a4eceaf13423ea6da40d419b04e3b7ea3739aa8",
+      "language": "python",
+      "size": 21
+    },
+    "67f153b39d3d18e9f5c996776643a75a48514e3b662cfc495f8408a6b7735a59": {
+      "blob_id": "93cb82c86a4fc05551bfabf7a4ac3576b5a4da94",
+      "key": "67f153b39d3d18e9f5c996776643a75a48514e3b662cfc495f8408a6b7735a59",
+      "language": "c",
+      "size": 23
+    },
+    "6e39043989cf11f7d0e899ea1edb68131bea341fea22db26cdbff25c5d708e8a": {
+      "blob_id": "548407e9f73dd82db7b7114f47cdda98cc3e3148",
+      "key": "6e39043989cf11f7d0e899ea1edb68131bea341fea22db26cdbff25c5d708e8a",
+      "language": "c",
+      "size": 14
+    },
+    "6fd4bf2c1d1e37effd9f64514511b773579965602ebe946bbd47ae7ab0d53e33": {
+      "blob_id": "d95240c5dc4fec3fd7b7258f270b643d84ad1a3f",
+      "key": "6fd4bf2c1d1e37effd9f64514511b773579965602ebe946bbd47ae7ab0d53e33",
+      "language": "cpp",
+      "size": 20
+    },
+    "6fd9451d83958df6b4ec5057d59dfa937421604baefd00702fbc5ace18dc4c3d": {
+      "blob_id": "2fe009c65b03efbfdc9f717f2f4c0f64df8f4d2e",
+      "key": "6fd9451d83958df6b4ec5057d59dfa937421604baefd00702fbc5ace18dc4c3d",
+      "language": "c",
+      "size": 14
+    },
+    "6fdc756319cfa012cfb344c4e0f42957bb985c29109a060d0a63613f7c46671f": {
+      "blob_id": "ae90d0cd084f2ebc8c51dc61d6181c2212c291dc",
+      "key": "6fdc756319cfa012cfb344c4e0f42957bb985c29109a060d0a63613f7c46671f",
+      "language": "c",
+      "size": 23
+    },
+    "7207dc6ec25e7cc98b09e3434d68e00de04ff3ea9be317bb141470d5930b76c2": {
+      "blob_id": "761bd806ec0d593135483c8c07b25f55f7e21359",
+      "key": "7207dc6ec25e7cc98b09e3434d68e00de04ff3ea9be317bb141470d5930b76c2",
+      "language": "c",
+      "size": 24
+    },
+    "741e501ddc0a2d4669177f8f9d31542a6c232786eddebc0b1040e26b5cb738ef": {
+      "blob_id": "75fc8b111a0db4c029f3ddfe5e333476b828cfa4",
+      "key": "741e501ddc0a2d4669177f8f9d31542a6c232786eddebc0b1040e26b5cb738ef",
+      "language": "c",
+      "size": 14
+    },
+    "788045e0caffbfb2e0b7488e64be5c81229947309b124d5ddb12368f26ef53c4": {
+      "blob_id": "95d2621a7f67783992adcd0a3584105ea79abf75",
+      "key": "788045e0caffbfb2e0b7488e64be5c81229947309b124d5ddb12368f26ef53c4",
+      "language": "c",
+      "size": 14
+    },
+    "79083d5c62df69c90a13acbba4ed1a072c0359878cd9bad0c154bfe39e5d572a": {
+      "blob_id": "4d108d2d67906c23d599ee67b8da7d1933f62a6d",
+      "key": "79083d5c62df69c90a13acbba4ed1a072c0359878cd9bad0c154bfe39e5d572a",
+      "language": "python",
+      "size": 12
+    },
+    "7ab2cae5005281328de876a5526f4f555eeb9e4d87f0dbcfc30e7e2c95b6c160": {
+      "blob_id": "25340b88bce30735caf1ebf1c9d69a45d7f7a2c4",
+      "key": "7ab2cae5005281328de876a5526f4f555eeb9e4d87f0dbcfc30e7e2c95b6c160",
+      "language": "c",
+      "size": 14
+    },
+    "7eef7f142b0cc02e864780bc73880cf829ce466214e8dcec014dc7c79b0557c3": {
+      "blob_id": "798ea5dc10b6b84d6a44a1269677dd4cfcbe0078",
+      "key": "7eef7f142b0cc02e864780bc73880cf829ce466214e8dcec014dc7c79b0557c3",
+      "language": "c",
+      "size": 23
+    },
+    "879cade63bfb77daf8489b7ac01484fdb357cd322143de8f26fead7635956561": {
+      "blob_id": "1edfe47f641d6d7dae6419625505e246b3d62a3b",
+      "key": "879cade63bfb77daf8489b7ac01484fdb357cd322143de8f26fead7635956561",
+      "language": "c",
+      "size": 24
+    },
+    "908b450c6a25776661301c36eca6ae3ebcc1c6254bedd017c17490132b5071a4": {
+      "blob_id": "7788d212756d7fcdce26a03acfbadf83f65f36c2",
+      "key": "908b450c6a25776661301c36eca6ae3ebcc1c6254bedd017c17490132b5071a4",
+      "language": "c",
+      "size": 23
+    },
+    "90dab365ead55fd336c569754d01031d8785502b36e508a225225f5f11622380": {
+      "blob_id": "236b8e528886f8c541e1bef95b1215b19e3dcd43",
+      "key": "90dab365ead55fd336c569754d01031d8785502b36e508a225225f5f11622380",
+      "language": "go",
+      "size": 21
+    },
+    "911e30c224551450211378104076575ff82cd7c0f9c177b395de9c2180cbaa03": {
+      "blob_id": "22cf9f2e6c5df7771fa428983d2f2a7639a003d7",
+      "key": "911e30c224551450211378104076575ff82cd7c0f9c177b395de9c2180cbaa03",
+      "language": "c",
+      "size": 14
+    },
+    "966d90b1f2409016186828dd8164c354b5f708ee062ba6fa753ac45de913a41a": {
+      "blob_id": "881ad296a9f04565cfe64b7d454434928f44c9b6",
+      "key": "966d90b1f2409016186828dd8164c354b5f708ee062ba6fa753ac45de913a41a",
+      "language": "c",
+      "size": 14
+    },
+    "9b83b65263fa7654b1283eda5f4fc4abd76e96278ed75f7445a637875d5cea2d": {
+      "blob_id": "e78ded41c248a5d59963627eca1ff5973272d9c2",
+      "key": "9b83b65263fa7654b1283eda5f4fc4abd76e96278ed75f7445a637875d5cea2d",
+      "language": "c",
+      "size": 14
+    },
+    "a05fe6c8e99ff57a650917ff00389487baf144351fd0e2e783cb14bf5e48ff87": {
+      "blob_id": "2858ed8a479a3fb7b8d71a9aa9b86fef33e610a1",
+      "key": "a05fe6c8e99ff57a650917ff00389487baf144351fd0e2e783cb14bf5e48ff87",
+      "language": "go",
+      "size": 12
+    },
+    "a0d0b175391e3e5eb6fa6d60e43bd2846c79f1f8a7c78ec30b0c1a81130b764e": {
+      "blob_id": "e8acb5e6236bf4c0e1ea1cf019d30df14927bf89",
+      "key": "a0d0b175391e3e5eb6fa6d60e43bd2846c79f1f8a7c78ec30b0c1a81130b764e",
+      "language": "c",
+      "size": 14
+    },
+    "a77653c65b3b4472aa0814b89e2929565e80375969fd0c4f65b16914246426cc": {
+      "blob_id": "1f5b38e16b530c022dfb86d9d044e686aa17075a",
+      "key": "a77653c65b3b4472aa0814b89e2929565e80375969fd0c4f65b16914246426cc",
+      "language": "c",
+      "size": 23
+    },
+    "abf2f7c15d2c1db0c219ac050727d2758b71a7490557ffd1651c59a4be90d843": {
+      "blob_id": "1eed55dd8fabbf7a0e5ad8bdfb4633d26802f2ba",
+      "key": "abf2f7c15d2c1db0c219ac050727d2758b71a7490557ffd1651c59a4be90d843",
+      "language": "java",
+      "size": 14
+    },
+    "b61a1e9988651ba523469aac5b7dda7b0146c3b8ad3b6cedbbb35e0f0d49fb9c": {
+      "blob_id": "b978062aa77573bdf9f030d1697bee781146215a",
+      "key": "b61a1e9988651ba523469aac5b7dda7b0146c3b8ad3b6cedbbb35e0f0d49fb9c",
+      "language": "c",
+      "size": 24
+    },
+    "b74079a9aac210c176925b5aa85c979904579755ee9eab8b4f6ca76c89193460": {
+      "blob_id": "7e5b603aba85992014c46c81f0fc31da8efd6f5a",
+      "key": "b74079a9aac210c176925b5aa85c979904579755ee9eab8b4f6ca76c89193460",
+      "language": "c",
+      "size": 14
+    },
+    "bbd6e2a48bfce49be652413fa6c74d2ce511ecfed5bd60d1e0461dd2c4d8573d": {
+      "blob_id": "afe1c55656475420bba274d8eb0ed1e9eeadebf3",
+      "key": "bbd6e2a48bfce49be652413fa6c74d2ce511ecfed5bd60d1e0461dd2c4d8573d",
+      "language": "c",
+      "size": 14
+    },
+    "c45164b8ad38707440910ab02d3edc7eb64c3eaac44539d61cfcae8cef50cec3": {
+      "blob_id": "456bb61517bbebc4e9f65d8f4711d6eec270f38c",
+      "key": "c45164b8ad38707440910ab02d3edc7eb64c3eaac44539d61cfcae8cef50cec3",
+      "language": "c",
+      "size": 14
+    },
+    "c9613415c9a1c35bf82e0e16b6547a1ca1eaa6405ea35ace4de318d4e275b9d5": {
+      "blob_id": "544a8cf11944e43e0ef31869ea5e354a4699c8b8",
+      "key": "c9613415c9a1c35bf82e0e16b6547a1ca1eaa6405ea35ace4de318d4e275b9d5",
+      "language": "c",
+      "size": 14
+    },
+    "c9c2338861c15723cc28ca7d1750509b44c7c2f2d8c362b2065118cb935ba54c": {
+      "blob_id": "6133955f56a3c8a19018a7dc6f2e0bff424d6aa8",
+      "key": "c9c2338861c15723cc28ca7d1750509b44c7c2f2d8c362b2065118cb935ba54c",
+      "language": "c",
+      "size": 23
+    },
+    "d97fc70c5236e3b31f40b719b66dbc0ffab38397777d1b1e88a1d6b56269a0f3": {
+      "blob_id": "6cabf22d81cfd85e6fdf29c109f4bc7089692a06",
+      "key": "d97fc70c5236e3b31f40b719b66dbc0ffab38397777d1b1e88a1d6b56269a0f3",
+      "language": "c",
+      "size": 14
+    },
+    "dbd97223271d20356484272cabfca561ee53004fea9714d6dae25f41f2f78a0a": {
+      "blob_id": "39436ef5f52140372f82310421dbf0ec9a3bfbd6",
+      "key": "dbd97223271d20356484272cabfca561ee53004fea9714d6dae25f41f2f78a0a",
+      "language": "c",
+      "size": 14
+    },
+    "e262f6cfb8327211ac9a2ec76ecba91369ee132f53edbb20b129ddb56a47603f": {
+      "blob_id": "f80590a9d166804da5a1337c8bef17ff5f48aa6b",
+      "key": "e262f6cfb8327211ac9a2ec76ecba91369ee132f53edbb20b129ddb56a47603f",
+      "language": "c",
+      "size": 14
+    },
+    "ea86c1210a855ea71bb97fc6fc968c17cb280cd60ca7b6c78de5a366796e190f": {
+      "blob_id": "cdde7e60d1f70e02177d21b2c428f68ce43bb280",
+      "key": "ea86c1210a855ea71bb97fc6fc968c17cb280cd60ca7b6c78de5a366796e190f",
+      "language": "c",
+      "size": 14
+    },
+    "eb7b18e5384bedc38298ecc5d52482038293f9899a44bea479247f0336231b53": {
+      "blob_id": "13081458705a1809b086da2d50dc520d05400e12",
+      "key": "eb7b18e5384bedc38298ecc5d52482038293f9899a44bea479247f0336231b53",
+      "language": "cpp",
+      "size": 12
+    },
+    "f153380c82158520540e0dbd0119c01bc718c3ff984b82de19c45c16e6187bb3": {
+      "blob_id": "9f072d2edb95e0b3007dfa4b18b4f6693d9ebf12",
+      "key": "f153380c82158520540e0dbd0119c01bc718c3ff984b82de19c45c16e6187bb3",
+      "language": "c",
+      "size": 14
+    },
+    "f471775aed87e7ded76f4d049ce2762ea7adc9b9e650ea133ee82bcfd7db5b18": {
+      "blob_id": "3587d5aa2391292876b8728de77c07349536da39",
+      "key": "f471775aed87e7ded76f4d049ce2762ea7adc9b9e650ea133ee82bcfd7db5b18",
+      "language": "c",
+      "size": 14
+    },
+    "fa339342c33015537886ee0080c8c335a587e1904aa68ed7064f2236ef90045f": {
+      "blob_id": "f989796c9c98e8e30017017cf918b67b7a87869e",
+      "key": "fa339342c33015537886ee0080c8c335a587e1904aa68ed7064f2236ef90045f",
+      "language": "c",
+      "size": 14
+    },
+    "fc777e22e87a9dbfe74d6d2529e2037d4b1c67cde7eb4330d4a9431f25dcd727": {
+      "blob_id": "a3f5262d52ac4faad0fb3f0ac9055382660e0cc0",
+      "key": "fc777e22e87a9dbfe74d6d2529e2037d4b1c67cde7eb4330d4a9431f25dcd727",
+      "language": "c",
+      "size": 23
+    },
+    "fec90e6c417222ede98be5c09af04fa509be9c4b82faa3f575b55c1684f479a3": {
+      "blob_id": "1a70c7399a30166f5b2007ac8a7bbdfbb9747b1f",
+      "key": "fec90e6c417222ede98be5c09af04fa509be9c4b82faa3f575b55c1684f479a3",
+      "language": "c",
+      "size": 23
+    }
+  },
+  "max_file_bytes": 100,
+  "model": {
+    "bytes": 1048576,
+    "sha256": "abababababababababababababababababababababababababababababababab"
+  },
+  "presentation": {},
+  "rules": {},
+  "rules_source": {
+    "source": "host"
+  },
+  "schema_version": 2,
+  "scorer": {
+    "analysis_version": 1,
+    "backend_configuration": "cpu",
+    "commit": "0123456789abcdef0123456789abcdef01234567",
+    "executable": null,
+    "inference_abi": "llama.cpp-b6000/entropy-v1",
+    "version": "0.1.0"
+  },
+  "scoring": {
+    "alpha": 0.8,
+    "backend": "cpu",
+    "batch_size": 64,
+    "context": 4096,
+    "entropy_reduction": "host",
+    "flash_attn": "on",
+    "hierarchy": "structural",
+    "kv_cache_type": "q8_0",
+    "kv_offload": "on",
+    "tau": 0.67,
+    "tau_percentile": null
+  },
+  "workers": [
+    {
+      "bytes": 245,
+      "keys": [
+        "7207dc6ec25e7cc98b09e3434d68e00de04ff3ea9be317bb141470d5930b76c2",
+        "c9c2338861c15723cc28ca7d1750509b44c7c2f2d8c362b2065118cb935ba54c",
+        "6fdc756319cfa012cfb344c4e0f42957bb985c29109a060d0a63613f7c46671f",
+        "673d3233d1359706ce763edd5a4eceaf13423ea6da40d419b04e3b7ea3739aa8",
+        "36242f705fc03de7ee604710eb5f474443c83475c94b9f6cf732f22fac2463b7",
+        "d97fc70c5236e3b31f40b719b66dbc0ffab38397777d1b1e88a1d6b56269a0f3",
+        "049422633f31e08fb9e7127b681380c0da6e3c7fb78f6e5b11a0e04fb62acee0",
+        "fa339342c33015537886ee0080c8c335a587e1904aa68ed7064f2236ef90045f",
+        "911e30c224551450211378104076575ff82cd7c0f9c177b395de9c2180cbaa03",
+        "966d90b1f2409016186828dd8164c354b5f708ee062ba6fa753ac45de913a41a",
+        "40b6b95cc2c963a0659d0c40308cd1febc83c5a2cfc731db9378326aed3d5bb5",
+        "788045e0caffbfb2e0b7488e64be5c81229947309b124d5ddb12368f26ef53c4",
+        "0464fce4ca4b1225cab2d485f179c6d3cc24bf1b5fbb4a70b0c5670b1ac66e5a",
+        "a05fe6c8e99ff57a650917ff00389487baf144351fd0e2e783cb14bf5e48ff87",
+        "eb7b18e5384bedc38298ecc5d52482038293f9899a44bea479247f0336231b53"
+      ],
+      "worker_id": 0
+    },
+    {
+      "bytes": 245,
+      "keys": [
+        "b61a1e9988651ba523469aac5b7dda7b0146c3b8ad3b6cedbbb35e0f0d49fb9c",
+        "7eef7f142b0cc02e864780bc73880cf829ce466214e8dcec014dc7c79b0557c3",
+        "908b450c6a25776661301c36eca6ae3ebcc1c6254bedd017c17490132b5071a4",
+        "2317366ba67e93cbb2945026c14b25093b20b0dfdbcbad8fa62ab303e5094392",
+        "6fd4bf2c1d1e37effd9f64514511b773579965602ebe946bbd47ae7ab0d53e33",
+        "43758b76f6b2482c7d0f586d5c6669fa492edc2a2dfe5dc204b777abfbef87b9",
+        "9b83b65263fa7654b1283eda5f4fc4abd76e96278ed75f7445a637875d5cea2d",
+        "4356a22c82bb68b5a7ab2026d0774c6c34e414c20a025f8519e61d68a2278d96",
+        "b74079a9aac210c176925b5aa85c979904579755ee9eab8b4f6ca76c89193460",
+        "bbd6e2a48bfce49be652413fa6c74d2ce511ecfed5bd60d1e0461dd2c4d8573d",
+        "abf2f7c15d2c1db0c219ac050727d2758b71a7490557ffd1651c59a4be90d843",
+        "6e39043989cf11f7d0e899ea1edb68131bea341fea22db26cdbff25c5d708e8a",
+        "335211c5459abd83d0e00d5a388eddd36aec2bcd797c9a996e01d0dc93ac7071",
+        "5ae1737c9e2694d0caef0cd055107dd359a64b7bab141f09fa302f96c5fdbbad",
+        "3935d3e6d6ba0c6101d8fbc5d7b2cd9186e770dc4db807ce4c91eb692279ebd0"
+      ],
+      "worker_id": 1
+    },
+    {
+      "bytes": 252,
+      "keys": [
+        "879cade63bfb77daf8489b7ac01484fdb357cd322143de8f26fead7635956561",
+        "a77653c65b3b4472aa0814b89e2929565e80375969fd0c4f65b16914246426cc",
+        "67f153b39d3d18e9f5c996776643a75a48514e3b662cfc495f8408a6b7735a59",
+        "90dab365ead55fd336c569754d01031d8785502b36e508a225225f5f11622380",
+        "65a532e6aeeabde08908c6be6a00de545291c7f5e3992c119efb1b9372233f34",
+        "4e33aa644eab4b40153ade40d2bc1bed6e92098fa5d2c1a28dcf9d25e2dd4a56",
+        "741e501ddc0a2d4669177f8f9d31542a6c232786eddebc0b1040e26b5cb738ef",
+        "4573eeda82097de83a2964f3dfde5650f9a1edd5c51691ece00b013ba12cdf76",
+        "22c4e82869a5cda87baf9ae49bb2b51c93390e20ff726d490182e1348d8d90f3",
+        "e262f6cfb8327211ac9a2ec76ecba91369ee132f53edbb20b129ddb56a47603f",
+        "ea86c1210a855ea71bb97fc6fc968c17cb280cd60ca7b6c78de5a366796e190f",
+        "a0d0b175391e3e5eb6fa6d60e43bd2846c79f1f8a7c78ec30b0c1a81130b764e",
+        "7ab2cae5005281328de876a5526f4f555eeb9e4d87f0dbcfc30e7e2c95b6c160",
+        "5c9b83a65a4033de4350bc778278f2237ea38587fd3d2210a64a4d17ad11a1a1",
+        "4122ed89f358f2949426ccc10c946aaba3d55b2b288e7c49cce426c0c8a0a7f5",
+        "0a89f12b9705c7874ba47c1ce4d9976e7f4eb50148c4ccbe228366dd60f181c1"
+      ],
+      "worker_id": 2
+    },
+    {
+      "bytes": 242,
+      "keys": [
+        "fec90e6c417222ede98be5c09af04fa509be9c4b82faa3f575b55c1684f479a3",
+        "fc777e22e87a9dbfe74d6d2529e2037d4b1c67cde7eb4330d4a9431f25dcd727",
+        "198fd47147decad6996b19fa1de51797c45a335878893b9ed4cf80bac4dbc8fb",
+        "566a7bc7b8f0ae74148d9666ddf093945d5d91dbc9b49c52403dadcead965a07",
+        "f153380c82158520540e0dbd0119c01bc718c3ff984b82de19c45c16e6187bb3",
+        "46bef212fa575327d37767cacc58d4e0f09c20cfda006dc98947c7e9c7f919e1",
+        "dbd97223271d20356484272cabfca561ee53004fea9714d6dae25f41f2f78a0a",
+        "1e8e46864e79db242d516d8b93d8959a2cfd8f45b5fb1bedb745042ac5649dd9",
+        "1a78fe6d03de152cbdf0ee0e89ad664cd46b5b1236857ed827fc9200da9699c8",
+        "c45164b8ad38707440910ab02d3edc7eb64c3eaac44539d61cfcae8cef50cec3",
+        "6fd9451d83958df6b4ec5057d59dfa937421604baefd00702fbc5ace18dc4c3d",
+        "c9613415c9a1c35bf82e0e16b6547a1ca1eaa6405ea35ace4de318d4e275b9d5",
+        "f471775aed87e7ded76f4d049ce2762ea7adc9b9e650ea133ee82bcfd7db5b18",
+        "79083d5c62df69c90a13acbba4ed1a072c0359878cd9bad0c154bfe39e5d572a",
+        "1847ca2178532bcec256da68f978fdc1d673beab8eee4cc852474488edaa495f"
+      ],
+      "worker_id": 3
+    }
+  ]
+}

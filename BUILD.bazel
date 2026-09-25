@@ -624,6 +624,268 @@ cc_library(
 )
 
 cc_library(
+    name = "compare_report",
+    srcs = [
+        "src/compare/json_util.cc",
+        "src/compare/markdown.cc",
+        "src/compare/report_model.cc",
+        "src/compare/report_render.cc",
+    ],
+    hdrs = [
+        "src/compare/json_util.h",
+        "src/compare/markdown.h",
+        "src/compare/report_model.h",
+        "src/compare/report_render.h",
+    ],
+    textual_hdrs = ["src/compare/unicode_cf.inc"],
+    deps = [
+        ":cache_io",
+        ":sha256",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_library(
+    name = "compare_store",
+    srcs = [
+        "src/compare/s3.cc",
+        "src/compare/store.cc",
+    ],
+    hdrs = [
+        "src/compare/s3.h",
+        "src/compare/store.h",
+    ],
+    deps = [
+        ":cache_io",
+        ":compare_report",
+        ":curl",
+        ":download",
+        ":input_limits",
+        ":sha256",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_library(
+    name = "compare_core",
+    srcs = [
+        "src/compare/aggregate.cc",
+        "src/compare/execution_host.cc",
+        "src/compare/identity.cc",
+        "src/compare/inventory.cc",
+        "src/compare/plan.cc",
+        "src/compare/prepare.cc",
+        "src/compare/result_cache.cc",
+        "src/compare/worker.cc",
+    ],
+    hdrs = [
+        "src/compare/aggregate.h",
+        "src/compare/entropy_tier.h",
+        "src/compare/execution_host.h",
+        "src/compare/identity.h",
+        "src/compare/inventory.h",
+        "src/compare/parallel.h",
+        "src/compare/plan.h",
+        "src/compare/prepare.h",
+        "src/compare/result_cache.h",
+        "src/compare/worker.h",
+    ],
+    linkopts = select({
+        ":host_windows": [],
+        "//conditions:default": ["-lpthread"],
+    }),
+    deps = [
+        ":analysis_totals",
+        ":analyze",
+        ":backend_fetch",
+        ":backend_policy",
+        ":build_info",
+        ":cache_io",
+        ":compare_report",
+        ":compare_store",
+        ":entropy_cache",
+        ":git",
+        ":input_limits",
+        ":jsonl",
+        ":lang",
+        ":models",
+        ":progress",
+        ":rocm_topology",
+        ":rules",
+        ":scorer_session",
+        ":scoring_settings",
+        ":sha256",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_library(
+    name = "compare_fake_scorer",
+    srcs = ["src/compare/fake_scorer.cc"],
+    hdrs = ["src/compare/fake_scorer.h"],
+    deps = [
+        ":analyze",
+        ":entropy_cache",
+        ":models",
+        ":scorer_session",
+        ":scoring_settings",
+    ],
+)
+
+cc_library(
+    name = "compare_test_repository",
+    testonly = True,
+    hdrs = ["src/compare/test_repository.h"],
+    deps = [
+        ":subprocess",
+        ":test_util",
+    ],
+)
+
+cc_test(
+    name = "compare_identity_test",
+    srcs = ["src/compare/identity_test.cc"],
+    deps = [
+        ":compare_core",
+        ":models",
+        ":scoring_settings",
+        ":test_util",
+    ],
+)
+
+cc_test(
+    name = "compare_result_cache_test",
+    srcs = ["src/compare/result_cache_test.cc"],
+    deps = [
+        ":compare_core",
+        ":sha256",
+        ":test_util",
+    ],
+)
+
+cc_test(
+    name = "compare_prepare_test",
+    srcs = ["src/compare/prepare_test.cc"],
+    # Windows test actions otherwise lose the PATH entry that finds git.exe.
+    env_inherit = ["PATH"],
+    deps = [
+        ":compare_core",
+        ":compare_test_repository",
+        ":git",
+        ":input_limits",
+        ":rules",
+        ":scoring_settings",
+        ":test_util",
+    ],
+)
+
+cc_test(
+    name = "compare_worker_test",
+    srcs = ["src/compare/worker_test.cc"],
+    env_inherit = ["PATH"],
+    deps = [
+        ":compare_core",
+        ":compare_fake_scorer",
+        ":compare_test_repository",
+        ":entropy_cache",
+        ":scoring_settings",
+        ":test_util",
+    ],
+)
+
+cc_test(
+    name = "compare_execution_host_test",
+    srcs = ["src/compare/execution_host_test.cc"],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        ":compare_core",
+        ":sha256",
+        ":test_util",
+    ],
+)
+
+cc_library(
+    name = "compare_cli",
+    srcs = ["src/compare/cli.cc"],
+    hdrs = ["src/compare/cli.h"],
+    deps = [
+        ":cache",
+        ":cache_io",
+        ":compare_core",
+        ":compare_report",
+        ":compare_store",
+        ":input_limits",
+        ":progress",
+        ":scorer_session",
+        ":scoring_settings",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_test(
+    name = "compare_cli_test",
+    srcs = ["src/compare/cli_test.cc"],
+    env_inherit = ["PATH"],
+    deps = [
+        ":compare_cli",
+        ":compare_fake_scorer",
+        ":compare_report",
+        ":compare_test_repository",
+        ":test_util",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_test(
+    name = "compare_store_test",
+    srcs = ["src/compare/store_test.cc"],
+    deps = [
+        ":compare_store",
+        ":sha256",
+        ":test_util",
+    ],
+)
+
+cc_test(
+    name = "compare_golden_test",
+    srcs = ["src/compare/golden_test.cc"],
+    args = ["$(rlocationpath testdata/compare/v2/README.md)"],
+    data = glob(["testdata/compare/v2/**"]),
+    deps = [
+        ":compare_core",
+        ":compare_report",
+        ":test_util",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_test(
+    name = "compare_report_test",
+    srcs = ["src/compare/report_test.cc"],
+    deps = [
+        ":compare_core",
+        ":compare_report",
+        ":test_util",
+        "@nlohmann_json//:json",
+    ],
+)
+
+# `llm-cc compare` without an inference backend, for tests of the glue.
+cc_binary(
+    name = "llm-cc-compare-fake",
+    testonly = True,
+    srcs = ["src/compare/fake_main.cc"],
+    deps = [
+        ":compare_cli",
+        ":compare_fake_scorer",
+    ] + select({
+        ":host_macos": [],
+        ":host_windows": [],
+        "//conditions:default": [":linux_compat"],
+    }),
+)
+
+cc_library(
     name = "inference_options",
     srcs = ["src/inference_options.cc"],
     hdrs = ["src/inference_options.h"],
@@ -654,10 +916,23 @@ cc_library(
 )
 
 cc_library(
+    name = "scorer_session",
+    hdrs = ["src/scorer_session.h"],
+    deps = [
+        ":analyze",
+        ":backend_policy",
+        ":entropy_cache",
+        ":progress",
+        ":scoring_settings",
+    ],
+)
+
+cc_library(
     name = "analysis_session",
     srcs = ["src/analysis_session.cc"],
     hdrs = ["src/analysis_session.h"],
     deps = [
+        ":scorer_session",
         ":analyze",
         ":backend_runtime",
         ":build_info",
@@ -784,6 +1059,7 @@ cc_binary(
         ":lang",
         ":models",
         ":project",
+        ":compare_cli",
         ":rules",
         ":rules_cmd",
         ":score_cmd",
@@ -817,6 +1093,7 @@ cc_binary(
         ":lang",
         ":models",
         ":project",
+        ":compare_cli",
         ":rules",
         ":rules_cmd",
         ":score_cmd",
@@ -905,6 +1182,27 @@ sh_test(
         "testdata/cli/sample.cpp",
         "@qwen2_5_coder_0_5b_q4_k_m//file",
     ],
+    tags = [
+        "manual",
+        "requires-network",
+    ],
+    use_bash_launcher = True,
+)
+
+# A real comparison with the small Qwen model: cold, cached, four workers and
+# the separate CI stages must agree.
+sh_test(
+    name = "compare_smoke_test",
+    srcs = ["//tools:compare_smoke_test.sh"],
+    args = [
+        "$(location :llm-cc)",
+        "$(location @qwen2_5_coder_0_5b_q4_k_m//file)",
+    ],
+    data = [
+        ":llm-cc",
+        "@qwen2_5_coder_0_5b_q4_k_m//file",
+    ],
+    env_inherit = ["PATH"],
     tags = [
         "manual",
         "requires-network",
@@ -1459,6 +1757,15 @@ test_suite(
         ":backend_test",
         ":cache_concurrency_test",
         ":cache_test",
+        ":compare_cli_test",
+        ":compare_execution_host_test",
+        ":compare_golden_test",
+        ":compare_identity_test",
+        ":compare_prepare_test",
+        ":compare_report_test",
+        ":compare_result_cache_test",
+        ":compare_store_test",
+        ":compare_worker_test",
         ":core_test",
         ":download_test",
         ":entropy_cache_test",
@@ -1524,5 +1831,21 @@ sh_test(
         "$(rlocationpath testdata/tls/README.md)",
     ],
     data = ["//tools:tls_integration_test.py", "//tools:tls_download_probe"] + glob(["testdata/tls/*"]),
+    tags = ["requires-network"],
+)
+
+sh_test(
+    name = "s3_integration_test",
+    srcs = ["//tools:s3_integration_test.sh"],
+    # A local server verifies the SigV4 signatures libcurl computes.
+    env_inherit = ["PATH"],
+    args = [
+        "$(rlocationpath //tools:s3_fake_server.py)",
+        "$(rlocationpath :llm-cc-compare-fake)",
+    ],
+    data = [
+        ":llm-cc-compare-fake",
+        "//tools:s3_fake_server.py",
+    ],
     tags = ["requires-network"],
 )

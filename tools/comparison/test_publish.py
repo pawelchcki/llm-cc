@@ -10,10 +10,8 @@ from unittest import mock
 import urllib.error
 
 from .__main__ import main
-from .cache import FilesystemStore
-from .common import pipeline_prefix, write_json
+from .common import aggregate_report, pipeline_prefix, write_json
 from .fixtures import FakeGitHub
-from .pipeline import failure_report
 from .publish import (
     COMMENT_MARKER,
     PublicationError,
@@ -23,6 +21,7 @@ from .publish import (
     publish,
     store_report,
 )
+from .store import FilesystemStore
 
 REPOSITORY = "owner/repo"
 TARGET = "b" * 40
@@ -57,7 +56,7 @@ class PublishFixture(unittest.TestCase):
     def stored(self, pipeline_id, sha, message="analysis finished", **fields):
         identity = self.identity(pipeline_id, sha, **fields)
         directory = self.root / ("report-" + pipeline_id)
-        failure_report(directory, identity, "0" * 64, [message])
+        aggregate_report(directory, identity=identity, errors=[message])
         store_report(self.store, directory)
         return identity
 
@@ -211,7 +210,7 @@ class PublishTest(PublishFixture):
             with self.subTest(failing=failing):
                 identity = self.stored("101", head(1), "first attempt")
                 directory = self.root / "report-101"
-                failure_report(directory, identity, "0" * 64, ["retried attempt"])
+                aggregate_report(directory, identity=identity, errors=["retried attempt"])
 
                 class Interrupted:
                     def put(self, key, value):
@@ -314,11 +313,11 @@ class PublishTest(PublishFixture):
 
     def test_store_report_refuses_reports_that_name_no_pipeline(self):
         directory = self.root / "anonymous"
-        failure_report(directory, None, None, ["unreadable plan"])
+        aggregate_report(directory, identity=None, errors=["unreadable plan"])
         with self.assertRaisesRegex(PublicationError, "repository and pipeline"):
             store_report(self.store, directory)
         stored = self.root / "mismatched"
-        failure_report(stored, self.identity("101", head(1)), None, ["x"])
+        aggregate_report(stored, identity=self.identity("101", head(1)), errors=["x"])
         with self.assertRaisesRegex(PublicationError, "pipeline_id"):
             store_report(
                 self.store, stored, {"repository": REPOSITORY, "pipeline_id": "999"}

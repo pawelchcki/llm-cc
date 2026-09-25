@@ -1,7 +1,8 @@
 """Validate existing host assets and publish a reproducible dogfood configuration.
 
 This command does not build the scorer, download models, or provision a store.
-Run it after installing the pinned scorer and materializing its ROCm profile.
+Run it after installing the pinned scorer and describing the host's GPU in an
+execution-host JSON file.
 """
 
 from __future__ import annotations
@@ -15,12 +16,49 @@ from pathlib import Path
 import re
 import shlex
 import stat
+import subprocess
 import tempfile
 import zipfile
 
 from .buildbuddy import bundle_command, validate_report_links
-from .common import canonical_bytes, model_digest, model_files
-from .profile import digest_file
+from .common import canonical_bytes
+
+# The dogfood ROCm scoring contract; every setting is explicit, one argument
+# per line as `llm-cc compare` reads response files.
+DOGFOOD_SCORING = (
+    "--backend",
+    "rocm",
+    "--gpu-layers",
+    "-1",
+    "--context",
+    "32768",
+    "--batch-size",
+    "256",
+    "--flash-attn",
+    "on",
+    "--kv-cache-type",
+    "q8_0",
+    "--kv-offload",
+    "on",
+    "--entropy-reduction",
+    "device",
+    "--hierarchy",
+    "structural",
+    "--tau",
+    "0.67",
+    "--alpha",
+    "0.8",
+)
+PCI_ADDRESS = re.compile(r"[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]")
+RESOURCE_ID = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
+
+
+def digest_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for block in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def package_bundle(source_root):
@@ -31,13 +69,11 @@ def package_bundle(source_root):
     paths.extend(
         sorted(p for p in package.glob("*.py") if not p.name.startswith("test_"))
     )
-    paths.append(package / "dogfood-rules.json")
     required = {
         "__init__.py",
         "__main__.py",
         "buildbuddy.py",
-        "worker.py",
-        "pipeline.py",
+        "store.py",
         "submit_bazzite.py",
     }
     if not required.issubset({p.name for p in paths[1:]}):
@@ -119,46 +155,82 @@ def launcher_script(bundle, checksum, generation_config):
     ).encode("utf-8")
 
 
-def verify_assets(profile, installed_root, model):
-    root = Path(installed_root).resolve(strict=True)
-    build = profile["build"]
-    host = build.get("execution_host", {})
-    if build.get("execution_image") != "none" or host.get("gpu_arch") != "gfx1100":
-        raise ValueError("Bazzite setup requires a bare-host gfx1100 scoring profile")
-    if not host.get("runtime_files"):
+def verify_execution_host(host):
+    """Check the bare-host contract llm-cc verifies before every worker."""
+    if (
+        not isinstance(host, dict)
+        or host.get("gpu_vendor") != "amd"
+        or host.get("gpu_arch") != "gfx1100"
+        or not isinstance(host.get("gpu_pci_address"), str)
+        or not PCI_ADDRESS.fullmatch(host["gpu_pci_address"])
+        or not isinstance(host.get("resource_id"), str)
+        or not RESOURCE_ID.fullmatch(host["resource_id"])
+        or type(host.get("gpu_vram_bytes_min")) is not int
+        or host["gpu_vram_bytes_min"] <= 0
+    ):
+        raise ValueError(
+            "Bazzite setup requires an AMD gfx1100 execution host with its PCI "
+            "address, minimum VRAM and resource_id"
+        )
+    files = host.get("runtime_files")
+    if not isinstance(files, dict) or not files:
         raise ValueError("bare-host runtime checksums are required")
-    for path, checksum in host["runtime_files"].items():
+    for path, checksum in files.items():
         runtime = Path(path)
         if (
             not runtime.is_absolute()
             or not runtime.is_file()
             or digest_file(runtime) != checksum
         ):
-            raise ValueError(f"runtime file does not match profile: {path}")
-    files = build.get("installed_files", {})
-    if "bin/llm-cc" not in files or not os.access(root / "bin/llm-cc", os.X_OK):
-        raise ValueError("profile must include an executable installed bin/llm-cc")
-    for relative, expected in files.items():
-        candidate = root / relative
-        if candidate.is_symlink() or root not in candidate.resolve().parents:
-            raise ValueError(
-                "installed scorer identity escapes its root or uses symlinks"
-            )
-        if not candidate.is_file() or digest_file(candidate) != expected:
-            raise ValueError(f"installed file does not match profile: {relative}")
+            raise ValueError(f"runtime file does not match execution host: {path}")
+    return host
+
+
+def verify_assets(installed_root, model):
+    root = Path(installed_root).resolve(strict=True)
+    llm_cc = root / "bin/llm-cc"
+    if llm_cc.is_symlink() or not llm_cc.is_file() or not os.access(llm_cc, os.X_OK):
+        raise ValueError("installed root must contain an executable bin/llm-cc")
     model = Path(model).resolve(strict=True)
     if not model.is_file():
-        raise ValueError("model size or checksum does not match profile")
-    # A profile pins the composite identity of every shard the scorer loads,
-    # so a split model must be verified as the whole set it names.
-    shards = model_files(model)
-    if sum(shard.stat().st_size for shard in shards) != build.get(
-        "model_bytes"
-    ) or model_digest([digest_file(shard) for shard in shards]) != build.get(
-        "model_sha256"
-    ):
-        raise ValueError("model size or checksum does not match profile")
-    return root, model
+        raise ValueError("model must be an existing GGUF file")
+    return llm_cc, model
+
+
+def scoring_identity(llm_cc, model, scoring):
+    """{scorer, model, scoring, fingerprint} as the pinned llm-cc derives it."""
+    with tempfile.TemporaryDirectory(prefix="llm-cc-setup-") as temporary:
+        arguments = Path(temporary) / "scoring.args"
+        arguments.write_text("".join(line + "\n" for line in scoring))
+        completed = subprocess.run(
+            [
+                str(llm_cc),
+                "compare",
+                "identity",
+                "--model",
+                str(model),
+                "@" + str(arguments),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    if completed.returncode != 0:
+        raise ValueError(
+            "llm-cc compare identity failed: "
+            + completed.stderr.decode("utf-8", "replace").strip()
+        )
+    return json.loads(completed.stdout)
+
+
+def read_scoring_args(path):
+    if path is None:
+        return list(DOGFOOD_SCORING)
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    return [
+        line.strip()
+        for line in lines
+        if line.strip() and not line.strip().startswith("#")
+    ]
 
 
 def provision_lock(assets, resource_id, group=None):
@@ -194,8 +266,21 @@ def provision_lock(assets, resource_id, group=None):
 
 
 def configure(args):
-    profile = json.loads(Path(args.profile).read_text(encoding="utf-8"))
-    installed_root, model = verify_assets(profile, args.installed_root, args.model)
+    host = verify_execution_host(
+        json.loads(Path(args.execution_host).read_text(encoding="utf-8"))
+    )
+    llm_cc, model = verify_assets(args.installed_root, args.model)
+    scoring = read_scoring_args(args.scoring_args)
+    if any(line.startswith(("@", "--model")) for line in scoring):
+        raise ValueError("scoring arguments cannot name models or response files")
+    identity = scoring_identity(llm_cc, model, scoring)
+    # Coordinators pin the weights by digest instead of rehashing them.
+    scoring += [
+        "--model-sha256",
+        identity["model"]["sha256"],
+        "--model-bytes",
+        str(identity["model"]["bytes"]),
+    ]
     cache = Path(args.cache).resolve(strict=True)
     if not cache.is_dir():
         raise ValueError("cache must name an existing shared filesystem directory")
@@ -208,18 +293,16 @@ def configure(args):
         )
     bundle, checksum = package_bundle(args.source_root)
     bundle_path = assets / "packages" / (checksum + ".zip")
-    rules = json.loads(
-        (Path(args.source_root) / "tools/comparison/dogfood-rules.json").read_text()
-    )
     links = json.loads(args.report_links) if args.report_links else {}
     validate_report_links(links)
-    identity = hashlib.sha256(
+    generation_id = hashlib.sha256(
         canonical_bytes(
             [
-                profile,
-                rules,
+                identity,
+                scoring,
+                host,
                 checksum,
-                str(installed_root),
+                str(llm_cc),
                 str(model),
                 str(cache),
                 args.endpoint,
@@ -229,10 +312,14 @@ def configure(args):
             ]
         )
     ).hexdigest()
-    generation = assets / "configurations" / identity
+    generation = assets / "configurations" / generation_id
     config = {
-        "profile": str(generation / "profile.json"),
-        "rules": str(generation / "rules.json"),
+        # The coordinator plans, and the worker scores and aggregates, with
+        # this one pinned llm-cc; a plan from another build is refused.
+        "llm_cc": str(llm_cc),
+        "scoring_args": str(generation / "scoring.args"),
+        "execution_host": str(generation / "execution-host.json"),
+        "model": str(model),
         "cache": str(cache),
         "endpoint": args.endpoint,
         "api_key_env": "BUILDBUDDY_API_KEY",
@@ -243,9 +330,6 @@ def configure(args):
         "execution_image": "none",
         "execution_bundle": str(bundle_path),
         "execution_bundle_sha256": checksum,
-        "scorer": str(installed_root / "bin/llm-cc"),
-        "installed_root": str(installed_root),
-        "model": str(model),
         "worker_secret_env": [],
         "worker_env": {},
         "platform_properties": {"EstimatedComputeUnits": "1"},
@@ -255,13 +339,14 @@ def configure(args):
         "expire_days": 30,
         "report_links": links,
     }
-    provision_lock(
-        assets, profile["build"]["execution_host"]["resource_id"], args.lock_group
-    )
+    provision_lock(assets, host["resource_id"], args.lock_group)
     # Write the executable package and identities before exposing their config.
     atomic_publish(bundle_path, bundle)
-    atomic_publish(generation / "profile.json", canonical_bytes(profile) + b"\n")
-    atomic_publish(generation / "rules.json", canonical_bytes(rules) + b"\n")
+    atomic_publish(
+        generation / "scoring.args", "".join(line + "\n" for line in scoring).encode()
+    )
+    atomic_publish(generation / "execution-host.json", canonical_bytes(host) + b"\n")
+    atomic_publish(generation / "identity.json", canonical_bytes(identity) + b"\n")
     atomic_publish(generation / "comparison.json", canonical_bytes(config) + b"\n")
     output = Path(args.output) if args.output else assets / "comparison.json"
     atomic_publish(output, canonical_bytes(config) + b"\n")
@@ -281,9 +366,18 @@ def main(argv=None):
     parser.add_argument(
         "--source-root", default=str(Path(__file__).resolve().parents[2])
     )
-    parser.add_argument("--profile", required=True)
     parser.add_argument("--installed-root", required=True)
     parser.add_argument("--model", required=True)
+    parser.add_argument(
+        "--execution-host",
+        required=True,
+        help="JSON AMD GPU identity, lock resource and runtime checksums",
+    )
+    parser.add_argument(
+        "--scoring-args",
+        help="scoring options, one argument per line (default: the ROCm "
+        "dogfood contract)",
+    )
     parser.add_argument("--cache", required=True)
     parser.add_argument("--execution-commit", required=True)
     parser.add_argument(

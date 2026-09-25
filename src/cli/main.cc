@@ -38,6 +38,7 @@
 #include "src/backend_fetch.h"
 #include "src/build_info.h"
 #include "src/cache.h"
+#include "src/compare/cli.h"
 #include "src/download.h"
 #include "src/entropy_cache.h"
 #include "src/input_limits.h"
@@ -103,7 +104,8 @@ constexpr std::string_view kUsageBeforeContext =
     "      [--no-download] [--progress auto|always|never]\n"
     "  llm-cc cache status|prune [PATH] [--format text|json]\n"
     "  llm-cc cache clear [PATH] [--legacy|--all] [--format text|json]\n"
-    "  llm-cc rules show [PATH]|check FILE|explain PATH...\n\n"
+    "  llm-cc rules show [PATH]|check FILE|explain PATH...\n"
+    "  llm-cc compare run|prepare|worker|aggregate|identity|store ...\n\n"
     "Analysis options:\n"
     "  --lang NAME          infer per file with auto, or force every input to\n"
     "                       rust, c, cpp, java, python, go, javascript, or\n"
@@ -556,9 +558,6 @@ void PrintCacheJson(
       {"directory", PathUtf8(status.directory)},
       {"storage_version", status.storage_version},
       {"inference_abi", llmcc::InferenceAbi()},
-      // External verifiers (tools/comparison) pin an installation to the
-      // commit this executable was built from; the backend manifest only
-      // describes the backend bundle.
       {"source_commit", std::string(llmcc::build_info::GitSha())},
       {"analysis_version", llmcc::kAnalysisVersion},
       {"backend_configuration",
@@ -1216,6 +1215,11 @@ int Main(int argc, char** argv) {
       result = RunCache(argc, argv);
     } else if (argc > 1 && std::string_view(argv[1]) == "rules") {
       result = llmcc::RunRulesCommand(argc - 1, argv + 1);
+    } else if (argc > 1 && std::string_view(argv[1]) == "compare") {
+      result = llmcc::compare::RunCompareCommand(
+          argc - 1, argv + 1,
+          {.inference_abi = std::string(llmcc::InferenceAbi()),
+           .open_session = llmcc::OpenScorerSession});
     } else {
       const auto arguments = ParseAnalyzeArguments(argc, argv);
       try {

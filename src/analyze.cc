@@ -237,6 +237,24 @@ EntropyProvider& ProjectAnalyzer::Provider() {
 }
 
 EntropyProviderResult ProjectAnalyzer::ReadRecords(std::string_view source) {
+  std::string tier_key;
+  if (options_.tier != nullptr) {
+    ReportPhase("shared entropy lookup");
+    tier_key = EntropyCacheKey(source, options_.model);
+    if (const auto entry = options_.tier->Fetch(tier_key)) {
+      try {
+        std::vector<EntropyRecord> records =
+            DecodeEntropyEntry(*entry, source, options_.model);
+        const ScoringMetadata metadata =
+            MetadataFromRecords(records, options_.inference_context_tokens);
+        return {.records = std::move(records),
+                .metadata = metadata,
+                .entropy_cache_hit = true};
+      } catch (const std::invalid_argument&) {  // NOLINT(bugprone-empty-catch)
+        // A foreign or corrupt entry is a miss; scoring replaces it.
+      }
+    }
+  }
   if (options_.cache) {
     ReportPhase("entropy cache lookup");
     auto cached = ReadEntropyCache(source, options_.model);
@@ -256,18 +274,32 @@ EntropyProviderResult ProjectAnalyzer::ReadRecords(std::string_view source) {
     scored.metadata =
         MetadataFromRecords(scored.records, options_.inference_context_tokens);
   }
+  if (options_.cache || options_.tier != nullptr) {
+    // The dummy-prefix space is not source text. Published unchanged, the
+    // entry fails the cache's completeness rule, so a SentencePiece model
+    // would rescan every file instead of ever reaching a cache hit. A first
+    // piece that is only the prefix cannot be normalized without changing
+    // the record count, and that file goes unpublished.
+    NormalizeDummyPrefix(source, scored.records);
+  }
   if (options_.cache) {
     ReportPhase("entropy cache publication");
     try {
-      // The dummy-prefix space is not source text. Published unchanged, the
-      // entry fails the cache's completeness rule, so a SentencePiece model
-      // would rescan every file instead of ever reaching a cache hit. A first
-      // piece that is only the prefix cannot be normalized without changing
-      // the record count, and that file goes unpublished.
-      NormalizeDummyPrefix(source, scored.records);
       WriteEntropyCache(source, options_.model, scored.records);
     } catch (const std::exception&) {
       // Entropy caching is advisory and must not lose an analysis.
+    }
+  }
+  if (options_.tier != nullptr) {
+    ReportPhase("shared entropy publication");
+    std::optional<std::string> entry;
+    try {
+      entry = EncodeEntropyEntry(source, options_.model, scored.records);
+    } catch (const std::invalid_argument&) {  // NOLINT(bugprone-empty-catch)
+      // Records that cannot be normalized are scored but never shared.
+    }
+    if (entry.has_value()) {
+      options_.tier->Store(tier_key, *entry);
     }
   }
   return scored;

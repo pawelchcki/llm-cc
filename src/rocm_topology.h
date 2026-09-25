@@ -1,6 +1,7 @@
 #ifndef LLM_CC_ROCM_TOPOLOGY_H_
 #define LLM_CC_ROCM_TOPOLOGY_H_
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <span>
@@ -12,6 +13,16 @@ namespace llmcc {
 
 struct AmdGpuDevice {
   std::string architecture;
+  // KFD identity, when the node's properties report it: the PCI vendor, the
+  // PCI domain and bus/device/function (bus << 8 | device << 3 | function),
+  // the ROCr UUID and the DRM render node minor.
+  std::uint64_t vendor_id = 0;
+  std::uint64_t domain = 0;
+  std::uint64_t location_id = 0;
+  std::uint64_t unique_id = 0;
+  std::optional<std::uint64_t> drm_render_minor;
+  // Local (public and private framebuffer) memory over all memory banks.
+  std::uint64_t vram_bytes = 0;
 };
 
 struct RocmTopology {
