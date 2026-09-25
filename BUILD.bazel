@@ -669,6 +669,141 @@ cc_library(
 )
 
 cc_library(
+    name = "compare_core",
+    srcs = [
+        "src/compare/execution_host.cc",
+        "src/compare/identity.cc",
+        "src/compare/inventory.cc",
+        "src/compare/plan.cc",
+        "src/compare/prepare.cc",
+        "src/compare/result_cache.cc",
+        "src/compare/worker.cc",
+    ],
+    hdrs = [
+        "src/compare/entropy_tier.h",
+        "src/compare/execution_host.h",
+        "src/compare/identity.h",
+        "src/compare/inventory.h",
+        "src/compare/parallel.h",
+        "src/compare/plan.h",
+        "src/compare/prepare.h",
+        "src/compare/result_cache.h",
+        "src/compare/worker.h",
+    ],
+    linkopts = select({
+        ":host_windows": [],
+        "//conditions:default": ["-lpthread"],
+    }),
+    deps = [
+        ":analysis_totals",
+        ":analyze",
+        ":backend_fetch",
+        ":backend_policy",
+        ":build_info",
+        ":cache_io",
+        ":compare_report",
+        ":compare_store",
+        ":entropy_cache",
+        ":git",
+        ":input_limits",
+        ":jsonl",
+        ":lang",
+        ":models",
+        ":progress",
+        ":rocm_topology",
+        ":rules",
+        ":scorer_session",
+        ":scoring_settings",
+        ":sha256",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_library(
+    name = "compare_fake_scorer",
+    srcs = ["src/compare/fake_scorer.cc"],
+    hdrs = ["src/compare/fake_scorer.h"],
+    deps = [
+        ":analyze",
+        ":entropy_cache",
+        ":models",
+        ":scorer_session",
+        ":scoring_settings",
+    ],
+)
+
+cc_library(
+    name = "compare_test_repository",
+    testonly = True,
+    hdrs = ["src/compare/test_repository.h"],
+    deps = [
+        ":subprocess",
+        ":test_util",
+    ],
+)
+
+cc_test(
+    name = "compare_identity_test",
+    srcs = ["src/compare/identity_test.cc"],
+    deps = [
+        ":compare_core",
+        ":models",
+        ":scoring_settings",
+        ":test_util",
+    ],
+)
+
+cc_test(
+    name = "compare_result_cache_test",
+    srcs = ["src/compare/result_cache_test.cc"],
+    deps = [
+        ":compare_core",
+        ":sha256",
+        ":test_util",
+    ],
+)
+
+cc_test(
+    name = "compare_prepare_test",
+    srcs = ["src/compare/prepare_test.cc"],
+    # Windows test actions otherwise lose the PATH entry that finds git.exe.
+    env_inherit = ["PATH"],
+    deps = [
+        ":compare_core",
+        ":compare_test_repository",
+        ":git",
+        ":rules",
+        ":scoring_settings",
+        ":test_util",
+    ],
+)
+
+cc_test(
+    name = "compare_worker_test",
+    srcs = ["src/compare/worker_test.cc"],
+    env_inherit = ["PATH"],
+    deps = [
+        ":compare_core",
+        ":compare_fake_scorer",
+        ":compare_test_repository",
+        ":entropy_cache",
+        ":scoring_settings",
+        ":test_util",
+    ],
+)
+
+cc_test(
+    name = "compare_execution_host_test",
+    srcs = ["src/compare/execution_host_test.cc"],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        ":compare_core",
+        ":sha256",
+        ":test_util",
+    ],
+)
+
+cc_library(
     name = "compare_cli",
     srcs = ["src/compare/cli.cc"],
     hdrs = ["src/compare/cli.h"],
@@ -756,10 +891,23 @@ cc_library(
 )
 
 cc_library(
+    name = "scorer_session",
+    hdrs = ["src/scorer_session.h"],
+    deps = [
+        ":analyze",
+        ":backend_policy",
+        ":entropy_cache",
+        ":progress",
+        ":scoring_settings",
+    ],
+)
+
+cc_library(
     name = "analysis_session",
     srcs = ["src/analysis_session.cc"],
     hdrs = ["src/analysis_session.h"],
     deps = [
+        ":scorer_session",
         ":analyze",
         ":backend_runtime",
         ":build_info",
@@ -1563,9 +1711,14 @@ test_suite(
         ":backend_test",
         ":cache_concurrency_test",
         ":cache_test",
+        ":compare_execution_host_test",
         ":compare_golden_test",
+        ":compare_identity_test",
+        ":compare_prepare_test",
         ":compare_report_test",
+        ":compare_result_cache_test",
         ":compare_store_test",
+        ":compare_worker_test",
         ":core_test",
         ":download_test",
         ":entropy_cache_test",

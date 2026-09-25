@@ -59,6 +59,18 @@ EntropyCacheLookup ReadEntropyCache(std::string_view preprocessed_source,
 void WriteEntropyCache(std::string_view preprocessed_source,
                        const ModelIdentity& model,
                        std::span<const EntropyRecord> records);
+
+// The native CBOR entry the cache stores under EntropyCacheKey, or nullopt
+// when records exceed the bounded cache-work policy. Throws
+// std::invalid_argument for records that do not cover the source.
+std::optional<std::string> EncodeEntropyEntry(
+    std::string_view preprocessed_source, const ModelIdentity& model,
+    std::span<const EntropyRecord> records);
+// Records from a native entry. Throws std::invalid_argument unless the entry
+// was written for exactly this source and model identity.
+std::vector<EntropyRecord> DecodeEntropyEntry(
+    std::string_view entry, std::string_view preprocessed_source,
+    const ModelIdentity& model);
 EntropyCacheStatus GetEntropyCacheStatus(bool inspect_provenance = true);
 void PruneEntropyCache(bool force = true);
 void ClearEntropyCache();

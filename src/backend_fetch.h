@@ -29,6 +29,9 @@ using BundleDownloader = std::function<void(std::string_view url,
                                             const DownloadOptions& options)>;
 
 std::optional<std::string> BackendArtifactName(std::string_view name);
+// SHA-256 of the running executable: the identity of a build without a
+// stamped commit.
+std::string RunningExecutableIdentity();
 std::filesystem::path BackendBundlePath(const BackendFetchOptions& options);
 void VerifyBackendBundle(const BackendFetchOptions& options);
 void VerifyBackendBundle(const BackendFetchOptions& options,

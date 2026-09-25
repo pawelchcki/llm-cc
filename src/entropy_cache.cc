@@ -201,28 +201,7 @@ std::optional<std::vector<EntropyRecord>> ReadEntry(const CacheLocation& l,
   }
   std::ifstream in(p, std::ios::binary);
   const std::string binary = ReadBoundedStream(in, kMaxEntropyCacheEntryBytes);
-  std::vector<uint8_t> b(binary.begin(), binary.end());
-  auto j = nlohmann::json::from_cbor(b);
-  if (!j.is_object() || j.value("version", 0) != 2 ||
-      j.value("source_size", uint64_t{}) != s.size() ||
-      !j.contains("provenance") || j["provenance"] != Provenance(s, m) ||
-      !j.contains("records") || !j["records"].is_array())
-    throw std::invalid_argument("invalid entropy entry");
-  std::vector<EntropyRecord> r;
-  for (auto& x : j["records"]) {
-    if (!x.is_array() || x.size() != 2 || !x[0].is_binary())
-      throw std::invalid_argument("invalid entropy record");
-    std::optional<double> q;
-    if (!x[1].is_null()) {
-      if (!x[1].is_number()) throw std::invalid_argument("invalid entropy");
-      q = x[1].get<double>();
-    }
-    auto& z = x[0].get_binary();
-    r.push_back({r.size(), std::string(z.begin(), z.end()), q});
-  }
-  if (!IsComplete(s, r))
-    throw std::invalid_argument("incomplete entropy entry");
-  return r;
+  return DecodeEntropyEntry(binary, s, m);
 }
 struct Accounting {
   uint64_t bytes = 0, entries = 0, next_expiry = 0;
@@ -365,6 +344,70 @@ void MaybeMaintain(const CacheLocation& location) {
 }
 }  // namespace
 
+std::vector<EntropyRecord> DecodeEntropyEntry(std::string_view entry,
+                                              std::string_view s,
+                                              const ModelIdentity& m) {
+  if (entry.size() > kMaxEntropyCacheEntryBytes) {
+    throw std::invalid_argument("oversized entropy entry");
+  }
+  nlohmann::json j;
+  try {
+    j = nlohmann::json::from_cbor(
+        std::vector<uint8_t>(entry.begin(), entry.end()));
+  } catch (const nlohmann::json::exception&) {
+    throw std::invalid_argument("malformed entropy entry");
+  }
+  if (!j.is_object() || j.value("version", 0) != 2 ||
+      j.value("source_size", uint64_t{}) != s.size() ||
+      !j.contains("provenance") || j["provenance"] != Provenance(s, m) ||
+      !j.contains("records") || !j["records"].is_array())
+    throw std::invalid_argument("invalid entropy entry");
+  std::vector<EntropyRecord> r;
+  for (auto& x : j["records"]) {
+    if (!x.is_array() || x.size() != 2 || !x[0].is_binary())
+      throw std::invalid_argument("invalid entropy record");
+    std::optional<double> q;
+    if (!x[1].is_null()) {
+      if (!x[1].is_number()) throw std::invalid_argument("invalid entropy");
+      q = x[1].get<double>();
+    }
+    auto& z = x[0].get_binary();
+    r.push_back({r.size(), std::string(z.begin(), z.end()), q});
+  }
+  if (!IsComplete(s, r))
+    throw std::invalid_argument("incomplete entropy entry");
+  return r;
+}
+
+std::optional<std::string> EncodeEntropyEntry(
+    std::string_view source, const ModelIdentity& model,
+    std::span<const EntropyRecord> records) {
+  // Do this before validation: entries beyond the bounded cache-work policy
+  // should not spend additional CPU checking records that will not be stored.
+  if (!CanSerializeCacheEntry(source, records)) {
+    return std::nullopt;
+  }
+  if (!IsComplete(source, records)) {
+    throw std::invalid_argument("refusing incomplete entropy records");
+  }
+  nlohmann::json encoded = {{"version", 2},
+                            {"source_size", source.size()},
+                            {"provenance", Provenance(source, model)},
+                            {"records", nlohmann::json::array()}};
+  for (const auto& record : records) {
+    encoded["records"].push_back(
+        nlohmann::json::array({nlohmann::json::binary(std::vector<uint8_t>(
+                                   record.bytes.begin(), record.bytes.end())),
+                               record.entropy ? nlohmann::json(*record.entropy)
+                                              : nlohmann::json(nullptr)}));
+  }
+  const auto bytes = nlohmann::json::to_cbor(encoded);
+  if (bytes.size() > kMaxEntropyCacheEntryBytes) {
+    return std::nullopt;
+  }
+  return std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+}
+
 std::filesystem::path EntropyCacheBaseDirectory() {
 #if defined(_WIN32)
   const auto environment_path = [](const wchar_t* name) {
@@ -467,29 +510,12 @@ EntropyCacheLookup ReadEntropyCache(std::string_view source,
 
 void WriteEntropyCache(std::string_view source, const ModelIdentity& model,
                        std::span<const EntropyRecord> records) {
-  // Do this before validation: entries beyond the bounded cache-work policy
-  // should not spend additional CPU checking records that will not be stored.
-  if (!CanSerializeCacheEntry(source, records)) {
+  const std::optional<std::string> entry =
+      EncodeEntropyEntry(source, model, records);
+  if (!entry.has_value() || entry->size() > Limit()) {
     return;
   }
-  if (!IsComplete(source, records)) {
-    throw std::invalid_argument("refusing incomplete entropy records");
-  }
-  nlohmann::json encoded = {{"version", 2},
-                            {"source_size", source.size()},
-                            {"provenance", Provenance(source, model)},
-                            {"records", nlohmann::json::array()}};
-  for (const auto& record : records) {
-    encoded["records"].push_back(
-        nlohmann::json::array({nlohmann::json::binary(std::vector<uint8_t>(
-                                   record.bytes.begin(), record.bytes.end())),
-                               record.entropy ? nlohmann::json(*record.entropy)
-                                              : nlohmann::json(nullptr)}));
-  }
-  const auto bytes = nlohmann::json::to_cbor(encoded);
-  if (bytes.size() > kMaxEntropyCacheEntryBytes || bytes.size() > Limit()) {
-    return;
-  }
+  const std::string_view bytes = *entry;
   const auto location = GlobalLocation();
   const auto target = EntryPath(location, EntropyCacheKey(source, model));
   EnsureCacheDirectory(location);
@@ -541,9 +567,7 @@ void WriteEntropyCache(std::string_view source, const ModelIdentity& model,
     SaveAccounting(location, RebuildAccounting(location));
     return;
   }
-  cache_io::AtomicWriteFile(
-      target, std::string_view(reinterpret_cast<const char*>(bytes.data()),
-                               bytes.size()));
+  cache_io::AtomicWriteFile(target, bytes);
   TouchEntry(target);
   ++account.entries;
   account.bytes += bytes.size();
