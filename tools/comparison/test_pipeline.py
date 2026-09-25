@@ -10,7 +10,7 @@ from pathlib import Path
 
 from tools.comparison.__main__ import parser
 from tools.comparison.cache import CacheError, FilesystemStore, ResultCache
-from tools.comparison.common import aggregate_report, write_json
+from tools.comparison.common import aggregate_report
 from tools.comparison.fixtures import git, synthetic_scorer
 from tools.comparison.inventory import (
     GitError,
