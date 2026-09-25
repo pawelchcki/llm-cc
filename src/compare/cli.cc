@@ -29,7 +29,7 @@ constexpr std::string_view kUsage =
     "Usage:\n"
     "  llm-cc compare aggregate --output-dir DIR [--plan PLAN] "
     "[--worker FILE]...\n"
-    "      [--identity FILE] [--error MESSAGE]...\n"
+    "      [--identity FILE] [--fingerprint HEX] [--error MESSAGE]...\n"
     "  llm-cc compare store get KEY --cache LOCATION [--store-options FILE]\n"
     "      [--output FILE]\n"
     "  llm-cc compare store put KEY --cache LOCATION [--store-options FILE]\n"
@@ -37,8 +37,8 @@ constexpr std::string_view kUsage =
     "aggregate validates a plan and its worker artifacts and writes\n"
     "report.json, report.md, comment.md, baseline.md, baseline.json and\n"
     "publication.json. Each --error makes the report a failure; without a\n"
-    "plan, --identity names the pipeline it belongs to. The exit status is 1\n"
-    "for a failed report.\n\n"
+    "plan, --identity and --fingerprint name the pipeline and experiment it\n"
+    "belongs to. The exit status is 1 for a failed report.\n\n"
     "store reads or writes one object of a filesystem or s3://bucket/prefix\n"
     "store, using standard output and input by default. A missing object\n"
     "exits 1. S3 credentials come from AWS_ACCESS_KEY_ID,\n"
@@ -54,6 +54,7 @@ struct AggregateArguments {
   std::vector<std::string> workers;
   std::filesystem::path output;
   std::optional<std::filesystem::path> identity;
+  std::optional<std::string> fingerprint;
   std::vector<std::string> errors;
 };
 
@@ -73,6 +74,13 @@ AggregateArguments ParseAggregate(const std::vector<std::string_view>& args) {
       arguments.output = std::filesystem::u8path(value);
     } else if (option == "--identity") {
       arguments.identity = std::filesystem::u8path(value);
+    } else if (option == "--fingerprint") {
+      if (value.size() != 64 || value.find_first_not_of("0123456789abcdef") !=
+                                    std::string_view::npos) {
+        throw CompareUsageError(
+            "--fingerprint must be 64 lowercase hex digits");
+      }
+      arguments.fingerprint = std::string(value);
     } else if (option == "--error") {
       arguments.errors.emplace_back(value);
     } else {
@@ -109,7 +117,10 @@ int RunAggregate(const std::vector<std::string_view>& args) {
   if (!plan.has_value()) {
     report =
         WriteFailureReport(arguments.output, ReadIdentity(arguments.identity),
-                           nullptr, arguments.errors);
+                           arguments.fingerprint.has_value()
+                               ? nlohmann::json(*arguments.fingerprint)
+                               : nlohmann::json(),
+                           arguments.errors);
   } else if (arguments.errors.empty()) {
     report = AggregatePlan(*plan, arguments.workers, arguments.output);
   } else {

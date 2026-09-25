@@ -396,5 +396,9 @@ int main() {  // NOLINT(bugprone-exception-escape)
   result["token_count"] = json::parse("18446744073709551615");
   Expect(!llmcc::compare::v1::ValidResult(result, item, "f"),
          "a token count past the source limit is invalid");
+  result["token_count"] = 3;
+  result["llm_cc"] = json::parse("18446744073709551615");
+  Expect(!llmcc::compare::v1::ValidResult(result, item, "f"),
+         "a score past 2^53 is invalid");
   return 0;
 }

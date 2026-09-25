@@ -76,8 +76,10 @@ bool ValidResult(const nlohmann::json& result, const nlohmann::json& item,
          // totals far from overflowing.
          IsInteger(tokens) && tokens.get<double>() >= 0 &&
          tokens.get<double>() <= static_cast<double>(kMaxSourceBytes) &&
-         IsNumber(score) && std::isfinite(score.get<double>()) &&
-         score.get<double>() >= 0;
+         // Scores past 2^53 are not exact doubles and an integral one could
+         // not be subtracted as int64 by the report.
+         IsNumber(score) && score.get<double>() <= 9007199254740992.0 &&
+         std::isfinite(score.get<double>()) && score.get<double>() >= 0;
 }
 
 void ValidatePlan(const nlohmann::json& plan) {

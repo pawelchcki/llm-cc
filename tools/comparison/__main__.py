@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from .cache import ResultCache, open_store
-from .common import aggregate_report
+from .common import aggregate_report, digest
 from .github import API_URL, GitHub
 from .inventory import validate_rules
 from .pipeline import compare, prepare
@@ -217,15 +217,25 @@ def main(argv=None):
     try:
         return _run(args)
     except Exception as error:
-        identity = {}
+        identity, fingerprint = {}, None
         try:
             if getattr(args, "identity", None):
                 identity = _json(args.identity)
-        except (OSError, ValueError):
+            if getattr(args, "profile", None):
+                profile = _json(args.profile)
+                fingerprint = digest(
+                    {"scoring": profile["scoring"], "build": profile["build"]}
+                )
+        except (OSError, ValueError, KeyError, TypeError):
             pass
         print(str(error), file=sys.stderr)
         try:
-            aggregate_report(args.output_dir, identity=identity, errors=[str(error)])
+            aggregate_report(
+                args.output_dir,
+                identity=identity,
+                errors=[str(error)],
+                fingerprint=fingerprint,
+            )
         except Exception as failure:
             print("cannot write the failure report: %s" % failure, file=sys.stderr)
         return 1

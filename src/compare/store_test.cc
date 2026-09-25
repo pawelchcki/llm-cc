@@ -210,6 +210,12 @@ int main() {  // NOLINT(bugprone-exception-escape)
       "unknown schemes are rejected");
   Expect(!StoreFailure([] { llmcc::compare::OpenStore("s3://"); }).empty(),
          "an S3 location needs a bucket");
+  for (const char* location : {"s3://../prefix", "s3://./prefix"}) {
+    Expect(StoreFailure([&] {
+             llmcc::compare::OpenStore(location);
+           }).find("invalid S3 bucket") != std::string::npos,
+           std::string("a dot-segment bucket is refused: ") + location);
+  }
   for (const char* location :
        {"s3://bucket/a/../b", "s3://bucket/./a", "s3://bucket/a//b"}) {
     Expect(StoreFailure([&] {

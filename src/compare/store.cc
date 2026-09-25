@@ -52,6 +52,13 @@ std::unique_ptr<Store> OpenS3(std::string_view rest,
   if (settings.bucket.empty()) {
     throw StoreError("S3 store location needs a bucket");
   }
+  // The bucket is a URL path segment for custom endpoints, which libcurl
+  // would squash if it were "." or "..".
+  try {
+    ValidateStoreKey(settings.bucket);
+  } catch (const StoreError&) {
+    throw StoreError("invalid S3 bucket '" + settings.bucket + "'");
+  }
   if (slash != std::string_view::npos) {
     std::string_view prefix = rest.substr(slash + 1);
     while (!prefix.empty() && prefix.front() == '/') {
