@@ -5,21 +5,17 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
-#else
-#include <sys/wait.h>
 #endif
 
 #include <algorithm>
-#include <array>
-#include <cstdio>
-#include <cwchar>
 #include <map>
-#include <memory>
 #include <set>
 #include <stdexcept>
 #include <string_view>
 #include <system_error>
 #include <vector>
+
+#include "src/git.h"
 
 namespace llmcc {
 namespace {
@@ -33,130 +29,6 @@ std::string PathUtf8(const std::filesystem::path& path) {
 #endif
 }
 
-#if defined(_WIN32)
-std::wstring WindowsArgument(std::wstring_view value) {
-  std::wstring result = L"\"";
-  std::size_t backslashes = 0;
-  for (wchar_t character : value) {
-    if (character == L'\\') {
-      ++backslashes;
-    } else if (character == L'"') {
-      result.append(backslashes * 2 + 1, L'\\');
-      result += character;
-      backslashes = 0;
-    } else {
-      result.append(backslashes, L'\\');
-      backslashes = 0;
-      result += character;
-    }
-  }
-  result.append(backslashes * 2, L'\\');
-  return result + L'"';
-}
-#else
-std::string ShellQuote(std::string_view value) {
-  std::string result = "'";
-  for (char character : value) {
-    result += character == '\'' ? "'\\''" : std::string(1, character);
-  }
-  return result + "'";
-}
-
-std::string_view NullRedirect() { return " 2>/dev/null"; }
-#endif
-
-struct CommandResult {
-  int status;
-  std::string output;
-};
-
-#if defined(_WIN32)
-CommandResult Capture(std::wstring_view arguments) {
-  const DWORD path_size = GetEnvironmentVariableW(L"PATH", nullptr, 0);
-  if (path_size == 0) {
-    return {.status = -1, .output = {}};
-  }
-  std::vector<wchar_t> search_path(path_size);
-  if (GetEnvironmentVariableW(L"PATH", search_path.data(), path_size) == 0) {
-    return {.status = -1, .output = {}};
-  }
-  const DWORD executable_size =
-      SearchPathW(search_path.data(), L"git.exe", nullptr, 0, nullptr, nullptr);
-  if (executable_size == 0) {
-    return {.status = -1, .output = {}};
-  }
-  std::vector<wchar_t> executable(executable_size + 1);
-  if (SearchPathW(search_path.data(), L"git.exe", nullptr,
-                  static_cast<DWORD>(executable.size()), executable.data(),
-                  nullptr) == 0) {
-    return {.status = -1, .output = {}};
-  }
-  SECURITY_ATTRIBUTES security{sizeof(security), nullptr, TRUE};
-  HANDLE read_pipe = nullptr;
-  HANDLE write_pipe = nullptr;
-  if (!CreatePipe(&read_pipe, &write_pipe, &security, 0) ||
-      !SetHandleInformation(read_pipe, HANDLE_FLAG_INHERIT, 0)) {
-    if (read_pipe) CloseHandle(read_pipe);
-    if (write_pipe) CloseHandle(write_pipe);
-    return {.status = -1, .output = {}};
-  }
-  HANDLE null_error =
-      CreateFileW(L"NUL", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                  &security, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-  STARTUPINFOW startup{};
-  startup.cb = sizeof(startup);
-  startup.dwFlags = STARTF_USESTDHANDLES;
-  startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-  startup.hStdOutput = write_pipe;
-  startup.hStdError = null_error;
-  PROCESS_INFORMATION process{};
-  std::wstring mutable_command =
-      WindowsArgument(executable.data()) + L" " + std::wstring(arguments);
-  const BOOL started = CreateProcessW(executable.data(), mutable_command.data(),
-                                      nullptr, nullptr, TRUE, CREATE_NO_WINDOW,
-                                      nullptr, nullptr, &startup, &process);
-  CloseHandle(write_pipe);
-  if (null_error != INVALID_HANDLE_VALUE) CloseHandle(null_error);
-  if (!started) {
-    CloseHandle(read_pipe);
-    return {.status = -1, .output = {}};
-  }
-  std::string output;
-  std::array<char, 4096> buffer{};
-  DWORD count = 0;
-  while (ReadFile(read_pipe, buffer.data(), static_cast<DWORD>(buffer.size()),
-                  &count, nullptr) &&
-         count != 0) {
-    output.append(buffer.data(), count);
-  }
-  CloseHandle(read_pipe);
-  WaitForSingleObject(process.hProcess, INFINITE);
-  DWORD status = static_cast<DWORD>(-1);
-  GetExitCodeProcess(process.hProcess, &status);
-  CloseHandle(process.hThread);
-  CloseHandle(process.hProcess);
-  return {.status = static_cast<int>(status), .output = std::move(output)};
-}
-#else
-CommandResult Capture(std::string_view command) {
-  using Pipe = std::unique_ptr<std::FILE, decltype(&pclose)>;
-  Pipe pipe(popen(std::string(command).c_str(), "r"),  // NOLINT
-            pclose);
-  if (!pipe) {
-    return {.status = -1, .output = {}};
-  }
-  std::string output;
-  std::array<char, 4096> buffer{};
-  while (const std::size_t count =
-             std::fread(buffer.data(), 1, buffer.size(), pipe.get())) {
-    output.append(buffer.data(), count);
-  }
-  std::FILE* raw = pipe.release();
-  const int raw_status = pclose(raw);
-  const int status = WIFEXITED(raw_status) ? WEXITSTATUS(raw_status) : -1;
-  return {.status = status, .output = std::move(output)};
-}
-#endif
 std::filesystem::path Canonical(const std::filesystem::path& path) {
   std::error_code error;
   const auto result = std::filesystem::canonical(path, error);
@@ -379,29 +251,14 @@ void FilesystemWalk(const std::filesystem::path& directory,
 bool GitWalk(const std::filesystem::path& input,
              const std::filesystem::path& repository, WalkContext& context) {
   const bool no_ignore = context.options.no_ignore;
-#if defined(_WIN32)
-  std::wstring command = L"-C " + WindowsArgument(repository.native()) +
-                         L" ls-files --cached --others" +
-                         (no_ignore ? L"" : L" --exclude-standard") + L" -z";
-#else
-  std::string command = "git -C " + ShellQuote(repository.native()) +
-                        " ls-files --cached --others" +
-                        (no_ignore ? "" : " --exclude-standard") + " -z" +
-                        std::string(NullRedirect());
-#endif
-  const CommandResult result = Capture(command);
-  if (result.status != 0) {
+  const auto listed = git::ListFiles(repository, no_ignore);
+  if (!listed.has_value()) {
     return false;
   }
   const Rules& rules = context.rules.For(repository);
   std::set<std::filesystem::path> nested_repositories;
-  std::string_view remaining = result.output;
-  while (!remaining.empty()) {
-    const std::size_t end = remaining.find('\0');
-    const std::string_view relative = remaining.substr(0, end);
-    remaining = end == std::string_view::npos ? std::string_view{}
-                                              : remaining.substr(end + 1);
-    if (relative.empty() || AlwaysExcluded(relative)) {
+  for (const std::string& relative : *listed) {
+    if (AlwaysExcluded(relative)) {
       continue;
     }
     const std::filesystem::path candidate =
@@ -420,8 +277,7 @@ bool GitWalk(const std::filesystem::path& input,
           (no_ignore ||
            (!rules.Excluded(relative) &&
             !PythonVirtualEnvironmentPath(canonical, repository)))) {
-        AddFile(canonical, std::string(relative), false, rules, repository,
-                context);
+        AddFile(canonical, relative, false, rules, repository, context);
       }
       continue;
     }
@@ -445,33 +301,7 @@ bool GitWalk(const std::filesystem::path& input,
 
 std::optional<std::filesystem::path> FindGitRepository(
     const std::filesystem::path& path) {
-  std::error_code error;
-  std::filesystem::path probe =
-      std::filesystem::is_directory(path, error) ? path : path.parent_path();
-  if (error || probe.empty()) {
-    return std::nullopt;
-  }
-#if defined(_WIN32)
-  const CommandResult result = Capture(
-      L"-C " + WindowsArgument(probe.native()) + L" rev-parse --show-toplevel");
-#else
-  const CommandResult result =
-      Capture("git -C " + ShellQuote(probe.native()) +
-              " rev-parse --show-toplevel" + std::string(NullRedirect()));
-#endif
-  if (result.status != 0) {
-    return std::nullopt;
-  }
-  std::string root = result.output;
-  while (!root.empty() && (root.back() == '\n' || root.back() == '\r')) {
-    root.pop_back();
-  }
-  if (root.empty()) {
-    return std::nullopt;
-  }
-  const auto canonical =
-      std::filesystem::canonical(std::filesystem::u8path(root), error);
-  return error ? std::nullopt : std::optional<std::filesystem::path>(canonical);
+  return git::FindRepositoryRoot(path);
 }
 
 DiscoveryResult DiscoverSources(

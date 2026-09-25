@@ -548,6 +548,32 @@ cc_library(
 )
 
 cc_library(
+    name = "sha1",
+    hdrs = ["src/sha1.h"],
+)
+
+cc_library(
+    name = "subprocess",
+    srcs = ["src/subprocess.cc"],
+    hdrs = ["src/subprocess.h"],
+    linkopts = select({
+        ":host_windows": [],
+        "//conditions:default": ["-lpthread"],
+    }),
+)
+
+cc_library(
+    name = "git",
+    srcs = ["src/git.cc"],
+    hdrs = ["src/git.h"],
+    deps = [
+        ":sha1",
+        ":sha256",
+        ":subprocess",
+    ],
+)
+
+cc_library(
     name = "glob",
     srcs = ["src/glob.cc"],
     hdrs = ["src/glob.h"],
@@ -584,6 +610,7 @@ cc_library(
     srcs = ["src/project.cc"],
     hdrs = ["src/project.h"],
     deps = [
+        ":git",
         ":lang",
         ":rules",
     ],
@@ -1263,6 +1290,41 @@ cc_test(
     }),
 )
 
+cc_binary(
+    name = "subprocess_test_helper",
+    testonly = True,
+    srcs = ["src/subprocess_test_helper.cc"],
+    deps = select({
+        ":host_macos": [],
+        ":host_windows": [],
+        "//conditions:default": [":linux_compat"],
+    }),
+)
+
+cc_test(
+    name = "subprocess_test",
+    srcs = ["src/subprocess_test.cc"],
+    args = ["$(rlocationpath :subprocess_test_helper)"],
+    data = [":subprocess_test_helper"],
+    deps = [
+        ":subprocess",
+        ":test_util",
+    ],
+)
+
+cc_test(
+    name = "git_test",
+    srcs = ["src/git_test.cc"],
+    # Windows test actions otherwise lose the PATH entry that finds git.exe.
+    env_inherit = ["PATH"],
+    deps = [
+        ":git",
+        ":sha1",
+        ":subprocess",
+        ":test_util",
+    ],
+)
+
 cc_test(
     name = "glob_test",
     srcs = ["src/glob_test.cc"],
@@ -1286,6 +1348,7 @@ cc_test(
 cc_test(
     name = "project_test",
     srcs = ["src/project_test.cc"],
+    env_inherit = ["PATH"],
     deps = [
         ":project",
         ":test_util",
@@ -1332,6 +1395,7 @@ test_suite(
         ":download_test",
         ":entropy_cache_test",
         ":format_test",
+        ":git_test",
         ":glob_test",
         ":jsonl_test",
         ":lang_test",
@@ -1347,6 +1411,7 @@ test_suite(
         ":scoring_test",
         ":sha256_test",
         ":starlark_test",
+        ":subprocess_test",
         ":version_test",
     ],
 )
