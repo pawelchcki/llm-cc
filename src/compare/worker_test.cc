@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
@@ -223,5 +224,17 @@ int main() {  // NOLINT(bugprone-exception-escape)
   const json rescored = harness.Prepare(repository, root / "rescored", 1, 0.9);
   harness.RunAll(rescored, root / "rescored");
   Expect(harness.scored->load() > 0, "corrupt entropy entries are rescored");
+
+  // So are well-formed entries whose fields have the wrong types.
+  const std::vector<std::uint8_t> mistyped =
+      json::to_cbor({{"version", "2"}, {"source_size", "many"}});
+  for (const auto& entry : fs::directory_iterator(root / "store/entropy/v2")) {
+    llmcc::compare::test::Write(entry.path(),
+                                std::string(mistyped.begin(), mistyped.end()));
+  }
+  harness.scored->store(0);
+  const json retyped = harness.Prepare(repository, root / "retyped", 1, 0.95);
+  harness.RunAll(retyped, root / "retyped");
+  Expect(harness.scored->load() > 0, "mistyped entropy entries are rescored");
   return 0;
 }

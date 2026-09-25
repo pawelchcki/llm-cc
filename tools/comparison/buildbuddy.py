@@ -617,7 +617,7 @@ def coordinate(args):
         identity = resolved
         store = open_store(config["cache"], **config.get("store_options", {}))
         # Fetch actual PR target, then full history if this checkout is shallow.
-        fetch_target(args.repo, identity["target_sha"])
+        fetch_target(args.repo, identity["target_sha"], identity.get("target_branch"))
         plan = prepare_plan(config, args.repo, args.head, identity, output)
         api = BuildBuddy(
             config.get("endpoint", "https://pawel.buildbuddy.io"),

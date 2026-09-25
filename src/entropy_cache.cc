@@ -357,26 +357,34 @@ std::vector<EntropyRecord> DecodeEntropyEntry(std::string_view entry,
   } catch (const nlohmann::json::exception&) {
     throw std::invalid_argument("malformed entropy entry");
   }
-  if (!j.is_object() || j.value("version", 0) != 2 ||
-      j.value("source_size", uint64_t{}) != s.size() ||
-      !j.contains("provenance") || j["provenance"] != Provenance(s, m) ||
-      !j.contains("records") || !j["records"].is_array())
+  // A well-formed document with mistyped fields is as invalid as a
+  // malformed one.
+  try {
+    return [&] {
+      if (!j.is_object() || j.value("version", 0) != 2 ||
+          j.value("source_size", uint64_t{}) != s.size() ||
+          !j.contains("provenance") || j["provenance"] != Provenance(s, m) ||
+          !j.contains("records") || !j["records"].is_array())
+        throw std::invalid_argument("invalid entropy entry");
+      std::vector<EntropyRecord> r;
+      for (auto& x : j["records"]) {
+        if (!x.is_array() || x.size() != 2 || !x[0].is_binary())
+          throw std::invalid_argument("invalid entropy record");
+        std::optional<double> q;
+        if (!x[1].is_null()) {
+          if (!x[1].is_number()) throw std::invalid_argument("invalid entropy");
+          q = x[1].get<double>();
+        }
+        auto& z = x[0].get_binary();
+        r.push_back({r.size(), std::string(z.begin(), z.end()), q});
+      }
+      if (!IsComplete(s, r))
+        throw std::invalid_argument("incomplete entropy entry");
+      return r;
+    }();
+  } catch (const nlohmann::json::exception&) {
     throw std::invalid_argument("invalid entropy entry");
-  std::vector<EntropyRecord> r;
-  for (auto& x : j["records"]) {
-    if (!x.is_array() || x.size() != 2 || !x[0].is_binary())
-      throw std::invalid_argument("invalid entropy record");
-    std::optional<double> q;
-    if (!x[1].is_null()) {
-      if (!x[1].is_number()) throw std::invalid_argument("invalid entropy");
-      q = x[1].get<double>();
-    }
-    auto& z = x[0].get_binary();
-    r.push_back({r.size(), std::string(z.begin(), z.end()), q});
   }
-  if (!IsComplete(s, r))
-    throw std::invalid_argument("incomplete entropy entry");
-  return r;
 }
 
 std::optional<std::string> EncodeEntropyEntry(

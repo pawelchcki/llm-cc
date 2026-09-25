@@ -16,7 +16,7 @@ class FilesystemStoreTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = FilesystemStore(directory)
             self.assertIsNone(store.get("pipelines/absent.json"))
-            for key in ("", "/absolute", "a/../b", "a//b", "./a"):
+            for key in ("", "/absolute", "a/../b", "a//b", "./a", "..\\up", "C:/x", "a:b"):
                 with self.subTest(key=key), self.assertRaises(StoreError):
                     store.put(key, b"x")
 

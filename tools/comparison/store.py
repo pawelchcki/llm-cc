@@ -37,7 +37,13 @@ class FilesystemStore:
 
     def _parts(self, key: str) -> list[str]:
         parts = key.split("/")
-        if not key or key.startswith("/") or any(p in ("", ".", "..") for p in parts):
+        # A backslash is a separator and a colon a drive or stream on
+        # Windows, as llm-cc's store key validation also refuses.
+        if (
+            not key
+            or key.startswith("/")
+            or any(p in ("", ".", "..") or "\\" in p or ":" in p for p in parts)
+        ):
             raise StoreError("invalid store key")
         return parts
 
