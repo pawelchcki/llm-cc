@@ -966,11 +966,6 @@ std::vector<std::size_t> CollectLineStarts(std::string_view source,
   return starts;
 }
 
-bool EndsWith(std::string_view value, std::string_view suffix) {
-  return value.size() >= suffix.size() &&
-         value.substr(value.size() - suffix.size()) == suffix;
-}
-
 }  // namespace
 
 std::pair<std::string, OffsetMap> StripComments(std::string_view source,
@@ -1108,12 +1103,30 @@ Language ParseLanguage(std::string_view name) {
                               std::string(kCanonicalLanguageNames));
 }
 
-Language InferLanguage(std::string_view path) {
+std::optional<Language> LanguageForExtension(std::string_view extension) {
+  const auto equal_ignoring_case = [extension](std::string_view candidate) {
+    return std::ranges::equal(extension, candidate, [](char left, char right) {
+      return std::tolower(static_cast<unsigned char>(left)) ==
+             std::tolower(static_cast<unsigned char>(right));
+    });
+  };
   for (Language language : kLanguages) {
-    for (std::string_view extension : Metadata(language).extensions) {
-      if (EndsWith(path, extension)) {
-        return language;
-      }
+    if (std::ranges::any_of(Metadata(language).extensions,
+                            equal_ignoring_case)) {
+      return language;
+    }
+  }
+  return std::nullopt;
+}
+
+Language InferLanguage(std::string_view path) {
+  const std::size_t separator = path.find_last_of("/\\");
+  const std::string_view name =
+      separator == std::string_view::npos ? path : path.substr(separator + 1);
+  const std::size_t dot = name.rfind('.');
+  if (dot != std::string_view::npos) {
+    if (const auto language = LanguageForExtension(name.substr(dot))) {
+      return *language;
     }
   }
   throw std::invalid_argument("cannot infer language from source file '" +
@@ -1123,25 +1136,6 @@ Language InferLanguage(std::string_view path) {
 
 std::string_view LanguageName(Language language) {
   return Metadata(language).canonical_name;
-}
-
-bool IsHeaderPath(std::string_view path) {
-  return std::ranges::any_of(
-      std::initializer_list<std::string_view>{".h", ".hpp", ".hh", ".hxx",
-                                              ".h++", ".cuh"},
-      [path](std::string_view suffix) { return EndsWith(path, suffix); });
-}
-
-bool IsSourcePath(std::string_view path, bool include_headers) {
-  if (IsHeaderPath(path)) {
-    return include_headers;
-  }
-  return std::ranges::any_of(kLanguages, [path](Language language) {
-    return std::ranges::any_of(Metadata(language).extensions,
-                               [path](std::string_view extension) {
-                                 return EndsWith(path, extension);
-                               });
-  });
 }
 
 }  // namespace llmcc

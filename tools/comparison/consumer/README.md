@@ -31,7 +31,7 @@ consuming repository only supplies configuration.
    `api_version` line, or merge only its `automations` entry into an existing
    policy that already declares one.
 
-Add `.llm-cc/comparison-rules.json`, based on
+Add `.llm-cc/rules.json`, based on
 [`comparison-rules.json`](comparison-rules.json), to classify paths for the
 language at hand. This is strongly recommended rather than optional: a
 repository without that file is scored with the host's own rules, which are

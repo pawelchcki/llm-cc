@@ -79,9 +79,16 @@ pull-request comments will link to it.
 
 ## Per-repository classification rules
 
-`prepare` reads `.llm-cc/comparison-rules.json` from the **target** commit's
-tree. A pull request therefore cannot reclassify its own files, and rules that
+`prepare` reads `.llm-cc/rules.json` from the **target** commit's tree, falling
+back to the legacy `.llm-cc/comparison-rules.json`. Local `llm-cc` analysis
+reads the same file; see
+[selection and classification rules](../../README.md#selection-and-classification-rules).
+A pull request cannot reclassify its own files, and rules that
 fail validation fail the run instead of silently reverting to the host defaults.
+Until the comparison core moves into `llm-cc`, this package still matches
+globs with Python's `fnmatch`, whose `*` also crosses `/`; write patterns that
+mean the same under both, as llm-cc's own `.llm-cc/rules.json` does
+(`tools/**` together with `**/*_test.*` rather than a bare `*_test.*`).
 Accepted keys are `exclude`, `tests`, `tooling`, `extensions` and `paths`; glob
 lists hold non-empty patterns of at most 256 characters, at most 512 patterns in
 total including `paths`, and the canonical document must stay under 64 KiB.

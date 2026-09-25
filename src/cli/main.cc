@@ -44,6 +44,8 @@
 #include "src/models.h"
 #include "src/progress.h"
 #include "src/project.h"
+#include "src/rules.h"
+#include "src/rules_cmd.h"
 #include "src/score_cmd.h"
 
 namespace {
@@ -75,7 +77,6 @@ struct AnalyzeArguments {
   std::optional<std::filesystem::path> model;
   std::optional<std::string> model_name;
   bool no_download = false;
-  bool include_headers = false;
   bool no_ignore = false;
   bool no_cache = false;
   std::int32_t gpu_layers = 0;
@@ -112,13 +113,15 @@ constexpr std::string_view kUsageBeforeContext =
     "  llm-cc backends fetch cuda|rocm [--url URL] [--assume-yes|-y]\n"
     "      [--no-download] [--progress auto|always|never]\n"
     "  llm-cc cache status|prune [PATH] [--format text|json]\n"
-    "  llm-cc cache clear [PATH] [--legacy|--all] [--format text|json]\n\n"
+    "  llm-cc cache clear [PATH] [--legacy|--all] [--format text|json]\n"
+    "  llm-cc rules show [PATH]|check FILE|explain PATH...\n\n"
     "Analysis options:\n"
     "  --lang NAME          infer per file with auto, or force every input to\n"
     "                       rust, c, cpp, java, python, go, javascript, or\n"
     "                       csharp (default: auto)\n"
-    "  --include-headers     include headers during recursive discovery\n"
-    "  --no-ignore           include ignored and generated source files\n"
+    "  --include-headers     accepted for compatibility; headers are always\n"
+    "                       discovered\n"
+    "  --no-ignore           include ignored and rule-excluded source files\n"
     "  --no-cache            disable shared entropy caching\n"
     "  --no-download         do not fetch the model or backend bundle\n"
     "  --model GGUF          llama.cpp-compatible model\n"
@@ -407,7 +410,6 @@ AnalyzeArguments ParseAnalyzeArguments(int argc, char** argv) {
       continue;
     }
     if (option == "--include-headers") {
-      arguments.include_headers = true;
       continue;
     }
     if (option == "--no-ignore") {
@@ -956,12 +958,11 @@ nlohmann::json TotalsMetricsJson(const MetricTotals& totals,
           {"high_entropy_tokens", totals.high_entropy_tokens}};
 }
 
-nlohmann::json TotalsJson(const MetricTotals& totals,
-                          const std::map<std::string, MetricTotals>& languages,
-                          bool fatal, std::string_view score_mode,
-                          llmcc::HierarchyMode hierarchy_mode) {
-  nlohmann::json language_json = nlohmann::json::object();
-  for (const auto& [name, value] : languages) {
+nlohmann::json GroupTotalsJson(
+    const std::map<std::string, MetricTotals>& groups,
+    std::string_view score_mode) {
+  nlohmann::json result = nlohmann::json::object();
+  for (const auto& [name, value] : groups) {
     nlohmann::json item = TotalsMetricsJson(value, score_mode);
     item.update({{"discovered", value.discovered},
                  {"analyzed", value.analyzed},
@@ -969,8 +970,35 @@ nlohmann::json TotalsJson(const MetricTotals& totals,
                  {"llm_cc", value.llm_cc},
                  {"total_branch", value.total_branch},
                  {"total_comp_level", value.total_comp_level}});
-    language_json[name] = std::move(item);
+    result[name] = std::move(item);
   }
+  return result;
+}
+
+// Per-file totals broken down by language and by rules category.
+struct GroupTotals {
+  std::map<std::string, MetricTotals> languages;
+  std::map<std::string, MetricTotals> categories;
+
+  void Discover(const llmcc::DiscoveredSource& source) {
+    ++Language(source).discovered;
+    ++Category(source).discovered;
+  }
+  void Fail(const llmcc::DiscoveredSource& source) {
+    ++Language(source).failed;
+    ++Category(source).failed;
+  }
+  MetricTotals& Language(const llmcc::DiscoveredSource& source) {
+    return languages[std::string(llmcc::LanguageName(source.language))];
+  }
+  MetricTotals& Category(const llmcc::DiscoveredSource& source) {
+    return categories[std::string(llmcc::CategoryName(source.category))];
+  }
+};
+
+nlohmann::json TotalsJson(const MetricTotals& totals, const GroupTotals& groups,
+                          bool fatal, std::string_view score_mode,
+                          llmcc::HierarchyMode hierarchy_mode) {
   nlohmann::json result = TotalsMetricsJson(totals, score_mode);
   result.update(
       {{"type", "totals"},
@@ -984,7 +1012,8 @@ nlohmann::json TotalsJson(const MetricTotals& totals,
        {"llm_cc", totals.llm_cc},
        {"total_branch", totals.total_branch},
        {"total_comp_level", totals.total_comp_level},
-       {"languages", std::move(language_json)},
+       {"languages", GroupTotalsJson(groups.languages, score_mode)},
+       {"categories", GroupTotalsJson(groups.categories, score_mode)},
        {"partial",
         fatal || totals.failed != 0 || totals.analyzed != totals.discovered}});
   return result;
@@ -1026,8 +1055,22 @@ EffectiveTau ResolveTau(const AnalyzeArguments& arguments,
   return {.value = llmcc::kPaperTau, .source = "paper-default"};
 }
 
+nlohmann::json RulesJson(const std::vector<llmcc::RulesSource>& sources) {
+  nlohmann::json result = nlohmann::json::array();
+  for (const llmcc::RulesSource& source : sources) {
+    result.push_back(
+        {{"repository", source.repository.has_value()
+                            ? nlohmann::json(PathUtf8(*source.repository))
+                            : nlohmann::json()},
+         {"path", source.path.has_value() ? nlohmann::json(*source.path)
+                                          : nlohmann::json()}});
+  }
+  return result;
+}
+
 nlohmann::json ConfigurationJson(
     const AnalyzeArguments& arguments, std::string_view requested_model,
+    const std::vector<llmcc::RulesSource>& rules,
     const llmcc::ModelIdentity* identity = nullptr) {
   const bool percentile = arguments.tau_percentile.has_value();
   const EffectiveTau tau = ResolveTau(arguments, identity);
@@ -1042,8 +1085,10 @@ nlohmann::json ConfigurationJson(
            ? "structural"
            : "reference"},
       {"language", arguments.language_name},
-      {"include_headers", arguments.include_headers},
+      // Headers are always discovered; kept for configuration consumers.
+      {"include_headers", true},
       {"no_ignore", arguments.no_ignore},
+      {"rules", RulesJson(rules)},
       {"progress", arguments.progress},
       {"no_download", arguments.no_download},
       {"model", requested_model},
@@ -1265,6 +1310,7 @@ nlohmann::json FileJson(const llmcc::DiscoveredSource& source,
   event["type"] = "file";
   event["path"] = PathUtf8(source.path);
   event["language"] = language;
+  event["category"] = llmcc::CategoryName(source.category);
   event["entropy_cache_hit"] = result.entropy_cache_hit;
   event["score"] = ScoreJson(result.analysis.metrics, arguments.score_mode);
   event["score_mode"] = arguments.score_mode;
@@ -1373,9 +1419,8 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
     }
   };
   llmcc::DiscoveryResult discovery = llmcc::DiscoverSources(
-      arguments.sources, {.language = arguments.language,
-                          .include_headers = arguments.include_headers,
-                          .no_ignore = arguments.no_ignore});
+      arguments.sources,
+      {.language = arguments.language, .no_ignore = arguments.no_ignore});
   const std::string requested_model =
       arguments.model.has_value() ? PathUtf8(*arguments.model)
                                   : arguments.model_name.value_or("default");
@@ -1387,7 +1432,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
 
   if (discovery.sources.empty()) {
     if (!text) {
-      Emit(ConfigurationJson(arguments, requested_model));
+      Emit(ConfigurationJson(arguments, requested_model, discovery.rules));
     }
     for (const auto& message : discovery.warnings) {
       warning(message);
@@ -1419,19 +1464,18 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
   // making an oversize-only invocation prompt and independent of model state.
   if (preflight_errors.size() == discovery.sources.size()) {
     if (!text) {
-      Emit(ConfigurationJson(arguments, requested_model));
+      Emit(ConfigurationJson(arguments, requested_model, discovery.rules));
     }
     for (const auto& message : discovery.warnings) {
       warning(message);
     }
     MetricTotals totals;
     totals.discovered = discovery.sources.size();
-    std::map<std::string, MetricTotals> languages;
+    GroupTotals groups;
     std::size_t file_index = 0;
     for (const auto& source : discovery.sources) {
       const std::string language(llmcc::LanguageName(source.language));
-      auto& language_totals = languages[language];
-      ++language_totals.discovered;
+      groups.Discover(source);
       progress.StartFile(++file_index, discovery.sources.size(), source.path);
       if (!text) {
         Emit({{"type", "file_start"},
@@ -1440,7 +1484,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       }
       progress.FailFile();
       ++totals.failed;
-      ++language_totals.failed;
+      groups.Fail(source);
       ReportFileError(source,
                       std::runtime_error(preflight_errors.at(source.path)),
                       text, false);
@@ -1448,7 +1492,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
     if (text) {
       PrintTotalsText(totals, arguments.score_mode);
     } else {
-      Emit(TotalsJson(totals, languages, false, arguments.score_mode,
+      Emit(TotalsJson(totals, groups, false, arguments.score_mode,
                       arguments.hierarchy_mode));
     }
     return 1;
@@ -1499,7 +1543,8 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       llmcc::KvCacheTypeName(arguments.kv_cache_type), arguments.kv_offload,
       calibrated_tau_applies);
   if (!text) {
-    Emit(ConfigurationJson(arguments, requested_model, &identity));
+    Emit(ConfigurationJson(arguments, requested_model, discovery.rules,
+                           &identity));
   }
   for (const auto& message : discovery.warnings) {
     warning(message);
@@ -1560,9 +1605,9 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
 
   MetricTotals totals;
   totals.discovered = discovery.sources.size();
-  std::map<std::string, MetricTotals> languages;
+  GroupTotals groups;
   for (const auto& source : discovery.sources) {
-    ++languages[std::string(llmcc::LanguageName(source.language))].discovered;
+    groups.Discover(source);
   }
   bool fatal = false;
   std::size_t file_index = 0;
@@ -1596,22 +1641,24 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
       progress.FinishFile(result.entropy_cache_hit);
       ++totals.analyzed;
       Accumulate(result.analysis, totals);
-      auto& language_totals = languages[language];
-      ++language_totals.analyzed;
-      Accumulate(result.analysis, language_totals);
+      for (MetricTotals* group :
+           {&groups.Language(source), &groups.Category(source)}) {
+        ++group->analyzed;
+        Accumulate(result.analysis, *group);
+      }
     } catch (const llmcc::GpuRecoverableError&) {
       progress.FailFile();
       throw;
     } catch (const llmcc::ScorerInitializationError& error) {
       progress.FailFile();
       ++totals.failed;
-      ++languages[language].failed;
+      groups.Fail(source);
       ReportFileError(source, error, text, true);
       fatal = true;
     } catch (const std::exception& error) {
       progress.FailFile();
       ++totals.failed;
-      ++languages[language].failed;
+      groups.Fail(source);
       ReportFileError(source, error, text, false);
     }
   }
@@ -1619,7 +1666,7 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
   if (text) {
     PrintTotalsText(totals, arguments.score_mode);
   } else {
-    Emit(TotalsJson(totals, languages, fatal, arguments.score_mode,
+    Emit(TotalsJson(totals, groups, fatal, arguments.score_mode,
                     arguments.hierarchy_mode));
   }
   if (fatal) {
@@ -1646,6 +1693,8 @@ int Main(int argc, char** argv) {
       result = RunBackends(argc, argv);
     } else if (argc > 1 && std::string_view(argv[1]) == "cache") {
       result = RunCache(argc, argv);
+    } else if (argc > 1 && std::string_view(argv[1]) == "rules") {
+      result = llmcc::RunRulesCommand(argc - 1, argv + 1);
     } else {
       const auto arguments = ParseAnalyzeArguments(argc, argv);
       try {

@@ -548,10 +548,45 @@ cc_library(
 )
 
 cc_library(
+    name = "glob",
+    srcs = ["src/glob.cc"],
+    hdrs = ["src/glob.h"],
+)
+
+cc_library(
+    name = "rules",
+    srcs = ["src/rules.cc"],
+    hdrs = ["src/rules.h"],
+    deps = [
+        ":glob",
+        ":input_limits",
+        ":lang",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_library(
+    name = "rules_cmd",
+    srcs = ["src/rules_cmd.cc"],
+    hdrs = ["src/rules_cmd.h"],
+    deps = [
+        ":input_limits",
+        ":lang",
+        ":progress",
+        ":project",
+        ":rules",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_library(
     name = "project",
     srcs = ["src/project.cc"],
     hdrs = ["src/project.h"],
-    deps = [":lang"],
+    deps = [
+        ":lang",
+        ":rules",
+    ],
 )
 
 cc_library(
@@ -670,6 +705,8 @@ cc_binary(
         ":lang",
         ":models",
         ":project",
+        ":rules",
+        ":rules_cmd",
         ":score_cmd",
     ],
     tags = ["manual"],
@@ -698,6 +735,8 @@ cc_binary(
         ":lang",
         ":models",
         ":project",
+        ":rules",
+        ":rules_cmd",
         ":score_cmd",
     ],
     tags = ["manual"],
@@ -1225,6 +1264,26 @@ cc_test(
 )
 
 cc_test(
+    name = "glob_test",
+    srcs = ["src/glob_test.cc"],
+    deps = [
+        ":glob",
+        ":test_util",
+    ],
+)
+
+cc_test(
+    name = "rules_test",
+    srcs = ["src/rules_test.cc"],
+    args = ["$(rlocationpath testdata/rules/valid.json)"],
+    data = glob(["testdata/rules/*"]) + [".llm-cc/rules.json"],
+    deps = [
+        ":rules",
+        ":test_util",
+    ],
+)
+
+cc_test(
     name = "project_test",
     srcs = ["src/project_test.cc"],
     deps = [
@@ -1273,6 +1332,7 @@ test_suite(
         ":download_test",
         ":entropy_cache_test",
         ":format_test",
+        ":glob_test",
         ":jsonl_test",
         ":lang_test",
         ":large_file_parse_test",
@@ -1282,6 +1342,7 @@ test_suite(
         ":progress_test",
         ":provenance_test",
         ":rocm_topology_test",
+        ":rules_test",
         ":score_cmd_test",
         ":scoring_test",
         ":sha256_test",

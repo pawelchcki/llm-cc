@@ -1,0 +1,10 @@
+{
+  "exclude": ["gen/**", "**/*.pb.*"],
+  "tests": ["**/tests/**"],
+  "tooling": ["tools/**"],
+  "extensions": {".h": "cpp", ".inc": "c"},
+  "paths": [
+    {"pattern": "legacy/new/**", "language": "rust"},
+    {"pattern": "legacy/**", "language": "c"}
+  ]
+}

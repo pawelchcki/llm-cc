@@ -21,6 +21,7 @@ from tools.comparison.inventory import (
     validate_rules,
 )
 from tools.comparison.pipeline import (
+    REPOSITORY_RULES_PATH,
     _assemble,
     _changed_files,
     _code,
@@ -516,6 +517,27 @@ class PipelineTest(unittest.TestCase):
         missing, host = resolve_rules(self.repo, target, {"tests": ["x"]}, "absent.json")
         self.assertEqual(host, {"source": "host"})
         self.assertEqual(missing, {"tests": ["x"]})
+
+    def test_repository_rules_prefer_the_shared_file_name(self):
+        (self.repo / ".llm-cc").mkdir()
+        (self.repo / ".llm-cc/comparison-rules.json").write_text(
+            json.dumps({"tooling": ["copy.cc"]})
+        )
+        (self.repo / ".llm-cc/rules.json").write_text(
+            json.dumps({"tests": ["copy.cc"]})
+        )
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "both rules files")
+        target = git(self.repo, "rev-parse", "HEAD")
+        rules, source = resolve_rules(self.repo, target, {}, REPOSITORY_RULES_PATH)
+        self.assertEqual(rules, {"tests": ["copy.cc"]})
+        self.assertEqual(source["path"], ".llm-cc/rules.json")
+        git(self.repo, "rm", "-q", ".llm-cc/rules.json")
+        git(self.repo, "commit", "-qm", "legacy rules only")
+        legacy = git(self.repo, "rev-parse", "HEAD")
+        rules, source = resolve_rules(self.repo, legacy, {}, REPOSITORY_RULES_PATH)
+        self.assertEqual(rules, {"tooling": ["copy.cc"]})
+        self.assertEqual(source["path"], ".llm-cc/comparison-rules.json")
 
     def test_invalid_repository_rules_fail_the_run(self):
         (self.repo / ".llm-cc").mkdir()

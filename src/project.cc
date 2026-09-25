@@ -9,6 +9,7 @@
 #include <sys/wait.h>
 #endif
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cwchar>
@@ -200,36 +201,24 @@ bool IsDirectoryReparsePoint(const std::filesystem::path& path) {
          (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
 }
 #endif
-bool AlwaysExcluded(const std::filesystem::path& path) {
+bool InCacheDirectory(const std::filesystem::path& path) {
   return std::ranges::any_of(
       path, [](const auto& component) { return component == ".llm-cc-cache"; });
 }
 
-bool GeneratedDirectory(std::string_view name) {
-  static const std::set<std::string_view> names = {".git",
-                                                   ".hg",
-                                                   ".svn",
-                                                   "target",
-                                                   "node_modules",
-                                                   ".gradle",
-                                                   ".venv",
-                                                   "__pycache__",
-                                                   ".tox",
-                                                   ".nox",
-                                                   ".mypy_cache",
-                                                   ".pytest_cache",
-                                                   ".ruff_cache",
-                                                   "vendor",
-                                                   "third_party",
-                                                   "build",
-                                                   "build-out",
-                                                   ".nuget",
-                                                   "dist",
-                                                   "deps",
-                                                   "_build",
-                                                   "cmake-build-debug",
-                                                   "cmake-build-release"};
-  return names.contains(name) || name.starts_with("bazel-");
+// The '/'-separated spelling rules match, whatever the host separator.
+std::string GenericUtf8(const std::filesystem::path& path) {
+#if defined(_WIN32)
+  const std::u8string value = path.generic_u8string();
+  return std::string(reinterpret_cast<const char*>(value.data()), value.size());
+#else
+  return path.generic_string();
+#endif
+}
+
+std::string RelativeUtf8(const std::filesystem::path& path,
+                         const std::filesystem::path& root) {
+  return GenericUtf8(path.lexically_relative(root));
 }
 
 bool PythonVirtualEnvironment(const std::filesystem::path& directory) {
@@ -253,69 +242,78 @@ bool PythonVirtualEnvironmentPath(const std::filesystem::path& path,
   return false;
 }
 
-bool TopLevelOutPath(const std::filesystem::path& path,
-                     const std::filesystem::path& root) {
-  const auto relative = path.lexically_relative(root);
-  return relative.begin() != relative.end() && *relative.begin() == "out";
-}
-
-bool CSharpGeneratedPath(const std::filesystem::path& path,
-                         const std::filesystem::path& root) {
-  if (path.extension() != ".cs") {
-    return false;
-  }
-  const auto relative = path.lexically_relative(root);
-  return std::ranges::any_of(relative, [](const auto& component) {
-    return component == "bin" || component == "obj";
-  });
-}
-
-bool GeneratedPath(const std::filesystem::path& path,
-                   const std::filesystem::path& repository) {
-  const auto relative = path.lexically_relative(repository);
-  return std::ranges::any_of(relative,
-                             [](const auto& component) {
-                               return component == ".llm-cc-cache" ||
-                                      GeneratedDirectory(PathUtf8(component));
-                             }) ||
-         PythonVirtualEnvironmentPath(path, repository) ||
-         TopLevelOutPath(path, repository) ||
-         CSharpGeneratedPath(path, repository);
-}
-
-void AddFile(const std::filesystem::path& path, bool explicit_file,
-             const DiscoveryOptions& options,
-             const std::optional<std::filesystem::path>& repository,
-             std::map<std::string, DiscoveredSource>& files) {
-  const std::filesystem::path canonical = Canonical(path);
-  if (AlwaysExcluded(canonical)) {
-    return;
-  }
-  if (!explicit_file &&
-      !IsSourcePath(PathUtf8(canonical), options.include_headers)) {
-    return;
-  }
-  Language language;
-  if (options.language.has_value()) {
-    language = *options.language;
-  } else {
-    try {
-      language = InferLanguage(PathUtf8(canonical));
-    } catch (const std::invalid_argument&) {
-      if (explicit_file) {
-        throw;
+// Loads each Git root's rules once; outside Git the built-ins apply.
+class RulesCache {
+ public:
+  const Rules& For(const std::optional<std::filesystem::path>& repository) {
+    if (!repository.has_value()) {
+      if (!builtin_used_) {
+        builtin_used_ = true;
+        sources_.push_back({.repository = std::nullopt, .path = std::nullopt});
       }
-      return;
+      return Rules::Builtin();
     }
+    auto found = loaded_.find(*repository);
+    if (found == loaded_.end()) {
+      LoadedRules loaded;
+      try {
+        loaded = Rules::LoadFromWorktree(*repository);
+      } catch (const RulesError& error) {
+        throw std::runtime_error("invalid rules in " + PathUtf8(*repository) +
+                                 ": " + error.what());
+      }
+      sources_.push_back({.repository = repository, .path = loaded.path});
+      found = loaded_.emplace(*repository, std::move(loaded)).first;
+    }
+    return found->second.rules;
   }
-  files.emplace(
-      PathUtf8(canonical),
-      DiscoveredSource{
-          .path = canonical, .language = language, .repository = repository});
+
+  std::vector<RulesSource> TakeSources() { return std::move(sources_); }
+
+ private:
+  std::map<std::filesystem::path, LoadedRules> loaded_;
+  std::vector<RulesSource> sources_;
+  bool builtin_used_ = false;
+};
+
+struct WalkContext {
+  const DiscoveryOptions& options;
+  RulesCache& rules;
+  std::map<std::string, DiscoveredSource>& files;
+};
+
+// `relative` is the rules path; explicit inputs bypass exclusion rules but
+// still resolve their language and category through them.
+void AddFile(const std::filesystem::path& path, std::string relative,
+             bool explicit_file, const Rules& rules,
+             const std::optional<std::filesystem::path>& repository,
+             WalkContext& context) {
+  const std::filesystem::path canonical = Canonical(path);
+  if (InCacheDirectory(canonical)) {
+    return;
+  }
+  std::optional<Language> language = context.options.language;
+  if (!language.has_value()) {
+    language = rules.ResolveLanguage(relative);
+  }
+  if (!language.has_value()) {
+    if (explicit_file) {
+      // Reports the unsupported extension and how to force a language.
+      static_cast<void>(InferLanguage(PathUtf8(canonical)));
+    }
+    return;
+  }
+  const Category category = rules.Classify(relative);
+  context.files.emplace(PathUtf8(canonical),
+                        DiscoveredSource{.path = canonical,
+                                         .language = *language,
+                                         .repository = repository,
+                                         .relative_path = std::move(relative),
+                                         .category = category});
 }
 
-bool SkipDirectory(const std::filesystem::path& path,
-                   const std::filesystem::path& root, bool no_ignore) {
+bool SkipDirectory(const std::filesystem::path& path, std::string_view relative,
+                   const Rules& rules, bool no_ignore) {
   const std::string name = PathUtf8(path.filename());
   if (name == ".git" || name == ".llm-cc-cache") {
     return true;
@@ -328,17 +326,18 @@ bool SkipDirectory(const std::filesystem::path& path,
   if (no_ignore) {
     return false;
   }
-  return GeneratedDirectory(name) || PythonVirtualEnvironment(path) ||
-         (name == "out" && path.parent_path() == root);
+  return rules.PrunesDirectory(relative) || PythonVirtualEnvironment(path);
 }
 
 void FilesystemWalk(const std::filesystem::path& directory,
-                    const DiscoveryOptions& options,
                     const std::optional<std::filesystem::path>& repository,
-                    std::map<std::string, DiscoveredSource>& files) {
-  if (!options.no_ignore && PythonVirtualEnvironment(directory)) {
+                    WalkContext& context) {
+  const bool no_ignore = context.options.no_ignore;
+  if (!no_ignore && PythonVirtualEnvironment(directory)) {
     return;
   }
+  const Rules& rules = context.rules.For(repository);
+  const std::filesystem::path& root = repository.value_or(directory);
   std::error_code error;
   std::filesystem::recursive_directory_iterator iterator(
       directory, std::filesystem::directory_options::skip_permission_denied,
@@ -356,15 +355,17 @@ void FilesystemWalk(const std::filesystem::path& directory,
       iterator.increment(error);
       continue;
     }
+    std::string relative = RelativeUtf8(entry.path(), root);
     if (directory_entry) {
-      if (SkipDirectory(entry.path(), directory, options.no_ignore)) {
+      if (SkipDirectory(entry.path(), relative, rules, no_ignore)) {
         iterator.disable_recursion_pending();
       }
     } else if (entry.is_regular_file(error) && !error) {
       const auto canonical = std::filesystem::canonical(entry.path(), error);
       if (!error && IsWithin(canonical, directory) &&
-          (options.no_ignore || !CSharpGeneratedPath(canonical, directory))) {
-        AddFile(canonical, false, options, repository, files);
+          (no_ignore || !rules.Excluded(relative))) {
+        AddFile(canonical, std::move(relative), false, rules, repository,
+                context);
       }
     }
     error.clear();
@@ -376,24 +377,23 @@ void FilesystemWalk(const std::filesystem::path& directory,
 }
 
 bool GitWalk(const std::filesystem::path& input,
-             const std::filesystem::path& repository,
-             const DiscoveryOptions& options,
-             std::map<std::string, DiscoveredSource>& files) {
+             const std::filesystem::path& repository, WalkContext& context) {
+  const bool no_ignore = context.options.no_ignore;
 #if defined(_WIN32)
   std::wstring command = L"-C " + WindowsArgument(repository.native()) +
                          L" ls-files --cached --others" +
-                         (options.no_ignore ? L"" : L" --exclude-standard") +
-                         L" -z";
+                         (no_ignore ? L"" : L" --exclude-standard") + L" -z";
 #else
   std::string command = "git -C " + ShellQuote(repository.native()) +
                         " ls-files --cached --others" +
-                        (options.no_ignore ? "" : " --exclude-standard") +
-                        " -z" + std::string(NullRedirect());
+                        (no_ignore ? "" : " --exclude-standard") + " -z" +
+                        std::string(NullRedirect());
 #endif
   const CommandResult result = Capture(command);
   if (result.status != 0) {
     return false;
   }
+  const Rules& rules = context.rules.For(repository);
   std::set<std::filesystem::path> nested_repositories;
   std::string_view remaining = result.output;
   while (!remaining.empty()) {
@@ -401,7 +401,7 @@ bool GitWalk(const std::filesystem::path& input,
     const std::string_view relative = remaining.substr(0, end);
     remaining = end == std::string_view::npos ? std::string_view{}
                                               : remaining.substr(end + 1);
-    if (relative.empty()) {
+    if (relative.empty() || AlwaysExcluded(relative)) {
       continue;
     }
     const std::filesystem::path candidate =
@@ -411,26 +411,31 @@ bool GitWalk(const std::filesystem::path& input,
     if (error || !IsWithin(canonical, input)) {
       continue;
     }
-    const bool generated = GeneratedPath(canonical, repository);
     const bool directory = std::filesystem::is_directory(canonical, error);
     if (error) {
       continue;
     }
     if (!directory) {
       if (std::filesystem::is_regular_file(canonical) &&
-          (options.no_ignore || !generated)) {
-        AddFile(canonical, false, options, repository, files);
+          (no_ignore ||
+           (!rules.Excluded(relative) &&
+            !PythonVirtualEnvironmentPath(canonical, repository)))) {
+        AddFile(canonical, std::string(relative), false, rules, repository,
+                context);
       }
       continue;
     }
+    // A directory entry is a submodule or an untracked nested repository,
+    // which its own rules govern once the parent's rules admit it.
     const auto nested_repository = FindGitRepository(canonical);
-    if ((!options.no_ignore && generated) || !nested_repository.has_value() ||
-        *nested_repository == repository ||
+    if ((!no_ignore && (rules.PrunesDirectory(relative) ||
+                        PythonVirtualEnvironmentPath(canonical, repository))) ||
+        !nested_repository.has_value() || *nested_repository == repository ||
         !nested_repositories.insert(*nested_repository).second) {
       continue;
     }
-    if (!GitWalk(canonical, *nested_repository, options, files)) {
-      FilesystemWalk(canonical, options, nested_repository, files);
+    if (!GitWalk(canonical, *nested_repository, context)) {
+      FilesystemWalk(canonical, nested_repository, context);
     }
   }
   return true;
@@ -477,6 +482,8 @@ DiscoveryResult DiscoverSources(
   }
   DiscoveryResult result;
   std::map<std::string, DiscoveredSource> files;
+  RulesCache rules;
+  WalkContext context{.options = options, .rules = rules, .files = files};
   for (const auto& raw_input : inputs) {
     const auto input = Canonical(raw_input);
     std::error_code error;
@@ -487,7 +494,11 @@ DiscoveryResult DiscoverSources(
     }
     const auto repository = FindGitRepository(input);
     if (regular) {
-      AddFile(input, true, options, repository, files);
+      std::string relative = repository.has_value()
+                                 ? RelativeUtf8(input, *repository)
+                                 : GenericUtf8(input.filename());
+      AddFile(input, std::move(relative), true, rules.For(repository),
+              repository, context);
       continue;
     }
     if (!std::filesystem::is_directory(input, error) || error) {
@@ -495,7 +506,7 @@ DiscoveryResult DiscoverSources(
                                   input.string());
     }
     if (repository.has_value()) {
-      if (GitWalk(input, *repository, options, files)) {
+      if (GitWalk(input, *repository, context)) {
         continue;
       }
       result.warnings.push_back("Git discovery failed for " + PathUtf8(input) +
@@ -505,12 +516,13 @@ DiscoveryResult DiscoverSources(
                                 " is not in a Git worktree; falling back to "
                                 "filesystem discovery");
     }
-    FilesystemWalk(input, options, repository, files);
+    FilesystemWalk(input, repository, context);
   }
   for (auto& [key, source] : files) {
     static_cast<void>(key);
     result.sources.push_back(std::move(source));
   }
+  result.rules = rules.TakeSources();
   return result;
 }
 

@@ -202,7 +202,7 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
   fs::create_directories(empty_repository);
   llmcc::test::ExpectEq(Run("git -C " + Quote(empty_repository) + " init -q"),
                         0, "empty analysis repository initialized");
-  Write(empty_repository / "only.h", "int declaration;\n");
+  Write(empty_repository / "notes.txt", "no source here\n");
   const fs::path empty_output = fs::path(test_tmpdir) / "empty.jsonl";
   llmcc::test::ExpectEq(Run(Quote(binary) + " " + Quote(empty_repository) +
                             " --no-download >" + Quote(empty_output)),
@@ -776,6 +776,18 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(
       multi_totals["type"] == "totals" && multi_totals["analyzed"] == 5,
       "multi-language totals include every file");
+  llmcc::test::Expect(
+      multi_totals["categories"].size() == 1 &&
+          multi_totals["categories"]["runtime"]["analyzed"] == 5,
+      "totals break analyzed files down by rules category");
+  const auto multi_configuration =
+      std::ranges::find_if(multi_events, [](const auto& item) {
+        return item.value("type", "") == "configuration";
+      });
+  llmcc::test::Expect(multi_configuration != multi_events.end() &&
+                          (*multi_configuration)["rules"].is_array() &&
+                          (*multi_configuration)["include_headers"] == true,
+                      "configuration reports the rules each root used");
   for (const auto& [filename, specification] : additional_sources) {
     const std::string canonical =
         std::string(llmcc::LanguageName(specification.first));
@@ -786,10 +798,10 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
           return item.value("type", "") == "file" &&
                  fs::path(item.value("path", "")).filename() == filename;
         });
-    llmcc::test::Expect(event != multi_events.end() &&
-                            (*event)["language"] == canonical &&
-                            !(*event)["functions"].empty(),
-                        "file event has canonical language and function data");
+    llmcc::test::Expect(
+        event != multi_events.end() && (*event)["language"] == canonical &&
+            (*event)["category"] == "runtime" && !(*event)["functions"].empty(),
+        "file event has canonical language and function data");
   }
 
   const fs::path alias_output = fs::path(test_tmpdir) / "language-alias.jsonl";
