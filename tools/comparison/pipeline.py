@@ -45,6 +45,11 @@ def resolve_rules(repo, target, rules, repository_rules_path):
         raw = read_tree_file(repo, target, path)
         if raw is None:
             continue
+        # llm-cc bounds the file itself, whitespace included.
+        if len(raw) > 64 * 1024:
+            raise ValueError(
+                "repository classification rules at %s exceed 64 KiB" % path
+            )
         try:
             candidate = json.loads(raw.decode("utf-8"))
         except (UnicodeError, ValueError) as error:

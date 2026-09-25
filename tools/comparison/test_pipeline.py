@@ -138,6 +138,20 @@ class PipelineTest(unittest.TestCase):
             {x["path"]: x for x in overridden}["node_modules/dep.js"]["reason"]
         )
 
+    def test_rules_reject_what_llm_cc_rejects(self):
+        for pattern in ("foo/", "/foo", "foo//bar", "a/./b", "x\\", "[ab"):
+            with self.subTest(pattern=pattern), self.assertRaises(ValueError):
+                validate_rules({"exclude": [pattern]})
+        (self.repo / ".llm-cc").mkdir()
+        (self.repo / ".llm-cc/rules.json").write_text(
+            "{" + " " * (64 * 1024) + '"tests": []}'
+        )
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "padded rules")
+        target = git(self.repo, "rev-parse", "HEAD")
+        with self.assertRaisesRegex(ValueError, "64 KiB"):
+            resolve_rules(self.repo, target, {}, REPOSITORY_RULES_PATH)
+
     def test_repository_rules_prefer_the_shared_file_name(self):
         (self.repo / ".llm-cc").mkdir()
         (self.repo / ".llm-cc/comparison-rules.json").write_text(
