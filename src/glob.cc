@@ -17,6 +17,9 @@ constexpr std::string_view kGlobstar = "**";
 // still match literally.
 char32_t NextCodePoint(std::string_view text, std::size_t& index) {
   const auto lead = static_cast<unsigned char>(text[index]);
+  // A byte outside a valid sequence reads as Python's surrogateescape does,
+  // U+DC80 to U+DCFF, so sets and ranges treat it the same in both engines.
+  const char32_t escaped = lead < 0x80U ? lead : 0xDC00U + lead;
   std::size_t length = 1;
   char32_t value = lead;
   if (lead >= 0xC2 && lead <= 0xDF) {
@@ -31,13 +34,13 @@ char32_t NextCodePoint(std::string_view text, std::size_t& index) {
   }
   if (length == 1 || index + length > text.size()) {
     ++index;
-    return lead;
+    return escaped;
   }
   for (std::size_t offset = 1; offset < length; ++offset) {
     const auto next = static_cast<unsigned char>(text[index + offset]);
     if ((next & 0xC0U) != 0x80U) {
       ++index;
-      return lead;
+      return escaped;
     }
     value = (value << 6U) | (next & 0x3FU);
   }
@@ -48,7 +51,7 @@ char32_t NextCodePoint(std::string_view text, std::size_t& index) {
        (value < 0x800U || (value >= 0xD800U && value <= 0xDFFFU))) ||
       (length == 4 && (value < 0x10000U || value > 0x10FFFFU))) {
     ++index;
-    return lead;
+    return escaped;
   }
   index += length;
   return value;

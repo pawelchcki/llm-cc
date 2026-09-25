@@ -12,6 +12,13 @@
 #include <system_error>
 #include <vector>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #include "src/input_limits.h"
 
 namespace llmcc {
@@ -268,7 +275,31 @@ Rules Rules::FromJson(const nlohmann::json& value) {
   return rules;
 }
 
+namespace {
+
+// A symlink, or on Windows any reparse point such as a junction.
+bool IsLink(const std::filesystem::path& path) {
+#ifdef _WIN32
+  const DWORD attributes = GetFileAttributesW(path.c_str());
+  return attributes != INVALID_FILE_ATTRIBUTES &&
+         (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+#else
+  std::error_code error;
+  return std::filesystem::is_symlink(path, error);
+#endif
+}
+
+}  // namespace
+
 LoadedRules Rules::LoadFromWorktree(const std::filesystem::path& root) {
+  // Git records a link itself, so following one would read rules the
+  // committed tree does not contain, possibly from outside the repository.
+  // The directory is checked first: a dangling or empty link would
+  // otherwise read as no rules.
+  const std::string_view name = kRulesPath.substr(0, kRulesPath.find('/'));
+  if (IsLink(root / std::filesystem::path(name))) {
+    throw RulesError(std::string(name) + " must not be a symlink");
+  }
   for (const std::string_view relative : {kRulesPath, kLegacyRulesPath}) {
     const std::filesystem::path path = root / std::filesystem::path(relative);
     std::error_code error;
@@ -281,10 +312,7 @@ LoadedRules Rules::LoadFromWorktree(const std::filesystem::path& root) {
       throw RulesError("cannot inspect " + std::string(relative) + ": " +
                        error.message());
     }
-    // Git records a symlink itself, so following one would read rules the
-    // committed tree does not contain, possibly from outside the repository.
-    if (status.type() == std::filesystem::file_type::symlink ||
-        std::filesystem::is_symlink(path.parent_path(), error)) {
+    if (status.type() == std::filesystem::file_type::symlink || IsLink(path)) {
       throw RulesError(std::string(relative) + " must not be a symlink");
     }
     if (status.type() != std::filesystem::file_type::regular) {

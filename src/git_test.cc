@@ -205,6 +205,11 @@ int main() {  // NOLINT(bugprone-exception-escape)
   ExpectEq(repository.ReadFile(base, ".llm-cc/rules.json"),
            std::optional<std::string>(R"({"tests": ["tests/**"]})"),
            "a committed file is read");
+  try {
+    static_cast<void>(repository.ReadFile(std::string(40, 'f'), "a"));
+    Expect(false, "an unresolvable revision is an error");
+  } catch (const llmcc::git::GitError&) {  // NOLINT(bugprone-empty-catch)
+  }
   Expect(
       !repository.ReadFile(base, ".llm-cc/comparison-rules.json").has_value() &&
           !repository.ReadFile(base, "absent/dir/file").has_value(),
