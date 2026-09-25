@@ -77,54 +77,6 @@ def _patterns(rules, name):
     return rules[name] if name in rules else DEFAULT_RULES[name]
 
 
-def _segment_regex(segment):
-    """One glob segment: `*` and `?` stay within it, `[...]` is a set."""
-    out = []
-    index = 0
-    while index < len(segment):
-        character = segment[index]
-        if character == "*":
-            while index < len(segment) and segment[index] == "*":
-                index += 1
-            out.append("[^/]*")
-            continue
-        if character == "?":
-            out.append("[^/]")
-        elif character == "[":
-            index += 1
-            negated = index < len(segment) and segment[index] in "!^"
-            index += negated
-            members = []
-            first = True
-            while index < len(segment) and (first or segment[index] != "]"):
-                first = False
-                if segment[index] == "\\":
-                    index += 1
-                low = segment[index]
-                index += 1
-                high = low
-                if index + 1 < len(segment) and segment[index] == "-" and segment[index + 1] != "]":
-                    index += 1
-                    if segment[index] == "\\":
-                        index += 1
-                    high = segment[index]
-                    index += 1
-                # A reversed range matches nothing, as in llm-cc.
-                if low <= high:
-                    members.append(re.escape(low) + "-" + re.escape(high))
-            if members:
-                out.append("[" + ("^/" if negated else "") + "".join(members) + "]")
-            else:
-                out.append("[^/]" if negated else "(?!)")
-        elif character == "\\" and index + 1 < len(segment):
-            index += 1
-            out.append(re.escape(segment[index]))
-        else:
-            out.append(re.escape(character))
-        index += 1
-    return "".join(out)
-
-
 def _check_glob(pattern):
     """Reject what llm-cc's Glob::Compile rejects, with its reasons."""
 
@@ -158,34 +110,103 @@ def _check_glob(pattern):
             index += 1
 
 
+def _match_class(pattern, index, value):
+    """Match the set starting at pattern[index] == "["; return (hit, end)."""
+    index += 1
+    negated = index < len(pattern) and pattern[index] in "!^"
+    index += negated
+    matched = False
+    first = True
+    while index < len(pattern) and (first or pattern[index] != "]"):
+        first = False
+        if pattern[index] == "\\":
+            index += 1
+        low = high = pattern[index]
+        index += 1
+        if index + 1 < len(pattern) and pattern[index] == "-" and pattern[index + 1] != "]":
+            index += 1
+            if pattern[index] == "\\":
+                index += 1
+            high = pattern[index]
+            index += 1
+        # A reversed range matches nothing.
+        matched = matched or low <= value <= high
+    return matched != negated, index + 1
+
+
+def _match_segment(pattern, text):
+    """One segment, as llm-cc matches it: the last `*` absorbs characters."""
+    position = offset = 0
+    star = None
+    star_offset = 0
+    while offset < len(text):
+        if position < len(pattern) and pattern[position] == "*":
+            while position < len(pattern) and pattern[position] == "*":
+                position += 1
+            star, star_offset = position, offset
+            continue
+        if position < len(pattern):
+            token = pattern[position]
+            if token == "?":
+                hit, following = True, position + 1
+            elif token == "[":
+                hit, following = _match_class(pattern, position, text[offset])
+            else:
+                literal = position + 1 if token == "\\" else position
+                hit, following = pattern[literal] == text[offset], literal + 1
+            if hit:
+                position, offset = following, offset + 1
+                continue
+        if star is None:
+            return False
+        star_offset += 1
+        position, offset = star, star_offset
+    while position < len(pattern) and pattern[position] == "*":
+        position += 1
+    return position == len(pattern)
+
+
 @functools.lru_cache(maxsize=4096)
 def _glob(pattern):
-    """llm-cc's segment-aware glob (src/glob.cc) as a compiled expression.
+    """llm-cc's segment-aware glob (src/glob.cc) as its segments.
 
     Patterns are anchored at the repository root; `*` and `?` never cross
     `/`; a whole-segment `**` matches zero or more directories, and a
-    trailing `/**` one or more path segments.
+    trailing `/**` one or more path segments. Matching is linear in the
+    pattern and path, never a backtracking regular expression.
     """
     segments = pattern.split("/")
     if segments[-1] == "**":
         segments[-1:] = ["*", "**"]
-    out = ""
-    separate = False
-    for position, segment in enumerate(segments):
-        if segment == "**":
-            if position == len(segments) - 1:
-                out += "(?:/[^/]+)*"
-            else:
-                out += ("/" if separate else "") + "(?:[^/]+/)*"
-                separate = False
+    return tuple(segments)
+
+
+def _glob_matches(pattern, path):
+    segments = _glob(pattern)
+    parts = [part for part in path.split("/") if part]
+    position = index = 0
+    star = None
+    star_index = 0
+    while index < len(parts):
+        if position < len(segments) and segments[position] == "**":
+            position += 1
+            star, star_index = position, index
             continue
-        out += ("/" if separate else "") + _segment_regex(segment)
-        separate = True
-    return re.compile(out, re.DOTALL)
+        if position < len(segments) and _match_segment(segments[position], parts[index]):
+            position += 1
+            index += 1
+            continue
+        if star is None:
+            return False
+        star_index += 1
+        position, index = star, star_index
+    while position < len(segments) and segments[position] == "**":
+        position += 1
+    return position == len(segments)
 
 
 def _matches(path, patterns):
-    return any(_glob(pattern).fullmatch(path) for pattern in patterns)
+    return any(_glob_matches(pattern, path) for pattern in patterns)
 
 
 def validate_rules(rules):
@@ -266,6 +287,19 @@ def read_tree_file(repo, revision, path):
     try:
         kind = _git(repo, ["cat-file", "-t", target]).strip()
     except GitError:
+        # Absent unless a parent exists as something other than a directory,
+        # which llm-cc reports rather than reading as no rules.
+        parts = path.split("/")
+        for depth in range(1, len(parts)):
+            parent = "%s:%s" % (revision, "/".join(parts[:depth]))
+            try:
+                parent_kind = _git(repo, ["cat-file", "-t", parent]).strip()
+            except GitError:
+                return None
+            if parent_kind != b"tree":
+                raise GitError(
+                    "%s is not a directory in %s" % ("/".join(parts[:depth]), revision)
+                )
         return None
     listing = _git(repo, ["ls-tree", "-z", revision, "--", path]).split(b"\0")[0]
     if kind != b"blob" or not listing.startswith((b"100644 ", b"100755 ")):
@@ -347,7 +381,7 @@ def resolve_language(path, rules):
     therefore a different cache key, on each side.
     """
     for override in rules.get("paths", []):
-        if _glob(override["pattern"]).fullmatch(path):
+        if _glob_matches(override["pattern"], path):
             return override["language"]
     return (LANGUAGES | rules.get("extensions", {})).get(_extension(path))
 

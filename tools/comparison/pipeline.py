@@ -36,6 +36,20 @@ def _utc_now():
     )
 
 
+def _reject_surrogates(value):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            _reject_surrogates(key)
+            _reject_surrogates(item)
+    elif isinstance(value, list):
+        for item in value:
+            _reject_surrogates(item)
+    elif isinstance(value, str) and any(
+        0xD800 <= ord(character) <= 0xDFFF for character in value
+    ):
+        raise ValueError("unpaired surrogate escape")
+
+
 def resolve_rules(repo, target, rules, repository_rules_path):
     """Prefer the target commit's own rules; a PR cannot reclassify itself.
 
@@ -53,8 +67,10 @@ def resolve_rules(repo, target, rules, repository_rules_path):
                 "repository classification rules at %s exceed 64 KiB" % path
             )
         try:
-            # llm-cc's JSON parser accepts a leading byte order mark.
+            # llm-cc's JSON parser accepts a leading byte order mark and
+            # rejects lone surrogate escapes.
             candidate = json.loads(raw.decode("utf-8-sig"))
+            _reject_surrogates(candidate)
         except (UnicodeError, ValueError) as error:
             raise ValueError(
                 "repository classification rules at %s are not valid JSON: %s"

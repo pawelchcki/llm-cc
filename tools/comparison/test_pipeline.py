@@ -574,6 +574,13 @@ class PipelineTest(unittest.TestCase):
         # A reversed range matches nothing, and its negation any character.
         self.assertEqual(_classify("q.cc", {"tests": ["[z-a].cc"]}), "runtime")
         self.assertEqual(_classify("q.cc", {"tests": ["[!z-a].cc"]}), "tests")
+        # A set never spans segments, and matching never backtracks forever.
+        self.assertEqual(
+            _classify("foo/bar.py", {"tests": ["foo[.-0]bar.py"]}), "runtime"
+        )
+        started = time.monotonic()
+        self.assertEqual(_classify("a" * 40, {"tests": ["*a" * 15 + "b"]}), "runtime")
+        self.assertLess(time.monotonic() - started, 1)
 
     def test_committed_rules_are_read_like_llm_cc(self):
         (self.repo / ".llm-cc").mkdir()
@@ -593,6 +600,22 @@ class PipelineTest(unittest.TestCase):
         linked = git(self.repo, "rev-parse", "HEAD")
         with self.assertRaises(GitError):
             resolve_rules(self.repo, linked, {}, REPOSITORY_RULES_PATH)
+        # A lone surrogate escape is invalid JSON for llm-cc.
+        (self.repo / ".llm-cc/rules.json").unlink()
+        (self.repo / ".llm-cc/rules.json").write_text('{"exclude": ["\\ud800"]}')
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-qm", "surrogate rules")
+        surrogate = git(self.repo, "rev-parse", "HEAD")
+        with self.assertRaises(ValueError):
+            resolve_rules(self.repo, surrogate, {}, REPOSITORY_RULES_PATH)
+        # A .llm-cc that is not a directory obstructs the rules, never hides them.
+        git(self.repo, "rm", "-rq", ".llm-cc")
+        (self.repo / ".llm-cc").write_text("not a directory\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-qm", "obstructed rules")
+        obstructed = git(self.repo, "rev-parse", "HEAD")
+        with self.assertRaises(GitError):
+            resolve_rules(self.repo, obstructed, {}, REPOSITORY_RULES_PATH)
 
     def test_repository_rules_prefer_the_shared_file_name(self):
         (self.repo / ".llm-cc").mkdir()

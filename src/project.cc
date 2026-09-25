@@ -73,9 +73,11 @@ bool IsDirectoryReparsePoint(const std::filesystem::path& path) {
          (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
 }
 #endif
-bool InCacheDirectory(const std::filesystem::path& path) {
-  return std::ranges::any_of(
-      path, [](const auto& component) { return component == ".llm-cc-cache"; });
+// Git metadata and llm-cc caches are never analyzed, even when named.
+bool InFixedExclusion(const std::filesystem::path& path) {
+  return std::ranges::any_of(path, [](const auto& component) {
+    return component == ".git" || component == ".llm-cc-cache";
+  });
 }
 
 // The '/'-separated spelling rules match, whatever the host separator.
@@ -93,9 +95,12 @@ std::string RelativeUtf8(const std::filesystem::path& path,
   return GenericUtf8(path.lexically_relative(root));
 }
 
+// A regular pyvenv.cfg marks a virtual environment; a symlinked marker does
+// not, as in a committed tree where the link is not a regular file.
 bool PythonVirtualEnvironment(const std::filesystem::path& directory) {
   std::error_code error;
-  return std::filesystem::is_regular_file(directory / "pyvenv.cfg", error) &&
+  return std::filesystem::symlink_status(directory / "pyvenv.cfg", error)
+                 .type() == std::filesystem::file_type::regular &&
          !error;
 }
 
@@ -161,7 +166,7 @@ void AddFile(const std::filesystem::path& path, std::string relative,
              const std::optional<std::filesystem::path>& repository,
              WalkContext& context) {
   const std::filesystem::path canonical = Canonical(path);
-  if (InCacheDirectory(canonical)) {
+  if (InFixedExclusion(canonical)) {
     return;
   }
   std::optional<Language> language = rules.ResolveLanguage(relative);
