@@ -82,9 +82,15 @@ ScorerSession OpenScorerSession(const ScorerRequest& request,
   const bool fetch_backend =
       ShouldFetchBackend(settings.backend, settings.gpu_layers);
   progress.Phase("selecting inference backend");
-  const ModelSpec& model_spec = request.model.model_name.has_value()
-                                    ? *FindModel(*request.model.model_name)
-                                    : DefaultModel();
+  const ModelSpec* named = request.model.model_name.has_value()
+                               ? FindModel(*request.model.model_name)
+                               : &DefaultModel();
+  if (named == nullptr) {
+    throw std::invalid_argument("unknown model name '" +
+                                *request.model.model_name +
+                                "'; see `llm-cc models list --available`");
+  }
+  const ModelSpec& model_spec = *named;
   ScorerSession session;
   session.backend = ResolveAnalysisBackend(request, model_spec, progress);
   const std::filesystem::path model_cache = CacheDir();

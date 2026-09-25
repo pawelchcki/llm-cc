@@ -229,6 +229,26 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::test::ExpectEq(included_environment.sources.size(), std::size_t{1},
                         "no-ignore includes a virtual environment input root");
 
+#ifndef _WIN32
+  // Recursive discovery skips symlinks, which would otherwise lend their own
+  // path, language and rules to the file they point at.
+  for (const bool git : {true, false}) {
+    const fs::path aliased =
+        fs::path(temporary) / (git ? "aliased-git" : "aliased");
+    Write(aliased / "src/main.rs", "fn main() {}\n");
+    fs::create_symlink("src/main.rs", aliased / "a.py");
+    if (git) {
+      Run("git -C " + Quote(aliased) + " init -q");
+    }
+    const auto discovered = llmcc::DiscoverSources({aliased});
+    llmcc::test::Expect(
+        discovered.sources.size() == 1 &&
+            discovered.sources[0].language == llmcc::Language::kRust &&
+            discovered.sources[0].relative_path == "src/main.rs",
+        "a symlink alias does not classify its target");
+  }
+#endif
+
   // A repository's rules select, name, and classify its sources.
   const fs::path ruled = fs::path(temporary) / "ruled";
   fs::create_directories(ruled);

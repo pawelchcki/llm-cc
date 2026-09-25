@@ -235,7 +235,8 @@ void FilesystemWalk(const std::filesystem::path& directory,
       if (SkipDirectory(entry.path(), relative, rules, no_ignore)) {
         iterator.disable_recursion_pending();
       }
-    } else if (entry.is_regular_file(error) && !error) {
+    } else if (!entry.is_symlink(error) && entry.is_regular_file(error) &&
+               !error) {
       const auto canonical = std::filesystem::canonical(entry.path(), error);
       if (!error && IsWithin(canonical, directory) &&
           (no_ignore || !rules.Excluded(relative))) {
@@ -267,6 +268,11 @@ bool GitWalk(const std::filesystem::path& input,
     const std::filesystem::path candidate =
         repository / std::filesystem::u8path(relative);
     std::error_code error;
+    // A symlink would lend its own path, and so its language and rules, to
+    // its target; the target is discovered through its own entry.
+    if (std::filesystem::is_symlink(candidate, error)) {
+      continue;
+    }
     const auto canonical = std::filesystem::canonical(candidate, error);
     if (error || !IsWithin(canonical, input)) {
       continue;
