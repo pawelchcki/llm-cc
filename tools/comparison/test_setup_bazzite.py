@@ -8,15 +8,17 @@ import tempfile
 import unittest
 from unittest import mock
 import zipfile
-from .common import model_digest
 
+from . import setup_bazzite
 from .buildbuddy import report_links, validate_report_links
-from .inventory import validate_rules as _validate_rules
+from .common import llm_cc
+from .fixtures import effective_rules
 from .setup_bazzite import (
     atomic_publish,
     launcher_script,
     package_bundle,
     verify_assets,
+    verify_execution_host,
 )
 from .submit_bazzite import (
     coordinator_request,
@@ -204,16 +206,14 @@ class BazziteSetupTest(unittest.TestCase):
                 "__init__.py",
                 "__main__.py",
                 "buildbuddy.py",
-                "worker.py",
-                "pipeline.py",
+                "store.py",
                 "submit_bazzite.py",
             ):
                 (package / name).write_text("# source\n")
-            (package / "dogfood-rules.json").write_text("{}")
             (package / "test_secret.py").write_text("private fixture")
             (package / "credentials.env").write_text("secret")
             first, checksum = package_bundle(root)
-            os.utime(package / "worker.py", (1000000, 1000000))
+            os.utime(package / "store.py", (1000000, 1000000))
             second, second_checksum = package_bundle(root)
             self.assertEqual(first, second)
             self.assertEqual(checksum, second_checksum)
@@ -221,97 +221,161 @@ class BazziteSetupTest(unittest.TestCase):
                 self.assertNotIn("tools/comparison/test_secret.py", archive.namelist())
                 self.assertNotIn("tools/comparison/credentials.env", archive.namelist())
                 self.assertEqual(
-                    archive.read("tools/comparison/worker.py"), b"# source\n"
+                    archive.read("tools/comparison/store.py"), b"# source\n"
                 )
             if os.name == "posix":
-                (package / "worker.py").unlink()
-                (package / "worker.py").symlink_to(package / "pipeline.py")
+                (package / "store.py").unlink()
+                (package / "store.py").symlink_to(package / "buildbuddy.py")
                 with self.assertRaisesRegex(ValueError, "regular file"):
                     package_bundle(root)
 
-    def test_validated_assets_reject_modified_model_and_runtime(self):
+    def host(self, runtime):
+        return {
+            "gpu_vendor": "amd",
+            "gpu_pci_address": "0000:03:00.0",
+            "gpu_arch": "gfx1100",
+            "gpu_vram_bytes_min": 24 << 30,
+            "resource_id": "bazzite-radeon-0",
+            "runtime_files": {
+                str(runtime): hashlib.sha256(runtime.read_bytes()).hexdigest()
+            },
+        }
+
+    def test_execution_host_rejects_modified_runtime_and_other_gpus(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            installed = root / "install"
-            (installed / "bin").mkdir(parents=True)
-            scorer = installed / "bin/llm-cc"
-            scorer.write_bytes(b"scorer")
-            scorer.chmod(0o755)
-            model, runtime = root / "model", root / "runtime.so"
-            model.write_bytes(b"model")
+            runtime = Path(temporary) / "runtime.so"
             runtime.write_bytes(b"runtime")
-
-            def sha(path):
-                return hashlib.sha256(path.read_bytes()).hexdigest()
-
-            profile = {
-                "build": {
-                    "execution_image": "none",
-                    "execution_host": {
-                        "gpu_arch": "gfx1100",
-                        "runtime_files": {str(runtime): sha(runtime)},
-                    },
-                    "installed_files": {"bin/llm-cc": sha(scorer)},
-                    "model_bytes": 5,
-                    "model_sha256": sha(model),
-                }
-            }
-            self.assertEqual(
-                verify_assets(profile, installed, model), (installed, model)
-            )
-            model.write_bytes(b"wrong")
-            with self.assertRaisesRegex(ValueError, "model size or checksum"):
-                verify_assets(profile, installed, model)
-            model.write_bytes(b"model")
+            host = self.host(runtime)
+            self.assertEqual(verify_execution_host(host), host)
+            for field, value in (
+                ("gpu_vendor", "nvidia"),
+                ("gpu_arch", "gfx90a"),
+                ("gpu_pci_address", "03:00.0"),
+                ("resource_id", "../lock"),
+                ("gpu_vram_bytes_min", 0),
+            ):
+                with self.subTest(field=field), self.assertRaises(ValueError):
+                    verify_execution_host(dict(host, **{field: value}))
+            with self.assertRaisesRegex(ValueError, "runtime checksums"):
+                verify_execution_host(dict(host, runtime_files={}))
             runtime.write_bytes(b"changed")
             with self.assertRaisesRegex(ValueError, "runtime file"):
-                verify_assets(profile, installed, model)
+                verify_execution_host(host)
 
-    def test_validated_assets_cover_every_split_model_shard(self):
+    def test_assets_need_an_executable_llm_cc_and_a_model(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             installed = root / "install"
             (installed / "bin").mkdir(parents=True)
             scorer = installed / "bin/llm-cc"
             scorer.write_bytes(b"scorer")
+            model = root / "model.gguf"
+            model.write_bytes(b"model")
+            with self.assertRaisesRegex(ValueError, "executable bin/llm-cc"):
+                verify_assets(installed, model)
             scorer.chmod(0o755)
+            self.assertEqual(
+                verify_assets(installed, model), (scorer.resolve(), model.resolve())
+            )
+            with self.assertRaises(FileNotFoundError):
+                verify_assets(installed, root / "missing.gguf")
+
+    @unittest.skipUnless(os.name == "posix", "host setup requires POSIX")
+    def test_configure_pins_the_model_and_publishes_one_generation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            installed = root / "install"
+            (installed / "bin").mkdir(parents=True)
+            # The installed scorer, here the deterministic test build.
+            scorer = installed / "bin/llm-cc"
+            scorer.write_text(
+                "#!/bin/sh\nexec %s \"$@\"\n" % os.path.abspath(llm_cc())
+            )
+            scorer.chmod(0o755)
+            model = root / "model.gguf"
+            model.write_bytes(b"weights")
             runtime = root / "runtime.so"
             runtime.write_bytes(b"runtime")
-            shards = []
-            for index in (1, 2):
-                shard = root / ("m-%05d-of-00002.gguf" % index)
-                shard.write_bytes(b"shard-%d" % index)
-                shards.append(shard)
-            profile = {
-                "build": {
-                    "execution_image": "none",
-                    "execution_host": {
-                        "gpu_arch": "gfx1100",
-                        "runtime_files": {
-                            str(runtime): hashlib.sha256(b"runtime").hexdigest()
-                        },
-                    },
-                    "installed_files": {
-                        "bin/llm-cc": hashlib.sha256(b"scorer").hexdigest()
-                    },
-                    "model_bytes": sum(s.stat().st_size for s in shards),
-                    "model_sha256": model_digest(
-                        [
-                            hashlib.sha256(s.read_bytes()).hexdigest()
-                            for s in shards
-                        ]
-                    ),
-                }
-            }
-            self.assertEqual(
-                verify_assets(profile, installed, shards[0]),
-                (installed, shards[0].resolve()),
+            host = root / "execution-host.json"
+            host.write_text(json.dumps(self.host(runtime)))
+            scoring = root / "scoring.args"
+            scoring.write_text(
+                "# CPU keeps the test portable.\n"
+                "--backend\ncpu\n--entropy-reduction\nhost\n"
             )
-            # A companion shard is part of the pinned identity, so changing it
-            # must fail here rather than at the first comparison.
-            shards[1].write_bytes(b"shard-X")
-            with self.assertRaisesRegex(ValueError, "model size or checksum"):
-                verify_assets(profile, installed, shards[0])
+            (root / "cache").mkdir()
+            published = {}
+
+            def publish(path, payload, mode=0o644):
+                published[str(path)] = payload
+
+            argv = [
+                "--installed-root",
+                str(installed),
+                "--model",
+                str(model),
+                "--execution-host",
+                str(host),
+                "--scoring-args",
+                str(scoring),
+                "--cache",
+                str(root / "cache"),
+                "--execution-commit",
+                "c" * 40,
+            ]
+            with (
+                mock.patch.object(setup_bazzite, "atomic_publish", publish),
+                mock.patch.object(setup_bazzite, "provision_lock") as lock,
+                mock.patch.object(
+                    setup_bazzite, "package_bundle", return_value=(b"zip", "d" * 64)
+                ),
+                mock.patch("builtins.print"),
+            ):
+                setup_bazzite.main(argv)
+                lock.assert_called_once_with(
+                    Path("/var/lib/llm-cc"), "bazzite-radeon-0", None
+                )
+            config = json.loads(published["/var/lib/llm-cc/comparison.json"])
+            generation = Path(config["scoring_args"]).parent
+            self.assertEqual(
+                json.loads(published[str(generation / "comparison.json")]), config
+            )
+            identity = json.loads(published[str(generation / "identity.json")])
+            self.assertEqual(identity["model"]["bytes"], len(b"weights"))
+            self.assertEqual(
+                identity["model"]["sha256"], hashlib.sha256(b"weights").hexdigest()
+            )
+            # Coordinators pin the weights instead of hashing them again.
+            self.assertEqual(
+                published[str(generation / "scoring.args")].decode().splitlines(),
+                [
+                    "--backend",
+                    "cpu",
+                    "--entropy-reduction",
+                    "host",
+                    "--model-sha256",
+                    identity["model"]["sha256"],
+                    "--model-bytes",
+                    str(len(b"weights")),
+                ],
+            )
+            self.assertEqual(
+                json.loads(published[str(generation / "execution-host.json")]),
+                self.host(runtime),
+            )
+            self.assertEqual(config["llm_cc"], str(scorer.resolve()))
+            self.assertEqual(
+                config["execution_host"], str(generation / "execution-host.json")
+            )
+            for removed in ("profile", "rules", "scorer", "installed_root"):
+                self.assertNotIn(removed, config)
+            # A model named in the scoring arguments would bypass the pin.
+            scoring.write_text("--model\n/elsewhere.gguf\n")
+            with (
+                mock.patch.object(setup_bazzite, "atomic_publish", publish),
+                self.assertRaisesRegex(ValueError, "cannot name models"),
+            ):
+                setup_bazzite.main(argv)
 
     @unittest.skipUnless(os.name == "posix", "launcher execution requires POSIX")
     def test_launcher_runs_only_verified_bytes_with_pinned_configuration(self):
@@ -554,9 +618,11 @@ class ConsumerTemplateTest(unittest.TestCase):
             with self.subTest(artifact=artifact):
                 self.assertIn("name: " + artifact + ",", policy)
         rules = json.loads(self.read("comparison-rules.json"))
-        _validate_rules(rules)
         self.assertIn("target/**", rules["exclude"])
         self.assertIn("xtask/**", rules["tooling"])
+        loaded = effective_rules(self.directory / "comparison-rules.json")
+        self.assertEqual(loaded["rules_source"], {"source": "host"})
+        self.assertEqual({key: loaded["rules"][key] for key in rules}, rules)
         guide = self.read("README.md")
         self.assertIn("llm-cc-coordinate", guide)
         self.assertIn(".llm-cc/rules.json", guide)

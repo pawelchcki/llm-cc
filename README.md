@@ -346,6 +346,28 @@ JSONL `file` events carry each file's `category`, `totals` adds per-category
 totals under `categories`, and the `configuration` event lists the rules file
 each Git root used.
 
+### Comparing revisions
+
+`llm-cc compare run` reports how a branch changes complexity against its
+target, the way the CI comparison does:
+
+```sh
+llm-cc compare run --target main --output-dir /tmp/comparison --model-name NAME
+```
+
+It compares `--head` (default `HEAD`) with its merge base with `--target`,
+using the target commit's rules, and writes `report.md`, `comment.md`,
+`report.json` and the head's `baseline.md` to `--output-dir`. Each file's
+result is cached by its Git blob, language and the exact scorer, model and
+settings, in `compare/` beside the model cache or in `--cache DIR` or
+`--cache s3://bucket/prefix`, so a rerun scores only files it has not seen.
+Every analysis option applies; an `auto` backend or entropy reduction is
+resolved on this machine. `--max-workers N` splits the files over up to four
+workers in turn, with the same results. CI runs the same stages separately
+(`compare prepare`, `compare worker`, `compare aggregate`); see
+[the comparison stage guide](tools/comparison/README.md) and
+[the schema](tools/comparison/SCHEMA.md).
+
 ## Interpreting scores
 
 The default headline (`--score raw`) is raw LM-CC, the paper's metric. It

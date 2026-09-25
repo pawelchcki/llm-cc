@@ -1,5 +1,7 @@
 #include "src/compare/prepare.h"
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -10,6 +12,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "src/compare/identity.h"
@@ -24,8 +27,9 @@ namespace {
 
 using nlohmann::json;
 
-constexpr std::array<std::string_view, 5> kSuppliedIdentity = {
-    "repository", "pipeline_id", "target_branch", "pr_number", "started_at"};
+constexpr std::array<std::string_view, 8> kSuppliedIdentity = {
+    "repository", "pipeline_id",   "head_sha",  "target_sha",
+    "base_sha",   "target_branch", "pr_number", "started_at"};
 
 json FullIdentity(const json& supplied, const std::string& head,
                   const std::string& target, const std::string& base,
@@ -37,8 +41,9 @@ json FullIdentity(const json& supplied, const std::string& head,
     static_cast<void>(value);
     if (std::ranges::find(kSuppliedIdentity, name) == kSuppliedIdentity.end()) {
       throw std::invalid_argument(
-          "identity fields must be repository, pipeline_id, target_branch, "
-          "pr_number and started_at; unexpected " +
+          "identity fields must be repository, pipeline_id, head_sha, "
+          "target_sha, base_sha, target_branch, pr_number and started_at; "
+          "unexpected " +
           name);
     }
   }
@@ -49,9 +54,19 @@ json FullIdentity(const json& supplied, const std::string& head,
       throw std::invalid_argument(std::string("identity needs a ") + required);
     }
   }
-  identity["head_sha"] = head;
-  identity["target_sha"] = target;
-  identity["base_sha"] = base;
+  // Discovery leaves the commits it cannot know null; any it names must be
+  // the ones compared.
+  for (const auto& [field, commit] :
+       {std::pair{"head_sha", &head}, std::pair{"target_sha", &target},
+        std::pair{"base_sha", &base}}) {
+    if (identity.contains(field) && !identity[field].is_null() &&
+        identity[field] != *commit) {
+      throw std::invalid_argument(std::string("identity ") + field +
+                                  " differs from the resolved commit " +
+                                  *commit);
+    }
+    identity[field] = *commit;
+  }
   if (!identity.contains("target_branch")) {
     identity["target_branch"] = nullptr;
   }

@@ -17,7 +17,6 @@ import re
 import tempfile
 import urllib.error
 
-from .cache import CacheError
 from .common import (
     aggregate_report,
     canonical_bytes,
@@ -25,7 +24,7 @@ from .common import (
     pipeline_prefix,
     read_json,
 )
-from .pipeline import COMMENT_LIMIT
+from .store import StoreError
 
 # Stored in this order: the publication envelope comes last, because its
 # presence is what tells `publish` that the report is complete. Storing first
@@ -40,6 +39,8 @@ REPORT_FILES = (
     "publication.json",
 )
 INCOMPLETE = b'{"incomplete":true}\n'
+# `llm-cc compare aggregate` renders comment.md within this many bytes.
+COMMENT_LIMIT = 24 * 1024
 COMMENT_MARKER = "<!-- llm-cc-comparison -->"
 _ORDER = re.compile(r"<!-- llm-cc-comparison pipeline=(\S+) ordinal=(\d+) -->")
 PIPELINE_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
@@ -170,7 +171,7 @@ def _reserve(store, key, record):
         written = store.put_if(key, canonical_bytes(record), token)
         if written is not None:
             return (record, written), None
-    raise CacheError("publication marker %s kept changing" % key)
+    raise StoreError("publication marker %s kept changing" % key)
 
 
 def _finish(store, key, token, record):
@@ -181,7 +182,7 @@ def _finish(store, key, token, record):
         marker, token = _read_marker(store, key)
         if marker is not None and marker["ordinal"] > record["ordinal"]:
             return False
-    raise CacheError("publication marker %s kept changing" % key)
+    raise StoreError("publication marker %s kept changing" % key)
 
 
 def _comment_ordinal(body):

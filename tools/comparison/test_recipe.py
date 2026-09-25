@@ -19,11 +19,18 @@ import unittest
 from unittest import mock
 
 from .__main__ import main
-from .cache import FilesystemStore
-from .ci import gitlab_child, gitlab_skipped, load_config, write_yaml
+from .ci import capacity, gitlab_child, gitlab_skipped, load_config, write_yaml
 from .common import llm_cc, pipeline_prefix, read_json, write_json
-from .fixtures import FakeGitHub, commit_files, git, synthetic_scorer
+from .fixtures import (
+    SCORER_IMAGE,
+    FakeGitHub,
+    commit_files,
+    effective_rules,
+    fake_scoring,
+    git,
+)
 from .publish import marker_key
+from .store import FilesystemStore
 
 ROOT = Path(__file__).resolve().parents[2]
 RECIPE = Path(__file__).resolve().parent / "recipe"
@@ -54,11 +61,11 @@ class RecipeTest(unittest.TestCase):
         self.repo.mkdir()
         git(self.repo, "init", "-q", "-b", "main")
         self.github = FakeGitHub(REPOSITORY)
-        scorer, model, profile = synthetic_scorer(
-            self.root / "scorer", max_file_bytes=256
-        )
-        self.profile = self.root / "profile.json"
-        write_json(self.profile, profile)
+        # The coordinator image's scoring.args and planning.args, for the
+        # deterministic llm-cc that both images share here.
+        model, self.scoring = fake_scoring(self.root / "scoring")
+        self.planning = self.root / "planning.args"
+        self.planning.write_text("--max-file-bytes\n256\n")
         self.rules = self.root / "rules.json"
         write_json(self.rules, {"exclude": ["vendor/**"], "tests": ["tests/**"]})
         self.config = self.root / "ci.json"
@@ -66,10 +73,9 @@ class RecipeTest(unittest.TestCase):
             self.config,
             {
                 "schema_version": 1,
-                "images": {"coordinator": COORDINATOR},
+                "images": {"coordinator": COORDINATOR, "scorer": SCORER_IMAGE},
                 "scorer": {
-                    "executable": str(scorer),
-                    "installed_root": str(scorer.parent),
+                    "executable": os.path.abspath(llm_cc()),
                     "model": str(model),
                 },
                 "gitlab": {"cpu_tags": ["cpu"], "gpu_tags": ["gpu"]},
@@ -165,27 +171,36 @@ class RecipeTest(unittest.TestCase):
             run.skipped = True
             run.child = gitlab_skipped(config, "no open pull request")
             return run
-        self.cli(
-            "prepare",
-            "--repo",
-            self.repo,
-            "--head",
-            head,
-            "--target",
-            variables["COMPARISON_TARGET_SHA"],
-            "--identity",
-            run.identity,
-            "--profile",
-            self.profile,
-            "--rules",
-            self.rules,
-            "--cache",
-            self.store,
-            "--config",
-            self.config,
-            "--output-dir",
-            output / "prep",
+        # As the template runs it: the coordinator's llm-cc, capped by the
+        # configured capacity while COMPARISON_MAX_WORKERS keeps its default.
+        completed = subprocess.run(
+            [
+                llm_cc(),
+                "compare",
+                "prepare",
+                "--repo",
+                self.repo,
+                "--head",
+                head,
+                "--target",
+                variables["COMPARISON_TARGET_SHA"],
+                "--identity",
+                run.identity,
+                "--default-rules",
+                self.rules,
+                "--cache",
+                self.store,
+                "--max-workers",
+                str(capacity(config, 4)),
+                "--output-dir",
+                output / "prep",
+                "@%s" % self.planning,
+                "@%s" % self.scoring,
+            ],
+            capture_output=True,
+            text=True,
         )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
         write_yaml(
             output / "child.yml",
             gitlab_child(read_json(run.prepare / PLAN), PLAN, config, str(self.store)),
@@ -379,19 +394,28 @@ class TemplateTest(unittest.TestCase):
         self.assertIn("--//:source_commit=", scorer)
         self.assertIn("--//:source_version=", scorer)
         self.assertIn("compute_86", scorer)
-        self.assertIn("profile generate", scorer)
+        self.assertIn("compare identity", scorer)
         self.assertRegex(scorer, r"(?m)^USER [1-9][0-9]*")
         self.assertNotRegex(scorer, r"(?i)ARG [A-Z_]*(TOKEN|SECRET|PASSWORD|API_KEY)")
+        # llm-cc is the whole worker: the GPU image carries no Python or SDK.
+        runtime = scorer.split("AS runtime", 1)[1]
+        self.assertNotIn("python3", runtime)
+        self.assertNotIn("boto3", runtime)
+        self.assertNotIn("tools/comparison", runtime)
         coordinator = self.read("images", "coordinator.Containerfile")
         self.assertIn("git", coordinator)
         self.assertIn("boto3", coordinator)
+        self.assertIn("COPY scoring.args planning.args rules.json", coordinator)
+        self.assertIn("LLM_CC_SCORER_IMAGE=${SCORER_IMAGE}", coordinator)
+        self.assertIn(
+            "compare identity @/opt/llm-cc-comparison/scoring.args", coordinator
+        )
         self.assertNotIn("gguf", coordinator.lower())
         self.assertNotIn("MODEL_IMAGE", coordinator)
         self.assertRegex(coordinator, r"(?m)^USER [1-9][0-9]*")
         # Jobs run from a checkout; its own tools/ must not replace the pinned one.
-        for image in (scorer, coordinator):
-            self.assertRegex(image, r"(?m)^\s+PYTHONSAFEPATH=1 \\$")
-            self.assertIn("sys.version_info < (3, 11)", image)
+        self.assertRegex(coordinator, r"(?m)^\s+PYTHONSAFEPATH=1 \\$")
+        self.assertIn("sys.version_info < (3, 11)", coordinator)
 
     def image_build(self, skopeo):
         """A pinned llm-cc checkout, a fake engine and registry, and build.sh's
@@ -466,6 +490,7 @@ class TemplateTest(unittest.TestCase):
             "COORDINATOR_IMAGE=registry.example/llm-cc/coordinator@sha256:" + "0" * 64,
             (source / "comparison" / "images.env").read_text(),
         )
+        self.assertTrue((source / "comparison" / "identity.json").is_file())
         models = [
             line
             for line in Path(environment["ENGINE_LOG"]).read_text().splitlines()
@@ -477,6 +502,9 @@ class TemplateTest(unittest.TestCase):
         context = Path(environment["ENGINE_LOG"] + ".context").read_text()
         # Only the scorer builds from the source tree.
         self.assertIn("./.gitignore", context.splitlines())
+        # The coordinator carries the scoring contract with the model pinned.
+        self.assertIn("./scoring.args", context.splitlines())
+        self.assertIn("./planning.args", context.splitlines())
         self.assertNotIn("model.gguf", context)
         self.assertFalse((source / "comparison" / "scorer-context").exists())
         # Only the outputs are exempt: an edited source still refuses to build.
@@ -499,12 +527,12 @@ class TemplateTest(unittest.TestCase):
         # Nor may an output replace a tracked file.
         source, environment = self.image_build("#!/bin/sh\nexit 1\n")
         environment["LLM_CC_COMMIT"] = commit_files(
-            source, {"tools/profile.json": "{}\n"}, "a tracked profile"
+            source, {"tools/identity.json": "{}\n"}, "a tracked identity"
         )
         environment["OUTPUT"] = str(source / "tools")
         completed = self.build_images(source, environment)
         self.assertEqual(completed.returncode, 1)
-        self.assertIn("overwrite tracked source tools/profile.json", completed.stderr)
+        self.assertIn("overwrite tracked source tools/identity.json", completed.stderr)
 
     @unittest.skipUnless(shutil.which("sha256sum"), "build.sh needs sha256sum")
     def test_build_script_reuses_images_only_for_the_same_inputs(self):
@@ -545,7 +573,7 @@ class TemplateTest(unittest.TestCase):
                 if line.startswith("build ")
             ]
         )
-        # The profile records MODEL_BYTES, so an image recording another size
+        # scoring.args pins MODEL_BYTES, so an image recording another size
         # is rebuilt, and the build's own size check decides.
         environment["REGISTRY_BYTES"] = "2"
         completed = self.build_images(source, environment)
@@ -580,7 +608,9 @@ class TemplateTest(unittest.TestCase):
         parent = self.read("gitlab", ".gitlab-ci.yml")
         for required in (
             "tools.comparison discover",
-            "tools.comparison prepare",
+            "llm-cc compare prepare",
+            "@/opt/llm-cc-comparison/scoring.args",
+            "tools.comparison ci capacity",
             "tools.comparison ci gitlab-child",
             "strategy: depend",
             "PARENT_PIPELINE_ID: $CI_PIPELINE_ID",
@@ -607,6 +637,9 @@ class TemplateTest(unittest.TestCase):
             "concurrency:",
             "permissions: {}",
             "ci github-matrix",
+            "llm-cc compare prepare",
+            "@/opt/llm-cc-comparison/scoring.args",
+            "/opt/llm-cc/bin/llm-cc compare worker",
             "needs.prepare.outputs.has_workers == 'true'",
             "fromJSON(needs.prepare.outputs.matrix)",
             "self-hosted",
@@ -631,9 +664,13 @@ class TemplateTest(unittest.TestCase):
         config = load_config(RECIPE / "config" / "ci.example.json")
         self.assertEqual(config["max_workers"], 4)
         self.assertEqual(config["worker_timeout"], "120m")
-        from .inventory import validate_rules
-
-        validate_rules(json.loads(self.read("config", "rules.example.json")))
+        self.assertEqual(capacity(config, 4), 4)
+        self.assertEqual(capacity(dict(config, max_workers=2), 4), 2)
+        with self.assertRaises(ValueError):
+            capacity(config, 5)
+        rules = json.loads(self.read("config", "rules.example.json"))
+        loaded = effective_rules(RECIPE / "config" / "rules.example.json")
+        self.assertEqual({key: loaded["rules"][key] for key in rules}, rules)
 
 
 if __name__ == "__main__":

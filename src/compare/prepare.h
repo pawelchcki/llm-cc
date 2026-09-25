@@ -19,7 +19,8 @@ struct PrepareOptions {
   std::string head;
   std::string target;
   // {repository, pipeline_id, target_branch?, pr_number?, started_at?}; the
-  // commits are resolved here.
+  // commits are resolved here, and any head_sha, target_sha or base_sha
+  // given must be null or agree.
   nlohmann::json identity;
   std::filesystem::path output;
   // Null plans every file as a miss.

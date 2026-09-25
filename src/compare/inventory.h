@@ -24,8 +24,7 @@ nlohmann::json BuildInventory(const git::Repository& repository,
 
 struct TargetRules {
   Rules rules;
-  // {source: repository, path, commit}, {source: host, path} or
-  // {source: builtin}.
+  // {source: repository, path, commit}, {source: host} or {source: builtin}.
   nlohmann::json source;
 };
 

@@ -71,12 +71,13 @@ jobs:
       - id: plan
         if: steps.discover.outputs.COMPARISON_SKIP == '0'
         run: |
-          python3 -m tools.comparison prepare \
+          llm-cc compare prepare \
             --repo . --head "$GITHUB_SHA" --target "$COMPARISON_TARGET_SHA" \
             --identity comparison/identity.json \
-            --profile /opt/llm-cc-comparison/profile.json \
-            --rules /opt/llm-cc-comparison/rules.json \
-            --cache "$COMPARISON_STORE" --output-dir comparison/prep
+            --default-rules /opt/llm-cc-comparison/rules.json \
+            --cache "$COMPARISON_STORE" --output-dir comparison/prep \
+            @/opt/llm-cc-comparison/planning.args @/opt/llm-cc-comparison/scoring.args
+          # The scorer image comes from the coordinator's LLM_CC_SCORER_IMAGE.
           python3 -m tools.comparison ci github-matrix --plan comparison/prep/plan.json
       - if: always()
         uses: actions/upload-artifact@v4
@@ -107,17 +108,17 @@ jobs:
           WORKER_ID: ${{ matrix.worker_id }}
         run: |
           mkdir -p "comparison/workers/$WORKER_ID"
-          # The exact image the profile fingerprints, as the runner's own
+          # The scorer image the coordinator was built with, whose llm-cc
+          # refuses a plan from any other build, as the runner's own
           # unprivileged user so its outputs stay writable.
           docker run --rm --gpus all --user "$(id -u):$(id -g)" \
             --env AWS_ACCESS_KEY_ID --env AWS_SECRET_ACCESS_KEY \
             --volume "$PWD/comparison:/work/comparison" --workdir /work \
             "$SCORER_IMAGE" \
-            python3 -m tools.comparison worker \
+            /opt/llm-cc/bin/llm-cc compare worker \
               --plan comparison/prep/plan.json --worker-id "$WORKER_ID" \
               --cache "$COMPARISON_STORE" --output-dir "comparison/workers/$WORKER_ID" \
-              --scorer /opt/llm-cc/bin/llm-cc --model /models/model.gguf \
-              --installed-root /opt/llm-cc
+              --model /models/model.gguf
       - if: always()
         uses: actions/upload-artifact@v4
         with:

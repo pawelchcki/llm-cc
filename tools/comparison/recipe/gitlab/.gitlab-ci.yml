@@ -18,8 +18,8 @@
 
 variables:
   COMPARISON_REPOSITORY: "OWNER/REPO"
-  # One digest pins the comparison code, the scoring profile and, through
-  # that profile, the GPU scorer image. The comparison-images job prints it.
+  # One digest pins the comparison glue, llm-cc, the scoring contract and
+  # the GPU scorer image. The comparison-images job prints it.
   COMPARISON_COORDINATOR_IMAGE: "registry.example.com/llm-cc/coordinator@sha256:0000000000000000000000000000000000000000000000000000000000000000"
   COMPARISON_STORE: "s3://YOUR_BUCKET/llm-cc"
   # Optional files in this repository; leave empty to use the defaults.
@@ -84,7 +84,7 @@ comparison-images:
   artifacts:
     paths:
       - comparison/images.env
-      - comparison/profile.json
+      - comparison/identity.json
 
 comparison-prepare:
   extends: .comparison-job
@@ -110,15 +110,17 @@ comparison-prepare:
           --output comparison/child.yml
         exit 0
       fi
+    # The coordinator's llm-cc plans with the scoring contract baked into its
+    # image; GPU workers must run the same llm-cc build.
     - >-
-      python3 -m tools.comparison prepare
+      llm-cc compare prepare
       --repo . --head "$CI_COMMIT_SHA" --target "$COMPARISON_TARGET_SHA"
       --identity comparison/identity.json
-      --profile /opt/llm-cc-comparison/profile.json
-      --rules /opt/llm-cc-comparison/rules.json
+      --default-rules /opt/llm-cc-comparison/rules.json
       --cache "$COMPARISON_STORE" ${COMPARISON_STORE_OPTIONS:+--store-options "$COMPARISON_STORE_OPTIONS"}
-      --max-workers "$COMPARISON_MAX_WORKERS" ${COMPARISON_CONFIG:+--config "$COMPARISON_CONFIG"}
+      --max-workers "$(python3 -m tools.comparison ci capacity ${COMPARISON_CONFIG:+--config "$COMPARISON_CONFIG"} --requested "$COMPARISON_MAX_WORKERS")"
       --output-dir comparison/prep
+      @/opt/llm-cc-comparison/planning.args @/opt/llm-cc-comparison/scoring.args
     # Zero to four GPU jobs, one per planned worker; a fully cached plan
     # yields only the aggregation job.
     - >-

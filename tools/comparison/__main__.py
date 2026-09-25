@@ -5,63 +5,17 @@ import sys
 import unittest
 from pathlib import Path
 
-from .cache import ResultCache, open_store
-from .common import aggregate_report
 from .github import API_URL, GitHub
-from .inventory import validate_rules
-from .pipeline import compare, prepare
-from .worker import run_worker
-
-# Stages that run around the comparison rather than producing its report;
-# their failures print an error instead of writing a failure report.
-RECIPE_COMMANDS = ("discover", "store-report", "publish", "ci")
+from .store import open_store
 
 
 def _json(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def _common(parser):
-    parser.add_argument("--repo", required=True)
-    parser.add_argument("--head", required=True)
-    parser.add_argument("--target", required=True)
-    parser.add_argument("--identity", required=True)
-    parser.add_argument("--profile", required=True)
-    parser.add_argument("--rules", required=True)
-    parser.add_argument("--cache", required=True)
-    parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--max-workers", type=int, default=4)
-    parser.add_argument("--cache-concurrency", type=int, default=8)
-    parser.add_argument("--refresh-days", type=int, default=20)
-    parser.add_argument("--expire-days", type=int, default=30)
-    parser.add_argument("--store-options")
-
-
 def parser():
     result = argparse.ArgumentParser(prog="python -m tools.comparison")
     commands = result.add_subparsers(dest="command", required=True)
-    preparation = commands.add_parser("prepare")
-    _common(preparation)
-    preparation.add_argument(
-        "--config", help="recipe configuration JSON; its max_workers caps the plan"
-    )
-    worker = commands.add_parser("worker")
-    worker.add_argument("--plan", required=True)
-    worker.add_argument("--worker-id", type=int, required=True)
-    worker.add_argument("--cache", required=True)
-    worker.add_argument("--output-dir", required=True)
-    worker.add_argument("--scorer", required=True)
-    worker.add_argument("--model", required=True)
-    worker.add_argument("--installed-root", required=True)
-    worker.add_argument("--deadline-seconds", type=int, default=6600)
-    worker.add_argument("--cache-concurrency", type=int, default=8)
-    worker.add_argument("--store-options")
-    comparison = commands.add_parser("compare")
-    _common(comparison)
-    comparison.add_argument("--scorer")
-    comparison.add_argument("--model")
-    comparison.add_argument("--installed-root")
-    comparison.add_argument("--deadline-seconds", type=int, default=6600)
     commands.add_parser("test")
     discovery = commands.add_parser(
         "discover", help="resolve the PR identity, or skip a branch without one"
@@ -105,8 +59,14 @@ def parser():
     child.add_argument("--skipped", metavar="REASON")
     child.add_argument("--cache")
     child.add_argument("--store-options")
+    limit = adapters.add_parser(
+        "capacity", help="print --max-workers for llm-cc compare prepare"
+    )
+    limit.add_argument("--config", help="optional recipe configuration JSON")
+    limit.add_argument("--requested", type=int, default=4)
     matrix = adapters.add_parser("github-matrix")
     matrix.add_argument("--plan", required=True)
+    matrix.add_argument("--config", help="optional recipe configuration JSON")
     matrix.add_argument("--github-output", default=os.environ.get("GITHUB_OUTPUT"))
     return result
 
@@ -118,7 +78,15 @@ def _github(parser):
     )
 
 
-def _run_recipe(args):
+def _test():
+    root = Path(__file__).parents[2]
+    suite = unittest.defaultTestLoader.discover(
+        str(Path(__file__).parent), "test_*.py", str(root)
+    )
+    return 0 if unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful() else 1
+
+
+def _run(args):
     from . import ci, discover, publish
 
     if args.command == "ci":
@@ -150,84 +118,16 @@ def _run_recipe(args):
     return 0
 
 
-def _run(args):
-    if args.command == "test":
-        root = Path(__file__).parents[2]
-        suite = unittest.defaultTestLoader.discover(
-            str(Path(__file__).parent), "test_*.py", str(root)
-        )
-        return (
-            0 if unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful() else 1
-        )
-    options = _json(args.store_options) if args.store_options else {}
-    store = open_store(args.cache, **options)
-    if args.command == "worker":
-        artifact = run_worker(
-            args.plan,
-            args.worker_id,
-            store,
-            args.output_dir,
-            args.scorer,
-            args.model,
-            args.installed_root,
-            args.deadline_seconds,
-            args.cache_concurrency,
-        )
-        return 0 if artifact["status"] == "complete" else 1
-    cache = ResultCache(store, args.refresh_days, args.expire_days)
-    max_workers = args.max_workers
-    if getattr(args, "config", None):
-        from .ci import load_config
-
-        # `ci gitlab-child` rejects a plan with more workers than this.
-        max_workers = min(max_workers, load_config(args.config)["max_workers"])
-    kwargs = dict(
-        repo=args.repo,
-        head=args.head,
-        target=args.target,
-        identity=_json(args.identity),
-        profile=_json(args.profile),
-        rules=validate_rules(_json(args.rules)),
-        cache=cache,
-        output_dir=args.output_dir,
-        max_workers=max_workers,
-        cache_concurrency=args.cache_concurrency,
-    )
-    if args.command == "prepare":
-        prepare(**kwargs)
-        return 0
-    report = compare(
-        **kwargs,
-        scorer=args.scorer,
-        model=args.model,
-        installed_root=args.installed_root,
-        deadline_seconds=args.deadline_seconds,
-    )
-    return 0 if report["status"] != "failed" else 1
-
-
 def main(argv=None):
     args = parser().parse_args(argv)
-    if args.command in RECIPE_COMMANDS:
-        try:
-            return _run_recipe(args)
-        except Exception as error:
-            print("%s failed: %s" % (args.command, error), file=sys.stderr)
-            return 1
+    if args.command == "test":
+        return _test()
+    # These stages run around the comparison, which `llm-cc compare` owns;
+    # their failures print an error instead of writing a failure report.
     try:
         return _run(args)
     except Exception as error:
-        identity = {}
-        try:
-            if getattr(args, "identity", None):
-                identity = _json(args.identity)
-        except (OSError, ValueError):
-            pass
-        print(str(error), file=sys.stderr)
-        try:
-            aggregate_report(args.output_dir, identity=identity, errors=[str(error)])
-        except Exception as failure:
-            print("cannot write the failure report: %s" % failure, file=sys.stderr)
+        print("%s failed: %s" % (args.command, error), file=sys.stderr)
         return 1
 
 

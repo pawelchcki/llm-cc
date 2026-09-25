@@ -1,4 +1,6 @@
 // Byte-for-byte agreement with the Python renderer the C++ port replaced.
+// With LLM_CC_UPDATE_GOLDENS naming the source golden directory, run under
+// --spawn_strategy=local, mismatching expectations are rewritten instead.
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -34,9 +36,15 @@ void Check(bool condition, const std::string& message) {
 
 void CompareFiles(const fs::path& expected, const fs::path& actual,
                   const std::string& label) {
+  const char* update = std::getenv("LLM_CC_UPDATE_GOLDENS");
   for (const char* name : kReportFiles) {
     const std::string want = ReadFileBytes(expected / name);
     const std::string got = ReadFileBytes(actual / name);
+    if (update != nullptr && want != got) {
+      llmcc::compare::WriteFileAtomic(
+          fs::path(update) / label / "expected" / name, got);
+      continue;
+    }
     Check(want == got, label + "/" + name + " matches the Python renderer");
   }
 }

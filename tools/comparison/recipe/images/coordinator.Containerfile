@@ -1,21 +1,22 @@
-# CPU coordinator image: Git, the comparison package, object-store support,
-# the scorer's llm-cc executable for report aggregation, and the installed-build
-# identity, which is the scoring profile generated from the pushed scorer
-# image. It holds no weights and runs no inference.
+# CPU coordinator image: Git, the provider glue (discovery, CI generation,
+# publication) with boto3, the scorer's own llm-cc, which prepares plans and
+# aggregates reports, and the scoring contract. It holds no weights and runs
+# no inference.
 #
 # build.sh assembles the build context: tools/ from the pinned llm-cc commit,
-# the generated profile.json and the default rules.json. One coordinator
-# digest therefore pins the comparison code, the scoring contract and, through
-# the profile, the exact GPU image every worker must run.
+# scoring.args (scoring settings and the model pin, one argument per line),
+# planning.args (the file size limit) and the default rules.json. One coordinator digest therefore pins the glue, the
+# scoring contract and, through LLM_CC_SCORER_IMAGE, the exact GPU image every
+# worker must run; that image's llm-cc refuses a plan from any other build.
 # Pin PYTHON_IMAGE by digest in production. SCORER_IMAGE is the pushed scorer
-# by digest: its llm-cc aggregates and renders reports, so both images run one
-# build of the comparison core.
+# by digest.
 ARG PYTHON_IMAGE=docker.io/library/python:3.12-slim
 ARG SCORER_IMAGE
 FROM ${SCORER_IMAGE} AS scorer
 
 FROM ${PYTHON_IMAGE}
 ARG LLM_CC_COMMIT
+ARG SCORER_IMAGE
 # Publication markers use conditional PutObject (If-Match/If-None-Match),
 # which needs a boto3 release from late 2024 or newer.
 ARG BOTO3_VERSION=1.42.84
@@ -33,11 +34,14 @@ RUN apt-get update \
  && useradd --uid 10001 --user-group --home-dir /home/llm-cc --create-home llm-cc
 COPY --from=scorer /opt/llm-cc/bin/llm-cc /usr/local/bin/llm-cc
 COPY tools/ /opt/llm-cc-comparison/tools/
-COPY profile.json rules.json /opt/llm-cc-comparison/
+COPY scoring.args planning.args rules.json /opt/llm-cc-comparison/
+# Fail the build now if this llm-cc rejects the scoring contract.
+RUN llm-cc compare identity @/opt/llm-cc-comparison/scoring.args >/dev/null
 # Jobs run `python3 -m tools.comparison` inside the project checkout.
 # PYTHONSAFEPATH keeps the working directory off sys.path, so a checkout with
 # its own tools/ package (llm-cc itself) cannot replace the pinned code.
 ENV HOME=/home/llm-cc \
+    LLM_CC_SCORER_IMAGE=${SCORER_IMAGE} \
     PYTHONPATH=/opt/llm-cc-comparison \
     PYTHONSAFEPATH=1 \
     PYTHONDONTWRITEBYTECODE=1

@@ -35,10 +35,10 @@ nlohmann::json ChangedFiles(const nlohmann::json& changes,
                             const nlohmann::json& head_rankings);
 
 struct ReportInputs {
-  int schema_version = 1;
+  int schema_version = 2;
   nlohmann::json identity;
   nlohmann::json fingerprint;
-  // Scorer identity copied into the report as-is.
+  // The plan's scorer, model and scoring, copied into the report as-is.
   nlohmann::json header = nlohmann::json::object();
   nlohmann::json inventories;
   nlohmann::json changes;

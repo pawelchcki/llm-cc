@@ -340,6 +340,8 @@ std::vector<Section> CommentSections(const nlohmann::json& report, bool full) {
                            "@" + commit_text.substr(0, 7)}});
   } else if (kind == "host") {
     sections.push_back({.priority = 8, .lines = {"", "Rules: host"}});
+  } else if (kind == "builtin") {
+    sections.push_back({.priority = 8, .lines = {"", "Rules: built-in"}});
   }
   return sections;
 }

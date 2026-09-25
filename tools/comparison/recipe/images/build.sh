@@ -5,7 +5,8 @@
 # reused after its digest passes signature and source-identity checks; a fresh
 # build uses the digest its push reports, never a tag resolved afterwards.
 # Writes $OUTPUT/images.env with immutable name@sha256 references and
-# $OUTPUT/profile.json, the scoring profile baked into the coordinator.
+# $OUTPUT/identity.json, the scorer, model, scoring and fingerprint that the
+# coordinator's scoring.args pin.
 #
 # Needs podman, skopeo, git, tar and sha256sum; cosign when signatures are
 # configured.
@@ -22,7 +23,9 @@ set -eu
 : "${BAZELISK_SHA256:?bazelisk SHA-256}"
 CUDA_ARCHS="${CUDA_ARCHS:-compute_86:sm_86}"
 # The pinned A10-class CUDA scoring contract; every setting is explicit.
-SCORING="${SCORING:---backend cuda --gpu-layers -1 --context 131072 --batch-size 256 --flash-attn on --kv-cache-type q8_0 --kv-offload on --entropy-reduction device --hierarchy structural --tau 0.67 --alpha 0.8 --score-mode raw --max-file-bytes 49152}"
+SCORING="${SCORING:---backend cuda --gpu-layers -1 --context 131072 --batch-size 256 --flash-attn on --kv-cache-type q8_0 --kv-offload on --entropy-reduction device --hierarchy structural --tau 0.67 --alpha 0.8}"
+# Planning options for `llm-cc compare prepare`: the largest file scored.
+PLANNING="${PLANNING:---max-file-bytes 49152}"
 ENGINE="${ENGINE:-podman}"
 OUTPUT="${OUTPUT:-comparison}"
 recipe="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
@@ -41,7 +44,7 @@ case "$OUTPUT/" in
   "$LLM_CC_SOURCE"/*)
     prefix="${OUTPUT#"$LLM_CC_SOURCE"}/"
     prefix="${prefix#/}"
-    for name in .digest coordinator-context images.env profile.json scorer-context; do
+    for name in .digest coordinator-context images.env identity.json scorer-context; do
       tracked="$(git -C "$LLM_CC_SOURCE" ls-files -- ":(literal)$prefix$name")"
       if [ -n "$tracked" ]; then
         echo "OUTPUT would overwrite tracked source $prefix$name" >&2
@@ -113,7 +116,7 @@ set -- --build-arg "MODEL_URL=$MODEL_URL" \
   --build-arg "MODEL_SHA256=$MODEL_SHA256" \
   --build-arg "MODEL_BYTES=$MODEL_BYTES"
 if [ -n "${FETCH_IMAGE:-}" ]; then set -- "$@" --build-arg "FETCH_IMAGE=$FETCH_IMAGE"; fi
-# The size goes into the profile, so a reused image must confirm it just as a
+# The size goes into scoring.args, so a reused image must confirm it just as a
 # fresh build's size check would.
 model="$(existing "$model_name" "$MODEL_SHA256" io.llm-cc.model.sha256 "$MODEL_SHA256" \
   io.llm-cc.model.bytes "$MODEL_BYTES")" ||
@@ -152,11 +155,16 @@ if ! scorer="$(existing "$scorer_name" "$scorer_tag" \
   rm -rf "$context"
 fi
 
-# 3. Coordinator: the comparison code, the scorer's llm-cc for aggregation, and
-# the profile that names the scorer.
+# 3. Coordinator: the provider glue, the scorer's llm-cc, and the scoring
+# contract with the model pinned by digest, one argument per line.
+# shellcheck disable=SC2086 # SCORING and PLANNING are lists of arguments.
+scoring_args="$(printf '%s\n' $SCORING --model-sha256 "$MODEL_SHA256" --model-bytes "$MODEL_BYTES")"
+# shellcheck disable=SC2086
+planning_args="$(printf '%s\n' $PLANNING)"
 coordinator_name="$REGISTRY/coordinator"
 coordinator_tag="$(
-  printf '%s\n' "$LLM_CC_COMMIT" "$scorer" "$MODEL_URL" "$SCORING" "${PYTHON_IMAGE:-}" |
+  printf '%s\n' "$LLM_CC_COMMIT" "$scorer" "$MODEL_URL" "$scoring_args" "$planning_args" \
+    "${PYTHON_IMAGE:-}" |
     cat - "$recipe/images/coordinator.Containerfile" "$recipe/config/rules.example.json" |
     key
 )"
@@ -168,21 +176,17 @@ if ! coordinator="$(existing "$coordinator_name" "$coordinator_tag" \
   cp "$LLM_CC_SOURCE/tools/__init__.py" "$context/tools/"
   cp "$LLM_CC_SOURCE"/tools/comparison/*.py "$context/tools/comparison/"
   cp "$recipe/config/rules.example.json" "$context/rules.json"
-  # The profile can only name the scorer once its push reported a digest.
-  # Generation runs the installed scorer offline; it needs no GPU or network.
-  # shellcheck disable=SC2086 # SCORING is deliberately a list of arguments.
-  "$ENGINE" run --rm --network=none "$scorer" \
-    python3 -m tools.comparison.profile generate --installed-root /opt/llm-cc \
-    --execution-image "$scorer" --model-sha256 "$MODEL_SHA256" \
-    --model-bytes "$MODEL_BYTES" --model-url "$MODEL_URL" $SCORING \
-    --output /dev/stdout >"$context/profile.json"
+  printf '%s\n' "$scoring_args" >"$context/scoring.args"
+  printf '%s\n' "$planning_args" >"$context/planning.args"
   set -- --build-arg "LLM_CC_COMMIT=$LLM_CC_COMMIT" --build-arg "SCORER_IMAGE=$scorer"
   if [ -n "${PYTHON_IMAGE:-}" ]; then set -- "$@" --build-arg "PYTHON_IMAGE=$PYTHON_IMAGE"; fi
   coordinator="$(publish "$coordinator_name" "$coordinator_tag" "$context" \
     "$recipe/images/coordinator.Containerfile" "$@")"
 fi
+# The identity every plan from this coordinator carries; it needs no GPU or
+# network, only the pinned llm-cc.
 "$ENGINE" run --rm --network=none "$coordinator" \
-  cat /opt/llm-cc-comparison/profile.json >"$OUTPUT/profile.json"
+  llm-cc compare identity @/opt/llm-cc-comparison/scoring.args >"$OUTPUT/identity.json"
 
 cat >"$OUTPUT/images.env" <<EOF
 MODEL_IMAGE=$model

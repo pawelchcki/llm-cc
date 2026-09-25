@@ -1,14 +1,16 @@
 """Turn a preparation plan into CI jobs: zero to four GPU workers.
 
 The GitLab adapter writes a child pipeline and the GitHub adapter a job matrix.
-Both take the scorer image from the plan's fingerprinted profile, so a GPU job
-can only run the exact image its cached results are keyed by. A fully cached
-plan produces no GPU job at all.
+Both run the scorer image by digest: images.scorer, which defaults to the
+LLM_CC_SCORER_IMAGE the coordinator image was built with. That image's llm-cc
+refuses a plan prepared by any other build, so a worker cannot mix results
+from two scorers. A fully cached plan produces no GPU job at all.
 """
 
 from __future__ import annotations
 
 import json
+import os
 from pathlib import PurePosixPath
 import re
 import shlex
@@ -16,10 +18,9 @@ import shlex
 from .common import read_json
 
 IMAGE = re.compile(r"[^\s@]+@sha256:[0-9a-f]{64}")
-# Where the recipe's scorer image installs the scorer and its model.
+# Where the recipe's scorer image installs llm-cc and its model.
 SCORER_PATHS = {
     "executable": "/opt/llm-cc/bin/llm-cc",
-    "installed_root": "/opt/llm-cc",
     "model": "/models/model.gguf",
 }
 DEFAULTS = {
@@ -57,6 +58,9 @@ def load_config(path=None):
     images = config.setdefault("images", {})
     if not isinstance(images, dict):
         raise ValueError("images must map roles to digest references")
+    # The coordinator image records the scorer image it was built against.
+    if images.get("scorer") is None and os.environ.get("LLM_CC_SCORER_IMAGE"):
+        images["scorer"] = os.environ["LLM_CC_SCORER_IMAGE"]
     for role in ("coordinator", "scorer"):
         if images.get(role) is not None:
             image_reference(images[role], role)
@@ -86,14 +90,14 @@ def load_config(path=None):
     return config
 
 
-def _scorer_image(plan, config):
-    image = image_reference(plan["profile"]["build"].get("execution_image"), "scorer")
-    configured = config["images"].get("scorer")
-    if configured is not None and configured != image:
+def _scorer_image(config):
+    image = config["images"].get("scorer")
+    if image is None:
         raise ValueError(
-            "configured scorer image differs from the plan's fingerprinted profile"
+            "GPU workers need images.scorer or LLM_CC_SCORER_IMAGE, the scorer "
+            "image by digest"
         )
-    return image
+    return image_reference(image, "scorer")
 
 
 def _workers(plan, config):
@@ -165,29 +169,28 @@ def gitlab_child(plan, plan_path, config, store, store_options=None, coordinator
     child = {"stages": ["score", "aggregate"]}
     worker_jobs = []
     worker_paths = []
-    scorer = _scorer_image(plan, config) if plan["workers"] else None
+    scorer = _scorer_image(config) if plan["workers"] else None
     for worker_id in _workers(plan, config):
         name = "comparison-worker-%d" % worker_id
         output = "comparison/workers/%d" % worker_id
         worker_jobs.append(name)
         worker_paths.append("%s/worker-%d.json" % (output, worker_id))
-        command = _command(
-            "worker",
-            "--plan",
-            plan_path,
-            "--worker-id",
-            str(worker_id),
-            *store,
-            "--output-dir",
-            output,
-            "--scorer",
-            config["scorer"]["executable"],
-            "--model",
-            config["scorer"]["model"],
-            "--installed-root",
-            config["scorer"]["installed_root"],
-            "--cache-concurrency",
-            str(config["cache_concurrency"]),
+        # The scorer image has no Python: its llm-cc is the whole worker.
+        command = shlex.join(
+            [
+                config["scorer"]["executable"],
+                "compare",
+                "worker",
+                "--plan",
+                plan_path,
+                "--worker-id",
+                str(worker_id),
+                *store,
+                "--output-dir",
+                output,
+                "--model",
+                config["scorer"]["model"],
+            ]
         )
         child[name] = {
             "stage": "score",
@@ -268,7 +271,7 @@ def write_yaml(path, document):
         stream.write("\n")
 
 
-def github_matrix(plan):
+def github_matrix(plan, config):
     """Outputs for a dynamic matrix; an empty matrix must skip the GPU job."""
     ids = [worker["worker_id"] for worker in plan["workers"]]
     if any(type(value) is not int or not 0 <= value < 4 for value in ids):
@@ -281,13 +284,25 @@ def github_matrix(plan):
         "has_workers": "true" if ids else "false",
     }
     if ids:
-        outputs["scorer_image"] = image_reference(
-            plan["profile"]["build"].get("execution_image"), "scorer"
-        )
+        outputs["scorer_image"] = _scorer_image(config)
     return outputs
 
 
+def capacity(config, requested):
+    """Workers to plan: the request, capped by the configured capacity.
+
+    `ci gitlab-child` rejects a plan needing more workers than the
+    configuration allows, so preparation must never plan more.
+    """
+    if not 1 <= requested <= 4:
+        raise ValueError("--requested must be between 1 and 4")
+    return min(requested, config["max_workers"])
+
+
 def run(args):
+    if args.adapter == "capacity":
+        print(capacity(load_config(args.config), args.requested))
+        return 0
     if args.adapter == "gitlab-child":
         config = load_config(args.config)
         if args.skipped is not None:
@@ -310,7 +325,7 @@ def run(args):
         workers = sum(name.startswith("comparison-worker-") for name in document)
         print("Generated %s with %d GPU worker job(s)." % (args.output, workers))
         return 0
-    outputs = github_matrix(read_json(args.plan))
+    outputs = github_matrix(read_json(args.plan), load_config(args.config))
     lines = "".join("%s=%s\n" % item for item in outputs.items())
     if args.github_output:
         with open(args.github_output, "a", encoding="utf-8") as stream:

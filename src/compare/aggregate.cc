@@ -12,9 +12,10 @@
 #include <string_view>
 #include <vector>
 
+#include "src/compare/identity.h"
 #include "src/compare/json_util.h"
 #include "src/compare/markdown.h"
-#include "src/compare/plan_v1_reader.h"
+#include "src/compare/plan.h"
 #include "src/compare/report_model.h"
 #include "src/compare/report_render.h"
 
@@ -99,7 +100,7 @@ void CollectWorkers(const json& plan, const std::vector<std::string>& paths,
     const std::set<std::string> actual = ObjectKeys(artifact["results"]);
     const std::set<std::string>& expected = expected_workers.at(worker_id);
     std::vector<std::string> artifact_errors;
-    if (Get(artifact, "schema_version") != v1::kSchemaVersion) {
+    if (Get(artifact, "schema_version") != kSchemaVersion) {
       artifact_errors.emplace_back("unsupported schema");
     }
     if (actual != expected) {
@@ -128,13 +129,14 @@ void CollectWorkers(const json& plan, const std::vector<std::string>& paths,
     for (const auto& [key, result] : artifact["results"].items()) {
       const json& item = Get(plan["items"], key);
       if (expected.contains(key) && !item.is_null() && !item.empty() &&
-          !v1::ValidResult(result, item, fingerprint)) {
+          !ValidResult(result, item, fingerprint)) {
         artifact_errors.push_back("invalid result " + key);
       }
     }
     if (!artifact_errors.empty()) {
       for (const std::string& error : artifact_errors) {
-        errors.push_back(worker + " " + error);
+        errors.push_back(worker);
+        errors.back().append(" ").append(error);
       }
       continue;
     }
@@ -157,12 +159,14 @@ void CollectWorkers(const json& plan, const std::vector<std::string>& paths,
 
 json Aggregate(const json& plan, const std::vector<std::string>& worker_paths,
                const std::filesystem::path& output) {
-  v1::ValidatePlan(plan);
+  ValidatePlan(plan);
   ReportInputs inputs{
-      .schema_version = v1::kSchemaVersion,
+      .schema_version = kSchemaVersion,
       .identity = plan["identity"],
       .fingerprint = plan["fingerprint"],
-      .header = {{"profile", plan["profile"]}},
+      .header = {{"scorer", plan["scorer"]},
+                 {"model", plan["model"]},
+                 {"scoring", plan["scoring"]}},
       .inventories = plan["inventories"],
       .changes = plan["changes"],
       .results = plan.contains("hits") ? plan["hits"] : json::object(),
@@ -220,11 +224,13 @@ nlohmann::json WriteFailureReport(const std::filesystem::path& output,
     markdown += "- " + markdown::Code(error) + "\n";
   }
   const json empty = json::array();
-  json report = {{"schema_version", v1::kSchemaVersion},
+  json report = {{"schema_version", kSchemaVersion},
                  {"identity", normalized},
                  {"fingerprint", fingerprint},
                  {"status", "failed"},
-                 {"profile", nullptr},
+                 {"scorer", nullptr},
+                 {"model", nullptr},
+                 {"scoring", nullptr},
                  {"inventories", {{"base", empty}, {"head", empty}}},
                  {"results", json::object()},
                  {"sides",

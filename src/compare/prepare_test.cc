@@ -361,6 +361,14 @@ int main() {  // NOLINT(bugprone-exception-escape)
   Expect(!Failure<std::invalid_argument>([&] {
             static_cast<void>(llmcc::compare::Prepare(extra));
           }).empty(),
-         "identity files cannot set the commits");
+         "identity files cannot contradict the commits");
+  PrepareOptions discovered =
+      Options(repo, repository.head, repository.base, root / "discovered");
+  discovered.identity["head_sha"] = repository.head;
+  discovered.identity["target_sha"] = repository.base;
+  discovered.identity["base_sha"] = nullptr;
+  Expect(llmcc::compare::Prepare(discovered)["identity"]["base_sha"] ==
+             repository.base,
+         "a discovered identity names the commits it knows");
   return 0;
 }

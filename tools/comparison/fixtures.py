@@ -1,45 +1,25 @@
 """Offline fixtures shared by the comparison tests.
 
-A synthetic scorer and profile that the real worker accepts, Git repository
-helpers, and an in-memory GitHub behind the real REST client. The name avoids
-the test_ prefix, so discovery never collects this module as tests.
+Scoring arguments that the deterministic llm-cc test build accepts, Git
+repository helpers, and an in-memory GitHub behind the real REST client. The
+name avoids the test_ prefix, so discovery never collects this module as tests.
 """
 
 from __future__ import annotations
 
 import copy
-import hashlib
+import json
 import os
 from pathlib import Path
 import subprocess
-import sys
+import tempfile
 import urllib.error
 import urllib.parse
 
-from .common import CONTAINER_ENVIRONMENT_POLICY
+from .common import llm_cc, read_json
 from .github import GitHub
 
 SCORER_IMAGE = "registry.example/llm-cc-scorer@sha256:" + "1" * 64
-
-# Emits the complete JSONL contract the worker validates: configuration, one
-# result per input with a deterministic score, and consistent totals. The
-# worker runs scorers with a sanitized PATH, so name the interpreter exactly.
-SCORER = (
-    "#!"
-    + sys.executable
-    + """
-import hashlib,json,sys
-language=sys.argv[sys.argv.index('--lang')+1]
-model=sys.argv[sys.argv.index('--model')+1]
-paths=sys.argv[sys.argv.index('--include-headers')+1:]
-print(json.dumps({'type':'configuration','model_sha256':hashlib.sha256(open(model,'rb').read()).hexdigest(),'model_size':len(open(model,'rb').read()),'language':language,'no_download':True,'no_ignore':True,'include_headers':True}))
-score=tokens=0
-for path in paths:
- data=open(path,'rb').read(); value=float(sum(data)); count=len(data); score+=value; tokens+=count
- print(json.dumps({'type':'file','path':path,'language':language,'llm_cc':value,'token_count':count}))
-print(json.dumps({'type':'totals','discovered':len(paths),'analyzed':len(paths),'failed':0,'partial':False,'llm_cc':score,'token_count':tokens}))
-"""
-)
 
 
 def git(repo, *args):
@@ -70,31 +50,61 @@ def commit_files(repo, files, message):
     return git(repo, "rev-parse", "HEAD")
 
 
-def synthetic_scorer(root, execution_image=SCORER_IMAGE, max_file_bytes=65536):
-    """Install the synthetic scorer and model; returns (scorer, model, profile)."""
+def fake_scoring(root):
+    """A model and scoring.args for llm-cc-compare-fake; returns (model, args).
+
+    The test build hashes any file as its model and scores deterministically,
+    so plans, workers and reports run end to end without inference.
+    """
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
-    scorer = root / "fake-scorer.py"
-    scorer.write_text(SCORER)
-    scorer.chmod(0o755)
     model = root / "model.gguf"
     model.write_bytes(b"model")
-    profile = {
-        "scoring": {"expected_configuration": {}},
-        "build": {
-            "installed_files": {
-                scorer.name: hashlib.sha256(scorer.read_bytes()).hexdigest()
-            },
-            "source_commit": "4646123",
-            "inference_abi": "test",
-            "execution_image": execution_image,
-            "container_environment_policy": CONTAINER_ENVIRONMENT_POLICY,
-            "model_sha256": hashlib.sha256(b"model").hexdigest(),
-            "model_bytes": 5,
-        },
-        "max_file_bytes": max_file_bytes,
-    }
-    return scorer, model, profile
+    arguments = root / "scoring.args"
+    arguments.write_text(
+        "# The deterministic test scorer's explicit contract.\n"
+        "--model\n%s\n--backend\ncpu\n--entropy-reduction\nhost\n" % model
+    )
+    return model, arguments
+
+
+def effective_rules(rules):
+    """`rules` as `llm-cc compare prepare` loads them for a target commit
+    without its own: {rules, rules_source} from a one-file plan."""
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        repo = root / "repo"
+        repo.mkdir()
+        git(repo, "init", "-q")
+        head = commit_files(repo, {"main.rs": "fn main() {}\n"}, "only")
+        model, scoring = fake_scoring(root / "scoring")
+        (root / "identity.json").write_text(
+            json.dumps({"repository": "o/r", "pipeline_id": "p"})
+        )
+        subprocess.run(
+            [
+                llm_cc(),
+                "compare",
+                "prepare",
+                "--repo",
+                str(repo),
+                "--head",
+                head,
+                "--target",
+                head,
+                "--identity",
+                str(root / "identity.json"),
+                "--output-dir",
+                str(root / "out"),
+                "--default-rules",
+                str(rules),
+                "@" + str(scoring),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        plan = read_json(root / "out/plan.json")
+    return {"rules": plan["rules"], "rules_source": plan["rules_source"]}
 
 
 class FakeGitHub(GitHub):

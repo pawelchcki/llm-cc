@@ -198,6 +198,10 @@ int main() {  // NOLINT(bugprone-exception-escape)
          "repository rules name their commit");
   Expect(Contains(llmcc::compare::RenderComment(Report()), "Rules: host"),
          "host rules are announced");
+  Expect(Contains(llmcc::compare::RenderComment(
+                      Report({{"rules_source", {{"source", "builtin"}}}})),
+                  "Rules: built-in"),
+         "built-in rules are announced");
   Expect(!Contains(llmcc::compare::RenderComment(Report(
                        {{"presentation",
                          {{"report_links",
