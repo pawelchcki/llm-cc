@@ -408,6 +408,8 @@ class PipelineTest(unittest.TestCase):
         # Linux filenames are bytes; llm-cc reads plans as strict JSON.
         name = os.fsdecode(b"bad\xffname.py")
         (self.repo / name).write_text("x = 1\n")
+        # A valid name spelling the same escape must stay distinct.
+        (self.repo / "bad\\xffname.py").write_text("x = 2\n")
         git(self.repo, "add", ".")
         git(self.repo, "commit", "-qm", "odd bytes")
         head = git(self.repo, "rev-parse", "HEAD")
@@ -427,6 +429,12 @@ class PipelineTest(unittest.TestCase):
         )
         self.assertEqual(entry["reason"], "unsupported")
         self.assertIsNone(entry["key"])
+        literal = next(
+            x
+            for x in plan["inventories"]["head"]
+            if x["path"] == "bad\\\\xffname.py"
+        )
+        self.assertTrue(literal["scorable"])
         self.assertIn(
             "bad\\xffname.py",
             {change["new_path"] for change in plan["changes"]},

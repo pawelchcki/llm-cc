@@ -1,5 +1,7 @@
 #include "src/compare/store.h"
 
+#include <array>
+#include <cerrno>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -10,9 +12,11 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 
-#if !defined(_WIN32)
+#ifndef _WIN32
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -40,20 +44,6 @@ std::string PathUtf8(const std::filesystem::path& path) {
 #endif
 }
 
-// A crash between rename and a later power loss must not lose the entry
-// name; the file data itself was synced before the rename.
-void SyncDirectory(const std::filesystem::path& directory) {
-#if !defined(_WIN32)
-  const int descriptor = open(directory.c_str(), O_RDONLY | O_CLOEXEC);
-  if (descriptor >= 0) {
-    static_cast<void>(fsync(descriptor));
-    close(descriptor);
-  }
-#else
-  static_cast<void>(directory);
-#endif
-}
-
 std::unique_ptr<Store> OpenS3(std::string_view rest,
                               const StoreOptions& options) {
   const std::size_t slash = rest.find('/');
@@ -69,6 +59,16 @@ std::unique_ptr<Store> OpenS3(std::string_view rest,
     }
     while (!prefix.empty() && prefix.back() == '/') {
       prefix.remove_suffix(1);
+    }
+    // libcurl squashes "." and ".." segments, which would address other
+    // objects than the configured prefix names.
+    if (!prefix.empty()) {
+      try {
+        ValidateStoreKey(prefix);
+      } catch (const StoreError&) {
+        throw StoreError("invalid S3 store prefix '" + std::string(prefix) +
+                         "'");
+      }
     }
     settings.prefix = std::string(prefix);
   }
@@ -119,11 +119,12 @@ void ValidateStoreKey(std::string_view key) {
 
 namespace {
 
-// Other writers of a shared store could replace a key directory with a
-// symlink and redirect reads or writes outside the root, so every directory
-// between the root and the entry must be a real one. With `create`, missing
-// directories are made one level at a time and checked in turn. Returns false
-// for a missing directory, which a read treats as a miss.
+// Other writers of a shared store could swap a key directory for a symlink
+// and redirect reads or writes outside the root.
+#ifdef _WIN32
+// Every directory between the root and the entry must be a real one. With
+// `create`, missing directories are made one level at a time and checked in
+// turn. Returns false for a missing directory, which a read treats as a miss.
 bool CheckedParents(const std::filesystem::path& root, std::string_view key,
                     bool create) {
   std::filesystem::path current = root;
@@ -142,14 +143,96 @@ bool CheckedParents(const std::filesystem::path& root, std::string_view key,
       return false;
     }
     if (error || status.type() != std::filesystem::file_type::directory) {
-      throw StoreError("store entry " + std::string(key) + " passes through " +
-                       (status.type() == std::filesystem::file_type::symlink
-                            ? "a symlink"
-                            : "something other than a directory"));
+      throw StoreError("store entry " + std::string(key) +
+                       " passes through a symlink or something other than a "
+                       "directory");
     }
   }
   return true;
 }
+#else
+// Each directory is opened relative to the previous one without following
+// symlinks, and the entry is read or replaced through the last directory's
+// descriptor, so no later path lookup can be redirected.
+class Descriptor {
+ public:
+  explicit Descriptor(int descriptor = -1) : descriptor_(descriptor) {}
+  Descriptor(Descriptor&& other) noexcept
+      : descriptor_(std::exchange(other.descriptor_, -1)) {}
+  Descriptor& operator=(Descriptor&& other) noexcept {
+    if (this != &other) {
+      Reset();
+      descriptor_ = std::exchange(other.descriptor_, -1);
+    }
+    return *this;
+  }
+  Descriptor(const Descriptor&) = delete;
+  Descriptor& operator=(const Descriptor&) = delete;
+  ~Descriptor() { Reset(); }
+  [[nodiscard]] int get() const { return descriptor_; }
+
+ private:
+  void Reset() {
+    if (descriptor_ >= 0) {
+      close(descriptor_);
+      descriptor_ = -1;
+    }
+  }
+  int descriptor_;
+};
+
+[[noreturn]] void Fail(std::string_view action, std::string_view key,
+                       int error) {
+  throw StoreError(std::string(action) + " store entry " + std::string(key) +
+                   ": " +
+                   (error == ELOOP || error == ENOTDIR
+                        ? std::string("it passes through a symlink or "
+                                      "something other than a directory")
+                        : std::generic_category().message(error)));
+}
+
+// The directory holding `key`'s entry, whose name goes to `name`. With
+// `create`, missing directories are made one level at a time. An invalid
+// descriptor means a directory is missing, which a read treats as a miss.
+Descriptor OpenParent(const std::filesystem::path& root, std::string_view key,
+                      bool create, std::string& name) {
+  const std::string_view action = create ? "cannot write" : "cannot read";
+  if (create) {
+    std::filesystem::create_directories(root);
+  }
+  Descriptor current(open(root.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+  if (current.get() < 0) {
+    if (errno == ENOENT) {
+      return Descriptor();
+    }
+    Fail(action, key, errno);
+  }
+  constexpr int kDirectory = O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC;
+  std::string_view remaining = key;
+  for (std::size_t end = remaining.find('/'); end != std::string_view::npos;
+       end = remaining.find('/')) {
+    const std::string segment(remaining.substr(0, end));
+    remaining.remove_prefix(end + 1);
+    int next = openat(current.get(), segment.c_str(), kDirectory);
+    if (next < 0 && errno == ENOENT && create) {
+      if (mkdirat(current.get(), segment.c_str(), 0777) != 0 &&
+          errno != EEXIST) {
+        Fail(action, key, errno);
+      }
+      next = openat(current.get(), segment.c_str(), kDirectory);
+    }
+    if (next < 0) {
+      if (errno == ENOENT) {
+        return Descriptor();
+      }
+      Fail(action, key, errno);
+    }
+    current = Descriptor(next);
+  }
+  name = std::string(remaining);
+  return current;
+}
+#endif
 
 }  // namespace
 
@@ -162,6 +245,7 @@ std::filesystem::path FilesystemStore::PathOf(std::string_view key) const {
 }
 
 std::optional<std::string> FilesystemStore::Get(std::string_view key) {
+#ifdef _WIN32
   const std::filesystem::path path = PathOf(key);
   if (!CheckedParents(root_, key, false)) {
     return std::nullopt;
@@ -190,19 +274,122 @@ std::optional<std::string> FilesystemStore::Get(std::string_view key) {
     throw StoreError("cannot read store entry " + std::string(key));
   }
   return contents.str();
+#else
+  ValidateStoreKey(key);
+  std::string name;
+  const Descriptor parent = OpenParent(root_, key, false, name);
+  if (parent.get() < 0) {
+    return std::nullopt;
+  }
+  // O_NONBLOCK keeps a planted FIFO from blocking the open.
+  const Descriptor file(openat(parent.get(), name.c_str(),
+                               O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC));
+  if (file.get() < 0) {
+    if (errno == ENOENT) {
+      return std::nullopt;
+    }
+    if (errno == ELOOP) {
+      throw StoreError("cannot read store entry " + std::string(key) +
+                       ": it is a symlink");
+    }
+    Fail("cannot read", key, errno);
+  }
+  struct stat information{};
+  if (fstat(file.get(), &information) != 0 || !S_ISREG(information.st_mode)) {
+    throw StoreError("cannot read store entry " + std::string(key) +
+                     ": not a regular file");
+  }
+  std::string contents;
+  std::array<char, std::size_t{64} * 1024> buffer{};
+  while (true) {
+    const ssize_t count = read(file.get(), buffer.data(), buffer.size());
+    if (count < 0 && errno == EINTR) {
+      continue;
+    }
+    if (count < 0) {
+      Fail("cannot read", key, errno);
+    }
+    if (count == 0) {
+      return contents;
+    }
+    contents.append(buffer.data(), static_cast<std::size_t>(count));
+  }
+#endif
 }
 
 void FilesystemStore::Put(std::string_view key, std::string_view value) {
+#ifdef _WIN32
   const std::filesystem::path path = PathOf(key);
   try {
     std::filesystem::create_directories(root_);
     CheckedParents(root_, key, true);
     cache_io::AtomicWriteFile(path, value, 0660);
+  } catch (const StoreError&) {
+    throw;
   } catch (const std::exception& error) {
     throw StoreError("cannot write store entry " + std::string(key) + ": " +
                      error.what());
   }
-  SyncDirectory(path.parent_path());
+#else
+  ValidateStoreKey(key);
+  std::string name;
+  Descriptor parent;
+  try {
+    parent = OpenParent(root_, key, true, name);
+  } catch (const std::filesystem::filesystem_error& error) {
+    throw StoreError("cannot write store entry " + std::string(key) + ": " +
+                     error.what());
+  }
+  struct stat existing{};
+  if (fstatat(parent.get(), name.c_str(), &existing, AT_SYMLINK_NOFOLLOW) ==
+          0 &&
+      S_ISLNK(existing.st_mode)) {
+    throw StoreError("cannot write store entry " + std::string(key) +
+                     ": it is a symlink");
+  }
+  // Honor the deployment's umask so a provisioned group can read and replace
+  // objects that another executor account wrote.
+  std::string temporary;
+  Descriptor file;
+  for (int attempt = 0; attempt != 10 && file.get() < 0; ++attempt) {
+    temporary = "." + name + cache_io::UniqueSuffix();
+    file = Descriptor(
+        openat(parent.get(), temporary.c_str(),
+               O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW | O_CLOEXEC, 0660));
+    if (file.get() < 0 && errno != EEXIST) {
+      Fail("cannot write", key, errno);
+    }
+  }
+  if (file.get() < 0) {
+    Fail("cannot write", key, EEXIST);
+  }
+  const auto abandon = [&](int error) {
+    unlinkat(parent.get(), temporary.c_str(), 0);
+    Fail("cannot write", key, error);
+  };
+  for (std::size_t written = 0; written < value.size();) {
+    const ssize_t count =
+        write(file.get(), value.data() + written, value.size() - written);
+    if (count < 0 && errno == EINTR) {
+      continue;
+    }
+    if (count < 0) {
+      abandon(errno);
+    }
+    written += static_cast<std::size_t>(count);
+  }
+  if (fsync(file.get()) != 0) {
+    abandon(errno);
+  }
+  file = Descriptor();
+  if (renameat(parent.get(), temporary.c_str(), parent.get(), name.c_str()) !=
+      0) {
+    abandon(errno);
+  }
+  // A crash between rename and a later power loss must not lose the name;
+  // the data itself was synced before the rename.
+  static_cast<void>(fsync(parent.get()));
+#endif
 }
 
 std::string FilesystemStore::Describe() const { return PathUtf8(root_); }

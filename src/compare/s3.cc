@@ -144,6 +144,20 @@ std::string Excerpt(std::string_view body) {
   return excerpt;
 }
 
+// The <Code> of an S3 error document, or empty.
+std::string ErrorCode(std::string_view body) {
+  constexpr std::string_view kOpen = "<Code>";
+  const std::size_t start = body.find(kOpen);
+  if (start == std::string_view::npos) {
+    return {};
+  }
+  const std::size_t end = body.find("</Code>", start);
+  return end == std::string_view::npos
+             ? std::string()
+             : std::string(body.substr(start + kOpen.size(),
+                                       end - start - kOpen.size()));
+}
+
 }  // namespace
 
 std::unique_ptr<HttpTransport> MakeCurlTransport() {
@@ -245,7 +259,11 @@ std::optional<std::string> S3Store::Get(std::string_view key) {
     return std::move(response.body);
   }
   if (response.status == 404) {
-    return std::nullopt;
+    // A missing bucket is a 404 too; only a missing key is a cache miss.
+    const std::string code = ErrorCode(response.body);
+    if (code.empty() || code == "NoSuchKey") {
+      return std::nullopt;
+    }
   }
   throw StoreError("cannot read " + Describe() + "/" + std::string(key) +
                    ": HTTP " + std::to_string(response.status) + ": " +

@@ -291,15 +291,18 @@ def resolve_language(path, rules):
 
 
 def _path(path_bytes):
-    """A Git path as text, and whether its bytes were valid UTF-8.
+    """A Git path as rules match it, and as a plan records it.
 
-    Undecodable bytes become `\\xHH`, as in llm-cc, so plans and reports stay
-    valid JSON; such a path is recorded but never scored.
+    Recorded paths spell `\\` as `\\\\` and each undecodable byte as `\\xHH`,
+    as llm-cc does, so distinct paths stay distinct and plans valid JSON. A path
+    that is not UTF-8 has no text to match and is never scored.
     """
     try:
-        return path_bytes.decode("utf-8"), True
+        text = path_bytes.decode("utf-8")
     except UnicodeDecodeError:
-        return path_bytes.decode("utf-8", "backslashreplace"), False
+        escaped = path_bytes.replace(b"\\", b"\\\\")
+        return None, escaped.decode("utf-8", "backslashreplace")
+    return text, text.replace("\\", "\\\\")
 
 
 def inventory(repo, revision, fingerprint, rules=None, max_file_bytes=65536):
@@ -312,12 +315,13 @@ def inventory(repo, revision, fingerprint, rules=None, max_file_bytes=65536):
             continue
         metadata, path_bytes = entry.split(b"\t", 1)
         mode, kind, object_id, size_text = metadata.split()
-        path, valid = _path(path_bytes)
+        text, path = _path(path_bytes)
+        matched = path if text is None else text
         size = None if size_text == b"-" else int(size_text)
         record = {
             "path": path,
             "language": None,
-            "category": _classify(path, rules),
+            "category": _classify(matched, rules),
             "size": size,
             "content_sha256": None,
             "key": None,
@@ -325,15 +329,15 @@ def inventory(repo, revision, fingerprint, rules=None, max_file_bytes=65536):
             "reason": None,
             "_object": object_id.decode("ascii"),
         }
-        if kind == b"blob" and valid:
-            record["language"] = resolve_language(path, rules)
+        if kind == b"blob" and text is not None:
+            record["language"] = resolve_language(text, rules)
         if mode == b"160000" or kind == b"commit":
             record["reason"] = "submodule"
         elif mode == b"120000":
             record["reason"] = "symlink"
-        elif kind != b"blob" or not valid:
+        elif kind != b"blob" or text is None:
             record["reason"] = "unsupported"
-        elif _matches(path, _patterns(rules, "exclude")):
+        elif _matches(matched, _patterns(rules, "exclude")):
             record["reason"] = "excluded"
         elif record["language"] is None:
             record["reason"] = "unsupported"
@@ -408,7 +412,7 @@ def changes(repo, base, head):
             old = new
 
         def decode(p):
-            return _path(p)[0]
+            return _path(p)[1]
 
         result.append(
             {
