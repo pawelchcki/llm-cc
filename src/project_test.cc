@@ -249,6 +249,26 @@ int main() {  // NOLINT(bugprone-exception-escape)
   }
 #endif
 
+  // A repository nested in a plain directory keeps its own rules.
+  const fs::path outer = fs::path(temporary) / "outer";
+  const fs::path inner = outer / "inner";
+  fs::create_directories(inner);
+  Run("git -C " + Quote(inner) + " init -q");
+  Write(inner / ".llm-cc/rules.json", R"({"exclude": ["gen/**"]})");
+  Write(inner / "gen/skip.cc", "int skip;\n");
+  Write(inner / "keep.cc", "int keep;\n");
+  Write(outer / "top.cc", "int top;\n");
+  const auto nested_rules = llmcc::DiscoverSources({outer});
+  std::map<std::string, const llmcc::DiscoveredSource*> nested_by_path;
+  for (const auto& source : nested_rules.sources) {
+    nested_by_path[source.relative_path] = &source;
+  }
+  llmcc::test::Expect(
+      nested_by_path.size() == 2 && nested_by_path.contains("top.cc") &&
+          nested_by_path.contains("keep.cc") &&
+          nested_by_path.at("keep.cc")->repository == fs::canonical(inner),
+      "a nested repository is discovered with its own rules");
+
   // A repository's rules select, name, and classify its sources.
   const fs::path ruled = fs::path(temporary) / "ruled";
   fs::create_directories(ruled);

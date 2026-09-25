@@ -119,6 +119,39 @@ def _segment_regex(segment):
     return "".join(out)
 
 
+def _check_glob(pattern):
+    """Reject what llm-cc's Glob::Compile rejects, with its reasons."""
+
+    def invalid(reason):
+        raise ValueError("invalid glob %r: %s" % (pattern, reason))
+
+    if pattern.startswith("/") or pattern.endswith("/"):
+        invalid("patterns are relative to the repository root and match files")
+    for segment in pattern.split("/"):
+        if not segment:
+            invalid("empty path segment")
+        if segment in (".", ".."):
+            invalid("'.' and '..' segments never match a repository path")
+        index = 0
+        while index < len(segment):
+            if segment[index] == "\\":
+                index += 1
+                if index >= len(segment):
+                    invalid("trailing backslash")
+            elif segment[index] == "[":
+                end = index + 1
+                if end < len(segment) and segment[end] in "!^":
+                    end += 1
+                if end < len(segment) and segment[end] == "]":
+                    end += 1
+                while end < len(segment) and segment[end] != "]":
+                    end += 2 if segment[end] == "\\" else 1
+                if end >= len(segment):
+                    invalid("unterminated '['")
+                index = end
+            index += 1
+
+
 @functools.lru_cache(maxsize=4096)
 def _glob(pattern):
     """llm-cc's segment-aware glob (src/glob.cc) as a compiled expression.
@@ -173,6 +206,7 @@ def validate_rules(rules):
                     "classification rule %s needs non-empty globs of at most 256 characters"
                     % name
                 )
+            _check_glob(pattern)
     paths = rules.get("paths", [])
     languages = set(LANGUAGES.values())
     if not isinstance(paths, list):
@@ -190,6 +224,7 @@ def validate_rules(rules):
                 "classification rule paths needs {pattern, language} objects with "
                 "non-empty globs of at most 256 characters"
             )
+        _check_glob(override["pattern"])
         if override["language"] not in languages:
             raise ValueError(
                 "classification rule path %s names an unsupported language"
