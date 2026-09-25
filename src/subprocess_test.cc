@@ -103,5 +103,20 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
   } catch (const std::runtime_error&) {        // NOLINT(bugprone-empty-catch)
     // Windows reports the directory through CreateProcess as well.
   }
+
+#ifndef _WIN32
+  // A relative PATH entry is found from our directory, not the child's.
+  const std::filesystem::path search = std::filesystem::path(test_tmpdir);
+  std::filesystem::create_directories(search / "relative-bin");
+  std::filesystem::copy_file(std::filesystem::u8path(helper),
+                             search / "relative-bin/llm-cc-relative-helper",
+                             std::filesystem::copy_options::overwrite_existing);
+  std::filesystem::current_path(search);
+  Expect(setenv("PATH", "relative-bin", 1) == 0, "PATH is replaced");
+  const auto relative =
+      llmcc::RunProcess({"llm-cc-relative-helper", "pwd"}, {.cwd = directory});
+  ExpectEq(relative.exit_code, 0,
+           "a relative PATH entry starts the child in another directory");
+#endif
   return 0;
 }

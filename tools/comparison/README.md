@@ -234,7 +234,9 @@ The `Complexity comparison` BuildBuddy action runs on pull requests targeting
 `main` and on `main` pushes. This repository runs the checkout's own coordinator
 through [dogfood.sh](dogfood.sh), so pull requests exercise coordinator changes
 before the host bundle is refreshed; consuming repositories call the published
-launcher instead. The coordinator derives its own head, branch and default branch
+launcher instead. The script builds the checkout's `//:llm-cc` and exports it
+as `LLM_CC`, which renders reports unless the host configuration names its own
+`llm_cc`. The coordinator derives its own head, branch and default branch
 from the checkout, unwrapping BuildBuddy's synthetic merge commit to the actual
 pull-request head. ci-toolkit consumes the completed BuildBuddy status and
 publishes the generated table and report links using `.ci-toolkit.yml` from the

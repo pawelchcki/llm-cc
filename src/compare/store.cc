@@ -8,7 +8,7 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <optional>
-#include <sstream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -23,6 +23,7 @@
 #include "src/cache_io.h"
 #include "src/compare/json_util.h"
 #include "src/compare/s3.h"
+#include "src/input_limits.h"
 
 namespace llmcc::compare {
 namespace {
@@ -306,12 +307,15 @@ std::optional<std::string> FilesystemStore::Read(
   if (!input.is_open()) {
     throw StoreError("cannot open store entry " + std::string(key));
   }
-  std::ostringstream contents;
-  contents << input.rdbuf();
-  if (input.bad()) {
+  // Another writer can still grow the file after the size check.
+  try {
+    return ReadBoundedStream(input, kMaxStoreObjectBytes);
+  } catch (const std::length_error&) {
+    throw StoreError("store entry " + std::string(key) + " exceeds " +
+                     std::to_string(kMaxStoreObjectBytes) + " bytes");
+  } catch (const std::runtime_error&) {
     throw StoreError("cannot read store entry " + std::string(key));
   }
-  return contents.str();
 #else
   ValidateStoreKey(key);
   std::string name;

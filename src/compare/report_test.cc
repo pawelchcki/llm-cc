@@ -387,6 +387,17 @@ int main() {  // NOLINT(bugprone-exception-escape)
              failure["identity"]["repository"] == "o/r" &&
              !failure["identity"].contains("extra"),
          "failure identities are normalized");
+  const json undecodable = llmcc::compare::WriteFailureReport(
+      root / "undecodable", nullptr, nullptr, {"cannot read bad\xff.json"});
+  Expect(undecodable["errors"][0] == "cannot read bad\\xff.json" &&
+             std::filesystem::exists(root / "undecodable/report.json"),
+         "an error with an invalid UTF-8 byte is escaped and reported");
+  const json undecodable_plan = llmcc::compare::AggregatePlan(
+      root / "bad\xff-plan.json", {}, root / "undecodable-plan");
+  Expect(Contains(undecodable_plan["errors"][0].get<std::string>(),
+                  "bad\\xff-plan.json") &&
+             std::filesystem::exists(root / "undecodable-plan/report.json"),
+         "a failure naming an invalid UTF-8 path still writes its report");
 
   // Counts beyond any file's size never reach the signed report totals.
   const json item = {{"key", "k"},

@@ -154,6 +154,14 @@ int main() {  // NOLINT(bugprone-exception-escape)
       "missing history is actionable");
   ExpectEq(repository.GetObjectFormat(), ObjectFormat::kSha1,
            "a default repository uses SHA-1");
+  Expect(Throws(
+             [&] {
+               static_cast<void>(
+                   llmcc::git::Repository(fs::path(temporary) / "missing")
+                       .GetObjectFormat());
+             },
+             "rev-parse --show-object-format failed"),
+         "a repository Git cannot open fails object-format detection");
 
   // Trees keep symbolic links and submodules as unmeasured entries.
   const auto tree = repository.ListTree(head);

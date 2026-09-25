@@ -166,7 +166,11 @@ void AddFile(const std::filesystem::path& path, std::string relative,
              const std::optional<std::filesystem::path>& repository,
              WalkContext& context) {
   const std::filesystem::path canonical = Canonical(path);
-  if (InFixedExclusion(canonical)) {
+  // Within a worktree only its own metadata counts; a directory above the
+  // root may be named .git. Git metadata itself has no worktree, so outside
+  // one the whole path is checked.
+  if (repository.has_value() ? AlwaysExcluded(relative)
+                             : InFixedExclusion(canonical)) {
     return;
   }
   std::optional<Language> language = rules.ResolveLanguage(relative);

@@ -660,6 +660,7 @@ cc_library(
         ":compare_report",
         ":curl",
         ":download",
+        ":input_limits",
         ":sha256",
         "@nlohmann_json//:json",
     ],

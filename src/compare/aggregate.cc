@@ -182,6 +182,10 @@ json Aggregate(const json& plan, const std::vector<std::string>& worker_paths,
     inputs.errors.push_back("unmeasured unique files: " +
                             std::to_string(inputs.missing));
   }
+  // Worker paths come from arguments and need not be UTF-8.
+  for (std::string& error : inputs.errors) {
+    error = EscapeInvalidUtf8(error);
+  }
   const json report = BuildReport(inputs);
   WriteReportArtifacts(output, report, RenderFullReport(report),
                        RenderComment(report));
@@ -219,7 +223,8 @@ nlohmann::json WriteFailureReport(const std::filesystem::path& output,
   json errors_json = json::array();
   std::string markdown =
       "## llm-cc comparison\n\nStatus: **failed**\n\nErrors:\n";
-  for (const std::string& error : errors) {
+  for (const std::string& raw : errors) {
+    const std::string error = EscapeInvalidUtf8(raw);
     errors_json.push_back(error);
     markdown += "- " + markdown::Code(error) + "\n";
   }
