@@ -23,6 +23,10 @@ struct ModelPin {
 // configuration, inference ABI and analysis version.
 nlohmann::json ScorerJson(std::string_view inference_abi);
 
+// Throws std::invalid_argument unless `scorer` has exactly ScorerJson's
+// fields, with either a commit or an executable digest.
+void ValidateScorer(const nlohmann::json& scorer);
+
 nlohmann::json ModelJson(const ModelPin& model);
 ModelPin ModelFromJson(const nlohmann::json& model);
 

@@ -308,11 +308,12 @@ std::optional<std::string> FilesystemStore::Read(
     throw StoreError("cannot open store entry " + std::string(key));
   }
   // Another writer can still grow the file after the size check.
+  const std::uint64_t limit = max_bytes.value_or(kMaxStoreObjectBytes);
   try {
-    return ReadBoundedStream(input, kMaxStoreObjectBytes);
+    return ReadBoundedStream(input, limit);
   } catch (const std::length_error&) {
-    throw StoreError("store entry " + std::string(key) + " exceeds " +
-                     std::to_string(kMaxStoreObjectBytes) + " bytes");
+    throw StoreEntryTooLarge("store entry " + std::string(key) + " exceeds " +
+                             std::to_string(limit) + " bytes");
   } catch (const std::runtime_error&) {
     throw StoreError("cannot read store entry " + std::string(key));
   }

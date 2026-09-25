@@ -1,6 +1,7 @@
 #include "src/compare/identity.h"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cstdint>
 #include <nlohmann/json.hpp>
@@ -65,6 +66,40 @@ json ScorerJson(std::string_view inference_abi) {
           {"backend_configuration", build_info::BackendConfiguration()},
           {"inference_abi", inference_abi},
           {"analysis_version", kAnalysisVersion}};
+}
+
+void ValidateScorer(const json& scorer) {
+  static constexpr std::array<const char*, 6> kFields = {
+      "version",       "commit",          "executable", "backend_configuration",
+      "inference_abi", "analysis_version"};
+  if (!scorer.is_object() || scorer.size() != kFields.size() ||
+      !std::ranges::all_of(
+          kFields, [&](const char* field) { return scorer.contains(field); })) {
+    throw std::invalid_argument(
+        "scorer must have exactly version, commit, executable, "
+        "backend_configuration, inference_abi and analysis_version");
+  }
+  const auto text = [&](const char* field) {
+    return scorer[field].is_string() &&
+           !scorer[field].get_ref<const std::string&>().empty();
+  };
+  if (!text("version") || !scorer["backend_configuration"].is_string() ||
+      !text("inference_abi") ||
+      !scorer["analysis_version"].is_number_integer()) {
+    throw std::invalid_argument(
+        "scorer version, backend_configuration, inference_abi and "
+        "analysis_version have the wrong types");
+  }
+  // A stamped build names its commit; an unstamped one its own digest.
+  const bool commit = text("commit");
+  const bool executable =
+      scorer["executable"].is_string() &&
+      IsHexDigest(scorer["executable"].get_ref<const std::string&>(), 64);
+  if (commit == executable || !(commit || scorer["commit"].is_null()) ||
+      !(executable || scorer["executable"].is_null())) {
+    throw std::invalid_argument(
+        "scorer needs either a commit or an executable SHA-256, not both");
+  }
 }
 
 json ModelJson(const ModelPin& model) {

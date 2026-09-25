@@ -266,8 +266,12 @@ void ValidatePlan(const json& plan) {
   }
   ValidateIdentity(Field(plan, "identity"));
   static_cast<void>(ModelFromJson(Field(plan, "model")));
-  if (!Field(plan, "scorer").is_object()) {
-    Invalid("plan needs a scorer identity");
+  // A fully cached plan reaches no worker to compare its scorer, so its
+  // shape is checked here.
+  try {
+    ValidateScorer(Field(plan, "scorer"));
+  } catch (const std::invalid_argument& error) {
+    Invalid(std::string("plan ") + error.what());
   }
   // A fully cached plan reaches no worker, so its settings are checked here.
   static_cast<void>(SettingsFromScoring(Field(plan, "scoring")));

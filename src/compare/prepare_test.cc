@@ -396,6 +396,20 @@ int main() {  // NOLINT(bugprone-exception-escape)
            llmcc::compare::ValidatePlan(unscorable);
          }).find("plan scoring") != std::string::npos,
          "a plan's scoring settings are validated");
+  json scorerless = llmcc::compare::Prepare(
+      Options(repo, repository.head, repository.base, root / "scorerless"));
+  json both = scorerless["scorer"];
+  both["commit"] = "abc";
+  both["executable"] = std::string(64, 'a');
+  for (const json& scorer : std::vector<json>{json::object(), both}) {
+    scorerless["scorer"] = scorer;
+    scorerless["fingerprint"] = llmcc::compare::Fingerprint(
+        scorer, scorerless["model"], scorerless["scoring"]);
+    Expect(Failure<std::invalid_argument>([&] {
+             llmcc::compare::ValidatePlan(scorerless);
+           }).find("plan scorer") != std::string::npos,
+           "a plan's scorer identity is validated");
+  }
   PrepareOptions huge =
       Options(repo, repository.head, repository.base, root / "huge");
   huge.max_file_bytes = llmcc::kMaxSourceBytes + 1;
