@@ -771,6 +771,7 @@ cc_test(
         ":compare_core",
         ":compare_test_repository",
         ":git",
+        ":input_limits",
         ":rules",
         ":scoring_settings",
         ":test_util",

@@ -74,6 +74,11 @@ std::string PrintablePath(std::string_view path) {
   static constexpr std::string_view kHex = "0123456789abcdef";
   std::string result;
   for (std::size_t index = 0; index < path.size();) {
+    if (path[index] == '\\') {
+      result += "\\\\";
+      ++index;
+      continue;
+    }
     const std::size_t length = SequenceLength(path, index);
     if (length != 0) {
       result += path.substr(index, length);
@@ -94,11 +99,12 @@ json BuildInventory(const git::Repository& repository, std::string_view commit,
   json entries = json::array();
   for (const git::TreeEntry& entry : repository.ListTree(commit)) {
     const bool valid_path = ValidUtf8(entry.path);
-    const std::string path =
-        valid_path ? entry.path : PrintablePath(entry.path);
+    // Rules match the name itself; the plan records its escaped spelling.
+    const std::string path = PrintablePath(entry.path);
+    const std::string& matched = valid_path ? entry.path : path;
     const bool blob = entry.type == "blob";
     const std::optional<Language> language =
-        blob && valid_path ? rules.ResolveLanguage(path) : std::nullopt;
+        blob && valid_path ? rules.ResolveLanguage(matched) : std::nullopt;
     json reason;
     if (entry.mode == "160000" || entry.type == "commit") {
       reason = "submodule";
@@ -106,7 +112,7 @@ json BuildInventory(const git::Repository& repository, std::string_view commit,
       reason = "symlink";
     } else if (!blob || !valid_path) {  // NOLINT(bugprone-branch-clone)
       reason = "unsupported";
-    } else if (AlwaysExcluded(path) || rules.Excluded(path)) {
+    } else if (AlwaysExcluded(matched) || rules.Excluded(matched)) {
       reason = "excluded";
     } else if (!language.has_value()) {
       reason = "unsupported";
@@ -119,7 +125,7 @@ json BuildInventory(const git::Repository& repository, std::string_view commit,
     entries.push_back(
         {{"path", path},
          {"language", language.has_value() ? json(language_name) : json()},
-         {"category", CategoryName(rules.Classify(path))},
+         {"category", CategoryName(rules.Classify(matched))},
          {"size", entry.size.has_value() ? json(*entry.size) : json()},
          {"blob_id", blob ? json(entry.object_id) : json()},
          {"key", scorable ? json(ResultKey(entry.object_id, language_name,
@@ -135,8 +141,13 @@ TargetRules LoadTargetRules(
     const git::Repository& repository, std::string_view target_commit,
     const std::optional<std::filesystem::path>& default_rules) {
   for (const std::string_view path : {kRulesPath, kLegacyRulesPath}) {
-    const std::optional<std::string> text =
-        repository.ReadFile(target_commit, path);
+    std::optional<std::string> text;
+    try {
+      text = repository.ReadFile(target_commit, path, kMaxRulesBytes);
+    } catch (const std::length_error&) {
+      throw RulesError("repository rules at " + std::string(path) +
+                       " in the target commit exceed 64 KiB");
+    }
     if (!text.has_value()) {
       continue;
     }

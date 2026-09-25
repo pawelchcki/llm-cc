@@ -25,7 +25,6 @@ struct WorkerOptions {
   // The running build's inference ABI; a plan from another build is refused.
   std::string inference_abi;
   ModelRequest model;
-  std::optional<std::filesystem::path> backend_directory;
   std::chrono::seconds deadline = kDefaultWorkerDeadline;
   // Bare-host execution: verify the GPU and hold its lock while scoring.
   std::optional<ExecutionHost> execution_host;

@@ -59,6 +59,26 @@ class FilesystemStoreTest(unittest.TestCase):
                     self.assertEqual(target.stat().st_gid, root.stat().st_gid)
                     self.assertEqual(store.get("pipelines/plan.json"), b"replaced")
 
+    @unittest.skipUnless(os.name == "posix", "POSIX symlinks")
+    def test_objects_never_resolve_through_a_symlink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory, "store")
+            outside = Path(directory, "outside")
+            outside.mkdir()
+            (outside / "x.json").write_bytes(b"outside")
+            store = FilesystemStore(root)
+            store.put("reports/r.json", b"inside")
+            (root / "linked").symlink_to(outside)
+            (root / "alias.json").symlink_to(root / "reports/r.json")
+            for key in ("linked/x.json", "alias.json"):
+                with self.subTest(key=key), self.assertRaises(StoreError):
+                    store.get(key)
+            for key in ("linked/y.json", "alias.json"):
+                with self.subTest(key=key), self.assertRaises(StoreError):
+                    store.put(key, b"escaped")
+            self.assertFalse((outside / "y.json").exists())
+            self.assertEqual(store.get("reports/r.json"), b"inside")
+
     def test_locations_select_a_store(self):
         with tempfile.TemporaryDirectory() as directory:
             self.assertIsInstance(open_store(directory), FilesystemStore)

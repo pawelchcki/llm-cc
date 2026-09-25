@@ -11,7 +11,8 @@
 #   GITHUB_READ_TOKEN     read-only GitHub token: Pull requests and Contents read
 #   GITHUB_COMMENT_TOKEN  Pull requests write; give it the environment scope
 #                         "llm-cc-publisher" so only the publish job receives it
-#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (or your store's credentials)
+#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_SESSION_TOKEN for
+#   temporary credentials (or your store's credentials)
 #
 # Include this file from an existing .gitlab-ci.yml, or use it as one. Every
 # comparison job may fail without failing the pipeline: the report is advisory.

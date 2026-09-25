@@ -15,6 +15,7 @@
 
 #include "src/compare/identity.h"
 #include "src/compare/json_util.h"
+#include "src/input_limits.h"
 #include "src/lang.h"
 
 namespace llmcc::compare {
@@ -246,18 +247,21 @@ void ValidatePlan(const json& plan) {
   }
   ValidateIdentity(Field(plan, "identity"));
   static_cast<void>(ModelFromJson(Field(plan, "model")));
-  if (!Field(plan, "scorer").is_object() ||
-      !Field(plan, "scoring").is_object()) {
-    Invalid("plan needs scorer and scoring identities");
+  if (!Field(plan, "scorer").is_object()) {
+    Invalid("plan needs a scorer identity");
   }
+  // A fully cached plan reaches no worker, so its settings are checked here.
+  static_cast<void>(SettingsFromScoring(Field(plan, "scoring")));
   const std::string fingerprint =
       Fingerprint(plan["scorer"], plan["model"], plan["scoring"]);
   if (Field(plan, "fingerprint") != fingerprint) {
     Invalid("plan fingerprint does not match its scorer, model and scoring");
   }
   if (!Field(plan, "max_file_bytes").is_number_unsigned() ||
-      plan["max_file_bytes"].get<std::uint64_t>() == 0) {
-    Invalid("plan max_file_bytes must be a positive integer");
+      plan["max_file_bytes"].get<std::uint64_t>() == 0 ||
+      plan["max_file_bytes"].get<std::uint64_t>() > kMaxSourceBytes) {
+    Invalid("plan max_file_bytes must be between 1 and " +
+            std::to_string(kMaxSourceBytes));
   }
   const json& items = Field(plan, "items");
   if (!items.is_object()) {

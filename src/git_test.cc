@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -205,6 +206,11 @@ int main() {  // NOLINT(bugprone-exception-escape)
   ExpectEq(repository.ReadFile(base, ".llm-cc/rules.json"),
            std::optional<std::string>(R"({"tests": ["tests/**"]})"),
            "a committed file is read");
+  try {
+    static_cast<void>(repository.ReadFile(base, ".llm-cc/rules.json", 8));
+    Expect(false, "an oversized committed file is refused");
+  } catch (const std::length_error&) {  // NOLINT(bugprone-empty-catch)
+  }
   Expect(
       !repository.ReadFile(base, ".llm-cc/comparison-rules.json").has_value() &&
           !repository.ReadFile(base, "absent/dir/file").has_value(),

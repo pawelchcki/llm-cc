@@ -18,6 +18,7 @@
 #include "src/compare/store.h"
 #include "src/compare/test_repository.h"
 #include "src/git.h"
+#include "src/input_limits.h"
 #include "src/rules.h"
 #include "src/scoring_settings.h"
 #include "src/test_util.h"
@@ -371,6 +372,22 @@ int main() {  // NOLINT(bugprone-exception-escape)
              repository.base,
          "a discovered identity names the commits it knows");
 
+  // Settings are validated even when no worker will ever read them.
+  json unscorable = llmcc::compare::Prepare(
+      Options(repo, repository.head, repository.base, root / "settings"));
+  unscorable["scoring"]["kv_offload"] = "sometimes";
+  Expect(Failure<std::invalid_argument>([&] {
+           llmcc::compare::ValidatePlan(unscorable);
+         }).find("plan scoring") != std::string::npos,
+         "a plan's scoring settings are validated");
+  PrepareOptions huge =
+      Options(repo, repository.head, repository.base, root / "huge");
+  huge.max_file_bytes = llmcc::kMaxSourceBytes + 1;
+  Expect(!Failure<std::invalid_argument>([&] {
+            static_cast<void>(llmcc::compare::Prepare(huge));
+          }).empty(),
+         "files the analyzer refuses are never planned");
+
 #ifndef _WIN32
   // A path that is not UTF-8 is spelled the same, escaped, in the inventory
   // and the changes, and is never scored.
@@ -381,6 +398,8 @@ int main() {  // NOLINT(bugprone-exception-escape)
   const std::string bytes_base = llmcc::compare::test::Commit(bytes, "base");
   llmcc::compare::test::Write(bytes / fs::path(std::string("bad\xff.py")),
                               "x = 1\n");
+  // A valid name spelling the same escape stays a different path.
+  llmcc::compare::test::Write(bytes / "bad\\xff.py", "x = 2\n");
   const std::string bytes_head = llmcc::compare::test::Commit(bytes, "head");
   const json escaped = llmcc::compare::Prepare(
       Options(bytes, bytes_head, bytes_base, root / "bytes-plan"));
@@ -388,8 +407,15 @@ int main() {  // NOLINT(bugprone-exception-escape)
   Expect(escaped_head.contains("bad\\xff.py") &&
              escaped_head.at("bad\\xff.py")["reason"] == "unsupported",
          "a non-UTF-8 path is escaped and unscored");
-  ExpectEq(escaped["changes"][0]["new_path"], json("bad\\xff.py"),
-           "changes spell the path as the inventory does");
+  Expect(escaped_head.contains("bad\\\\xff.py") &&
+             escaped_head.at("bad\\\\xff.py")["scorable"] == true,
+         "a literal backslash is escaped, so the spellings never collide");
+  std::set<std::string> changed;
+  for (const json& change : escaped["changes"]) {
+    changed.insert(change["new_path"].get<std::string>());
+  }
+  ExpectEq(changed, std::set<std::string>{"bad\\xff.py", "bad\\\\xff.py"},
+           "changes spell paths as the inventory does");
 #endif
   return 0;
 }

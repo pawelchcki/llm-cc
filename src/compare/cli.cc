@@ -52,7 +52,7 @@ constexpr std::string_view kUsage =
     "      [--store-options FILE] [--max-workers N] [PLANNING] MODEL SCORING\n"
     "  llm-cc compare worker --plan PLAN --worker-id N --output-dir DIR\n"
     "      --cache LOCATION [--store-options FILE]\n"
-    "      [--model GGUF | --model-name NAME] [--backend-dir DIR]\n"
+    "      [--model GGUF | --model-name NAME]\n"
     "      [--deadline-seconds N] [--execution-host FILE] [--progress MODE]\n"
     "  llm-cc compare aggregate --output-dir DIR [--plan PLAN] "
     "[--worker FILE]...\n"
@@ -371,6 +371,7 @@ ResolvedScoring ResolveScoring(const CompareRuntime& runtime,
                                ProgressReporter& progress) {
   ScoringSettings settings = parsed.scoring;
   ValidateScoringSettings(settings);
+  RequireBuiltInBackends(settings);
   const ModelArguments& model = parsed.model;
   if (model.sha256.has_value() != model.bytes.has_value()) {
     throw CompareUsageError("--model-sha256 and --model-bytes go together");
@@ -528,7 +529,6 @@ int RunLocal(const std::vector<std::string_view>& args,
                .open_session = runtime.open_session,
                .inference_abi = runtime.inference_abi,
                .model = parsed.model.request,
-               .backend_directory = resolved.settings.backend_directory,
                .deadline = parsed.deadline,
                .progress = &progress});
     artifacts.push_back(cache_io::PathUtf8(
@@ -567,8 +567,6 @@ int RunWorkerCommand(const std::vector<std::string_view>& args,
       cache = arguments.Value(option);
     } else if (option == "--store-options") {
       store_options = fs::u8path(arguments.Value(option));
-    } else if (option == "--backend-dir") {
-      options.backend_directory = fs::u8path(arguments.Value(option));
     } else if (option == "--deadline-seconds") {
       options.deadline = ParseDeadline(option, arguments);
     } else if (option == "--execution-host") {

@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -265,8 +266,9 @@ std::vector<TreeEntry> Repository::ListTree(std::string_view revision) const {
   return entries;
 }
 
-std::optional<std::string> Repository::ReadFile(std::string_view revision,
-                                                std::string_view path) const {
+std::optional<std::string> Repository::ReadFile(
+    std::string_view revision, std::string_view path,
+    std::optional<std::uint64_t> max_bytes) const {
   CheckRevision(revision);
   const std::size_t slash = path.rfind('/');
   const std::string parent(slash == std::string_view::npos
@@ -284,12 +286,12 @@ std::optional<std::string> Repository::ReadFile(std::string_view revision,
     return std::nullopt;
   }
   const std::string listing =
-      Run({"ls-tree", "-z", TrimLine(exists.stdout_data)});
+      Run({"ls-tree", "-l", "-z", TrimLine(exists.stdout_data)});
   for (const std::string_view line : SplitNul(listing)) {
     if (line.empty()) {
       continue;
     }
-    const TreeEntry entry = ParseTreeEntry(line, false);
+    const TreeEntry entry = ParseTreeEntry(line, true);
     if (entry.path != name) {
       continue;
     }
@@ -297,6 +299,11 @@ std::optional<std::string> Repository::ReadFile(std::string_view revision,
         (entry.mode != "100644" && entry.mode != "100755")) {
       throw GitError(std::string(path) + " is not a regular file in " +
                      std::string(revision));
+    }
+    if (max_bytes.has_value() && entry.size.value_or(0) > *max_bytes) {
+      throw std::length_error(std::string(path) + " in " +
+                              std::string(revision) + " exceeds " +
+                              std::to_string(*max_bytes) + " bytes");
     }
     return Run({"cat-file", "blob", entry.object_id});
   }

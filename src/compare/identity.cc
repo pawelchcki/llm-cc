@@ -97,6 +97,14 @@ void RequireExplicitScoring(const ScoringSettings& settings) {
   CheckDeviceReduction(settings);
 }
 
+void RequireBuiltInBackends(const ScoringSettings& settings) {
+  if (settings.backend_directory.has_value()) {
+    throw UsageError(
+        "comparisons use this build's own backends; --backend-dir and "
+        "LLM_CC_BACKEND_DIR are not part of the comparison fingerprint");
+  }
+}
+
 std::optional<double> ComparisonTau(const ScoringSettings& settings,
                                     std::string_view model_sha256) {
   if (settings.tau_percentile.has_value()) {

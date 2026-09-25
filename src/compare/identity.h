@@ -30,6 +30,11 @@ ModelPin ModelFromJson(const nlohmann::json& model);
 // an explicit backend, entropy reduction and flash-attention mode.
 void RequireExplicitScoring(const ScoringSettings& settings);
 
+// The fingerprint names this build's own backends, so a plugin directory
+// from --backend-dir or LLM_CC_BACKEND_DIR, which it cannot describe, is
+// refused. Throws UsageError.
+void RequireBuiltInBackends(const ScoringSettings& settings);
+
 // An explicit threshold wins, then the calibration of a registered model
 // with this digest, then the paper's value. Null for a percentile rule.
 std::optional<double> ComparisonTau(const ScoringSettings& settings,

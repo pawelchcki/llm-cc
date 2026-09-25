@@ -21,6 +21,7 @@
 #include "src/compare/parallel.h"
 #include "src/compare/plan.h"
 #include "src/git.h"
+#include "src/input_limits.h"
 
 namespace llmcc::compare {
 namespace {
@@ -103,8 +104,10 @@ json Prepare(const PrepareOptions& options) {
   if (options.cache_concurrency < 1 || options.cache_concurrency > 64) {
     throw std::invalid_argument("--cache-concurrency must be between 1 and 64");
   }
-  if (options.max_file_bytes == 0) {
-    throw std::invalid_argument("--max-file-bytes must be positive");
+  // Larger files could never be scored: the analyzer refuses them.
+  if (options.max_file_bytes == 0 || options.max_file_bytes > kMaxSourceBytes) {
+    throw std::invalid_argument("--max-file-bytes must be between 1 and " +
+                                std::to_string(kMaxSourceBytes));
   }
   const std::string fingerprint =
       Fingerprint(options.scorer, options.model, options.scoring);

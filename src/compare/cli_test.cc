@@ -196,5 +196,8 @@ int main() {  // NOLINT(bugprone-exception-escape)
                     "@" + scoring.string()}),
            2, "one model source");
   ExpectEq(Compare({"frobnicate"}), 2, "unknown commands are refused");
+  ExpectEq(Compare({"identity", "--model", model, "--backend-dir",
+                    root.string(), "@" + scoring.string()}),
+           2, "custom backend directories are outside the fingerprint");
   return 0;
 }

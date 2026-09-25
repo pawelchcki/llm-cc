@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import stat
 import uuid
 from pathlib import Path
 from typing import Any
@@ -18,22 +19,147 @@ class StoreError(RuntimeError):
     """A store could not be read or written."""
 
 
+# Descriptor-relative traversal needs POSIX *at() calls; elsewhere (Windows,
+# where creating symlinks needs privilege) objects are addressed by path.
+_DESCRIPTORS = (
+    os.open in os.supports_dir_fd
+    and os.mkdir in os.supports_dir_fd
+    and hasattr(os, "O_NOFOLLOW")
+    and hasattr(os, "O_DIRECTORY")
+)
+
+
 class FilesystemStore:
     """A small atomic object store rooted at a directory."""
 
     def __init__(self, root: str | os.PathLike[str]):
         self.root = Path(root)
 
-    def _path(self, key: str) -> Path:
-        if (
-            not key
-            or key.startswith("/")
-            or any(part in ("", ".", "..") for part in key.split("/"))
-        ):
+    def _parts(self, key: str) -> list[str]:
+        parts = key.split("/")
+        if not key or key.startswith("/") or any(p in ("", ".", "..") for p in parts):
             raise StoreError("invalid store key")
-        return self.root.joinpath(*key.split("/"))
+        return parts
+
+    def _path(self, key: str) -> Path:
+        return self.root.joinpath(*self._parts(key))
+
+    def _parent(self, key: str, create: bool) -> tuple[int | None, str]:
+        """The directory holding `key`, opened without following symlinks.
+
+        Another writer of a shared store could swap a key directory for a
+        symlink, so each directory is opened relative to the previous one with
+        O_NOFOLLOW, and the object is then read or replaced through the last
+        descriptor. With `create`, missing directories are made one level at
+        a time; otherwise a missing one returns no descriptor, a miss.
+        """
+        parts = self._parts(key)
+        flags = os.O_RDONLY | os.O_DIRECTORY
+        if create:
+            self.root.mkdir(parents=True, exist_ok=True)
+        try:
+            descriptor = os.open(self.root, flags)
+        except FileNotFoundError:
+            return None, parts[-1]
+        try:
+            for part in parts[:-1]:
+                try:
+                    child = os.open(part, flags | os.O_NOFOLLOW, dir_fd=descriptor)
+                except FileNotFoundError:
+                    if not create:
+                        os.close(descriptor)
+                        return None, parts[-1]
+                    try:
+                        os.mkdir(part, 0o777, dir_fd=descriptor)
+                    except FileExistsError:
+                        pass
+                    child = os.open(part, flags | os.O_NOFOLLOW, dir_fd=descriptor)
+                os.close(descriptor)
+                descriptor = child
+        except OSError as error:
+            os.close(descriptor)
+            raise StoreError(
+                "store object %s passes through a symlink or something other "
+                "than a directory: %s" % (key, error)
+            ) from error
+        return descriptor, parts[-1]
 
     def get(self, key: str) -> bytes | None:
+        if not _DESCRIPTORS:
+            return self._get_by_path(key)
+        directory, name = self._parent(key, create=False)
+        if directory is None:
+            return None
+        try:
+            # O_NONBLOCK keeps a planted FIFO from blocking the open.
+            descriptor = os.open(
+                name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
+            )
+        except FileNotFoundError:
+            return None
+        except OSError as error:
+            raise StoreError(
+                "cannot read store object %s: %s" % (key, error)
+            ) from error
+        finally:
+            os.close(directory)
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise StoreError("cannot read store object %s: not a file" % key)
+            with os.fdopen(descriptor, "rb") as stream:
+                descriptor = None
+                return stream.read()
+        except OSError as error:
+            raise StoreError(
+                "cannot read store object %s: %s" % (key, error)
+            ) from error
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+
+    def put(self, key: str, value: bytes) -> None:
+        if not _DESCRIPTORS:
+            return self._put_by_path(key, value)
+        directory, name = self._parent(key, create=True)
+        temporary = ".%s.%d.%s.tmp" % (name, os.getpid(), uuid.uuid4().hex)
+        created = False
+        try:
+            try:
+                existing = os.stat(name, dir_fd=directory, follow_symlinks=False)
+                if stat.S_ISLNK(existing.st_mode):
+                    raise StoreError("store object %s is a symlink" % key)
+            except FileNotFoundError:
+                pass
+            # O_EXCL avoids two writers mistaking the same temporary file for
+            # their own. Honor the deployment's umask/default ACL so a
+            # provisioned shared group can read objects another account wrote.
+            descriptor = os.open(
+                temporary,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o660,
+                dir_fd=directory,
+            )
+            created = True
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(value)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)
+            created = False
+            os.fsync(directory)
+        except OSError as error:
+            raise StoreError(
+                "cannot write store object %s: %s" % (key, error)
+            ) from error
+        finally:
+            if created:
+                try:
+                    os.unlink(temporary, dir_fd=directory)
+                except OSError:
+                    pass
+            os.close(directory)
+
+    def _get_by_path(self, key: str) -> bytes | None:
         try:
             return self._path(key).read_bytes()
         except FileNotFoundError:
@@ -43,7 +169,7 @@ class FilesystemStore:
                 "cannot read store object %s: %s" % (key, error)
             ) from error
 
-    def put(self, key: str, value: bytes) -> None:
+    def _put_by_path(self, key: str, value: bytes) -> None:
         destination = self._path(key)
         temporary = None
         try:
@@ -51,24 +177,12 @@ class FilesystemStore:
             temporary = destination.with_name(
                 ".%s.%d.%s.tmp" % (destination.name, os.getpid(), uuid.uuid4().hex)
             )
-            # O_EXCL avoids two writers mistaking the same temporary file for
-            # their own. replace is atomic on the same filesystem.
-            # Honor the deployment's umask/default ACL so a provisioned shared
-            # group can read objects published by another executor account.
             fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o660)
             with os.fdopen(fd, "wb") as stream:
                 stream.write(value)
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temporary, destination)
-            try:
-                directory_fd = os.open(destination.parent, os.O_RDONLY)
-                try:
-                    os.fsync(directory_fd)
-                finally:
-                    os.close(directory_fd)
-            except OSError:  # directory fsync is unavailable on some platforms
-                pass
         except OSError as error:
             raise StoreError(
                 "cannot write store object %s: %s" % (key, error)

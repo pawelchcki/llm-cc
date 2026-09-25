@@ -97,10 +97,8 @@ void Score(const WorkerOptions& options, const json& plan,
            const json& assignment, Clock::time_point deadline,
            ProgressReporter& progress, json& results,
            std::vector<std::string>& errors) {
-  ScoringSettings settings = SettingsFromScoring(plan["scoring"]);
-  if (options.backend_directory.has_value()) {
-    settings.backend_directory = options.backend_directory;
-  }
+  const ScoringSettings settings = SettingsFromScoring(plan["scoring"]);
+  RequireBuiltInBackends(settings);
   std::unique_ptr<cache_io::FileLock> lease;
   if (options.execution_host.has_value()) {
     ApplyEnvironment(
