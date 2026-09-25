@@ -354,13 +354,17 @@ def _always_excluded(path):
     return any(part in (".git", ".llm-cc-cache") for part in path.split("/"))
 
 
-def _in_virtual_environment(path, environments):
-    """Whether the root or a directory above `path` holds a pyvenv.cfg."""
-    if "" in environments:
+def _in_virtual_environment(path_bytes, environments):
+    """Whether the root or a directory above `path_bytes` holds a pyvenv.cfg.
+
+    Both are raw Git path bytes: an escaped spelling could name a different
+    directory.
+    """
+    if b"" in environments:
         return True
-    directories = path.split("/")[:-1]
+    directories = path_bytes.split(b"/")[:-1]
     return any(
-        "/".join(directories[: depth + 1]) in environments
+        b"/".join(directories[: depth + 1]) in environments
         for depth in range(len(directories))
     )
 
@@ -412,8 +416,7 @@ def inventory(repo, revision, fingerprint, rules=None, max_file_bytes=65536):
         if metadata.split()[0] in (b"100644", b"100755") and (
             path_bytes.rsplit(b"/", 1)[-1] == b"pyvenv.cfg"
         ):
-            text, printable = _path(path_bytes.rpartition(b"/")[0])
-            environments.add(printable if text is None else text)
+            environments.add(path_bytes.rpartition(b"/")[0])
     records = []
     blob_ids = []
     for entry in entries:
@@ -443,7 +446,7 @@ def inventory(repo, revision, fingerprint, rules=None, max_file_bytes=65536):
             record["reason"] = "unsupported"
         elif (
             _always_excluded(matched)
-            or _in_virtual_environment(matched, environments)
+            or _in_virtual_environment(path_bytes, environments)
             or _matches(matched, _patterns(rules, "exclude"))
         ):
             record["reason"] = "excluded"

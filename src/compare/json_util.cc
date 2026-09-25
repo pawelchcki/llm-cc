@@ -238,6 +238,26 @@ std::string CanonicalJson(const nlohmann::json& value) {
   return output;
 }
 
+std::string EscapeInvalidUtf8(std::string_view text) {
+  std::string output;
+  output.reserve(text.size());
+  std::size_t index = 0;
+  while (index < text.size()) {
+    const std::size_t start = index;
+    try {
+      static_cast<void>(DecodeUtf8(text, index));
+      output.append(text.substr(start, index - start));
+    } catch (const std::invalid_argument&) {
+      const auto byte = static_cast<unsigned char>(text[start]);
+      output += "\\x";
+      output.push_back(kHexDigits[byte >> 4U]);
+      output.push_back(kHexDigits[byte & 0xFU]);
+      index = start + 1;
+    }
+  }
+  return output;
+}
+
 std::string CanonicalDigest(const nlohmann::json& value) {
   return Sha256Hex(CanonicalJson(value));
 }

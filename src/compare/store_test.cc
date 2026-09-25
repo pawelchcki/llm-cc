@@ -288,6 +288,19 @@ int main() {  // NOLINT(bugprone-exception-escape)
                  .ObjectUrl("k"),
              std::string("https://s3.us-east-2.amazonaws.com/dotted.bucket/k"),
              "dotted buckets use path-style URLs");
+    ExpectEq(
+        llmcc::compare::S3Store(
+            {.bucket = "bucket#suffix", .region = "us-east-2"}, nullptr)
+            .ObjectUrl("k"),
+        std::string("https://s3.us-east-2.amazonaws.com/bucket%23suffix/k"),
+        "a bucket that is no hostname label stays in the path");
+    Expect(StoreFailure([] {
+             static_cast<void>(
+                 llmcc::compare::S3Store(
+                     {.bucket = "plain", .region = "evil.example#"}, nullptr)
+                     .ObjectUrl("k"));
+           }).find("invalid S3 region") != std::string::npos,
+           "a region that is no hostname label is rejected");
   }
 
   // 404 is a miss; authorization and exhausted retries are errors.

@@ -15,6 +15,10 @@ namespace llmcc::compare {
 // Throws std::invalid_argument for non-finite numbers or invalid UTF-8.
 std::string CanonicalJson(const nlohmann::json& value);
 
+// `text` with every byte outside valid UTF-8 spelled `\xhh`, so a message
+// built from paths or arguments always encodes.
+std::string EscapeInvalidUtf8(std::string_view text);
+
 // SHA-256 of the canonical encoding.
 std::string CanonicalDigest(const nlohmann::json& value);
 

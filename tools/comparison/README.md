@@ -271,7 +271,9 @@ The `Complexity comparison` BuildBuddy action runs on pull requests targeting
 `main` and on `main` pushes. This repository runs the checkout's own coordinator
 through [dogfood.sh](dogfood.sh), so pull requests exercise coordinator changes
 before the host bundle is refreshed; consuming repositories call the published
-launcher instead. The coordinator derives its own head, branch and default branch
+launcher instead. The script builds the checkout's `//:llm-cc` and exports it
+as `LLM_CC`, which renders reports unless the host configuration names its own
+`llm_cc`. The coordinator derives its own head, branch and default branch
 from the checkout, unwrapping BuildBuddy's synthetic merge commit to the actual
 pull-request head. PR updates compare committed source against the merge base of
 the actual target; `main` pushes populate the baseline cache and publish the

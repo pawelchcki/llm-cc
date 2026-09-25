@@ -171,6 +171,17 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(rows[".llm-cc-cache/cached.py"]["reason"], "excluded")
         self.assertEqual(rows["project-env/lib/site.py"]["reason"], "excluded")
         self.assertIsNone(rows[kelvin]["language"])
+        # An undecodable environment excludes nothing spelled like its escape.
+        invalid = self.repo / os.fsdecode(b"env\xff")
+        invalid.mkdir()
+        (invalid / "pyvenv.cfg").write_text("home = /usr\n")
+        (self.repo / "env\\xff").mkdir()
+        (self.repo / "env\\xff/tool.py").write_text("x = 1\n")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "escaped environment")
+        head = git(self.repo, "rev-parse", "HEAD")
+        rows = {x["path"]: x for x in inventory(self.repo, head, "f" * 64, rules)[0]}
+        self.assertTrue(rows["env\\\\xff/tool.py"]["scorable"])
         # A reversed range matches nothing, and its negation any character.
         self.assertEqual(_classify("q.cc", {"tests": ["[z-a].cc"]}), "runtime")
         self.assertEqual(_classify("q.cc", {"tests": ["[!z-a].cc"]}), "tests")

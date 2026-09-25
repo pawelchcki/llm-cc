@@ -2,6 +2,7 @@
 
 #include <curl/curl.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -158,6 +159,14 @@ std::string ErrorCode(std::string_view body) {
                                        end - start - kOpen.size()));
 }
 
+// Only these characters keep a name within one hostname label.
+bool HostLabel(std::string_view value) {
+  return !value.empty() && std::ranges::all_of(value, [](char character) {
+    return (character >= 'a' && character <= 'z') ||
+           (character >= '0' && character <= '9') || character == '-';
+  });
+}
+
 }  // namespace
 
 std::unique_ptr<HttpTransport> MakeCurlTransport() {
@@ -202,9 +211,12 @@ std::string S3Store::ObjectUrl(std::string_view key) const {
     return base + "/" + EncodeS3Key(settings_.bucket) + "/" +
            EncodeS3Key(object);
   }
-  // Virtual-hosted addressing unless the bucket name cannot be a hostname
-  // label under the wildcard certificate.
-  if (settings_.bucket.find('.') == std::string::npos) {
+  if (!HostLabel(settings_.region)) {
+    throw StoreError("invalid S3 region '" + settings_.region + "'");
+  }
+  // Virtual-hosted addressing only when the bucket is one hostname label
+  // under the wildcard certificate; any other name is escaped in the path.
+  if (HostLabel(settings_.bucket)) {
     return "https://" + settings_.bucket + ".s3." + settings_.region +
            ".amazonaws.com/" + EncodeS3Key(object);
   }
