@@ -343,6 +343,10 @@ llm-cc rules check rules.json      # validate a file
 llm-cc rules explain src/a.h tools/gen.py --format json
 ```
 
+A file named on the command line is analyzed even when `exclude` matches it,
+so `explain` reports it selected and marks it `excluded` (text: `selected
+(excluded when discovered)`) to show that directory discovery skips it.
+
 JSONL `file` events carry each file's `category`, `totals` adds per-category
 totals under `categories`, and the `configuration` event lists the rules file
 each Git root used.

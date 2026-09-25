@@ -1083,6 +1083,19 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(explanation["relative_path"] == "src/main.rs" &&
                           explanation["language"] == "rust",
                       "rules explain follows a symlink to its target");
+  // A named file is analyzed even when exclude matches it.
+  fs::create_directories(aliased / "third_party");
+  std::ofstream(aliased / "third_party/lib.rs") << "fn lib() {}\n";
+  const fs::path excluded = fs::path(test_tmpdir) / "explain-excluded.jsonl";
+  llmcc::test::ExpectEq(Run(Quote(binary) + " rules explain " +
+                            Quote(aliased / "third_party/lib.rs") +
+                            " --format json >" + Quote(excluded)),
+                        0, "rules explain accepts an excluded file");
+  const auto excluded_explanation = nlohmann::json::parse(Read(excluded));
+  llmcc::test::Expect(excluded_explanation["selected"] == true &&
+                          excluded_explanation["excluded"] == true &&
+                          excluded_explanation["reason"].is_null(),
+                      "rules explain selects a named excluded file");
 
   return 0;
 }

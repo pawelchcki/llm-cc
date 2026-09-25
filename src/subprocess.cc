@@ -161,7 +161,11 @@ std::string FindExecutable(const std::string& name) {
     struct stat status{};
     if (stat(candidate.c_str(), &status) == 0 && S_ISREG(status.st_mode) &&
         access(candidate.c_str(), X_OK) == 0) {
-      return candidate;
+      // A relative PATH entry names a directory under our cwd, not the
+      // child's after it changes directory.
+      return candidate.front() == '/'
+                 ? candidate
+                 : std::filesystem::absolute(candidate).string();
     }
     start = end + 1;
   }

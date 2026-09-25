@@ -27,8 +27,10 @@ constexpr std::string_view kUsage =
     "show prints the effective rules for the Git worktree containing PATH\n"
     "(default: the current directory). check validates a rules file and\n"
     "prints its effective rules. explain reports how each path would be\n"
-    "selected, which language scores it, and its category. .gitignore and\n"
-    "Python virtual environments are not consulted.\n";
+    "selected, which language scores it, and its category. A file named on\n"
+    "the command line is analyzed even when exclude matches it; explain\n"
+    "marks such a file as excluded when discovered in a directory.\n"
+    ".gitignore and Python virtual environments are not consulted.\n";
 
 class RulesUsageError : public std::invalid_argument {
  public:
@@ -111,6 +113,8 @@ struct Explanation {
   std::optional<std::string> rules_path;
   std::string relative;
   std::optional<std::string_view> reason;
+  // Discovery skips the path in a directory; naming it still analyzes it.
+  bool excluded = false;
   std::optional<Language> language;
   Category category = Category::kRuntime;
 };
@@ -151,9 +155,10 @@ Explanation Explain(std::string_view input) {
   result.category = rules.Classify(result.relative);
   if (AlwaysExcluded(result.relative)) {
     result.reason = "always-excluded";
-  } else if (rules.Excluded(result.relative)) {
-    result.reason = "excluded";
-  } else if (!result.language.has_value()) {
+    return result;
+  }
+  result.excluded = rules.Excluded(result.relative);
+  if (!result.language.has_value()) {
     result.reason = "unsupported";
   }
   return result;
@@ -195,6 +200,7 @@ int ExplainAll(const std::vector<std::string_view>& arguments) {
                              : nlohmann::json()},
           {"rules", OptionalJson(explanation.rules_path)},
           {"selected", !explanation.reason.has_value()},
+          {"excluded", explanation.excluded},
           {"reason", explanation.reason.has_value()
                          ? nlohmann::json(*explanation.reason)
                          : nlohmann::json()},
@@ -205,7 +211,9 @@ int ExplainAll(const std::vector<std::string_view>& arguments) {
     } else {
       std::cout << TerminalSafe(explanation.input) << '\t'
                 << (explanation.reason.has_value() ? *explanation.reason
-                                                   : "selected")
+                    : explanation.excluded
+                        ? "selected (excluded when discovered)"
+                        : "selected")
                 << '\t' << (language.empty() ? "-" : language) << '\t'
                 << CategoryName(explanation.category) << '\t'
                 << TerminalSafe(rules_source) << '\n';

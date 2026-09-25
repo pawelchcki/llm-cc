@@ -81,12 +81,16 @@ supported language) and `paths` (an ordered list of
 `{pattern: <glob>, language: <supported>}` objects), 512 patterns in total
 across the glob lists and `paths`, at most 64 KiB canonical. Language
 resolution takes the first matching `paths` rule, then `extensions`, then the
-built-in extension table; patterns match the full repository path with
-`fnmatchcase`. The resolved language is part of the file key, so the same bytes
-under two overridden directories are separate cache entries. Symlinks and
+built-in extension table. Patterns match the full repository path with
+llm-cc's segment-aware glob, not `fnmatch`: anchored at the root and
+case-sensitive, `*`, `?` and `[...]` never cross `/`, a whole-segment `**`
+matches zero or more directories and a trailing `/**` one or more segments
+(the README's rules section is normative). The resolved language is part of
+the file key, so the same bytes under two overridden directories are separate cache entries. Symlinks and
 submodules keep their unscorable reason whatever rule matches them.
-`prepare` reads `.llm-cc/comparison-rules.json` from the **target** commit's tree
-when present, so a pull request cannot reclassify its own files; invalid
+`prepare` reads `.llm-cc/rules.json`, then the legacy
+`.llm-cc/comparison-rules.json`, from the **target** commit's tree when
+present, so a pull request cannot reclassify its own files; invalid
 repository rules fail the run instead of falling back to host rules.
 `presentation.report_links` holds already-substituted https URLs; the BuildBuddy
 coordinator validates the templates and URL-quotes `{repository}`,
@@ -119,8 +123,10 @@ results:{key:result}, errors:[string], elapsed_seconds}`. Always write
 
 Preparation entry `prepare(repo, head, target, identity, profile, rules,
 cache, output_dir, max_workers=4,
-repository_rules_path=".llm-cc/comparison-rules.json", presentation=None,
-cache_concurrency=8)` returns plan and writes plan.json/blobs.
+repository_rules_path=(".llm-cc/rules.json", ".llm-cc/comparison-rules.json"),
+presentation=None, cache_concurrency=8)` returns plan and writes
+plan.json/blobs. `repository_rules_path` is one path or a sequence tried in
+order; the first present file wins.
 `cache_concurrency` (1-64) bounds parallel result-cache reads. The plan is
 assembled from sorted keys, so it is byte-identical at any bound; the first
 read error cancels queued reads and fails the run.
