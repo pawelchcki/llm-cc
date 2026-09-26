@@ -24,13 +24,25 @@ bazel run //tools/comparison:worker -- \
   --installed-root /opt/llm-cc
 ```
 
-The CPU aggregation stage accepts every produced worker artifact:
+The CPU aggregation stage is `llm-cc compare aggregate`, from the same llm-cc
+build as the scorer. It accepts every produced worker artifact:
 
 ```sh
-bazel run //tools/comparison:aggregate -- \
+llm-cc compare aggregate \
   --plan artifacts/plan.json --worker artifacts/worker-0.json \
   --output-dir artifacts/report
 ```
+
+`llm-cc compare store get|put KEY --cache LOCATION` reads or writes one object
+of a filesystem or `s3://bucket/prefix` store for operators. S3 requests are
+signed with SigV4 from `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and
+`AWS_SESSION_TOKEN`; `--store-options` may set `endpoint_url` and
+`region_name`, which otherwise come from `AWS_ENDPOINT_URL[_S3]` and
+`AWS_REGION`.
+
+Each `--error MESSAGE` turns the report into a failure; without `--plan`,
+`--identity FILE` names the pipeline the failure belongs to. The Python stages
+that write failure reports run `$LLM_CC`, or `llm-cc` from `PATH`.
 
 For local execution, `//tools/comparison:compare` accepts the union of the
 prepare and worker flags and runs each planned worker sequentially. Cache
@@ -259,7 +271,9 @@ The `Complexity comparison` BuildBuddy action runs on pull requests targeting
 `main` and on `main` pushes. This repository runs the checkout's own coordinator
 through [dogfood.sh](dogfood.sh), so pull requests exercise coordinator changes
 before the host bundle is refreshed; consuming repositories call the published
-launcher instead. The coordinator derives its own head, branch and default branch
+launcher instead. The script builds the checkout's `//:llm-cc` and exports it
+as `LLM_CC`, which renders reports unless the host configuration names its own
+`llm_cc`. The coordinator derives its own head, branch and default branch
 from the checkout, unwrapping BuildBuddy's synthetic merge commit to the actual
 pull-request head. PR updates compare committed source against the merge base of
 the actual target; `main` pushes populate the baseline cache and publish the

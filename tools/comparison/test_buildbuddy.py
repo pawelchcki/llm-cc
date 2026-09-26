@@ -26,7 +26,7 @@ from .common import (
     write_json,
 )
 from .github import GitHub
-from .pipeline import failure_report
+from .common import aggregate_report
 
 
 class FakeAPI:
@@ -416,7 +416,7 @@ class BuildBuddyTest(unittest.TestCase):
         self.assertIsNone(github.discover("a" * 40, "feature", "main"))
 
     def test_failure_envelope_matches_bounded_comment(self):
-        failure_report(self.root, self.identity, "0" * 64, ["analysis failed"])
+        aggregate_report(self.root, identity=self.identity, errors=["analysis failed"])
         publication = json.loads((self.root / "publication.json").read_text())
         body = (self.root / "comment.md").read_bytes()
         self.assertEqual(

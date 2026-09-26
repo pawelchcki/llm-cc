@@ -130,9 +130,11 @@ order; the first present file wins.
 `cache_concurrency` (1-64) bounds parallel result-cache reads. The plan is
 assembled from sorted keys, so it is byte-identical at any bound; the first
 read error cancels queued reads and fails the run.
-Aggregation entry `aggregate(plan_path, worker_paths, output_dir)` validates
-exact per-worker coverage, writes report.json, report.md, comment.md,
-publication.json, baseline.md and baseline.json, and returns report dict.
+Aggregation is `llm-cc compare aggregate --plan PLAN [--worker FILE]...
+--output-dir DIR [--identity FILE] [--error MESSAGE]...`. It validates exact
+per-worker coverage and writes report.json, report.md, comment.md,
+publication.json, baseline.md and baseline.json; `--error` makes a failure
+report, keeping any aggregated plan in analysis-report.json.
 
 Report `report.json` stays `schema_version: 1`. Alongside the existing keys it
 carries `rankings: {base: [entry], head: [entry]}` where an entry is
@@ -157,8 +159,8 @@ unmeasured reasons. On a pull-request run these describe the PR head; the
 default-branch copies retained by the publisher are the repository baseline.
 
 Failure reports are mandatory, scores advisory.
-CLI `python -m tools.comparison {prepare,worker,aggregate,compare}` exposes the
-same stages through independently schedulable commands; `discover`,
+CLI `python -m tools.comparison {prepare,worker,compare}` and `llm-cc compare
+aggregate` expose the same stages through independently schedulable commands; `discover`,
 `store-report`, `publish` and `ci {gitlab-child,github-matrix}` complete a CI
 pipeline around them (see [CI_RECIPE.md](CI_RECIPE.md)).
 

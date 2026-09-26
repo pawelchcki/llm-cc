@@ -21,7 +21,7 @@ from unittest import mock
 from .__main__ import main
 from .cache import FilesystemStore
 from .ci import gitlab_child, gitlab_skipped, load_config, write_yaml
-from .common import pipeline_prefix, read_json, write_json
+from .common import llm_cc, pipeline_prefix, read_json, write_json
 from .fixtures import FakeGitHub, commit_files, git, synthetic_scorer
 from .publish import marker_key
 
@@ -73,6 +73,7 @@ class RecipeTest(unittest.TestCase):
                     "model": str(model),
                 },
                 "gitlab": {"cpu_tags": ["cpu"], "gpu_tags": ["gpu"]},
+                "llm_cc": llm_cc(),
             },
         )
         self.store = self.root / "store"

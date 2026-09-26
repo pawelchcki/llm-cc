@@ -21,6 +21,7 @@ import urllib.parse
 
 from .cache import ResultCache, open_store
 from .common import (
+    aggregate_report,
     canonical_bytes,
     digest,
     pipeline_prefix,
@@ -31,7 +32,7 @@ from .common import (
 from .deadline import Deadline, DeadlineExceeded
 from .discover import discover_identity, fetch_target, new_identity
 from .github import GitHub, api_request
-from .pipeline import REPOSITORY_RULES_PATH, aggregate, prepare
+from .pipeline import REPOSITORY_RULES_PATH, prepare
 from .publish import store_report
 
 
@@ -307,8 +308,6 @@ def run_prepared(
     current_check_seconds=0,
 ):
     """Schedule exactly the miss plan, retain failures, and always aggregate."""
-    from .pipeline import failure_report
-
     plan = read_json(plan_path)
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
@@ -388,15 +387,15 @@ def run_prepared(
                 errors.append(f"could not cancel worker {invocation}: {error}")
         for sig, handler in previous.items():
             signal.signal(sig, handler)
-    report = aggregate(plan_path, artifacts, output)
-    if errors:
-        write_json(output / "analysis-report.json", report)
-        report = failure_report(
-            output,
-            plan["identity"],
-            plan["fingerprint"],
-            errors + report.get("errors", []),
-        )
+    # With errors, llm-cc keeps the analysis in analysis-report.json and
+    # publishes a failure carrying both sets of errors.
+    report = aggregate_report(
+        output,
+        plan=plan_path,
+        workers=artifacts,
+        errors=errors,
+        executable=config.get("llm_cc"),
+    )
     store_report(store, output, plan["identity"])
     return report
 
@@ -499,11 +498,10 @@ def remote_worker(args):
 
 
 def coordinate(args):
-    from .pipeline import failure_report
-
     output = Path(args.output_dir)
     identity = new_identity(args.repository, args.pipeline_id, args.head)
-    fingerprint = "0" * 64
+    config = {}
+    fingerprint = None
     try:
         config = read_json(args.config)
         github = GitHub(
@@ -561,7 +559,13 @@ def coordinate(args):
         )
         return 1 if report["status"] == "failed" else 0
     except Exception as error:
-        failure_report(output, identity, fingerprint, [str(error)])
+        aggregate_report(
+            output,
+            identity=identity,
+            errors=[str(error)],
+            executable=config.get("llm_cc") if isinstance(config, dict) else None,
+            fingerprint=fingerprint,
+        )
         return 1
 
 

@@ -80,6 +80,7 @@ class GitLabChildTest(unittest.TestCase):
                     sorted(workers),
                 )
                 script = "\n".join(aggregate["script"])
+                self.assertIn("llm-cc compare aggregate --plan", script)
                 self.assertEqual(script.count("--worker "), count)
                 self.assertIn("store-report --cache s3://bucket/llm-cc", script)
                 self.assertTrue(aggregate["script"][-1].startswith("exit"))

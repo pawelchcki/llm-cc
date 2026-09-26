@@ -28,6 +28,15 @@ else
   echo "Cannot resolve comparison runfiles: $entry" >&2
   exit 1
 fi
+# Tests aggregate reports with a runfile llm-cc; resolve it like the entry.
+if [[ -n "${LLM_CC_RLOCATION:-}" && -z "${LLM_CC:-}" ]]; then
+  if [[ -f "$runfiles/$LLM_CC_RLOCATION" ]]; then
+    export LLM_CC="$runfiles/$LLM_CC_RLOCATION"
+  elif [[ -n "${RUNFILES_MANIFEST_FILE:-}" ]]; then
+    LLM_CC="$(grep -m1 "^$LLM_CC_RLOCATION " "$RUNFILES_MANIFEST_FILE" | cut -d' ' -f2-)"
+    export LLM_CC
+  fi
+fi
 package="$(cd -- "$(dirname -- "$entry")" && pwd)"
 root="$(dirname -- "$(dirname -- "$package")")"
 export PYTHONPATH="$root${PYTHONPATH:+:$PYTHONPATH}"

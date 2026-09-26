@@ -354,13 +354,17 @@ def _always_excluded(path):
     return any(part in (".git", ".llm-cc-cache") for part in path.split("/"))
 
 
-def _in_virtual_environment(path, environments):
-    """Whether the root or a directory above `path` holds a pyvenv.cfg."""
-    if "" in environments:
+def _in_virtual_environment(path_bytes, environments):
+    """Whether the root or a directory above `path_bytes` holds a pyvenv.cfg.
+
+    Both are raw Git path bytes: an escaped spelling could name a different
+    directory.
+    """
+    if b"" in environments:
         return True
-    directories = path.split("/")[:-1]
+    directories = path_bytes.split(b"/")[:-1]
     return any(
-        "/".join(directories[: depth + 1]) in environments
+        b"/".join(directories[: depth + 1]) in environments
         for depth in range(len(directories))
     )
 
@@ -386,6 +390,21 @@ def resolve_language(path, rules):
     return (LANGUAGES | rules.get("extensions", {})).get(_extension(path))
 
 
+def _path(path_bytes):
+    """A Git path as rules match it, and as a plan records it.
+
+    Recorded paths spell `\\` as `\\\\` and each undecodable byte as `\\xHH`,
+    as llm-cc does, so distinct paths stay distinct and plans valid JSON. A path
+    that is not UTF-8 has no text to match and is never scored.
+    """
+    try:
+        text = path_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        escaped = path_bytes.replace(b"\\", b"\\\\")
+        return None, escaped.decode("utf-8", "backslashreplace")
+    return text, text.replace("\\", "\\\\")
+
+
 def inventory(repo, revision, fingerprint, rules=None, max_file_bytes=65536):
     rules = validate_rules(rules or {})
     raw = _git(repo, ["ls-tree", "-rlz", "--full-tree", revision])
@@ -397,20 +416,19 @@ def inventory(repo, revision, fingerprint, rules=None, max_file_bytes=65536):
         if metadata.split()[0] in (b"100644", b"100755") and (
             path_bytes.rsplit(b"/", 1)[-1] == b"pyvenv.cfg"
         ):
-            environments.add(
-                path_bytes.rpartition(b"/")[0].decode("utf-8", "surrogateescape")
-            )
+            environments.add(path_bytes.rpartition(b"/")[0])
     records = []
     blob_ids = []
     for entry in entries:
         metadata, path_bytes = entry.split(b"\t", 1)
         mode, kind, object_id, size_text = metadata.split()
-        path = path_bytes.decode("utf-8", "surrogateescape")
+        text, path = _path(path_bytes)
+        matched = path if text is None else text
         size = None if size_text == b"-" else int(size_text)
         record = {
             "path": path,
             "language": None,
-            "category": _classify(path, rules),
+            "category": _classify(matched, rules),
             "size": size,
             "content_sha256": None,
             "key": None,
@@ -418,18 +436,18 @@ def inventory(repo, revision, fingerprint, rules=None, max_file_bytes=65536):
             "reason": None,
             "_object": object_id.decode("ascii"),
         }
-        if kind == b"blob":
-            record["language"] = resolve_language(path, rules)
+        if kind == b"blob" and text is not None:
+            record["language"] = resolve_language(text, rules)
         if mode == b"160000" or kind == b"commit":
             record["reason"] = "submodule"
         elif mode == b"120000":
             record["reason"] = "symlink"
-        elif kind != b"blob":
+        elif kind != b"blob" or text is None:
             record["reason"] = "unsupported"
         elif (
-            _always_excluded(path)
-            or _in_virtual_environment(path, environments)
-            or _matches(path, _patterns(rules, "exclude"))
+            _always_excluded(matched)
+            or _in_virtual_environment(path_bytes, environments)
+            or _matches(matched, _patterns(rules, "exclude"))
         ):
             record["reason"] = "excluded"
         elif record["language"] is None:
@@ -505,7 +523,7 @@ def changes(repo, base, head):
             old = new
 
         def decode(p):
-            return p.decode("utf-8", "surrogateescape")
+            return _path(p)[1]
 
         result.append(
             {

@@ -244,6 +244,8 @@ def configure(args):
         "execution_bundle": str(bundle_path),
         "execution_bundle_sha256": checksum,
         "scorer": str(installed_root / "bin/llm-cc"),
+        # The coordinator aggregates reports with the same pinned llm-cc.
+        "llm_cc": str(installed_root / "bin/llm-cc"),
         "installed_root": str(installed_root),
         "model": str(model),
         "worker_secret_env": [],

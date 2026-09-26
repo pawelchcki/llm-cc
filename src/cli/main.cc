@@ -38,6 +38,7 @@
 #include "src/backend_fetch.h"
 #include "src/build_info.h"
 #include "src/cache.h"
+#include "src/compare/cli.h"
 #include "src/download.h"
 #include "src/entropy_cache.h"
 #include "src/input_limits.h"
@@ -103,7 +104,8 @@ constexpr std::string_view kUsageBeforeContext =
     "      [--no-download] [--progress auto|always|never]\n"
     "  llm-cc cache status|prune [PATH] [--format text|json]\n"
     "  llm-cc cache clear [PATH] [--legacy|--all] [--format text|json]\n"
-    "  llm-cc rules show [PATH]|check FILE|explain PATH...\n\n"
+    "  llm-cc rules show [PATH]|check FILE|explain PATH...\n"
+    "  llm-cc compare aggregate --output-dir DIR [--plan PLAN] ...\n\n"
     "Analysis options:\n"
     "  --lang NAME          infer per file with auto, or force every input to\n"
     "                       rust, c, cpp, java, python, go, javascript, or\n"
@@ -1216,6 +1218,8 @@ int Main(int argc, char** argv) {
       result = RunCache(argc, argv);
     } else if (argc > 1 && std::string_view(argv[1]) == "rules") {
       result = llmcc::RunRulesCommand(argc - 1, argv + 1);
+    } else if (argc > 1 && std::string_view(argv[1]) == "compare") {
+      result = llmcc::compare::RunCompareCommand(argc - 1, argv + 1);
     } else {
       const auto arguments = ParseAnalyzeArguments(argc, argv);
       try {

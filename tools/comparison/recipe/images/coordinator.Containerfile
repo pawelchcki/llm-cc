@@ -1,13 +1,19 @@
-# CPU coordinator image: Git, the comparison package, object-store support and
-# the installed-build identity, which is the scoring profile generated from the
-# pushed scorer image. It holds no weights and no scorer.
+# CPU coordinator image: Git, the comparison package, object-store support,
+# the scorer's llm-cc executable for report aggregation, and the installed-build
+# identity, which is the scoring profile generated from the pushed scorer
+# image. It holds no weights and runs no inference.
 #
 # build.sh assembles the build context: tools/ from the pinned llm-cc commit,
 # the generated profile.json and the default rules.json. One coordinator
 # digest therefore pins the comparison code, the scoring contract and, through
 # the profile, the exact GPU image every worker must run.
-# Pin PYTHON_IMAGE by digest in production.
+# Pin PYTHON_IMAGE by digest in production. SCORER_IMAGE is the pushed scorer
+# by digest: its llm-cc aggregates and renders reports, so both images run one
+# build of the comparison core.
 ARG PYTHON_IMAGE=docker.io/library/python:3.12-slim
+ARG SCORER_IMAGE
+FROM ${SCORER_IMAGE} AS scorer
+
 FROM ${PYTHON_IMAGE}
 ARG LLM_CC_COMMIT
 # Publication markers use conditional PutObject (If-Match/If-None-Match),
@@ -25,6 +31,7 @@ RUN apt-get update \
  && git config --system --add safe.directory '*' \
  && pip install --no-cache-dir "boto3==${BOTO3_VERSION}" \
  && useradd --uid 10001 --user-group --home-dir /home/llm-cc --create-home llm-cc
+COPY --from=scorer /opt/llm-cc/bin/llm-cc /usr/local/bin/llm-cc
 COPY tools/ /opt/llm-cc-comparison/tools/
 COPY profile.json rules.json /opt/llm-cc-comparison/
 # Jobs run `python3 -m tools.comparison` inside the project checkout.
