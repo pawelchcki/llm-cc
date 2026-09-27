@@ -241,7 +241,10 @@ int main() {  // NOLINT(bugprone-exception-escape)
   // Name-status changes with rename detection.
   std::map<std::string, llmcc::git::Change> changes;
   for (const auto& change : repository.Diff(base, head)) {
-    changes.emplace(change.new_path.value_or(*change.old_path), change);
+    // value_or would dereference old_path even for an added file.
+    changes.emplace(
+        change.new_path.has_value() ? *change.new_path : *change.old_path,
+        change);
   }
   Expect(changes.at("tests/move.cc").status.starts_with("R") &&
              changes.at("tests/move.cc").old_path == "move.cc",
