@@ -215,5 +215,24 @@ int main() {  // NOLINT(bugprone-exception-escape)
     } catch (const std::invalid_argument&) {  // NOLINT(bugprone-empty-catch)
     }
   }
+
+  // The digest covers what can change a result, not where the GPU sits.
+  const std::string digest = llmcc::compare::ExecutionHostDigest(
+      llmcc::compare::ParseExecutionHost(fake.Host()));
+  const auto digest_with = [&](const std::string& field, const json& value) {
+    json host = fake.Host();
+    host[field] = value;
+    return llmcc::compare::ExecutionHostDigest(
+        llmcc::compare::ParseExecutionHost(host));
+  };
+  Expect(digest_with("gpu_pci_address", "0000:04:00.0") == digest &&
+             digest_with("resource_id", "radeon-1") == digest &&
+             digest_with("gpu_vram_bytes_min", std::uint64_t{1}) == digest,
+         "moving or relabeling the GPU keeps the host digest");
+  Expect(digest_with("gpu_arch", "gfx1101") != digest &&
+             digest_with("runtime_files",
+                         {{fake.Host()["runtime_files"].begin().key(),
+                           std::string(64, 'd')}}) != digest,
+         "another architecture or runtime changes the host digest");
   return 0;
 }

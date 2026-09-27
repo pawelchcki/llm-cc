@@ -161,7 +161,7 @@ def coordinator_request(config, config_path, repository, head, branch, default_b
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("submit", "run-coordinator"))
-    parser.add_argument("--config", default="/var/lib/llm-cc/comparison.json")
+    parser.add_argument("--config", default="/var/lib/llm-cc/comparison-v2.json")
     parser.add_argument("--repository", required=True)
     parser.add_argument("--head")
     parser.add_argument("--branch")

@@ -49,7 +49,8 @@ constexpr std::string_view kUsage =
     "      [SCORING]\n"
     "  llm-cc compare prepare --head REV --target REV --identity FILE\n"
     "      --output-dir DIR [--repo DIR] [--cache LOCATION]\n"
-    "      [--store-options FILE] [--max-workers N] [PLANNING] MODEL SCORING\n"
+    "      [--store-options FILE] [--max-workers N] [--execution-host FILE]\n"
+    "      [PLANNING] MODEL SCORING\n"
     "  llm-cc compare worker --plan PLAN --worker-id N --output-dir DIR\n"
     "      --cache LOCATION [--store-options FILE]\n"
     "      [--model GGUF | --model-name NAME]\n"
@@ -57,7 +58,7 @@ constexpr std::string_view kUsage =
     "  llm-cc compare aggregate --output-dir DIR [--plan PLAN] "
     "[--worker FILE]...\n"
     "      [--identity FILE] [--fingerprint HEX] [--error MESSAGE]...\n"
-    "  llm-cc compare identity MODEL SCORING\n"
+    "  llm-cc compare identity [--execution-host FILE] MODEL SCORING\n"
     "  llm-cc compare store get KEY --cache LOCATION [--store-options FILE]\n"
     "      [--output FILE]\n"
     "  llm-cc compare store put KEY --cache LOCATION [--store-options FILE]\n"
@@ -92,7 +93,10 @@ constexpr std::string_view kUsage =
     "An argument @FILE in place of an option reads further arguments from\n"
     "FILE, one per line; blank lines and lines starting with # are ignored.\n\n"
     "worker --execution-host FILE verifies a bare-metal AMD GPU host and\n"
-    "holds its lock while scoring. The deadline defaults to 6600 seconds.\n\n"
+    "holds its lock while scoring. The deadline defaults to 6600 seconds.\n"
+    "prepare and identity take the same --execution-host FILE: its GPU\n"
+    "architecture and runtime checksums join the scorer identity, and a\n"
+    "worker refuses a plan made for another host.\n\n"
     "store reads or writes one object of a filesystem or s3://bucket/prefix\n"
     "store, using standard output and input by default. A missing object\n"
     "exits 1. S3 credentials come from AWS_ACCESS_KEY_ID,\n"
@@ -269,6 +273,8 @@ std::string_view CommandName(Command command) {
 struct PlanArguments {
   PrepareOptions prepare;
   std::optional<fs::path> identity;
+  // The bare host whose workers will score the plan.
+  std::optional<fs::path> execution_host;
   std::string cache;
   std::optional<fs::path> store_options;
   std::optional<fs::path> presentation;
@@ -337,7 +343,9 @@ PlanArguments ParsePlanArguments(const std::vector<std::string_view>& args,
          ParsePlanning(parsed, option, arguments))) {
       continue;
     }
-    if (command == Command::kRun && option == "--deadline-seconds") {
+    if (command != Command::kRun && option == "--execution-host") {
+      parsed.execution_host = fs::u8path(arguments.Value(option));
+    } else if (command == Command::kRun && option == "--deadline-seconds") {
       parsed.deadline = ParseDeadline(option, arguments);
     } else if (command == Command::kRun && option == "--progress") {
       parsed.progress = ParseProgress(option, arguments);
@@ -411,9 +419,14 @@ ResolvedScoring ResolveScoring(const CompareRuntime& runtime,
     }
     RequireExplicitScoring(settings);
   }
+  const std::optional<std::string> host =
+      parsed.execution_host.has_value()
+          ? std::optional(ExecutionHostDigest(
+                ParseExecutionHost(ReadJsonFile(*parsed.execution_host))))
+          : std::nullopt;
   return {
       .settings = settings,
-      .scorer = ScorerJson(runtime.inference_abi),
+      .scorer = ScorerJson(runtime.inference_abi, host),
       .model = ModelJson(pin),
       .scoring = ScoringJson(settings, ComparisonTau(settings, pin.sha256))};
 }

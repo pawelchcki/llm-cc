@@ -205,7 +205,11 @@ json RunWorker(const WorkerOptions& options) {
     ValidatePlan(plan);
     artifact["identity"] = plan["identity"];
     artifact["fingerprint"] = plan["fingerprint"];
-    const json running = ScorerJson(options.inference_abi);
+    const json running = ScorerJson(
+        options.inference_abi,
+        options.execution_host.has_value()
+            ? std::optional(ExecutionHostDigest(*options.execution_host))
+            : std::nullopt);
     if (plan["scorer"] != running) {
       throw WorkerAbort(DescribeScorerMismatch(plan["scorer"], running));
     }

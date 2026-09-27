@@ -335,7 +335,7 @@ class BazziteSetupTest(unittest.TestCase):
                 lock.assert_called_once_with(
                     Path("/var/lib/llm-cc"), "bazzite-radeon-0", None
                 )
-            config = json.loads(published["/var/lib/llm-cc/comparison.json"])
+            config = json.loads(published["/var/lib/llm-cc/comparison-v2.json"])
             generation = Path(config["scoring_args"]).parent
             self.assertEqual(
                 json.loads(published[str(generation / "comparison.json")]), config
@@ -345,6 +345,8 @@ class BazziteSetupTest(unittest.TestCase):
             self.assertEqual(
                 identity["model"]["sha256"], hashlib.sha256(b"weights").hexdigest()
             )
+            # The recorded identity is the one prepare derives for this host.
+            self.assertRegex(identity["scorer"]["execution_host"], "^[0-9a-f]{64}$")
             # Coordinators pin the weights instead of hashing them again.
             self.assertEqual(
                 published[str(generation / "scoring.args")].decode().splitlines(),

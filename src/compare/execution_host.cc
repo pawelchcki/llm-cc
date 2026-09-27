@@ -147,6 +147,12 @@ ExecutionHost ParseExecutionHost(const json& host) {
   return result;
 }
 
+std::string ExecutionHostDigest(const ExecutionHost& host) {
+  return CanonicalDigest({{"gpu_vendor", "amd"},
+                          {"gpu_arch", host.architecture},
+                          {"runtime_files", host.runtime_files}});
+}
+
 std::vector<std::pair<std::string, std::string>> VerifyExecutionHost(
     const ExecutionHost& host, const HostPaths& paths) {
 #ifdef __linux__

@@ -197,16 +197,21 @@ def verify_assets(installed_root, model):
     return llm_cc, model
 
 
-def scoring_identity(llm_cc, model, scoring):
-    """{scorer, model, scoring, fingerprint} as the pinned llm-cc derives it."""
+def scoring_identity(llm_cc, model, scoring, host):
+    """{scorer, model, scoring, fingerprint} as the pinned llm-cc derives it
+    for workers on `host`."""
     with tempfile.TemporaryDirectory(prefix="llm-cc-setup-") as temporary:
         arguments = Path(temporary) / "scoring.args"
         arguments.write_text("".join(line + "\n" for line in scoring))
+        host_path = Path(temporary) / "execution-host.json"
+        host_path.write_bytes(canonical_bytes(host))
         completed = subprocess.run(
             [
                 str(llm_cc),
                 "compare",
                 "identity",
+                "--execution-host",
+                str(host_path),
                 "--model",
                 str(model),
                 "@" + str(arguments),
@@ -273,7 +278,7 @@ def configure(args):
     scoring = read_scoring_args(args.scoring_args)
     if any(line.startswith(("@", "--model")) for line in scoring):
         raise ValueError("scoring arguments cannot name models or response files")
-    identity = scoring_identity(llm_cc, model, scoring)
+    identity = scoring_identity(llm_cc, model, scoring, host)
     # Coordinators pin the weights by digest instead of rehashing them.
     scoring += [
         "--model-sha256",
@@ -348,7 +353,8 @@ def configure(args):
     atomic_publish(generation / "execution-host.json", canonical_bytes(host) + b"\n")
     atomic_publish(generation / "identity.json", canonical_bytes(identity) + b"\n")
     atomic_publish(generation / "comparison.json", canonical_bytes(config) + b"\n")
-    output = Path(args.output) if args.output else assets / "comparison.json"
+    # Beside, not over, the schema 1 comparison.json that older checkouts read.
+    output = Path(args.output) if args.output else assets / "comparison-v2.json"
     atomic_publish(output, canonical_bytes(config) + b"\n")
     # The launcher is the consumer-facing entry point; publish it only once its
     # pinned package and immutable generation are already on disk.

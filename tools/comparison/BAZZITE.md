@@ -66,7 +66,9 @@ scoring contract, then creates:
   `--model-sha256` and `--model-bytes`, so coordinators never rehash the
   model), `execution-host.json`, `identity.json` (scorer, model, scoring and
   fingerprint) and the nonsecret comparison settings.
-- `comparison.json`: atomically published current settings.
+- `comparison-v2.json`: atomically published current settings. Schema 1
+  checkouts read `comparison.json`, which setup leaves alone, so both
+  pipelines can run on one host while branches migrate.
 - `locks/bazzite-radeon-0.lock`: a root-owned group-writable persistent lock beneath
   root-owned directories. Keep this inode in place while workers may be running.
 - `bin/llm-cc-coordinate`: a mode 0755 launcher that execs the verified package
@@ -107,7 +109,7 @@ mechanism, then run:
 
 ```sh
 python3 -m tools.comparison.submit_bazzite submit \
-  --config /var/lib/llm-cc/comparison.json \
+  --config /var/lib/llm-cc/comparison-v2.json \
   --repository pawelchcki/llm-cc
 ```
 
@@ -139,7 +141,7 @@ command from the implementation checkout is:
 
 ```sh
 python3 -m tools.comparison.buildbuddy coordinate \
-  --config /var/lib/llm-cc/comparison.json \
+  --config /var/lib/llm-cc/comparison-v2.json \
   --repository pawelchcki/llm-cc \
   --head "$(git rev-parse HEAD)" --branch "$(git branch --show-current)" \
   --pipeline-id "$(python3 -c 'from tools.comparison.submit_bazzite import parent_invocation_id; print(parent_invocation_id())')" \

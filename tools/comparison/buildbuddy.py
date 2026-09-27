@@ -573,6 +573,10 @@ def prepare_plan(config, repo, head, identity, output):
     ]
     if config.get("default_rules"):
         command += ["--default-rules", config["default_rules"]]
+    # The workers' host joins the scorer identity, so results from another
+    # GPU architecture or runtime never share cache keys.
+    execution_host(config)
+    command += ["--execution-host", config["execution_host"]]
     with tempfile.TemporaryDirectory(prefix="llm-cc-prepare-") as temporary:
         presentation = Path(temporary) / "presentation.json"
         write_json(presentation, {"report_links": report_links(config, identity)})

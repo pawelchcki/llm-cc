@@ -57,27 +57,41 @@ bool IsHexDigest(std::string_view value, std::size_t length) {
          });
 }
 
-json ScorerJson(std::string_view inference_abi) {
+json ScorerJson(std::string_view inference_abi,
+                const std::optional<std::string>& execution_host) {
   const std::string_view commit = build_info::GitSha();
-  return {{"version", build_info::Version()},
-          {"commit", commit.empty() ? json() : json(commit)},
-          {"executable",
-           commit.empty() ? json(RunningExecutableIdentity()) : json()},
-          {"backend_configuration", build_info::BackendConfiguration()},
-          {"inference_abi", inference_abi},
-          {"analysis_version", kAnalysisVersion}};
+  json scorer = {{"version", build_info::Version()},
+                 {"commit", commit.empty() ? json() : json(commit)},
+                 {"executable",
+                  commit.empty() ? json(RunningExecutableIdentity()) : json()},
+                 {"backend_configuration", build_info::BackendConfiguration()},
+                 {"inference_abi", inference_abi},
+                 {"analysis_version", kAnalysisVersion}};
+  // Absent rather than null, so fingerprints without a host stay unchanged.
+  if (execution_host.has_value()) {
+    scorer["execution_host"] = *execution_host;
+  }
+  return scorer;
 }
 
 void ValidateScorer(const json& scorer) {
   static constexpr std::array<const char*, 6> kFields = {
       "version",       "commit",          "executable", "backend_configuration",
       "inference_abi", "analysis_version"};
-  if (!scorer.is_object() || scorer.size() != kFields.size() ||
+  const bool host = scorer.is_object() && scorer.contains("execution_host");
+  if (!scorer.is_object() || scorer.size() != kFields.size() + (host ? 1 : 0) ||
       !std::ranges::all_of(
           kFields, [&](const char* field) { return scorer.contains(field); })) {
     throw std::invalid_argument(
         "scorer must have exactly version, commit, executable, "
-        "backend_configuration, inference_abi and analysis_version");
+        "backend_configuration, inference_abi and analysis_version, and "
+        "optionally execution_host");
+  }
+  if (host &&
+      !(scorer["execution_host"].is_string() &&
+        IsHexDigest(scorer["execution_host"].get_ref<const std::string&>(),
+                    64))) {
+    throw std::invalid_argument("scorer execution_host must be a SHA-256");
   }
   const auto text = [&](const char* field) {
     return scorer[field].is_string() &&

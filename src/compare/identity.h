@@ -20,11 +20,15 @@ struct ModelPin {
 
 // The running build, as every comparison stage must agree on it: version,
 // stamped commit (or, unstamped, the executable's SHA-256), backend
-// configuration, inference ABI and analysis version.
-nlohmann::json ScorerJson(std::string_view inference_abi);
+// configuration, inference ABI and analysis version, plus the
+// ExecutionHostDigest of a bare host's contract when it has one.
+nlohmann::json ScorerJson(
+    std::string_view inference_abi,
+    const std::optional<std::string>& execution_host = std::nullopt);
 
 // Throws std::invalid_argument unless `scorer` has exactly ScorerJson's
-// fields, with either a commit or an executable digest.
+// fields, with either a commit or an executable digest and at most an
+// execution-host digest besides.
 void ValidateScorer(const nlohmann::json& scorer);
 
 nlohmann::json ModelJson(const ModelPin& model);

@@ -196,6 +196,19 @@ int main() {  // NOLINT(bugprone-exception-escape)
              foreign["errors"][0].get<std::string>().find(
                  "different llm-cc build") != std::string::npos,
          "a plan from another build is refused");
+  auto other_host = harness.Worker(root / "cold/plan.json", 0, root / "host");
+  other_host.execution_host = llmcc::compare::ExecutionHost{
+      .pci_address = "0000:03:00.0",
+      .architecture = "gfx1100",
+      .vram_bytes_min = 1,
+      .resource_id = "radeon-0",
+      .runtime_files = {
+          {"/opt/rocm/lib/libamdhip64.so", std::string(64, 'a')}}};
+  const json unhosted = llmcc::compare::RunWorker(other_host);
+  Expect(unhosted["status"] == "failed" &&
+             unhosted["errors"][0].get<std::string>().find("execution_host") !=
+                 std::string::npos,
+         "a plan made for no host or another host is refused");
   const json absent = llmcc::compare::RunWorker(
       harness.Worker(root / "cold/plan.json", 3, root / "absent"));
   Expect(

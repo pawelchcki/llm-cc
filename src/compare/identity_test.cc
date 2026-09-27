@@ -104,6 +104,22 @@ int main() {  // NOLINT(bugprone-exception-escape)
                .second,
            std::string("scorer ") + field + " changes the fingerprint");
   }
+  // A bare host's contract joins the scorer only when there is one.
+  const json hosted = llmcc::compare::ScorerJson("abi", std::string(64, 'c'));
+  Expect(!scorer.contains("execution_host") &&
+             hosted["execution_host"] == std::string(64, 'c'),
+         "the execution host is recorded only for a bare host");
+  Expect(
+      fingerprints.insert(llmcc::compare::Fingerprint(hosted, model, scoring))
+          .second,
+      "the execution host changes the fingerprint");
+  llmcc::compare::ValidateScorer(scorer);
+  llmcc::compare::ValidateScorer(hosted);
+  json unhashed = hosted;
+  unhashed["execution_host"] = "gfx1100";
+  Expect(Throws<std::invalid_argument>(
+             [&] { llmcc::compare::ValidateScorer(unhashed); }),
+         "an execution host is named by its digest");
   for (const json& changed :
        {llmcc::compare::ModelJson(
             {.sha256 = std::string(64, 'b'), .bytes = 1234}),

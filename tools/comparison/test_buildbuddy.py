@@ -174,6 +174,12 @@ class BuildBuddyTest(unittest.TestCase):
         index = command.index("remote-worker")
         return buildbuddy.main(command[index:])
 
+    def test_prepare_binds_the_plan_to_the_execution_host(self):
+        # Without the stand-in, llm-cc itself reads the host contract.
+        self.config["llm_cc"] = os.path.abspath(llm_cc())
+        plan = self.prepare()
+        self.assertRegex(plan["scorer"]["execution_host"], "^[0-9a-f]{64}$")
+
     def test_prepare_plans_misses_with_the_pinned_llm_cc(self):
         plan = self.prepare()
         self.assertEqual(plan["schema_version"], 2)

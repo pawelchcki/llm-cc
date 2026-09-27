@@ -31,6 +31,11 @@ struct ExecutionHost {
 // resource_id, runtime_files}. Throws std::invalid_argument.
 ExecutionHost ParseExecutionHost(const nlohmann::json& host);
 
+// SHA-256 of the canonical {gpu_vendor, gpu_arch, runtime_files}: the parts
+// of the contract that can change a result. A plan's scorer records it, so
+// results from another GPU architecture or runtime never share cache keys.
+std::string ExecutionHostDigest(const ExecutionHost& host);
+
 struct HostPaths {
   std::filesystem::path sysfs = "/sys";
   std::filesystem::path devices = "/dev";

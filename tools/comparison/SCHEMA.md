@@ -16,9 +16,14 @@ A plan names three objects, and every stage must agree on them:
 - `scorer`: the running build, `{version, commit, executable,
   backend_configuration, inference_abi, analysis_version}`. `commit` is the
   stamped source commit; an unstamped build has `commit: null` and
-  `executable`, the SHA-256 of its own executable, instead. A worker refuses a
-  plan whose `scorer` differs from its own, so the coordinator and the GPU
-  workers must run the same llm-cc build.
+  `executable`, the SHA-256 of its own executable, instead. A plan for a bare
+  host adds `execution_host`: the SHA-256 of the canonical `{gpu_vendor,
+  gpu_arch, runtime_files}` of the `--execution-host` contract that `prepare`
+  and `identity` were given, so another GPU architecture or ROCm runtime never
+  reuses results; the PCI address, VRAM floor and lock resource do not affect
+  it. A worker refuses a plan whose `scorer` differs from its own, host
+  included, so the coordinator and the GPU workers must run the same llm-cc
+  build against the same contract.
 - `model`: `{sha256, bytes}`, the scorer's model identity. A split GGUF has
   the domain-separated digest of all its shards and their total size.
 - `scoring`: every setting that changes a result, `{backend, context,
