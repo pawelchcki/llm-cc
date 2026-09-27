@@ -1,423 +1,129 @@
 # llm-cc
 
-For advisory base/head complexity reports with reusable filesystem or S3 results
-and CPU-only cache hits, see [the comparison stage guide](tools/comparison/README.md)
-and [the CI recipe](tools/comparison/CI_RECIPE.md) for GitLab and GitHub Actions.
+`llm-cc` scores source code with **LM-CC**, a complexity metric that asks
+where a code language model is *unsure* rather than counting control-flow
+paths. It runs a local GGUF model through llama.cpp and reports the files,
+functions and lines that are hardest for a model to read. That makes them
+good candidates for refactoring.
 
-`llm-cc` measures entropy-guided language-model code complexity (LM-CC) in Rust,
-C, C++, Java, Python, Go, Node.js JavaScript, and C#. It helps identify files,
-functions, and source lines to inspect when planning refactoring, using a local
-GGUF model through llama.cpp.
+It supports Rust, C, C++ (and CUDA), Java, Python, Go, Node.js JavaScript and
+C#, on Linux (x86-64, ARM64), macOS (Metal) and Windows, with CUDA and ROCm
+backends on Linux x86-64.
 
-## Motivation
-
-Code quality is an investment in readability, maintainability, and reliable
-work by both people and coding agents. Clear structure makes changes easier
-to understand and review. LM-CC adds a model-sensitive refactoring signal
-alongside tests, code review, and engineering judgment; a lower score alone
-cannot establish that a change improves the code.
-
-The paper *Rethinking Code Complexity Through the Lens of Large Language
-Models* describes [semantic decomposition](https://arxiv.org/html/2602.07882v1#S3.SS2)
-using token uncertainty and structural boundaries, then defines
-[LM-CC](https://arxiv.org/html/2602.07882v1#S3.SS4) from branching and
-compositional depth. The `llm_cc` field, and the default headline score, is that
-LM-CC: `0.8 × branches + 0.2 × Σ depth` over the block tree, on the same scale
-as the paper's reported values (tens for a typical program). This
-implementation removes comments and Python docstrings before measuring entropy
-and constructing that hierarchy.
-
-The paper's [rewriting experiment](https://arxiv.org/html/2602.07882v1#S4.SS2)
-reports program-repair pass@1 increasing from **13.4% to 16.2%** on its selected
-rewrite subset. Selection required lower LM-CC without lower cyclomatic
-complexity; passing original tests was also required outside the repair task.
-That result motivates investigating refactoring opportunities, but does not
-validate every rewrite, this implementation's deviations from the reference, or
-its optional normalized scores.
-
-### Relation to the reference implementation
-
-The per-token signal and the score formula match the authors' reference
-implementation ([xchen121/lm-cc](https://github.com/xchen121/lm-cc) at
-`c38a26af`): full-vocabulary entropy in nats at temperature 1, logits at
-position *i − 1* scoring token *i*, and a first code token that never opens a
-block. The paper sets τ = 0.67 nats from a percentile of CodeLlama-7b's token
-entropies. Entropy distributions differ between models, so an absolute 0.67
-marks a different share of tokens for each one. Every registered model
-therefore carries its own τ: the entropy percentile at which the authors'
-CodeLlama-7b pipeline reaches exactly 0.67 on the paper's HumanEval programs,
-applied to that model's entropies on the same programs. See the
-[τ calibration experiment](experiments/tau-calibration/README.md). A custom
-`--model` falls back to 0.67; `--tau-percentile` applies a percentile per file
-instead.
-
-These deviations are deliberate:
-
-- The default `--hierarchy structural` adds syntax scope boundaries to the
-  entropy boundaries. `--hierarchy reference` uses entropy boundaries only.
-- Nesting comes from tree-sitter scopes in every supported language rather
-  than from Python indentation.
-- Comments and docstrings are removed with tree-sitter, blank lines are kept,
-  and code is not reformatted with `black`.
-- The default model is DeepSeek-Coder-V2-Lite rather than CodeLlama-7b. The
-  registered `codellama-7b-q8_0` model reproduces the paper's model choice.
-
-## Installation
-
-### From source
-
-Install Git, then clone the repository and select the source revision:
-
-```sh
-git clone https://github.com/pawelchcki/llm-cc.git
-cd llm-cc
-git checkout main
-```
-
-Replace `main` with a release tag or commit if you need a particular revision.
-Install [Bazelisk](https://github.com/bazelbuild/bazelisk#installation), which
-automatically downloads and runs the Bazel version pinned in [.bazelversion](.bazelversion).
-On macOS with Homebrew:
-
-```sh
-brew install bazelisk
-```
-
-On Linux x86-64, download the Bazelisk binary and install it as `bazel`:
-
-```sh
-mkdir -p "$HOME/.local/bin"
-curl -fL https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-amd64 \
-  -o "$HOME/.local/bin/bazel"
-chmod +x "$HOME/.local/bin/bazel"
-```
-
-For Linux ARM64 CPU builds, use the `bazelisk-linux-arm64` asset instead. Add
-the installation directory to `PATH` on either platform, and keep this setting
-in your shell startup file:
-
-```sh
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-Run the command matching your platform from the checkout:
-
-| Platform | Prerequisites | Installation command |
-| --- | --- | --- |
-| macOS Metal | macOS 14+, Metal-capable hardware, full Xcode selected through `xcode-select` | `bazel run --config=release --config=metal //:install` |
-| Linux AMD ROCm | x86-64, a supported `gfx1100`/`gfx1101`/`gfx1102` GPU, compatible AMD driver, GPU device permissions | `bazel run --config=release --config=rocm //:install` |
-| Linux NVIDIA CUDA | x86-64, supported NVIDIA GPU, driver compatible with CUDA 13.0.2 | `bazel run --config=release --config=cuda //:install` |
-
-Bazel downloads the pinned Linux compilers and GPU SDKs; a system CUDA or ROCm
-SDK is unnecessary. Drivers and device access remain host prerequisites. Follow
-[AMD's device-access guidance](https://rocm.docs.amd.com/projects/install-on-linux/en/docs-7.1.1/install/prerequisites.html#configuring-permissions-for-gpu-access)
-and [NVIDIA's driver compatibility guidance](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html)
-for your system. macOS builds use the selected Xcode and Apple SDK.
-
-For a clean Ubuntu build container, install `ca-certificates`, `libxml2`,
-`libstdc++6`, `zlib1g`, `python3`, `git`, `perl`, `xz-utils`, `bzip2`, and `unzip`,
-plus Bazel/Bazelisk. The pinned LLVM linker needs `libxml2.so.2` at build time.
-GNU Make is unnecessary: Linux TLS and payload hashes use native Bazel BoringSSL
-`0.20260813.0`, and curl uses pinned CMake/Ninja. macOS uses Secure Transport;
-Windows uses Schannel. BoringSSL updates must pass the local TLS fixture because
-upstream does not promise API/ABI stability.
-
-To consume llm-cc from another Bazel module, use the complete
-[consumer example](examples/consumer/README.md), including root-owned patches,
-toolchain registration, toolkit overrides, and explicit llm-cc provenance.
-For A10-only builds, add `--//:cuda_archs=compute_86:sm_86` in this checkout or
-`--@llm_cc//:cuda_archs=compute_86:sm_86` in the consumer. The default preserves
-portable release architecture coverage. Bundles and caches carry a configuration
-fingerprint, so narrower builds cannot reuse incompatible portable bundles.
-
-For a CPU installation:
-
-```sh
-bazel run --config=release --config=cpu //:install
-```
-
-The default prefix is `$HOME/.local`, placing the executable in its `bin`
-directory. Append `-- --prefix PATH` to any install command to change it, for
-example:
-
-```sh
-bazel run --config=release --config=metal //:install -- --prefix "$HOME/opt/llm-cc"
-```
-
-Add that prefix's `bin` directory to `PATH` instead. Verify the installation:
-
-```sh
-llm-cc --version
-```
-
-### Prebuilt releases
-
-On Linux or macOS, install the latest release with one command:
+## Install
 
 ```sh
 sh -c "$(curl -fsSL https://github.com/pawelchcki/llm-cc/releases/latest/download/install.sh || echo exit 1)"
 ```
 
-With wget, substitute `wget -qO- <url>` for the `curl` command. If the download
-fails, `|| echo exit 1` makes the command exit with an error instead of running
-an empty script. The script selects your platform, verifies SHA-256, installs
-`llm-cc` into `$HOME/.local/bin`, and on Linux x86-64 fetches the matching
-CUDA or ROCm bundle when it detects that GPU. Options follow `--`:
-`--version X.Y.Z`, `--bin-dir PATH`, and `--backend cuda|rocm|auto|none`.
-Every release after 0.2.0 also ships the script as `install.sh`, so a pinned
-version can use its own copy; replace `X.Y.Z` with that release:
+The installer picks your platform, checks SHA-256, puts `llm-cc` in
+`~/.local/bin`, and fetches the CUDA or ROCm bundle if it finds that GPU. On
+Windows, run `py -3 install_release.py` from a
+[release](https://github.com/pawelchcki/llm-cc/releases). To build from
+source with [Bazelisk](https://github.com/bazelbuild/bazelisk), run
+`bazel run --config=release --config=cpu //:install`, using `metal`, `cuda` or
+`rocm` in place of `cpu` as needed. See [USAGE.md](USAGE.md#installation) for
+every option.
+
+## Use
 
 ```sh
-sh -c "$(curl -fsSL https://github.com/pawelchcki/llm-cc/releases/download/vX.Y.Z/install.sh || echo exit 1)" -- --version X.Y.Z
+llm-cc src --format text                            # files, functions, hotspots
+llm-cc src --force-cpu --model-name qwen2.5-coder-3b-q6_k -y --format text
+llm-cc compare run --target main --output-dir out   # how this branch changes LM-CC
+llm-cc rules show                                   # which files count, and as what
 ```
 
-Alternatively, download an executable from [GitHub Releases](https://github.com/pawelchcki/llm-cc/releases),
-or use the Python installer (3.9+) shipped with each release:
+The default model, DeepSeek-Coder-V2-Lite Q6_K, is about 14 GB and downloads
+after you confirm. Run `llm-cc models list --available` to see smaller ones.
+Without `--format text`, output is JSONL for tools. [USAGE.md](USAGE.md)
+covers GPU and memory settings, long files, repository rules, and the exit
+code contract.
 
-```sh
-python3 install_release.py
+## How LM-CC works
+
+LM-CC comes from *Rethinking Code Complexity Through the Lens of Large
+Language Models* (Xie, Shi, Gu, Shen; [arXiv:2602.07882](https://arxiv.org/abs/2602.07882)).
+Its premise: a model reads code easily where each next token is predictable,
+and struggles at the points where it has to decide what comes next. LM-CC
+turns those decision points into a tree and measures the tree's breadth and
+depth.
+
+```mermaid
+flowchart LR
+  S[Source file] --> P["Strip comments<br/>(tree-sitter)"]
+  P --> M["Code LLM reads<br/>every token"]
+  M --> H["Entropy per token<br/>H(tᵢ)"]
+  H --> B{"H ≥ τ, or a<br/>scope ends?"}
+  P -. syntax scopes .-> B
+  B -- yes --> N[Start a new block]
+  N --> T["Nest blocks<br/>by scope depth"]
+  T --> L["LM-CC = Σ 0.8·b + 0.2·d"]
 ```
 
-On Windows, use the Python launcher:
+1. **Measure uncertainty.** With comments removed, the model reads the file
+   one token at a time. At each position the entropy of its full next-token
+   distribution, H(tᵢ) = −Σⱼ p(tⱼ | t<ᵢ) log p(tⱼ | t<ᵢ), says how unsure it
+   was.
+2. **Cut blocks.** A new block starts on a line where entropy reaches the
+   threshold τ, or where a loop, conditional or function ends. The paper uses
+   τ = 0.67 nats for CodeLlama-7b. llm-cc gives each model its own τ that
+   marks the same share of tokens.
+3. **Build a tree.** The whole file is the root, at level d = 1. Each block
+   takes its nesting depth from the syntax and becomes a child of the closest
+   earlier block that is less deeply nested.
+4. **Score it.** For every node v, let b(v) be its number of children and
+   d(v) its level. Then LM-CC = Σᵥ α·b(v) + (1 − α)·d(v), with α = 0.8.
 
-```powershell
-py -3 install_release.py
+An example tree, where `d` is the level and `b` the number of children:
+
+```mermaid
+flowchart TD
+  R["file · d=1 · b=3"] --> A["block · d=2 · b=0"]
+  R --> B["block · d=2 · b=2"]
+  R --> C["block · d=2 · b=0"]
+  B --> B1["block · d=3 · b=0"]
+  B --> B2["block · d=3 · b=0"]
 ```
 
-The Python installer selects your platform, verifies SHA-256, and installs into
-`$HOME/.local/bin` (or `%USERPROFILE%\.local\bin` on Windows). Ensure that
-directory is on `PATH` before running `llm-cc`; pass `--bin-dir PATH` to choose
-another location. Linux x86-64 releases require glibc 2.28 or newer and can
-download matching CUDA/ROCm bundles. Linux ARM64 releases require glibc 2.35 or
-newer and use CPU. macOS includes Metal, while Windows x64 uses CPU. Model
-weights are separate.
+Here Σb = 5 and Σd = 13, so LM-CC = 0.8·5 + 0.2·13 = **6.6**. Many decision
+points side by side raise b; decision points buried in nested scopes raise d.
 
-## Usage
+In the paper, after controlling for code length, LM-CC's partial correlation
+with LLM pass@1 reaches −0.93 on program repair, −0.97 on translation and −0.92
+on execution reasoning. Rewriting programs to lower LM-CC, while keeping their
+cyclomatic complexity the same, raised repair pass@1 from 13.4% to 16.2%.
 
-Get a readable project report with file scores, function scores, and entropy
-hotspots:
+llm-cc follows the authors' reference code for entropy and the formula.
+Besides the per-model τ, its defaults differ in two ways: tree-sitter scopes
+supply nesting in every language, and the model is DeepSeek-Coder-V2-Lite,
+not CodeLlama-7b.
+`--hierarchy reference` uses entropy boundaries only, and the registered
+`codellama-7b-q8_0` model reproduces the paper's setup. See
+[USAGE.md](USAGE.md#relation-to-the-reference-implementation).
 
-```sh
-llm-cc src --format text
-```
+## Reading the score
 
-Inputs may be files or recursively searched directories. Languages are detected
-per file from the extension, ignoring case; headers are ordinary sources, and
-`.h` is C unless the repository's rules say otherwise. Discovery respects Git
-ignore rules and the repository's [selection rules](#selection-and-classification-rules);
-`--no-ignore` includes ignored and rule-excluded files. Explicitly named files
-are always accepted. `--include-headers` is still accepted and changes nothing.
-JavaScript support excludes JSX and TypeScript.
-
-Select your own llama.cpp-compatible GGUF:
-
-```sh
-llm-cc src include/widget.hpp --model /path/to/model.gguf --format text
-```
-
-Without `--model`, the default is `deepseek-coder-v2-lite-base-q6_k` (about
-14 GB). Use `llm-cc models list --available` to inspect registered models and
-`--model-name NAME` to choose one. `--model` and `--model-name` are mutually
-exclusive; model selection never changes automatically.
-
-Missing models require download confirmation. `--assume-yes` (`-y`) accepts
-model and permitted backend downloads for unattended use; without it, missing
-assets cause a prompt or an error if no terminal is available. `--no-download`
-prevents these downloads even with `--assume-yes`.
-
-GPU execution defaults to full offload (`--gpu-layers -1`). Linux supports
-`--backend cuda` or `--backend rocm`; Metal uses automatic runtime selection.
-GPU setup failures stop with a suggested CPU command. Explicitly request CPU
-execution, including after a CPU installation:
-
-```sh
-llm-cc src --force-cpu --model-name qwen2.5-coder-3b-q6_k --assume-yes --format text
-```
-
-Inference memory is configurable with `--flash-attn auto|on|off`,
-`--kv-cache-type f16|q8_0|q4_0` (the same type is used for K and V), and
-`--kv-offload on|off`. Quantized V requires Flash Attention, so combining a
-quantized cache with `--flash-attn off` is rejected. `--backend-diagnostics`
-adds bounded backend logs, device allocation information, and operation
-placement to stderr. These settings are part of the entropy-cache identity.
-
-The retained A10G measurement for the 14.07 GB DeepSeek Q6_K artifact peaked
-at 17.55 GiB of GPU memory for the 26-file, 32K-context experiment. This is a
-measurement, not a universal requirement: context length, batch size, K/V
-type, backend, and driver all affect the total. The dedicated
-[inference validation experiment](experiments/inference-issues/README.md)
-records the corresponding Radeon and CUDA measurements. On a 24 GiB Radeon RX
-7900 XTX, a 74,496-token DeepSeek context completed with Q4_0 K/V at a measured
-20,232 MiB peak, while Q8_0 and F16 did not fit. The independent 26-file score
-agreement gates pass for Flash Attention and Q8_0, so the defaults are
-`--flash-attn on --kv-cache-type q8_0`. Q4_0 remains opt-in.
-
-CPU inference can be slow. The registered Qwen 3B model is about 2.5 GB;
-`qwen2.5-coder-1.5b-q6_k` needs about 1.3 GB of weights. Allow additional memory
-for inference. The [model-selection experiment](experiments/model-selection/README.md)
-compares timings, memory, and ranking agreement with the default; it does not
-measure downstream coding quality.
-
-For unattended JSONL output, the default format:
-
-```sh
-llm-cc src --assume-yes > results.jsonl 2> progress.log
-```
-
-Progress goes to stderr. Consumers must collect every `file` event and wait for
-both exit status **0** and a terminal `totals` event with `partial == false`.
-A truncated stream or `file_start` is incomplete. Exit **1** indicates partial
-results; **2** indicates configuration or model failure. Individual file errors
-do not prevent later files from being analyzed.
-
-Files larger than 1 MiB produce an informational stderr notice. Inputs larger
-than 1 GiB (1,073,741,824 bytes) are rejected, including raw scoring input.
-Files exceeding the configured context are scored with overlapping windows:
-the first window is scored normally, then each subsequent window advances by
-half the context size. Overlapping tokens supply context; each source token is
-reported once. Syntax scopes and the complexity hierarchy still cover the
-complete file. Files that fit retain their existing scoring behavior.
-
-Windowed scores use bounded preceding context, so they can differ from scores
-computed with enough context for the entire file. Changing the context changes
-the measurement; use consistent settings when comparing revisions. The report
-exposes overflow relative to a fixed 128K-token reference independently of the
-inference context. Overflow is a separate policy signal and does not change raw
-LM-CC or the default normalized score.
-
-Syntax preprocessing has a five-minute cooperative time budget and a maximum
-syntax depth of 1,024. Inputs exceeding either budget fail explicitly; no
-truncated analysis is reported. This budget covers parsing and preprocessing,
-not model loading, tokenization, or inference. Full neural scoring of tens of
-megabytes can take much longer, depending on hardware, model, and context.
-Long phases keep emitting five-second heartbeats with phase time and stalled
-time; decoding also reports token throughput. `--progress never` suppresses
-this status output.
-
-The [large-file experiment](experiments/large-files/README.md) records dense
-10 MiB fixtures across all supported languages and 100 MiB C++/Python runs,
-including elapsed preprocessing time and peak host memory.
-
-### Selection and classification rules
-
-One rules engine decides which files are analyzed, which language scores each
-one, and which category (`runtime`, `tests`, or `tooling`) reports it. Local
-analysis and the [CI comparison](tools/comparison/README.md) use the same
-rules. A repository keeps them in `.llm-cc/rules.json` at its Git root;
-`.llm-cc/comparison-rules.json` is still read when the new name is absent. A
-nested repository or submodule uses its own rules.
-
-```json
-{
-  "exclude": ["third_party/**", "**/generated/**", "**/*.pb.*"],
-  "tests": ["**/tests/**", "**/*_test.*"],
-  "tooling": ["tools/**", "scripts/**"],
-  "extensions": {".h": "cpp"},
-  "paths": [{"pattern": "include/legacy/**", "language": "c"}]
-}
-```
-
-Every key is optional. A key that is present replaces its built-in default; an
-absent key keeps it. The default `exclude` list skips common dependency and
-generated trees such as `**/node_modules/**`, `**/third_party/**`,
-`**/bazel-*/**` and a top-level `out/**`; `llm-cc rules show` prints the
-complete effective rules. `tests` is checked before `tooling`, and anything
-else is `runtime`. A language comes from the first matching `paths` rule, then
-`extensions` (lowercase keys, matched case-insensitively), then the built-in
-extension table. Patterns are at most 256 characters, at most 512 in total, and
-the file stays under 64 KiB. `.git` and `.llm-cc-cache` are never discovered;
-Python virtual environments (directories containing `pyvenv.cfg`) are skipped
-unless `--no-ignore` is given.
-
-Globs are anchored at the repository root and segment-aware, like
-`.gitignore`: `*` and `?` stay within one path segment, `[a-z]` matches one
-character from a set, and a whole-segment `**` matches zero or more
-directories. `third_party/**` therefore matches only the top-level directory,
-`**/*_test.*` matches test files at any depth, and matching is case-sensitive.
-
-Inspect decisions without a model:
-
-```sh
-llm-cc rules show                  # effective rules for this worktree
-llm-cc rules check rules.json      # validate a file
-llm-cc rules explain src/a.h tools/gen.py --format json
-```
-
-A file named on the command line is analyzed even when `exclude` matches it,
-so `explain` reports it selected and marks it `excluded` (text: `selected
-(excluded when discovered)`) to show that directory discovery skips it.
-
-JSONL `file` events carry each file's `category`, `totals` adds per-category
-totals under `categories`, and the `configuration` event lists the rules file
-each Git root used.
-
-### Comparing revisions
-
-`llm-cc compare run` reports how a branch changes complexity against its
-target, the way the CI comparison does:
-
-```sh
-llm-cc compare run --target main --output-dir /tmp/comparison --model-name NAME
-```
-
-It compares `--head` (default `HEAD`) with its merge base with `--target`,
-using the target commit's rules, and writes `report.md`, `comment.md`,
-`report.json` and the head's `baseline.md` to `--output-dir`. Each file's
-result is cached by its Git blob, language and the exact scorer, model and
-settings, in `compare/` beside the model cache or in `--cache DIR` or
-`--cache s3://bucket/prefix`, so a rerun scores only files it has not seen.
-Every analysis option applies; an `auto` backend or entropy reduction is
-resolved on this machine. `--max-workers N` splits the files over up to four
-workers in turn, with the same results. CI runs the same stages separately
-(`compare prepare`, `compare worker`, `compare aggregate`); see
-[the comparison stage guide](tools/comparison/README.md) and
-[the schema](tools/comparison/SCHEMA.md).
-
-## Interpreting scores
-
-The default headline (`--score raw`) is raw LM-CC, the paper's metric. It
-combines branching and compositional depth, so it grows with input length.
-Project totals report the sum over files and `mean_llm_cc_per_file`.
-`--score lmcc` selects `lmcc_per_token`, raw LM-CC divided by the number of
-scored tokens. That normalization is a heuristic: it is neither length-invariant
-nor validated by the paper. `--score density` selects the fraction of tokens at
-or above the entropy threshold; `--score mean` selects mean entropy. Every
-metric remains available in JSONL regardless of the headline.
-
-Compare revisions with the same model, quantization, hierarchy, and inference
-settings. Establish a fresh baseline when changing them, including after
-upgrading from releases that used a fixed τ of 0.67 for every model or the
-per-token headline. The default `--hierarchy structural` combines entropy and
-syntax boundaries. Without `--tau` or `--tau-percentile`, the threshold is the
-selected registered model's calibrated τ; the JSONL `configuration` event
-reports the effective `tau` and a `tau_source` of `model-default`,
-`paper-default`, or `cli`. Use scores and hotspots to choose code to inspect,
-then assess changes through readability, maintainability, tests, and review.
+The headline is raw LM-CC, as in the paper, so it grows with file length.
+Compare revisions only with the same model and settings. `--score lmcc` divides
+by token count, a heuristic the paper does not validate. Treat high scores as
+places to look, not as verdicts: a lower number alone does not prove a change
+made the code better.
 
 ## Development
 
-The project is a C++20 executable built with Bazel. Run the development checks:
-
 ```sh
-bazel test //:unit
-bazel test //:integration
+bazel test //:unit //:integration
 tools/run_clang_tidy.sh
 ```
 
-Ordinary pull requests use BuildBuddy's CPU regression, GPU backend, and LMCC
-comparison checks. Comparisons run automatically on PR updates; `main` pushes
-populate the baseline cache and publish a repository-wide ranking of the
-worst-scoring files. ci-toolkit publishes the comparison table, the per-file
-changed table, and report links in one updated PR comment using the target
-branch's publication policy. Other repositories can adopt the same comparison by
-copying the templates in
-[tools/comparison/consumer](tools/comparison/consumer/README.md).
-The full GitHub Actions platform matrix, CPU/CUDA consumer installation checks,
-and cross-platform lockfile check run on `main` pushes and same-repository
-release-please PRs, such as `release-please--branches--main`. Manual full runs
-also require `main` or a release-please branch. Superseded runs are canceled.
+Pull requests run BuildBuddy's CPU, GPU backend and LM-CC comparison checks.
+The full release matrix covers Linux x86-64 and ARM64, macOS, Windows, and
+the CPU and CUDA consumer installs. It runs on `main`, on release-please PRs,
+and on any PR labeled `ci: release-builds`.
 
-The optional `bazel test //:model_smoke_test` downloads a pinned 398 MB model
-for a real CPU inference check. See [DESIGN.md](DESIGN.md) for implementation
-background and [CHANGELOG.md](CHANGELOG.md) for changes. `llm-cc --help` lists
-all analysis options; `llm-cc score --help` documents raw token scoring.
+More: [DESIGN.md](DESIGN.md) (internals),
+[comparison pipeline](tools/comparison/README.md) and its
+[CI recipe](tools/comparison/CI_RECIPE.md),
+[consuming llm-cc from Bazel](examples/consumer/README.md),
+[experiments](experiments), [CHANGELOG.md](CHANGELOG.md).
