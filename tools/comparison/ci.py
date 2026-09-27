@@ -90,6 +90,26 @@ def load_config(path=None):
     return config
 
 
+def _worker_image(plan, config):
+    """The image GPU workers run: the one the plan's scorer identity names.
+
+    Workers refuse a plan prepared for another image, so a configured
+    images.scorer that differs fails here, before any GPU runner starts.
+    """
+    planned = (plan.get("scorer") or {}).get("image")
+    if planned is None:
+        return _scorer_image(config)
+    planned = image_reference(planned, "planned scorer")
+    configured = config["images"].get("scorer")
+    if configured is not None and image_reference(configured, "scorer") != planned:
+        raise ValueError(
+            "images.scorer %s differs from %s, the image the plan was prepared "
+            "for; pass the same image to llm-cc compare prepare --scorer-image"
+            % (configured, planned)
+        )
+    return planned
+
+
 def _scorer_image(config):
     image = config["images"].get("scorer")
     if image is None:
@@ -169,7 +189,7 @@ def gitlab_child(plan, plan_path, config, store, store_options=None, coordinator
     child = {"stages": ["score", "aggregate"]}
     worker_jobs = []
     worker_paths = []
-    scorer = _scorer_image(config) if plan["workers"] else None
+    scorer = _worker_image(plan, config) if plan["workers"] else None
     for worker_id in _workers(plan, config):
         name = "comparison-worker-%d" % worker_id
         output = "comparison/workers/%d" % worker_id
@@ -287,7 +307,7 @@ def github_matrix(plan, config):
         "has_workers": "true" if ids else "false",
     }
     if ids:
-        outputs["scorer_image"] = _scorer_image(config)
+        outputs["scorer_image"] = _worker_image(plan, config)
     return outputs
 
 

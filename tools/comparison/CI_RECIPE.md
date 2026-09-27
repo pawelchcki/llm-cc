@@ -118,11 +118,11 @@ itself, so the GPU image carries neither Python nor an S3 SDK.
 The coordinator copies `llm-cc` from the pushed scorer image, so preparation,
 scoring and aggregation run one build; a worker refuses a plan that any other
 build prepared. The coordinator also records the scorer image digest as
-`LLM_CC_SCORER_IMAGE`, which the CI adapters use for GPU jobs unless the CI
-configuration names `images.scorer`. Preparation passes it as
-`--scorer-image`, so it joins the plan's scorer identity and fingerprint, and
-every GPU job passes its own image the same way; a worker told another image
-refuses the plan. One coordinator digest thus pins the glue, llm-cc, the
+`LLM_CC_SCORER_IMAGE`. Preparation passes it as `--scorer-image`, so it joins
+the plan's scorer identity and fingerprint, and the CI adapters run every GPU
+job in the image the plan names, passing it the same way; a worker told
+another image refuses the plan. A CI configuration's `images.scorer` must name
+that same image, or the adapters refuse to generate the jobs. One coordinator digest thus pins the glue, llm-cc, the
 scoring contract and the exact scorer every GPU job runs.
 
 `build.sh` treats content-derived tags only as lookup hints. A tag found in the

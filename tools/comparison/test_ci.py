@@ -177,6 +177,23 @@ class GitLabChildTest(unittest.TestCase):
             with mock.patch.dict(os.environ, {"LLM_CC_SCORER_IMAGE": SCORER}):
                 self.assertEqual(load_config(path)["images"]["scorer"], other)
 
+    def test_workers_run_the_image_the_plan_names(self):
+        planned = plan(1)
+        other = "registry.example/other@sha256:" + "3" * 64
+        planned["scorer"] = {"image": other}
+        with self.assertRaisesRegex(ValueError, "differs from"):
+            gitlab_child(planned, PLAN_PATH, self.config, STORE, coordinator=COORDINATOR)
+        with self.assertRaisesRegex(ValueError, "differs from"):
+            github_matrix(planned, self.config)
+        del self.config["images"]["scorer"]
+        child = gitlab_child(
+            planned, PLAN_PATH, self.config, STORE, coordinator=COORDINATOR
+        )
+        worker = child["comparison-worker-0"]
+        self.assertEqual(worker["image"], other)
+        self.assertIn("--scorer-image " + other, worker["script"][-1])
+        self.assertEqual(github_matrix(planned, self.config)["scorer_image"], other)
+
     def test_capacity_paths_and_store_options_are_validated(self):
         self.config["max_workers"] = 2
         with self.assertRaisesRegex(ValueError, "allows 2"):
