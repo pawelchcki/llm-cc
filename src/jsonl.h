@@ -20,9 +20,8 @@ struct EntropyRecord {
   std::optional<double> entropy;
 };
 
-// The schema version every configuration/totals event reports, and which an
-// external verifier reads from `cache status --format json` to pin a profile
-// to the scorer that will execute it.
+// The schema version every configuration/totals event reports; comparison
+// fingerprints include it, so a change invalidates their cached results.
 inline constexpr int kAnalysisVersion = 3;
 
 std::vector<EntropyRecord> ParseEntropyJsonl(std::string_view input);

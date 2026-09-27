@@ -40,6 +40,21 @@ class ScorerInitializationError : public std::runtime_error {
   using std::runtime_error::runtime_error;
 };
 
+// A shared entropy cache consulted before the local one, such as a
+// comparison store. Entries are the native CBOR encoding under
+// EntropyCacheKey; a failing Fetch or Store fails the file.
+class EntropyTier {
+ public:
+  EntropyTier() = default;
+  EntropyTier(const EntropyTier&) = delete;
+  EntropyTier& operator=(const EntropyTier&) = delete;
+  EntropyTier(EntropyTier&&) = delete;
+  EntropyTier& operator=(EntropyTier&&) = delete;
+  virtual ~EntropyTier() = default;
+  virtual std::optional<std::string> Fetch(std::string_view key) = 0;
+  virtual void Store(std::string_view key, std::string_view entry) = 0;
+};
+
 struct ProjectAnalysisOptions {
   ModelIdentity model;
   TauRule tau_rule;
@@ -48,6 +63,8 @@ struct ProjectAnalysisOptions {
   std::size_t hotspots = 10;
   HierarchyMode hierarchy_mode = HierarchyMode::kStructural;
   std::uint32_t inference_context_tokens = 128U * 1024U;
+  // Not owned; may be null.
+  EntropyTier* tier = nullptr;
 };
 
 struct FunctionScore {

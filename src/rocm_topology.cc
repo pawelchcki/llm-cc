@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
+#include <map>
 #include <sstream>
 #include <system_error>
 #include <utility>
@@ -39,14 +41,15 @@ std::optional<std::string> GfxArchitecture(std::uint64_t version) {
   return "gfx" + std::to_string(major) + kHex[minor] + kHex[step];
 }
 
-std::optional<AmdGpuDevice> ReadGpuProperties(const std::filesystem::path& path,
-                                              bool& is_cpu) {
+// Reads "name value" lines. Every line must have that shape; `required`
+// fields must be present, and each field may appear once.
+std::optional<std::map<std::string, std::uint64_t, std::less<>>>
+ReadNumericProperties(const std::filesystem::path& path) {
   std::ifstream input(path);
   if (!input) {
     return std::nullopt;
   }
-  std::optional<std::uint64_t> gfx_target_version;
-  std::optional<std::uint64_t> simd_count;
+  std::map<std::string, std::uint64_t, std::less<>> values;
   std::string line;
   while (std::getline(input, line)) {
     std::istringstream fields(line);
@@ -55,23 +58,63 @@ std::optional<AmdGpuDevice> ReadGpuProperties(const std::filesystem::path& path,
     if (!(fields >> name >> value_text)) {
       return std::nullopt;
     }
-    if (name != "gfx_target_version" && name != "simd_count") {
-      continue;
-    }
     std::string trailing;
     std::uint64_t value = 0;
     if ((fields >> trailing) || !ParseUnsigned(value_text, value)) {
+      // Only the fields llm-cc reads must be numeric.
+      if (name == "gfx_target_version" || name == "simd_count") {
+        return std::nullopt;
+      }
+      continue;
+    }
+    if (!values.emplace(name, value).second) {
       return std::nullopt;
     }
-    std::optional<std::uint64_t>& destination =
-        name == "gfx_target_version" ? gfx_target_version : simd_count;
-    if (destination.has_value()) {
-      return std::nullopt;
-    }
-    destination = value;
   }
-  if (!input.eof() || !gfx_target_version.has_value() ||
-      !simd_count.has_value()) {
+  if (!input.eof()) {
+    return std::nullopt;
+  }
+  return values;
+}
+
+// Public and private framebuffer heaps; system memory banks do not count.
+std::uint64_t LocalMemoryBytes(const std::filesystem::path& node) {
+  std::error_code error;
+  std::filesystem::directory_iterator iterator(node / "mem_banks", error);
+  std::uint64_t total = 0;
+  for (; !error && iterator != std::filesystem::directory_iterator();
+       iterator.increment(error)) {
+    const auto properties =
+        ReadNumericProperties(iterator->path() / "properties");
+    if (!properties.has_value()) {
+      continue;
+    }
+    const auto heap = properties->find("heap_type");
+    const auto size = properties->find("size_in_bytes");
+    if (heap != properties->end() && size != properties->end() &&
+        (heap->second == 1 || heap->second == 2)) {
+      total += size->second;
+    }
+  }
+  return total;
+}
+
+std::optional<AmdGpuDevice> ReadGpuProperties(const std::filesystem::path& node,
+                                              bool& is_cpu) {
+  const auto properties = ReadNumericProperties(node / "properties");
+  if (!properties.has_value()) {
+    return std::nullopt;
+  }
+  const auto value =
+      [&](std::string_view name) -> std::optional<std::uint64_t> {
+    const auto found = properties->find(name);
+    return found == properties->end() ? std::nullopt
+                                      : std::optional(found->second);
+  };
+  const std::optional<std::uint64_t> gfx_target_version =
+      value("gfx_target_version");
+  const std::optional<std::uint64_t> simd_count = value("simd_count");
+  if (!gfx_target_version.has_value() || !simd_count.has_value()) {
     return std::nullopt;
   }
   is_cpu = *gfx_target_version == 0 || *simd_count == 0;
@@ -83,7 +126,13 @@ std::optional<AmdGpuDevice> ReadGpuProperties(const std::filesystem::path& path,
   if (!architecture.has_value()) {
     return std::nullopt;
   }
-  return AmdGpuDevice{.architecture = *architecture};
+  return AmdGpuDevice{.architecture = *architecture,
+                      .vendor_id = value("vendor_id").value_or(0),
+                      .domain = value("domain").value_or(0),
+                      .location_id = value("location_id").value_or(0),
+                      .unique_id = value("unique_id").value_or(0),
+                      .drm_render_minor = value("drm_render_minor"),
+                      .vram_bytes = LocalMemoryBytes(node)};
 }
 
 bool IsSupported(std::string_view architecture,
@@ -139,8 +188,7 @@ std::optional<std::vector<AmdGpuDevice>> ReadAmdGpuDevices(
   std::vector<AmdGpuDevice> devices;
   for (const KfdNode& node : nodes) {
     bool is_cpu = false;
-    std::optional<AmdGpuDevice> device =
-        ReadGpuProperties(node.path / "properties", is_cpu);
+    std::optional<AmdGpuDevice> device = ReadGpuProperties(node.path, is_cpu);
     if (!device.has_value()) {
       return std::nullopt;
     }

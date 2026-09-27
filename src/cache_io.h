@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -80,19 +81,33 @@ inline std::string UniqueSuffix() {
          std::to_string(sequence.fetch_add(1, std::memory_order_relaxed));
 }
 
+struct FileLockOptions {
+  // Opens an existing, preprovisioned lock file and leaves its mode alone,
+  // instead of creating a private one.
+  bool existing = false;
+  // Gives up at this time instead of waiting indefinitely.
+  std::optional<std::chrono::steady_clock::time_point> deadline;
+};
+
 class FileLock {
  public:
-  explicit FileLock(const std::filesystem::path& path) {
+  explicit FileLock(const std::filesystem::path& path,
+                    const FileLockOptions& options = {}) {
     ReportPhase("waiting for cache lock " + PathUtf8(path));
-    if (!path.parent_path().empty()) {
+    if (!options.existing && !path.parent_path().empty()) {
       std::filesystem::create_directories(path.parent_path());
     }
     CheckNotSymlink(path);
+    const auto timed_out = [&options] {
+      return options.deadline.has_value() &&
+             std::chrono::steady_clock::now() >= *options.deadline;
+    };
 #if defined(_WIN32)
-    handle_ = CreateFileW(
-        path.c_str(), GENERIC_READ | GENERIC_WRITE,
-        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
-        FILE_ATTRIBUTE_HIDDEN | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    handle_ = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE,
+                          FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                          options.existing ? OPEN_EXISTING : OPEN_ALWAYS,
+                          FILE_ATTRIBUTE_HIDDEN | FILE_FLAG_OPEN_REPARSE_POINT,
+                          nullptr);
     if (handle_ == INVALID_HANDLE_VALUE) {
       throw std::system_error(static_cast<int>(GetLastError()),
                               std::system_category(),
@@ -107,17 +122,32 @@ class FileLock {
       handle_ = INVALID_HANDLE_VALUE;
       throw std::runtime_error("invalid lock file " + path.string());
     }
-    OVERLAPPED overlap{};
-    if (!LockFileEx(handle_, LOCKFILE_EXCLUSIVE_LOCK, 0, MAXDWORD, MAXDWORD,
-                    &overlap)) {
+    while (true) {
+      OVERLAPPED overlap{};
+      const DWORD flags =
+          LOCKFILE_EXCLUSIVE_LOCK |
+          (options.deadline.has_value() ? LOCKFILE_FAIL_IMMEDIATELY : 0);
+      if (LockFileEx(handle_, flags, 0, MAXDWORD, MAXDWORD, &overlap)) {
+        break;
+      }
       const int error = static_cast<int>(GetLastError());
+      if (error == ERROR_LOCK_VIOLATION && !timed_out()) {
+        Sleep(200);
+        continue;
+      }
       CloseHandle(handle_);
       handle_ = INVALID_HANDLE_VALUE;
+      if (error == ERROR_LOCK_VIOLATION) {
+        throw std::runtime_error("timed out waiting for lock " + path.string());
+      }
       throw std::system_error(error, std::system_category(),
                               "cannot lock " + path.string());
     }
 #else
-    fd_ = open(path.c_str(), O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600);
+    fd_ =
+        open(path.c_str(),
+             (options.existing ? 0 : O_CREAT) | O_RDWR | O_CLOEXEC | O_NOFOLLOW,
+             0600);
     struct stat details{};
     if (fd_ < 0 || fstat(fd_, &details) != 0) {
       const int error = errno;
@@ -129,11 +159,29 @@ class FileLock {
       close(fd_);
       throw std::runtime_error("invalid lock file " + path.string());
     }
-    int result;
-    do {
-      result = flock(fd_, LOCK_EX);
-    } while (result != 0 && errno == EINTR);
-    if (result != 0 || fchmod(fd_, 0600) != 0) {
+    int result = 0;
+    int lock_error = 0;
+    while (true) {
+      result =
+          flock(fd_, LOCK_EX | (options.deadline.has_value() ? LOCK_NB : 0));
+      lock_error = errno;
+      if (result == 0 || lock_error == EINTR) {
+        if (result == 0) {
+          break;
+        }
+        continue;
+      }
+      if (lock_error == EWOULDBLOCK && !timed_out()) {
+        usleep(200 * 1000);
+        continue;
+      }
+      break;
+    }
+    if (result != 0 && lock_error == EWOULDBLOCK) {
+      close(fd_);
+      throw std::runtime_error("timed out waiting for lock " + path.string());
+    }
+    if (result != 0 || (!options.existing && fchmod(fd_, 0600) != 0)) {
       const int error = errno;
       close(fd_);
       throw std::system_error(error, std::system_category(),

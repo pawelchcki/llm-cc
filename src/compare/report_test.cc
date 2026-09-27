@@ -13,7 +13,7 @@
 #include "src/compare/aggregate.h"
 #include "src/compare/json_util.h"
 #include "src/compare/markdown.h"
-#include "src/compare/plan_v1_reader.h"
+#include "src/compare/plan.h"
 #include "src/compare/report_model.h"
 #include "src/compare/report_render.h"
 #include "src/test_util.h"
@@ -199,6 +199,10 @@ int main() {  // NOLINT(bugprone-exception-escape)
          "repository rules name their commit");
   Expect(Contains(llmcc::compare::RenderComment(Report()), "Rules: host"),
          "host rules are announced");
+  Expect(Contains(llmcc::compare::RenderComment(
+                      Report({{"rules_source", {{"source", "builtin"}}}})),
+                  "Rules: built-in"),
+         "built-in rules are announced");
   Expect(!Contains(llmcc::compare::RenderComment(Report(
                        {{"presentation",
                          {{"report_links",
@@ -396,20 +400,29 @@ int main() {  // NOLINT(bugprone-exception-escape)
          "a failure naming an invalid UTF-8 path still writes its report");
 
   // Counts beyond any file's size never reach the signed report totals.
-  const json item = {
-      {"key", "k"}, {"content_sha256", "c"}, {"language", "cpp"}};
-  json result = {{"schema_version", 1}, {"key", "k"},
-                 {"fingerprint", "f"},  {"content_sha256", "c"},
-                 {"language", "cpp"},   {"token_count", 3},
-                 {"llm_cc", 1.5}};
-  Expect(llmcc::compare::v1::ValidResult(result, item, "f"),
+  const json item = {{"key", "k"},
+                     {"blob_id", std::string(40, 'b')},
+                     {"language", "cpp"},
+                     {"size", 3}};
+  const json valid = llmcc::compare::ResultRecord(
+      item, "f", {.llm_cc = 1.5, .token_count = 3});
+  Expect(llmcc::compare::ValidResult(valid, item, "f"),
          "a plausible result is valid");
-  result["token_count"] = json::parse("18446744073709551615");
-  Expect(!llmcc::compare::v1::ValidResult(result, item, "f"),
-         "a token count past the source limit is invalid");
-  result["token_count"] = 3;
-  result["llm_cc"] = json::parse("18446744073709551615");
-  Expect(!llmcc::compare::v1::ValidResult(result, item, "f"),
+  for (const char* field : {"token_count", "high_entropy_tokens",
+                            "total_branch", "total_comp_level"}) {
+    json oversized = valid;
+    oversized[field] = json::parse("18446744073709551615");
+    Expect(!llmcc::compare::ValidResult(oversized, item, "f"),
+           std::string("a count past the source limit is invalid: ") + field);
+  }
+  // Nesting levels add up per unit, so their sum outgrows the file itself.
+  json deep = valid;
+  deep["total_comp_level"] = std::uint64_t{1} << 40U;
+  Expect(llmcc::compare::ValidResult(deep, item, "f"),
+         "a level sum beyond the source size is valid");
+  json huge_score = valid;
+  huge_score["llm_cc"] = json::parse("18446744073709551615");
+  Expect(!llmcc::compare::ValidResult(huge_score, item, "f"),
          "a score past 2^53 is invalid");
 
   return 0;

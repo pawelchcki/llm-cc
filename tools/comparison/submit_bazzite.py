@@ -161,7 +161,7 @@ def coordinator_request(config, config_path, repository, head, branch, default_b
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("submit", "run-coordinator"))
-    parser.add_argument("--config", default="/var/lib/llm-cc/comparison.json")
+    parser.add_argument("--config", default="/var/lib/llm-cc/comparison-v2.json")
     parser.add_argument("--repository", required=True)
     parser.add_argument("--head")
     parser.add_argument("--branch")
@@ -190,9 +190,10 @@ def main(argv=None):
         return coordinate(args)
     config = read_json(args.config)
     key = os.environ[config.get("api_key_env", "BUILDBUDDY_API_KEY")]
-    # Setup stores a complete immutable generation alongside its profile. Avoid
-    # reading the mutable comparison.json pointer after the remote job queues.
-    pinned_config = Path(config["profile"]).with_name("comparison.json")
+    # Setup stores a complete immutable generation beside its scoring
+    # arguments. Avoid reading the mutable comparison.json pointer after the
+    # remote job queues.
+    pinned_config = Path(config["scoring_args"]).with_name("comparison.json")
     if read_json(pinned_config) != config:
         raise ValueError(
             "configuration differs from its published immutable generation"

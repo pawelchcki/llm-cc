@@ -10,10 +10,8 @@ from unittest import mock
 import urllib.error
 
 from .__main__ import main
-from .cache import FilesystemStore
-from .common import pipeline_prefix, write_json
+from .common import aggregate_report, pipeline_prefix, write_json
 from .fixtures import FakeGitHub
-from .common import aggregate_report
 from .publish import (
     COMMENT_MARKER,
     PublicationError,
@@ -23,6 +21,7 @@ from .publish import (
     publish,
     store_report,
 )
+from .store import FilesystemStore
 
 REPOSITORY = "owner/repo"
 TARGET = "b" * 40

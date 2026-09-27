@@ -87,7 +87,7 @@ actions:
       container-image: "none"
       debug-executor-labels: "machine=bazzite"
     env:
-      LLM_CC_COMPARISON_CONFIG: "/var/lib/llm-cc/comparison.json"
+      LLM_CC_COMPARISON_CONFIG: "/var/lib/llm-cc/comparison-v2.json"
     resource_requests: { disk: 10GB }
     timeout: 130m
     allow_concurrent_runs: false

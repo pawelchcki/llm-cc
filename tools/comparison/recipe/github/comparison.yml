@@ -10,7 +10,13 @@
 # Repository variables (Settings > Secrets and variables > Actions):
 #   LLM_CC_COORDINATOR_IMAGE  coordinator image by digest; build.sh prints it
 #   LLM_CC_STORE              result store, for example s3://bucket/llm-cc
-# Repository secrets: LLM_CC_STORE_ACCESS_KEY_ID, LLM_CC_STORE_SECRET_ACCESS_KEY
+#   LLM_CC_STORE_REGION       the bucket's AWS region (llm-cc otherwise signs
+#                             for us-east-1)
+#   LLM_CC_GPU_POOL           a runner label carried only by GPU runners with
+#                             one GPU model and one host driver: the scorer
+#                             identity records the image, not the hardware
+# Repository secrets: LLM_CC_STORE_ACCESS_KEY_ID, LLM_CC_STORE_SECRET_ACCESS_KEY,
+# and LLM_CC_STORE_SESSION_TOKEN when the store's credentials are temporary
 #
 # GPU jobs need self-hosted runners with Docker and the NVIDIA container
 # toolkit, labelled as in `runs-on` below. Pin each action to a full commit
@@ -31,8 +37,10 @@ concurrency:
 
 env:
   COMPARISON_STORE: ${{ vars.LLM_CC_STORE }}
+  AWS_REGION: ${{ vars.LLM_CC_STORE_REGION }}
   AWS_ACCESS_KEY_ID: ${{ secrets.LLM_CC_STORE_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.LLM_CC_STORE_SECRET_ACCESS_KEY }}
+  AWS_SESSION_TOKEN: ${{ secrets.LLM_CC_STORE_SESSION_TOKEN }}
 
 jobs:
   prepare:
@@ -70,13 +78,19 @@ jobs:
           cat comparison/discover.env >> "$GITHUB_ENV"
       - id: plan
         if: steps.discover.outputs.COMPARISON_SKIP == '0'
+        env:
+          GPU_POOL: ${{ vars.LLM_CC_GPU_POOL }}
         run: |
-          python3 -m tools.comparison prepare \
+          # GPU jobs must land on one homogeneous pool; see the header.
+          test -n "$GPU_POOL" || { echo "set the LLM_CC_GPU_POOL variable" >&2; exit 1; }
+          llm-cc compare prepare \
             --repo . --head "$GITHUB_SHA" --target "$COMPARISON_TARGET_SHA" \
             --identity comparison/identity.json \
-            --profile /opt/llm-cc-comparison/profile.json \
-            --rules /opt/llm-cc-comparison/rules.json \
-            --cache "$COMPARISON_STORE" --output-dir comparison/prep
+            --scorer-image "$LLM_CC_SCORER_IMAGE" \
+            --default-rules /opt/llm-cc-comparison/rules.json \
+            --cache "$COMPARISON_STORE" --output-dir comparison/prep \
+            @/opt/llm-cc-comparison/planning.args @/opt/llm-cc-comparison/scoring.args
+          # The scorer image comes from the coordinator's LLM_CC_SCORER_IMAGE.
           python3 -m tools.comparison ci github-matrix --plan comparison/prep/plan.json
       - if: always()
         uses: actions/upload-artifact@v4
@@ -90,7 +104,9 @@ jobs:
   score:
     needs: prepare
     if: needs.prepare.outputs.has_workers == 'true'
-    runs-on: [self-hosted, linux, x64, gpu]
+    # Neither the GPU model nor the host driver joins the scorer identity, so
+    # results are shared only within this one homogeneous pool.
+    runs-on: [self-hosted, linux, x64, gpu, "${{ vars.LLM_CC_GPU_POOL }}"]
     timeout-minutes: 120
     permissions: {}
     strategy:
@@ -107,17 +123,18 @@ jobs:
           WORKER_ID: ${{ matrix.worker_id }}
         run: |
           mkdir -p "comparison/workers/$WORKER_ID"
-          # The exact image the profile fingerprints, as the runner's own
+          # The scorer image the coordinator was built with, whose llm-cc
+          # refuses a plan from any other build, as the runner's own
           # unprivileged user so its outputs stay writable.
           docker run --rm --gpus all --user "$(id -u):$(id -g)" \
-            --env AWS_ACCESS_KEY_ID --env AWS_SECRET_ACCESS_KEY \
+            --env AWS_REGION --env AWS_ACCESS_KEY_ID --env AWS_SECRET_ACCESS_KEY \
+            --env AWS_SESSION_TOKEN \
             --volume "$PWD/comparison:/work/comparison" --workdir /work \
             "$SCORER_IMAGE" \
-            python3 -m tools.comparison worker \
+            /opt/llm-cc/bin/llm-cc compare worker \
               --plan comparison/prep/plan.json --worker-id "$WORKER_ID" \
               --cache "$COMPARISON_STORE" --output-dir "comparison/workers/$WORKER_ID" \
-              --scorer /opt/llm-cc/bin/llm-cc --model /models/model.gguf \
-              --installed-root /opt/llm-cc
+              --model /models/model.gguf --scorer-image "$SCORER_IMAGE"
       - if: always()
         uses: actions/upload-artifact@v4
         with:

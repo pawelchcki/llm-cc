@@ -1,5 +1,10 @@
 # Implementation validation
 
+The sections up to 2026-09-23 record the Python comparison stages that
+`llm-cc compare` has since replaced; their measurements describe that
+implementation. See [the comparison core in llm-cc](#comparison-core-in-llm-cc-2026-09-25)
+for the current one.
+
 Checked on Linux x86_64 on 2026-09-11. These results establish local correctness.
 The Bazzite ROCm acceptance recorded below supplements these checks;
 CUDA and generated-comment publication acceptance remain outstanding.
@@ -32,36 +37,9 @@ CUDA and generated-comment publication acceptance remain outstanding.
   | 20 ms injected read latency | 2.707 s | 0.385 s |
 
   A local filesystem cache is already fast enough that the bound does not
-  matter; the default of 8 exists for high-latency object stores. Reproduce it
-  by seeding a filesystem cache from a cold plan, then timing preparation at
-  each bound:
-
-  ```python
-  import time
-  from tools.comparison.cache import FilesystemStore, ResultCache
-  from tools.comparison.pipeline import prepare
-
-  class SlowStore(FilesystemStore):
-      def get(self, key):
-          time.sleep(0.02)
-          return super().get(key)
-
-  cold = prepare(repo, head, base, identity, profile, {},
-                 ResultCache(FilesystemStore(cache)), out, 4)
-  writer = ResultCache(FilesystemStore(cache))
-  for key, item in cold["items"].items():
-      writer.put({"schema_version": 1, "key": key,
-                  "fingerprint": cold["fingerprint"],
-                  "content_sha256": item["content_sha256"],
-                  "language": item["language"], "llm_cc": 1.0,
-                  "token_count": 10})
-  for concurrency in (1, 8):
-      start = time.monotonic()
-      prepare(repo, head, base, identity, profile, {},
-              ResultCache(SlowStore(cache)), out, 4,
-              cache_concurrency=concurrency)
-      print(concurrency, time.monotonic() - start)
-  ```
+  matter; the default of 8 exists for high-latency object stores. The Python
+  script that produced this table was removed with the Python stages;
+  `llm-cc compare prepare --cache-concurrency N` takes the same bound.
 
 The companion publisher passed all 419 ci-toolkit unit tests and the TypeScript
 check. Coverage includes concurrent initial publications, one-comment updates,
@@ -275,3 +253,26 @@ Not verified here: building the model and scorer images (the 14 GB download and
 the CUDA build), model-layer reuse across scorer builds, GPU scoring inside the
 scorer image, S3 conditional writes against a real service, and a live GitLab or
 GitHub Actions rollout.
+
+## Comparison core in llm-cc, 2026-09-25
+
+Selection, classification, planning, scoring, caching and reporting moved into
+`llm-cc compare` (schema version 2); this package keeps discovery, CI job
+generation, publication and the BuildBuddy/Bazzite coordinator. Checked on
+Linux x86_64. These results establish local correctness only.
+
+- `bazel test //tools/comparison:comparison_test` passes all **106** Python
+  tests in four shards. The end-to-end tests run `llm-cc-compare-fake`, llm-cc
+  with a deterministic scorer, as every stage: the recipe test prepares with
+  `llm-cc compare prepare @scoring.args`, runs each generated GitLab worker job
+  (`llm-cc compare worker`) in a real shell and aggregates; the BuildBuddy tests
+  prepare real v2 plans, upload their blobs verified against Git object IDs, and
+  run the submitted remote worker through a stand-in for a verified bare host.
+  Plans from another build, changed plan digests and tampered blobs fail with a
+  stored v2 worker artifact.
+- Bazzite setup derives `scoring.args`, `execution-host.json` and
+  `identity.json` from `llm-cc compare identity`; the consumer and example
+  rules load through llm-cc's own rules engine.
+
+Not verified here: the image builds, a live GitLab, GitHub Actions or
+BuildBuddy run with the new stages, and a Bazzite redeploy.

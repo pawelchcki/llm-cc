@@ -144,11 +144,6 @@ fs::path RunningExecutablePath() {
 #endif
 }
 
-std::string RunningExecutableIdentity() {
-  static const std::string identity = Hex(HashFile(RunningExecutablePath()));
-  return identity;
-}
-
 int HexDigit(char value) {
   if (value >= '0' && value <= '9') {
     return value - '0';
@@ -513,6 +508,13 @@ void VerifyManifest(const fs::path& manifest,
 }
 
 }  // namespace
+
+std::string FileSha256Hex(const fs::path& path) { return Hex(HashFile(path)); }
+
+std::string RunningExecutableIdentity() {
+  static const std::string identity = Hex(HashFile(RunningExecutablePath()));
+  return identity;
+}
 
 std::optional<std::string> BackendArtifactName(std::string_view name) {
 #if defined(__linux__) && defined(__x86_64__)

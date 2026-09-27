@@ -8,10 +8,10 @@
 
 namespace llmcc {
 
-// Model digest memo, the supported interface for external verifiers.
+// Model digest memo.
 //
-// Hashing a multi-gigabyte GGUF model on every invocation is wasteful when a
-// caller has already hashed the very same file. `InspectModel` therefore reads
+// Hashing a multi-gigabyte GGUF model on every invocation is wasteful when the
+// file has not changed since it was last hashed. `InspectModel` therefore reads
 // and writes an advisory memo at
 //
 //   <entropy cache directory>/model-digests/<key>.json

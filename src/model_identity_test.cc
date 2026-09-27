@@ -91,9 +91,8 @@ int main() {  // NOLINT(bugprone-exception-escape)
                         "identical copy has same cache key");
 
 #if !defined(_WIN32)
-  // The memo file is the supported interface for external verifiers: a memo
-  // written by someone else, with a signature that still matches, is reused
-  // verbatim instead of hashing the model again.
+  // A memo written by another process, with a signature that still matches,
+  // is reused verbatim instead of hashing the model again.
   const fs::path external = root / "external.gguf";
   const std::string external_bytes = "external model bytes";
   Write(external, external_bytes);

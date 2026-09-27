@@ -1,5 +1,6 @@
-# GPU scorer image: the installed llm-cc CUDA scorer, the comparison worker and
-# a non-root user, built on the content-keyed model image by digest.
+# GPU scorer image: the installed llm-cc CUDA scorer and a non-root user, built
+# on the content-keyed model image by digest. `llm-cc compare worker` is the
+# whole worker: it reads the plan, scores, and stores results in S3 itself.
 #
 # Build from the pinned commit's tracked files (build.sh uses `git archive`):
 #
@@ -50,28 +51,20 @@ RUN --mount=type=secret,id=bazelrc,required=false \
       --//:source_version="$LLM_CC_VERSION" \
       //:install -- --prefix /opt/llm-cc; \
     bazel $rc shutdown
-# Fail the build now if the installed tree cannot state its own identity. The
-# real profile names this image's digest, so build.sh generates it after push.
-RUN PYTHONPATH=/src python3 -m tools.comparison.profile generate \
-      --installed-root /opt/llm-cc --backend cuda \
-      --execution-image registry.invalid/llm-cc-scorer@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
+# Fail the build now if the installed scorer cannot state its own identity.
+RUN /opt/llm-cc/bin/llm-cc compare identity --backend cuda \
+      --entropy-reduction device --flash-attn on \
       --model-sha256 0000000000000000000000000000000000000000000000000000000000000000 \
-      --model-bytes 1 --max-file-bytes 49152 --output /dev/null
+      --model-bytes 1 >/dev/null
 
 FROM ${RUNTIME_IMAGE} AS runtime
-# Workers only read and write whole objects, so the distribution's boto3 is
-# sufficient here; the coordinator needs conditional writes.
+# llm-cc talks to S3 itself; the image needs no Python or SDK.
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      ca-certificates python3 python3-boto3 \
+      ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --uid 10001 --user-group --home-dir /home/llm-cc --create-home llm-cc
-# PYTHONSAFEPATH below needs Python 3.11 or newer.
-RUN python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' \
- || { echo "RUNTIME_IMAGE must provide Python 3.11 or newer" >&2; exit 1; }
 COPY --from=build /opt/llm-cc /opt/llm-cc
-COPY --from=build /src/tools/__init__.py /opt/llm-cc-comparison/tools/__init__.py
-COPY --from=build /src/tools/comparison/*.py /opt/llm-cc-comparison/tools/comparison/
 
 # Start from the model image so its layer is shared by digest with every
 # scorer built on the same weights; the whole runtime is one layer above it.
@@ -81,13 +74,8 @@ ARG LLM_CC_COMMIT
 ARG LLM_CC_VERSION
 ARG CUDA_ARCHS=compute_86:sm_86
 COPY --from=runtime / /
-# A GitLab job without a fresh checkout still starts in the build directory,
-# which may hold an earlier checkout; only the pinned package may load.
-ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+ENV PATH=/opt/llm-cc/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     HOME=/home/llm-cc \
-    PYTHONPATH=/opt/llm-cc-comparison \
-    PYTHONSAFEPATH=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility
 LABEL org.opencontainers.image.revision="${LLM_CC_COMMIT}" \

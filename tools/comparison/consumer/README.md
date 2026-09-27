@@ -12,7 +12,8 @@ consuming repository only supplies configuration.
   BuildBuddy group has access to the `linux-amd64-rocm` pool.
 - The ci-toolkit GitHub app is installed on the repository.
 - `/var/lib/llm-cc/bin/llm-cc-coordinate` exists on the host. Re-run
-  `python3 -m tools.comparison.setup_bazzite` after any comparison source change.
+  `python3 -m tools.comparison.setup_bazzite` after any llm-cc or comparison
+  source change.
 - The publication policy is merged on the **default branch first**. ci-toolkit
   reads `.ci-toolkit.yml` from a pull request's target commit, so a policy that
   exists only on the PR branch publishes nothing.
@@ -34,16 +35,18 @@ consuming repository only supplies configuration.
 Add `.llm-cc/rules.json`, based on
 [`comparison-rules.json`](comparison-rules.json), to classify paths for the
 language at hand. This is strongly recommended rather than optional: a
-repository without that file is scored with the host's own rules, which are
-specific to llm-cc. They map every `.h` to C++, and treat `tools/**`,
-`examples/**`, `experiments/**`, `scripts/**` and `.github/**` as tooling, so a
-C project or a differently laid out repository gets misclassified languages and
-category rankings rather than an error.
+repository without that file is scored with llm-cc's built-in rules. They map
+`.h` to C, treat only a few top-level directories (`tools/**`, `examples/**`,
+`scripts/**`, `benchmarks/**`) as tooling, and exclude common vendored and
+generated trees, so a C++ project or a differently laid out repository gets
+misclassified languages and category rankings rather than an error. Check a
+rules file with `llm-cc rules explain PATH...` before committing it.
 
 Rules are read from the **target** commit's tree, so a pull request cannot
 reclassify its own files. Invalid rules fail the run rather than silently
-falling back to the host defaults. Accepted keys are `exclude`, `tests`,
-`tooling`, `extensions`, and `paths`.
+falling back to the defaults. Accepted keys are `exclude`, `tests`,
+`tooling`, `extensions`, and `paths`. Globs work like `.gitignore`: `*` never
+crosses `/`, and `**` matches any number of directories.
 
 `paths` chooses a language by location, for a repository where one extension
 means different languages in different directories:
@@ -53,9 +56,7 @@ means different languages in different directories:
 ```
 
 The first matching `paths` entry wins, then `extensions`, then the built-in
-extension table. A host older than this feature rejects the key as an
-unsupported classification rule, which fails the run, so only add `paths` once
-the host runs a version that supports it.
+extension table.
 
 ## Private repositories and GitHub quota
 
@@ -67,9 +68,10 @@ recommended for public ones.
 
 ## Shared store
 
-Comparisons share one host filesystem cache. Result keys are content and scoring
-fingerprint only, and transport paths hash `[repository, pipeline_id]`, so
-repositories neither collide nor learn each other's paths. Uploaded blobs are
+Comparisons share one host filesystem cache. Result keys are the Git blob ID,
+language and scoring fingerprint only, and transport paths hash
+`[repository, pipeline_id]`, so repositories neither collide nor learn each
+other's paths. Uploaded blobs are
 host-local and readable by both executor users, so only run this on repositories
 whose source those users may read.
 

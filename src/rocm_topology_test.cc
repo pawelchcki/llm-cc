@@ -173,6 +173,33 @@ int main() try {
          "ROCR visibility is not set when HIP visibility is present");
 
   ClearVisibility();
+
+  // Device identity and local memory for bare-host checks.
+  const fs::path identified = root / "identified";
+  WriteNode(identified, "1",
+            "cpu_cores_count 0\nsimd_count 96\ngfx_target_version 110000\n"
+            "vendor_id 4098\ndomain 0\nlocation_id 768\n"
+            "unique_id 2408463410737365011\ndrm_render_minor 128\n"
+            "marketing_name Radeon RX\n");
+  for (const auto& [bank, properties] :
+       {std::pair{"0", "heap_type 1\nsize_in_bytes 25753026560\n"},
+        std::pair{"1", "heap_type 2\nsize_in_bytes 1024\n"},
+        std::pair{"2", "heap_type 0\nsize_in_bytes 999999\n"}}) {
+    const fs::path directory = identified / "1/mem_banks" / bank;
+    fs::create_directories(directory);
+    std::ofstream(directory / "properties") << properties;
+  }
+  const auto identities = llmcc::ReadAmdGpuDevices(identified);
+  Expect(identities.has_value() && identities->size() == 1,
+         "an identified GPU parses despite non-numeric fields");
+  const AmdGpuDevice& device = identities->front();
+  Expect(device.vendor_id == 0x1002 && device.domain == 0 &&
+             device.location_id == 768 &&
+             device.unique_id == 2408463410737365011ULL &&
+             device.drm_render_minor == std::optional<std::uint64_t>(128),
+         "KFD identity fields are read");
+  ExpectEq(device.vram_bytes, std::uint64_t{25753026560 + 1024},
+           "local memory sums framebuffer heaps only");
   return 0;
 } catch (const std::exception& exception) {
   std::cerr << "FAIL: unexpected exception: " << exception.what() << '\n';

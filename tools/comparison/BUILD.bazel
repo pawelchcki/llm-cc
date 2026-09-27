@@ -16,9 +16,6 @@ filegroup(
         data = [":sources", ":__main__.py"],
     )
     for stage in [
-        "prepare",
-        "worker",
-        "compare",
         "discover",
         "store-report",
         "publish",
@@ -35,7 +32,8 @@ sh_test(
         ":__main__.py",
         "//:llm-cc-compare-fake",
     ],
-    # The launcher resolves this runfile into LLM_CC for report aggregation.
+    # The launcher resolves this runfile into LLM_CC: the deterministic
+    # llm-cc runs prepare, worker and aggregate in the end-to-end tests.
     env = {"LLM_CC_RLOCATION": "$(rlocationpath //:llm-cc-compare-fake)"},
     env_inherit = ["PATH"],
     # The suite is dominated by subprocess and git fixtures; shards run in

@@ -125,7 +125,7 @@ ScorerSession OpenScorerSession(const ScorerRequest& request,
       device_reduction ? "device" : "host", session.entropy_cache,
       FlashAttentionName(settings.flash_attention),
       KvCacheTypeName(settings.kv_cache_type), settings.kv_offload,
-      calibrated_tau_applies);
+      calibrated_tau_applies || request.require_model_digest);
   session.tau = ResolveTau(settings, request.model, &session.identity);
 
   const BackendKind resolved_backend = session.backend;
@@ -145,7 +145,8 @@ ScorerSession OpenScorerSession(const ScorerRequest& request,
           .cache = session.entropy_cache,
           .hotspots = request.hotspots,
           .hierarchy_mode = settings.hierarchy_mode,
-          .inference_context_tokens = settings.context},
+          .inference_context_tokens = settings.context,
+          .tier = request.tier},
       [&progress, settings, resolved_backend, backend_diagnostics, no_download,
        fetch_backend, model_cache, model_path]() {
         progress.Phase("loading model after entropy cache miss");
