@@ -5,15 +5,11 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-    types: [opened, synchronize, reopened, labeled]
+  # release-builds-label.yml dispatches this when a PR gets `ci: release-builds`.
   workflow_dispatch:
 
 concurrency:
-  # Adding an unrelated label must not cancel builds already running.
-  group: >-
-    ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{
-    github.event.action == 'labeled' && github.event.label.name != 'ci: release-builds'
-    && format('-{0}', github.run_id) || '' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -22,15 +18,13 @@ permissions:
 jobs:
   platform:
     # Ordinary PRs use BuildBuddy. Full platform and consumer builds run for
-    # main, manual dispatches, same-repository release-please branches, and
-    # any PR labeled `ci: release-builds`.
+    # main, dispatches, same-repository release-please branches, and pushes
+    # to a PR labeled `ci: release-builds`.
     if: >-
       github.event_name != 'pull_request' ||
-      ((github.event.action != 'labeled' ||
-        github.event.label.name == 'ci: release-builds') &&
-       (contains(github.event.pull_request.labels.*.name, 'ci: release-builds') ||
-        (github.event.pull_request.head.repo.full_name == github.repository &&
-         startsWith(github.head_ref, 'release-please--branches--'))))
+      contains(github.event.pull_request.labels.*.name, 'ci: release-builds') ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       startsWith(github.head_ref, 'release-please--branches--'))
     strategy:
       fail-fast: false
       matrix:
@@ -98,15 +92,13 @@ jobs:
 
   consumer:
     # Ordinary PRs use BuildBuddy. Full platform and consumer builds run for
-    # main, manual dispatches, same-repository release-please branches, and
-    # any PR labeled `ci: release-builds`.
+    # main, dispatches, same-repository release-please branches, and pushes
+    # to a PR labeled `ci: release-builds`.
     if: >-
       github.event_name != 'pull_request' ||
-      ((github.event.action != 'labeled' ||
-        github.event.label.name == 'ci: release-builds') &&
-       (contains(github.event.pull_request.labels.*.name, 'ci: release-builds') ||
-        (github.event.pull_request.head.repo.full_name == github.repository &&
-         startsWith(github.head_ref, 'release-please--branches--'))))
+      contains(github.event.pull_request.labels.*.name, 'ci: release-builds') ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       startsWith(github.head_ref, 'release-please--branches--'))
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
