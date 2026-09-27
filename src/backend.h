@@ -38,6 +38,11 @@ std::string SmallerModelGuidance(
 bool IsGpuAllocationFailure(std::string_view diagnostics);
 
 std::string DiscoverBackendSource(BackendKind backend);
+// SHA-256 of the bundle or plugin this build loads for `backend` from outside
+// its executable, resolved as inference resolves it but never downloaded;
+// nullopt for CPU and for backends compiled or embedded into the executable.
+// Throws MissingBackendPluginError when the backend is not available.
+std::optional<std::string> BackendArtifactDigest(BackendKind backend);
 
 BackendKind ParseBackend(std::string_view value);
 std::string_view BackendName(BackendKind backend);

@@ -76,6 +76,7 @@ jobs:
           llm-cc compare prepare \
             --repo . --head "$GITHUB_SHA" --target "$COMPARISON_TARGET_SHA" \
             --identity comparison/identity.json \
+            --scorer-image "$LLM_CC_SCORER_IMAGE" \
             --default-rules /opt/llm-cc-comparison/rules.json \
             --cache "$COMPARISON_STORE" --output-dir comparison/prep \
             @/opt/llm-cc-comparison/planning.args @/opt/llm-cc-comparison/scoring.args
@@ -120,7 +121,7 @@ jobs:
             /opt/llm-cc/bin/llm-cc compare worker \
               --plan comparison/prep/plan.json --worker-id "$WORKER_ID" \
               --cache "$COMPARISON_STORE" --output-dir "comparison/workers/$WORKER_ID" \
-              --model /models/model.gguf
+              --model /models/model.gguf --scorer-image "$SCORER_IMAGE"
       - if: always()
         uses: actions/upload-artifact@v4
         with:

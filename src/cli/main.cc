@@ -35,6 +35,7 @@
 #include "src/analysis_session.h"
 #include "src/analysis_totals.h"
 #include "src/analyze.h"
+#include "src/backend.h"
 #include "src/backend_fetch.h"
 #include "src/build_info.h"
 #include "src/cache.h"
@@ -1219,7 +1220,8 @@ int Main(int argc, char** argv) {
       result = llmcc::compare::RunCompareCommand(
           argc - 1, argv + 1,
           {.inference_abi = std::string(llmcc::InferenceAbi()),
-           .open_session = llmcc::OpenScorerSession});
+           .open_session = llmcc::OpenScorerSession,
+           .backend_artifact = llmcc::BackendArtifactDigest});
     } else {
       const auto arguments = ParseAnalyzeArguments(argc, argv);
       try {

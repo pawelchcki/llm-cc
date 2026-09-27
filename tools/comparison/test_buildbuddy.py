@@ -174,6 +174,26 @@ class BuildBuddyTest(unittest.TestCase):
         index = command.index("remote-worker")
         return buildbuddy.main(command[index:])
 
+    def test_scorer_inherits_only_store_and_cache_settings(self):
+        environment = buildbuddy.scorer_environment(
+            {
+                "HOME": "/home/worker",
+                "AWS_ACCESS_KEY_ID": "id",
+                "LD_LIBRARY_PATH": "/opt/other-rocm/lib",
+                "HSA_OVERRIDE_GFX_VERSION": "11.0.0",
+                "PATH": "/opt/other/bin",
+            }
+        )
+        self.assertEqual(
+            environment,
+            {
+                "PATH": "/usr/bin:/bin",
+                "LANG": "C.UTF-8",
+                "HOME": "/home/worker",
+                "AWS_ACCESS_KEY_ID": "id",
+            },
+        )
+
     def test_prepare_binds_the_plan_to_the_execution_host(self):
         # Without the stand-in, llm-cc itself reads the host contract.
         self.config["llm_cc"] = os.path.abspath(llm_cc())

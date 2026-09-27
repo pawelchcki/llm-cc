@@ -196,7 +196,8 @@ shown as the LM-CC/token delta. Zero-token scores and zero-baseline percentages
 are unavailable.
 
 The store holds results under `results/v2/`, native entropy entries under
-`entropy/v2/` (so a new tau or alpha reuses inference), and each pipeline's
+`entropy/v2/<scorer>/` (so a new tau or alpha reuses inference, but another
+build, backend, image or host does not), and each pipeline's
 plan, blobs, worker artifacts and report under `pipelines/<digest>/`. Results
 refresh after 20 days and expire after 30 by default; configure the bucket's
 lifecycle accordingly. Corrupt or mismatched entries are misses; read,

@@ -509,6 +509,8 @@ void VerifyManifest(const fs::path& manifest,
 
 }  // namespace
 
+std::string FileSha256Hex(const fs::path& path) { return Hex(HashFile(path)); }
+
 std::string RunningExecutableIdentity() {
   static const std::string identity = Hex(HashFile(RunningExecutablePath()));
   return identity;

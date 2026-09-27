@@ -2,6 +2,7 @@
 #define LLM_CC_COMPARE_IDENTITY_H_
 
 #include <cstdint>
+#include <functional>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
@@ -18,17 +19,35 @@ struct ModelPin {
   std::uint64_t bytes = 0;
 };
 
+// What a scorer's results depend on outside its executable; each value that
+// is present joins the scorer identity.
+struct ScorerContext {
+  // ExecutionHostDigest of the bare host whose workers score the plan.
+  std::optional<std::string> execution_host;
+  // BackendArtifactDigest of the GPU backend the scoring settings load.
+  std::optional<std::string> backend_artifact;
+  // The scorer image workers run in, as name@sha256:<digest>.
+  std::optional<std::string> image;
+};
+
+// BackendArtifactDigest, supplied by the executable that links the backends;
+// an empty resolver means every backend is compiled in.
+using BackendArtifactResolver =
+    std::function<std::optional<std::string>(BackendKind)>;
+
 // The running build, as every comparison stage must agree on it: version,
 // stamped commit (null when unstamped), the executable's SHA-256, backend
-// configuration, inference ABI and analysis version, plus the
-// ExecutionHostDigest of a bare host's contract when it has one.
-nlohmann::json ScorerJson(
-    std::string_view inference_abi,
-    const std::optional<std::string>& execution_host = std::nullopt);
+// configuration, inference ABI and analysis version, plus `context`.
+nlohmann::json ScorerJson(std::string_view inference_abi,
+                          const ScorerContext& context = {});
+
+// Throws std::invalid_argument unless `image` is name@sha256:<digest>, an
+// immutable reference.
+void ValidateImageReference(std::string_view image);
 
 // Throws std::invalid_argument unless `scorer` has exactly ScorerJson's
-// fields, with a commit, an executable digest or both, and at most an
-// execution-host digest besides.
+// fields, with a commit, an executable digest or both, and valid optional
+// execution_host, backend_artifact and image fields.
 void ValidateScorer(const nlohmann::json& scorer);
 
 nlohmann::json ModelJson(const ModelPin& model);

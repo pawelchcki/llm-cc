@@ -220,7 +220,12 @@ bool ValidResult(const json& result, const json& item,
          result["high_entropy_tokens"].get<std::uint64_t>() <=
              result["token_count"].get<std::uint64_t>() &&
          IsFiniteNonNegative(result["entropy_sum"]) &&
-         IsCount(result["total_branch"]) && IsCount(result["total_comp_level"]);
+         IsCount(result["total_branch"]) &&
+         // A sum of per-unit nesting levels, which grows with the square of
+         // the file, so only the report's exact integer range bounds it.
+         result["total_comp_level"].is_number_unsigned() &&
+         result["total_comp_level"].get<std::uint64_t>() <= std::uint64_t{1}
+                                                                << 53U;
 }
 
 std::vector<WorkerAssignment> Partition(std::vector<json> items,

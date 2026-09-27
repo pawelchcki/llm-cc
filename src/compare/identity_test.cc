@@ -106,7 +106,8 @@ int main() {  // NOLINT(bugprone-exception-escape)
            std::string("scorer ") + field + " changes the fingerprint");
   }
   // A bare host's contract joins the scorer only when there is one.
-  const json hosted = llmcc::compare::ScorerJson("abi", std::string(64, 'c'));
+  const json hosted = llmcc::compare::ScorerJson(
+      "abi", {.execution_host = std::string(64, 'c')});
   Expect(!scorer.contains("execution_host") &&
              hosted["execution_host"] == std::string(64, 'c'),
          "the execution host is recorded only for a bare host");
@@ -116,6 +117,22 @@ int main() {  // NOLINT(bugprone-exception-escape)
       "the execution host changes the fingerprint");
   llmcc::compare::ValidateScorer(scorer);
   llmcc::compare::ValidateScorer(hosted);
+  const std::string image =
+      "registry.example/scorer@sha256:" + std::string(64, 'd');
+  const json packaged = llmcc::compare::ScorerJson(
+      "abi", {.backend_artifact = std::string(64, 'e'), .image = image});
+  llmcc::compare::ValidateScorer(packaged);
+  Expect(packaged["backend_artifact"] == std::string(64, 'e') &&
+             packaged["image"] == image &&
+             fingerprints
+                 .insert(llmcc::compare::Fingerprint(packaged, model, scoring))
+                 .second,
+         "the backend artifact and image join the fingerprint");
+  Expect(Throws<std::invalid_argument>([] {
+           static_cast<void>(llmcc::compare::ScorerJson(
+               "abi", {.image = "registry.example/scorer:latest"}));
+         }),
+         "a scorer image must be pinned by digest");
   json unhashed = hosted;
   unhashed["execution_host"] = "gfx1100";
   Expect(Throws<std::invalid_argument>(

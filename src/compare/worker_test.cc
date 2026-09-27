@@ -131,9 +131,10 @@ int main() {  // NOLINT(bugprone-exception-escape)
     ExpectEq(cache.Get(cold["items"][key], cold["fingerprint"]),
              std::optional<json>(result), "each result is stored");
   }
-  Expect(fs::exists(root / "store/entropy/v2") &&
-             !fs::is_empty(root / "store/entropy/v2"),
-         "native entropy entries are shared");
+  const fs::path entropy = root / "store/entropy/v2" /
+                           llmcc::compare::CanonicalDigest(cold["scorer"]);
+  Expect(fs::exists(entropy) && !fs::is_empty(entropy),
+         "native entropy entries are shared under the plan's scorer");
 
   // Warm: nothing left to score.
   const json warm = harness.Prepare(repository, root / "warm", 4);
@@ -204,6 +205,11 @@ int main() {  // NOLINT(bugprone-exception-escape)
              foreign["errors"][0].get<std::string>().find(
                  "different llm-cc build") != std::string::npos,
          "a plan from another build is refused");
+#ifdef __linux__
+  // Bazel's test runner sets these, which bare-host workers refuse.
+  unsetenv("RUNFILES_DIR");
+  unsetenv("RUNFILES_MANIFEST_FILE");
+#endif
   auto other_host = harness.Worker(root / "cold/plan.json", 0, root / "host");
   other_host.execution_host = llmcc::compare::ExecutionHost{
       .pci_address = "0000:03:00.0",
@@ -217,6 +223,34 @@ int main() {  // NOLINT(bugprone-exception-escape)
              unhosted["errors"][0].get<std::string>().find("execution_host") !=
                  std::string::npos,
          "a plan made for no host or another host is refused");
+#ifdef __linux__
+  // Loader and ROCm settings would act outside the host contract.
+  setenv("LD_LIBRARY_PATH", "/opt/other-rocm/lib", 1);
+  const json inherited = llmcc::compare::RunWorker(other_host);
+  unsetenv("LD_LIBRARY_PATH");
+  Expect(inherited["status"] == "failed" &&
+             inherited["errors"][0].get<std::string>().find(
+                 "LD_LIBRARY_PATH") != std::string::npos,
+         "a bare-host worker refuses an inherited loader path");
+#endif
+  auto other_image = harness.Worker(root / "cold/plan.json", 0, root / "image");
+  other_image.scorer_image =
+      "registry.example/scorer@sha256:" + std::string(64, 'e');
+  const json imaged = llmcc::compare::RunWorker(other_image);
+  Expect(imaged["status"] == "failed" &&
+             imaged["errors"][0].get<std::string>().find("image") !=
+                 std::string::npos,
+         "a plan made for another scorer image is refused");
+  auto other_backend =
+      harness.Worker(root / "cold/plan.json", 0, root / "backend");
+  other_backend.backend_artifact = [](llmcc::BackendKind) {
+    return std::optional<std::string>(std::string(64, 'f'));
+  };
+  const json rebacked = llmcc::compare::RunWorker(other_backend);
+  Expect(rebacked["status"] == "failed" &&
+             rebacked["errors"][0].get<std::string>().find(
+                 "backend_artifact") != std::string::npos,
+         "a plan made with another backend artifact is refused");
   const json absent = llmcc::compare::RunWorker(
       harness.Worker(root / "cold/plan.json", 3, root / "absent"));
   Expect(
@@ -238,7 +272,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
          "a blob that does not match its id is not scored");
 
   // A corrupt shared entropy entry is rescored rather than trusted.
-  for (const auto& entry : fs::directory_iterator(root / "store/entropy/v2")) {
+  for (const auto& entry : fs::directory_iterator(entropy)) {
     llmcc::compare::test::Write(entry.path(), "corrupt");
   }
   harness.scored->store(0);
@@ -249,7 +283,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
   // So are well-formed entries whose fields have the wrong types.
   const std::vector<std::uint8_t> mistyped =
       json::to_cbor({{"version", "2"}, {"source_size", "many"}});
-  for (const auto& entry : fs::directory_iterator(root / "store/entropy/v2")) {
+  for (const auto& entry : fs::directory_iterator(entropy)) {
     llmcc::compare::test::Write(entry.path(),
                                 std::string(mistyped.begin(), mistyped.end()));
   }

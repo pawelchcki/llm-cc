@@ -8,6 +8,7 @@
 #include <string>
 
 #include "src/compare/execution_host.h"
+#include "src/compare/identity.h"
 #include "src/compare/store.h"
 #include "src/progress.h"
 #include "src/scorer_session.h"
@@ -26,6 +27,9 @@ struct WorkerOptions {
   std::string inference_abi;
   ModelRequest model;
   std::chrono::seconds deadline = kDefaultWorkerDeadline;
+  BackendArtifactResolver backend_artifact;
+  // The image this worker runs in, when the plan names one.
+  std::optional<std::string> scorer_image;
   // Bare-host execution: verify the GPU and hold its lock while scoring.
   std::optional<ExecutionHost> execution_host;
   HostPaths host_paths;

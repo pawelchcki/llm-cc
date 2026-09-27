@@ -1,5 +1,7 @@
 #include "src/compare/worker.h"
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -9,8 +11,13 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
+
+#ifdef __linux__
+#include <unistd.h>
+#endif
 
 #include "src/analysis_totals.h"
 #include "src/backend.h"
@@ -45,6 +52,36 @@ std::string DescribeScorerMismatch(const json& planned, const json& running) {
   return "the plan was prepared by a different llm-cc build (" +
          (fields.empty() ? std::string("fields differ") : fields) +
          "); coordinator and workers must run the same executable";
+}
+
+// Loader and GPU runtime settings change which libraries load or how kernels
+// run, and neither the host contract nor the fingerprint records them, so a
+// bare-host worker only accepts the visibility settings it applies itself.
+void RefuseInheritedRuntimeSettings() {
+#ifdef __linux__
+  static constexpr std::array<std::string_view, 12> kPrefixes = {
+      "LD_",  "HSA_",  "HIP_",    "ROCR_",    "ROCM_",      "AMD_",
+      "GPU_", "CUDA_", "MIOPEN_", "ROCBLAS_", "HIPBLASLT_", "GGML_"};
+  static constexpr std::array<std::string_view, 4> kNames = {
+      "RUNFILES_DIR", "RUNFILES_MANIFEST_FILE", "LLM_CC_BACKEND_DIR",
+      "LLM_CC_RUNTIME_DIR"};
+  static constexpr std::array<std::string_view, 3> kApplied = {
+      "ROCR_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES", "CUDA_VISIBLE_DEVICES"};
+  for (char** entry = environ; entry != nullptr && *entry != nullptr; ++entry) {
+    const std::string_view variable(*entry);
+    const std::string_view name = variable.substr(0, variable.find('='));
+    if (std::ranges::find(kApplied, name) != kApplied.end()) {
+      continue;
+    }
+    if (std::ranges::find(kNames, name) != kNames.end() ||
+        std::ranges::any_of(kPrefixes, [&](std::string_view prefix) {
+          return name.starts_with(prefix);
+        })) {
+      throw WorkerAbort("bare-host workers run in a clean environment; unset " +
+                        std::string(name));
+    }
+  }
+#endif
 }
 
 void ApplyEnvironment(
@@ -124,7 +161,7 @@ void Score(const WorkerOptions& options, const json& plan,
       return;
     }
   }
-  StoreEntropyTier tier(*options.store);
+  StoreEntropyTier tier(*options.store, CanonicalDigest(plan["scorer"]));
   ScorerSession session =
       options.open_session(ScorerRequest{.settings = settings,
                                          .model = options.model,
@@ -220,13 +257,22 @@ json RunWorker(const WorkerOptions& options) {
     }
     const json plan = ReadJsonFile(options.plan);
     ValidatePlan(plan);
+    if (options.execution_host.has_value()) {
+      RefuseInheritedRuntimeSettings();
+    }
     artifact["identity"] = plan["identity"];
     artifact["fingerprint"] = plan["fingerprint"];
+    const BackendKind backend = SettingsFromScoring(plan["scoring"]).backend;
     const json running = ScorerJson(
         options.inference_abi,
-        options.execution_host.has_value()
-            ? std::optional(ExecutionHostDigest(*options.execution_host))
-            : std::nullopt);
+        {.execution_host =
+             options.execution_host.has_value()
+                 ? std::optional(ExecutionHostDigest(*options.execution_host))
+                 : std::nullopt,
+         .backend_artifact = options.backend_artifact
+                                 ? options.backend_artifact(backend)
+                                 : std::nullopt,
+         .image = options.scorer_image});
     if (plan["scorer"] != running) {
       throw WorkerAbort(DescribeScorerMismatch(plan["scorer"], running));
     }

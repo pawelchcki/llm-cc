@@ -415,6 +415,11 @@ int main() {  // NOLINT(bugprone-exception-escape)
     Expect(!llmcc::compare::ValidResult(oversized, item, "f"),
            std::string("a count past the source limit is invalid: ") + field);
   }
+  // Nesting levels add up per unit, so their sum outgrows the file itself.
+  json deep = valid;
+  deep["total_comp_level"] = std::uint64_t{1} << 40U;
+  Expect(llmcc::compare::ValidResult(deep, item, "f"),
+         "a level sum beyond the source size is valid");
   json huge_score = valid;
   huge_score["llm_cc"] = json::parse("18446744073709551615");
   Expect(!llmcc::compare::ValidResult(huge_score, item, "f"),

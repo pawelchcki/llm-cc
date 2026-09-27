@@ -186,7 +186,8 @@ fi
 # The identity every plan from this coordinator carries; it needs no GPU or
 # network, only the pinned llm-cc.
 "$ENGINE" run --rm --network=none "$coordinator" \
-  llm-cc compare identity @/opt/llm-cc-comparison/scoring.args >"$OUTPUT/identity.json"
+  llm-cc compare identity --scorer-image "$scorer" \
+  @/opt/llm-cc-comparison/scoring.args >"$OUTPUT/identity.json"
 
 cat >"$OUTPUT/images.env" <<EOF
 MODEL_IMAGE=$model

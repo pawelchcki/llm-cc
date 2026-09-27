@@ -32,6 +32,8 @@ std::optional<std::string> BackendArtifactName(std::string_view name);
 // SHA-256 of the running executable: the identity of a build without a
 // stamped commit.
 std::string RunningExecutableIdentity();
+// Lowercase hex SHA-256 of a file's bytes.
+std::string FileSha256Hex(const std::filesystem::path& path);
 std::filesystem::path BackendBundlePath(const BackendFetchOptions& options);
 void VerifyBackendBundle(const BackendFetchOptions& options);
 void VerifyBackendBundle(const BackendFetchOptions& options,

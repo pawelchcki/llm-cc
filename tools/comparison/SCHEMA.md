@@ -23,9 +23,19 @@ A plan names three objects, and every stage must agree on them:
   gpu_arch, runtime_files}` of the `--execution-host` contract that `prepare`
   and `identity` were given, so another GPU architecture or ROCm runtime never
   reuses results; the PCI address, VRAM floor and lock resource do not affect
-  it. A worker refuses a plan whose `scorer` differs from its own, host
+  it. A GPU backend loaded from outside the executable adds
+  `backend_artifact`, the SHA-256 of the bundle or plugin that inference
+  resolves (never downloaded while planning), so the coordinator must see the
+  same backend files as its workers; a backend compiled into the executable
+  adds nothing. `--scorer-image name@sha256:<digest>` on `prepare`, `identity`
+  and `worker` adds `image`, the scorer image workers run in. A worker refuses
+  a plan whose `scorer` differs from its own, host, backend and image
   included, so the coordinator and the GPU workers must run the same llm-cc
-  build against the same contract.
+  build against the same contract. A bare-host worker also refuses to inherit
+  loader, ROCm, HIP, HSA, CUDA or GGML settings, runfiles directories and
+  `LLM_CC_BACKEND_DIR`/`LLM_CC_RUNTIME_DIR`, which would act outside that
+  identity; the BuildBuddy remote worker runs it with only `HOME`, `TMPDIR`,
+  `SSL_CERT_FILE` and the store's `AWS_*` settings.
 - `model`: `{sha256, bytes}`, the scorer's model identity. A split GGUF has
   the domain-separated digest of all its shards and their total size.
 - `scoring`: every setting that changes a result, `{backend, context,
@@ -138,8 +148,10 @@ umask. S3 requests are signed with SigV4; credentials come only from
   where `sha256` covers the canonical result. An entry that fails any check is
   a miss. A hit older than 20 days (`--refresh-days`) is rewritten with a new
   `stored_at`; one older than 30 (`--expire-days`) is a miss.
-- `entropy/v2/<entry key>.cbor`: llm-cc's native entropy cache entry for one
-  file under one model and inference configuration. Workers read it before
+- `entropy/v2/<scorer>/<entry key>.cbor`: llm-cc's native entropy cache entry
+  for one file under one model and inference configuration, where `<scorer>`
+  is the SHA-256 of the plan's canonical `scorer`: the entry key does not
+  cover the build, backend, image or host. Workers read it before
   inference and write it after, so a new threshold or presentation rescores
   from stored entropy instead of the model. A corrupt entry is rescored.
 - `pipelines/<sha256(canonical([repository, pipeline_id]))>/`: a pipeline's

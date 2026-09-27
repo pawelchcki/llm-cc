@@ -645,6 +645,26 @@ std::string DiscoverBackendSource(BackendKind backend) {
 #endif
 }
 
+std::optional<std::string> BackendArtifactDigest(BackendKind backend) {
+#ifdef LLM_CC_DYNAMIC_BACKENDS
+  if (backend != BackendKind::kCuda && backend != BackendKind::kRocm) {
+    return std::nullopt;
+  }
+  const auto resolved = ResolveBackendPlugin(
+      backend, std::nullopt, PluginCandidates(backend),
+      [backend] { return HasEmbeddedPayload(BackendName(backend)); },
+      [] { return RuntimeRoot(); }, build_info::Version(), build_info::GitSha(),
+      {}, [] { return InstalledBackendRoot(); });
+  if (resolved.source == BackendPluginSource::kEmbedded) {
+    return std::nullopt;
+  }
+  return FileSha256Hex(resolved.path);
+#else
+  static_cast<void>(backend);
+  return std::nullopt;
+#endif
+}
+
 BackendRuntime::BackendRuntime(
     BackendKind requested, std::int32_t gpu_layers, std::string_view version,
     const std::optional<std::filesystem::path>& backend_directory,

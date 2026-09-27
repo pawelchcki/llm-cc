@@ -57,8 +57,7 @@ bool IsHexDigest(std::string_view value, std::size_t length) {
          });
 }
 
-json ScorerJson(std::string_view inference_abi,
-                const std::optional<std::string>& execution_host) {
+json ScorerJson(std::string_view inference_abi, const ScorerContext& context) {
   const std::string_view commit = build_info::GitSha();
   // The executable's digest even for a stamped build: the same commit built
   // with another toolchain or image can compute different results.
@@ -68,31 +67,64 @@ json ScorerJson(std::string_view inference_abi,
                  {"backend_configuration", build_info::BackendConfiguration()},
                  {"inference_abi", inference_abi},
                  {"analysis_version", kAnalysisVersion}};
-  // Absent rather than null, so fingerprints without a host stay unchanged.
-  if (execution_host.has_value()) {
-    scorer["execution_host"] = *execution_host;
+  // Absent rather than null, so fingerprints without them stay unchanged.
+  if (context.execution_host.has_value()) {
+    scorer["execution_host"] = *context.execution_host;
+  }
+  if (context.backend_artifact.has_value()) {
+    scorer["backend_artifact"] = *context.backend_artifact;
+  }
+  if (context.image.has_value()) {
+    ValidateImageReference(*context.image);
+    scorer["image"] = *context.image;
   }
   return scorer;
+}
+
+void ValidateImageReference(std::string_view image) {
+  constexpr std::string_view kDigest = "@sha256:";
+  const std::size_t at = image.find(kDigest);
+  if (at == 0 || at == std::string_view::npos ||
+      !IsHexDigest(image.substr(at + kDigest.size()), 64) ||
+      std::ranges::any_of(image.substr(0, at), [](char character) {
+        return character <= ' ' || character == '@' || character == 0x7f;
+      })) {
+    throw std::invalid_argument("scorer image must be name@sha256:<digest>");
+  }
 }
 
 void ValidateScorer(const json& scorer) {
   static constexpr std::array<const char*, 6> kFields = {
       "version",       "commit",          "executable", "backend_configuration",
       "inference_abi", "analysis_version"};
-  const bool host = scorer.is_object() && scorer.contains("execution_host");
-  if (!scorer.is_object() || scorer.size() != kFields.size() + (host ? 1 : 0) ||
+  static constexpr std::array<const char*, 3> kOptional = {
+      "execution_host", "backend_artifact", "image"};
+  if (!scorer.is_object() ||
       !std::ranges::all_of(
-          kFields, [&](const char* field) { return scorer.contains(field); })) {
+          kFields, [&](const char* field) { return scorer.contains(field); }) ||
+      scorer.size() !=
+          kFields.size() + static_cast<std::size_t>(std::ranges::count_if(
+                               kOptional, [&](const char* field) {
+                                 return scorer.contains(field);
+                               }))) {
     throw std::invalid_argument(
         "scorer must have exactly version, commit, executable, "
         "backend_configuration, inference_abi and analysis_version, and "
-        "optionally execution_host");
+        "optionally execution_host, backend_artifact and image");
   }
-  if (host &&
-      !(scorer["execution_host"].is_string() &&
-        IsHexDigest(scorer["execution_host"].get_ref<const std::string&>(),
-                    64))) {
-    throw std::invalid_argument("scorer execution_host must be a SHA-256");
+  for (const char* field : {"execution_host", "backend_artifact"}) {
+    if (scorer.contains(field) &&
+        !(scorer[field].is_string() &&
+          IsHexDigest(scorer[field].get_ref<const std::string&>(), 64))) {
+      throw std::invalid_argument(std::string("scorer ") + field +
+                                  " must be a SHA-256");
+    }
+  }
+  if (scorer.contains("image")) {
+    if (!scorer["image"].is_string()) {
+      throw std::invalid_argument("scorer image must be a string");
+    }
+    ValidateImageReference(scorer["image"].get_ref<const std::string&>());
   }
   const auto text = [&](const char* field) {
     return scorer[field].is_string() &&

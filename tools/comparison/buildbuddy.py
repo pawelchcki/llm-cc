@@ -413,6 +413,34 @@ def run_prepared(
     return report
 
 
+# What the scorer may inherit: its store's S3 settings and where its caches
+# live. Loader paths and GPU runtime tuning would change inference outside
+# the scorer identity, and llm-cc applies GPU visibility itself after it
+# verifies the host.
+SCORER_ENVIRONMENT = (
+    "HOME",
+    "TMPDIR",
+    "SSL_CERT_FILE",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "AWS_REGION",
+    "AWS_DEFAULT_REGION",
+    "AWS_ENDPOINT_URL",
+    "AWS_ENDPOINT_URL_S3",
+)
+
+
+def scorer_environment(environ=None):
+    """The clean environment `llm-cc compare worker` runs in."""
+    environ = os.environ if environ is None else environ
+    environment = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"}
+    environment.update(
+        {name: environ[name] for name in SCORER_ENVIRONMENT if name in environ}
+    )
+    return environment
+
+
 def _failed_artifact(worker_id, plan, errors, elapsed):
     return {
         "schema_version": 2,
@@ -506,6 +534,7 @@ def remote_worker(args):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 timeout=remaining() + 300,
+                env=scorer_environment(),
             )
             if not artifact_path.is_file():
                 errors.append(

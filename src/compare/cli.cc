@@ -275,6 +275,8 @@ struct PlanArguments {
   std::optional<fs::path> identity;
   // The bare host whose workers will score the plan.
   std::optional<fs::path> execution_host;
+  // The image workers run in, name@sha256:<digest>.
+  std::optional<std::string> scorer_image;
   std::string cache;
   std::optional<fs::path> store_options;
   std::optional<fs::path> presentation;
@@ -345,6 +347,8 @@ PlanArguments ParsePlanArguments(const std::vector<std::string_view>& args,
     }
     if (command != Command::kRun && option == "--execution-host") {
       parsed.execution_host = fs::u8path(arguments.Value(option));
+    } else if (command != Command::kRun && option == "--scorer-image") {
+      parsed.scorer_image = arguments.Value(option);
     } else if (command == Command::kRun && option == "--deadline-seconds") {
       parsed.deadline = ParseDeadline(option, arguments);
     } else if (command == Command::kRun && option == "--progress") {
@@ -419,14 +423,19 @@ ResolvedScoring ResolveScoring(const CompareRuntime& runtime,
     }
     RequireExplicitScoring(settings);
   }
-  const std::optional<std::string> host =
-      parsed.execution_host.has_value()
-          ? std::optional(ExecutionHostDigest(
-                ParseExecutionHost(ReadJsonFile(*parsed.execution_host))))
-          : std::nullopt;
+  const ScorerContext context{
+      .execution_host =
+          parsed.execution_host.has_value()
+              ? std::optional(ExecutionHostDigest(
+                    ParseExecutionHost(ReadJsonFile(*parsed.execution_host))))
+              : std::nullopt,
+      .backend_artifact = runtime.backend_artifact
+                              ? runtime.backend_artifact(settings.backend)
+                              : std::nullopt,
+      .image = parsed.scorer_image};
   return {
       .settings = settings,
-      .scorer = ScorerJson(runtime.inference_abi, host),
+      .scorer = ScorerJson(runtime.inference_abi, context),
       .model = ModelJson(pin),
       .scoring = ScoringJson(settings, ComparisonTau(settings, pin.sha256))};
 }
@@ -544,6 +553,7 @@ int RunLocal(const std::vector<std::string_view>& args,
                .open_session = runtime.open_session,
                .inference_abi = runtime.inference_abi,
                .model = parsed.model.request,
+               .backend_artifact = runtime.backend_artifact,
                .deadline = parsed.deadline,
                .progress = &progress});
     artifacts.push_back(cache_io::PathUtf8(
@@ -559,7 +569,8 @@ int RunLocal(const std::vector<std::string_view>& args,
 int RunWorkerCommand(const std::vector<std::string_view>& args,
                      const CompareRuntime& runtime) {
   WorkerOptions options{.open_session = runtime.open_session,
-                        .inference_abi = runtime.inference_abi};
+                        .inference_abi = runtime.inference_abi,
+                        .backend_artifact = runtime.backend_artifact};
   std::optional<int> worker_id;
   std::string cache;
   std::optional<fs::path> store_options;
@@ -586,6 +597,8 @@ int RunWorkerCommand(const std::vector<std::string_view>& args,
       options.deadline = ParseDeadline(option, arguments);
     } else if (option == "--execution-host") {
       execution_host = fs::u8path(arguments.Value(option));
+    } else if (option == "--scorer-image") {
+      options.scorer_image = arguments.Value(option);
     } else if (option == "--progress") {
       progress_mode = ParseProgress(option, arguments);
     } else {

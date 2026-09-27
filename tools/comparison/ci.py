@@ -190,6 +190,9 @@ def gitlab_child(plan, plan_path, config, store, store_options=None, coordinator
                 output,
                 "--model",
                 config["scorer"]["model"],
+                # The plan's scorer names this image; another is refused.
+                "--scorer-image",
+                scorer,
             ]
         )
         child[name] = {

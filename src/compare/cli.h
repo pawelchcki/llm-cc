@@ -3,6 +3,7 @@
 
 #include <string>
 
+#include "src/compare/identity.h"
 #include "src/scorer_session.h"
 
 namespace llmcc::compare {
@@ -13,6 +14,7 @@ namespace llmcc::compare {
 struct CompareRuntime {
   std::string inference_abi;
   ScorerSessionFactory open_session;
+  BackendArtifactResolver backend_artifact;
 };
 
 // `llm-cc compare ...`; `argv[0]` is "compare".

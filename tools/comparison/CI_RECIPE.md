@@ -119,8 +119,11 @@ The coordinator copies `llm-cc` from the pushed scorer image, so preparation,
 scoring and aggregation run one build; a worker refuses a plan that any other
 build prepared. The coordinator also records the scorer image digest as
 `LLM_CC_SCORER_IMAGE`, which the CI adapters use for GPU jobs unless the CI
-configuration names `images.scorer`. One coordinator digest thus pins the
-glue, llm-cc, the scoring contract and the exact scorer every GPU job runs.
+configuration names `images.scorer`. Preparation passes it as
+`--scorer-image`, so it joins the plan's scorer identity and fingerprint, and
+every GPU job passes its own image the same way; a worker told another image
+refuses the plan. One coordinator digest thus pins the glue, llm-cc, the
+scoring contract and the exact scorer every GPU job runs.
 
 `build.sh` treats content-derived tags only as lookup hints. A tag found in the
 registry is reused after its labels match the producer's source identity
@@ -191,7 +194,7 @@ glue only the pipeline and publication objects:
 | Object key | Contents |
 |---|---|
 | `results/v2/<result_key>.json` | `{schema_version, stored_at, sha256, result}` with `result = {key, blob_id, language, fingerprint, llm_cc, token_count, high_entropy_tokens, entropy_sum, total_branch, total_comp_level}` |
-| `entropy/v2/<entry key>.cbor` | one native entropy entry, keyed by the source bytes, model and inference settings |
+| `entropy/v2/<scorer>/<entry key>.cbor` | one native entropy entry, keyed by the source bytes, model and inference settings, under the digest of the plan's scorer identity |
 | `pipelines/<SHA256([repository, pipeline_id])>/` | `report.json`, `report.md`, `comment.md`, `publication.json`, `baseline.md`, `baseline.json` (BuildBuddy transport also keeps its plan, blobs and worker artifacts here) |
 | `publications/<SHA256([repository, pr_number])>.json` | publication marker `{schema_version, ordinal, pipeline_id, head_sha, state, comment_id}` |
 

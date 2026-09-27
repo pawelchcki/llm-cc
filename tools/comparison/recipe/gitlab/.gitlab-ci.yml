@@ -117,6 +117,7 @@ comparison-prepare:
       llm-cc compare prepare
       --repo . --head "$CI_COMMIT_SHA" --target "$COMPARISON_TARGET_SHA"
       --identity comparison/identity.json
+      --scorer-image "$LLM_CC_SCORER_IMAGE"
       --default-rules /opt/llm-cc-comparison/rules.json
       --cache "$COMPARISON_STORE" ${COMPARISON_STORE_OPTIONS:+--store-options "$COMPARISON_STORE_OPTIONS"}
       --max-workers "$(python3 -m tools.comparison ci capacity ${COMPARISON_CONFIG:+--config "$COMPARISON_CONFIG"} --requested "$COMPARISON_MAX_WORKERS")"

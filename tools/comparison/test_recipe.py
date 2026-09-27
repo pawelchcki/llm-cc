@@ -186,6 +186,8 @@ class RecipeTest(unittest.TestCase):
                 variables["COMPARISON_TARGET_SHA"],
                 "--identity",
                 run.identity,
+                "--scorer-image",
+                config["images"]["scorer"],
                 "--default-rules",
                 self.rules,
                 "--cache",
