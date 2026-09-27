@@ -95,11 +95,16 @@ on execution reasoning. Rewriting programs to lower LM-CC, while keeping their
 cyclomatic complexity the same, raised repair pass@1 from 13.4% to 16.2%.
 
 llm-cc follows the authors' reference code for entropy and the formula.
-Besides the per-model τ, its defaults differ in two ways: tree-sitter scopes
-supply nesting in every language, and the model is DeepSeek-Coder-V2-Lite,
-not CodeLlama-7b.
+Its defaults depart from that code in a few ways:
+
+- scope ends are boundaries too, where the reference uses entropy alone;
+- tree-sitter supplies nesting in every language, not Python indentation;
+- comments are removed without reformatting;
+- τ is set per model;
+- the model is DeepSeek-Coder-V2-Lite, not CodeLlama-7b.
+
 `--hierarchy reference` uses entropy boundaries only, and the registered
-`codellama-7b-q8_0` model reproduces the paper's setup. See
+`codellama-7b-q8_0` model matches the paper's model choice. See
 [USAGE.md](USAGE.md#relation-to-the-reference-implementation).
 
 ## Reading the score

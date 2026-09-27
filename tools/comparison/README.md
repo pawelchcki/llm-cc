@@ -129,7 +129,7 @@ pull-request comments will link to it.
 `prepare` reads `.llm-cc/rules.json` from the **target** commit's tree, falling
 back to the legacy `.llm-cc/comparison-rules.json`, with the same rules engine
 as local `llm-cc` analysis; see
-[selection and classification rules](../../README.md#selection-and-classification-rules).
+[selection and classification rules](../../USAGE.md#selection-and-classification-rules).
 A pull request cannot reclassify its own files, and rules that fail validation
 fail the run instead of silently reverting to the defaults. A target without
 that file uses `--default-rules`, the rules the host publishes, and otherwise
