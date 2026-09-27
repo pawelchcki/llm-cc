@@ -29,6 +29,10 @@ build:windows --cxxopt=/std:c++20
 # and encodes "é" as one Windows-1252 byte instead of UTF-8.
 build:windows --copt=/utf-8
 build:windows --host_copt=/utf-8
+# MSVC rejects designated initializers out of declaration order, which Clang
+# only warns about. Fail the same way on Linux and macOS.
+build:linux --per_file_copt=^(src|tools)/.*\.cc$@-Werror=reorder-init-list
+build:macos --per_file_copt=^(src|tools)/.*\.cc$@-Werror=reorder-init-list
 # C++ fixture tests and Bash integration tests use the runfiles directory.
 build:windows --enable_runfiles
 # Without symlink support, Bazel copies a runfile that exists and makes a
