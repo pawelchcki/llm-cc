@@ -5,7 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  # release-builds-label.yml dispatches this when a PR gets `ci: release-builds`.
+  # release-builds-label.yml calls this when a PR gets `ci: release-builds`.
+  workflow_call:
   workflow_dispatch:
 
 concurrency:
@@ -18,8 +19,8 @@ permissions:
 jobs:
   platform:
     # Ordinary PRs use BuildBuddy. Full platform and consumer builds run for
-    # main, dispatches, same-repository release-please branches, and pushes
-    # to a PR labeled `ci: release-builds`.
+    # main, dispatches, same-repository release-please branches, and PRs
+    # labeled `ci: release-builds` (when labeled, and on each later push).
     if: >-
       github.event_name != 'pull_request' ||
       contains(github.event.pull_request.labels.*.name, 'ci: release-builds') ||
@@ -92,8 +93,8 @@ jobs:
 
   consumer:
     # Ordinary PRs use BuildBuddy. Full platform and consumer builds run for
-    # main, dispatches, same-repository release-please branches, and pushes
-    # to a PR labeled `ci: release-builds`.
+    # main, dispatches, same-repository release-please branches, and PRs
+    # labeled `ci: release-builds` (when labeled, and on each later push).
     if: >-
       github.event_name != 'pull_request' ||
       contains(github.event.pull_request.labels.*.name, 'ci: release-builds') ||

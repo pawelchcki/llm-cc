@@ -1,30 +1,22 @@
 name: Release builds label
 
-# Adding `ci: release-builds` to a same-repository pull request starts the
-# Reusable builds matrix on its branch; later pushes run it through that
-# workflow's own pull_request trigger. Listening for `labeled` there instead
-# would post skipped checks, under the real checks' names, for every other
-# label.
+# Adding `ci: release-builds` to a pull request runs the Reusable builds
+# matrix for its head; later pushes run it through that workflow's own
+# pull_request trigger. Listening for `labeled` there instead would post
+# skipped checks, under the real checks' names, for every other label.
+# Calling it from this pull_request run, unlike a dispatch, keeps the
+# results on the pull request.
 on:
   pull_request:
+    branches: [main]
     types: [labeled]
 
 permissions:
   contents: read
 
 jobs:
-  dispatch:
-    name: Start release builds
+  builds:
+    name: release builds
     if: >-
-      github.event.label.name == 'ci: release-builds' &&
-      github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      actions: write
-    steps:
-      - env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
-        run: gh workflow run reusable-builds.yml --ref "$HEAD_REF"
+      github.event.label.name == 'ci: release-builds'
+    uses: ./.github/workflows/reusable-builds.yml
