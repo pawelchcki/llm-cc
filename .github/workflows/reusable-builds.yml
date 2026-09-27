@@ -5,10 +5,15 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # Adding an unrelated label must not cancel builds already running.
+  group: >-
+    ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{
+    github.event.action == 'labeled' && github.event.label.name != 'ci: release-builds'
+    && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 permissions:
@@ -16,15 +21,16 @@ permissions:
 
 jobs:
   platform:
-    # Ordinary PRs use BuildBuddy; full platform and consumer builds run for
-    # main and same-repository release-please branches before release.
+    # Ordinary PRs use BuildBuddy. Full platform and consumer builds run for
+    # main, manual dispatches, same-repository release-please branches, and
+    # any PR labeled `ci: release-builds`.
     if: >-
-      (github.event_name == 'pull_request' &&
-       github.event.pull_request.head.repo.full_name == github.repository &&
-       startsWith(github.head_ref, 'release-please--branches--')) ||
-      (github.event_name != 'pull_request' &&
-       (github.ref == 'refs/heads/main' ||
-        startsWith(github.ref, 'refs/heads/release-please--branches--')))
+      github.event_name != 'pull_request' ||
+      ((github.event.action != 'labeled' ||
+        github.event.label.name == 'ci: release-builds') &&
+       (contains(github.event.pull_request.labels.*.name, 'ci: release-builds') ||
+        (github.event.pull_request.head.repo.full_name == github.repository &&
+         startsWith(github.head_ref, 'release-please--branches--'))))
     strategy:
       fail-fast: false
       matrix:
@@ -55,7 +61,8 @@ jobs:
         if: runner.os == 'Windows'
         run: echo 'BAZEL_SH=C:/PROGRA~1/Git/bin/bash.exe' >> "$GITHUB_ENV"
       - name: Unit, integration and TLS regression tests
-        run: bazel test --config=release --config=${{ matrix.backend }} --jobs=4 --test_output=errors //:unit //:integration //:tls_integration_test
+        # --keep_going reports every failing target in one run, not the first.
+        run: bazel test --config=release --config=${{ matrix.backend }} --jobs=4 --keep_going --test_output=errors //:unit //:integration //:tls_integration_test
       - name: Link distribution executable
         run: bazel build --config=release --config=${{ matrix.backend }} --jobs=4 //:llm-cc
       - name: Check Linux ABI
@@ -90,15 +97,16 @@ jobs:
           path: MODULE.bazel.lock
 
   consumer:
-    # Ordinary PRs use BuildBuddy; full platform and consumer builds run for
-    # main and same-repository release-please branches before release.
+    # Ordinary PRs use BuildBuddy. Full platform and consumer builds run for
+    # main, manual dispatches, same-repository release-please branches, and
+    # any PR labeled `ci: release-builds`.
     if: >-
-      (github.event_name == 'pull_request' &&
-       github.event.pull_request.head.repo.full_name == github.repository &&
-       startsWith(github.head_ref, 'release-please--branches--')) ||
-      (github.event_name != 'pull_request' &&
-       (github.ref == 'refs/heads/main' ||
-        startsWith(github.ref, 'refs/heads/release-please--branches--')))
+      github.event_name != 'pull_request' ||
+      ((github.event.action != 'labeled' ||
+        github.event.label.name == 'ci: release-builds') &&
+       (contains(github.event.pull_request.labels.*.name, 'ci: release-builds') ||
+        (github.event.pull_request.head.repo.full_name == github.repository &&
+         startsWith(github.head_ref, 'release-please--branches--'))))
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
