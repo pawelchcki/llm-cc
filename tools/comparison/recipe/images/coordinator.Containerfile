@@ -1,7 +1,8 @@
 # CPU coordinator image: Git, the provider glue (discovery, CI generation,
 # publication) with boto3, the scorer's own llm-cc, which prepares plans and
 # aggregates reports, and the scoring contract. It holds no weights and runs
-# no inference.
+# no inference. llm-cc keeps its GPU backend bundle, whose digest joins the
+# scorer identity every plan records, so the whole installed tree is copied.
 #
 # build.sh assembles the build context: tools/ from the pinned llm-cc commit,
 # scoring.args (scoring settings and the model pin, one argument per line),
@@ -32,7 +33,8 @@ RUN apt-get update \
  && git config --system --add safe.directory '*' \
  && pip install --no-cache-dir "boto3==${BOTO3_VERSION}" \
  && useradd --uid 10001 --user-group --home-dir /home/llm-cc --create-home llm-cc
-COPY --from=scorer /opt/llm-cc/bin/llm-cc /usr/local/bin/llm-cc
+COPY --from=scorer /opt/llm-cc /opt/llm-cc
+RUN ln -s /opt/llm-cc/bin/llm-cc /usr/local/bin/llm-cc
 COPY tools/ /opt/llm-cc-comparison/tools/
 COPY scoring.args planning.args rules.json /opt/llm-cc-comparison/
 # Fail the build now if this llm-cc rejects the scoring contract.

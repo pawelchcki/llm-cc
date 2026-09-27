@@ -306,6 +306,13 @@ class BuildBuddyTest(unittest.TestCase):
         artifact = json.loads(self.store.get(prefix + "workers/0/worker-0.json"))
         self.assertIn("corrupt source blob", artifact["errors"][0])
 
+    def test_upload_refuses_a_plan_workers_could_not_read(self):
+        self.prepare()
+        with patch.object(buildbuddy, "PLAN_BYTES", 16):
+            with self.assertRaisesRegex(ValueError, "workers read at most 16"):
+                upload_plan(self.store, self.output / "plan.json")
+        self.assertFalse((self.store.root / "pipelines").exists())
+
     def test_upload_verifies_blobs_against_their_object_ids(self):
         plan = self.prepare()
         object_id = plan["items"][plan["workers"][0]["keys"][0]]["blob_id"]

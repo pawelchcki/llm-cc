@@ -104,6 +104,12 @@ def upload_plan(store, plan_path):
     """Upload every assigned blob, then the plan's exact bytes and digest."""
     plan_path = Path(plan_path)
     payload = plan_path.read_bytes()
+    # Workers refuse a larger plan, so none could start.
+    if len(payload) > PLAN_BYTES:
+        raise ValueError(
+            "plan.json is %d bytes; BuildBuddy workers read at most %d"
+            % (len(payload), PLAN_BYTES)
+        )
     plan = json.loads(payload)
     prefix = pipeline_prefix(plan["identity"])
     uploaded = set()
