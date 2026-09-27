@@ -39,6 +39,10 @@ std::vector<WorkerAssignment> Partition(std::vector<nlohmann::json> items,
                                         int max_workers);
 nlohmann::json AssignmentsJson(const std::vector<WorkerAssignment>& workers);
 
+// Rejects a pipeline identity that aggregation or publication would refuse.
+// Throws std::invalid_argument.
+void ValidatePlanIdentity(const nlohmann::json& identity);
+
 // Rejects a plan whose fingerprint, items, inventories, cached hits or
 // worker assignments do not agree with each other. Throws
 // std::invalid_argument naming the first inconsistency.

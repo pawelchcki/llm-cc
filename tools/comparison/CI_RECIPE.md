@@ -185,6 +185,15 @@ a completed result. A fully cached plan yields only the aggregation job and
 needs no scorer image. `ci github-matrix` prints `matrix`, `has_workers` and
 `scorer_image` outputs; the GPU job is skipped when `has_workers` is false.
 
+Container GPU jobs receive the host's GPU and driver through the container
+runtime, and neither is part of the scorer identity, which records only the
+image. Run them on one homogeneous pool: GitLab's `gitlab.gpu_tags` and the
+GitHub workflow's `LLM_CC_GPU_POOL` label must select runners with one GPU
+model and one driver version. Moving the pool to other hardware or drivers
+must come with a new scorer image, so its digest, and with it every key,
+changes. A bare AMD host instead declares that contract with
+`--execution-host`, which the worker verifies and the fingerprint records.
+
 ## 4. Two cache layers with explicit provenance
 
 Stores share one interface over a filesystem directory (atomic replacement) or

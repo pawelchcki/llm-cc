@@ -78,6 +78,8 @@ json FullIdentity(const json& supplied, const std::string& head,
     identity["started_at"] =
         FormatTimestamp(now ? now() : std::chrono::system_clock::now());
   }
+  // Before any inventory or scoring, not once the work is done.
+  ValidatePlanIdentity(identity);
   return identity;
 }
 

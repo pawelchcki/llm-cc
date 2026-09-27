@@ -106,6 +106,23 @@ void ValidateIdentity(const json& identity) {
       Invalid(std::string("plan identity ") + field + " must be a commit");
     }
   }
+  // Publication reads these, so a plan cannot carry values it would refuse
+  // only after every worker has run.
+  const json& pr_number = identity["pr_number"];
+  if (!pr_number.is_null() &&
+      !(pr_number.is_number_integer() && pr_number.get<std::int64_t>() > 0)) {
+    Invalid("plan identity pr_number must be a positive integer or null");
+  }
+  const json& target_branch = identity["target_branch"];
+  if (!target_branch.is_null() &&
+      !(target_branch.is_string() &&
+        !target_branch.get_ref<const std::string&>().empty())) {
+    Invalid("plan identity target_branch must be a branch name or null");
+  }
+  if (!identity["started_at"].is_string() ||
+      identity["started_at"].get_ref<const std::string&>().empty()) {
+    Invalid("plan identity started_at must be a timestamp");
+  }
 }
 
 void ValidateItem(const std::string& key, const json& item,
@@ -264,6 +281,8 @@ json AssignmentsJson(const std::vector<WorkerAssignment>& workers) {
   }
   return result;
 }
+
+void ValidatePlanIdentity(const json& identity) { ValidateIdentity(identity); }
 
 void ValidatePlan(const json& plan) {
   if (!plan.is_object() || Field(plan, "schema_version") != kSchemaVersion) {

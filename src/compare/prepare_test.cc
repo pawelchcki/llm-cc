@@ -410,6 +410,21 @@ int main() {  // NOLINT(bugprone-exception-escape)
            }).find("plan scorer") != std::string::npos,
            "a plan's scorer identity is validated");
   }
+  // Publication refuses these, so preparation does before any work.
+  for (const auto& [field, value] :
+       std::vector<std::pair<std::string, json>>{{"pr_number", "1"},
+                                                 {"pr_number", 0},
+                                                 {"target_branch", ""},
+                                                 {"started_at", nullptr}}) {
+    PrepareOptions malformed =
+        Options(repo, repository.head, repository.base, root / "malformed");
+    malformed.identity[field] = value;
+    Expect(!Failure<std::invalid_argument>([&] {
+              static_cast<void>(llmcc::compare::Prepare(malformed));
+            }).empty() &&
+               !fs::exists(root / "malformed/plan.json"),
+           "an identity publication would refuse is refused: " + field);
+  }
   PrepareOptions huge =
       Options(repo, repository.head, repository.base, root / "huge");
   huge.max_file_bytes = llmcc::kMaxSourceBytes + 1;
