@@ -171,13 +171,21 @@ int main() {  // NOLINT(bugprone-exception-escape)
 
   // A zero deadline still writes a failed artifact.
   auto expired = harness.Worker(root / "cold/plan.json", 0, root / "expired");
-  expired.deadline = std::chrono::seconds(0);
+  expired.deadline = std::chrono::seconds(-1);
+  bool opened = false;
+  expired.open_session = [&, open = expired.open_session](
+                             const llmcc::ScorerRequest& request,
+                             llmcc::ProgressReporter& progress) {
+    opened = true;
+    return open(request, progress);
+  };
   const json late = llmcc::compare::RunWorker(expired);
   Expect(late["status"] == "failed" &&
              late["errors"][0].get<std::string>().find("deadline") !=
                  std::string::npos &&
              fs::exists(root / "expired/worker-0.json"),
          "an expired worker still reports");
+  Expect(!opened, "an expired worker never opens the scorer");
 
   // Wrong weights, builds and assignments are refused.
   llmcc::compare::test::Write(root / "other.gguf", "other weights");

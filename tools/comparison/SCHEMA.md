@@ -15,8 +15,10 @@ A plan names three objects, and every stage must agree on them:
 
 - `scorer`: the running build, `{version, commit, executable,
   backend_configuration, inference_abi, analysis_version}`. `commit` is the
-  stamped source commit; an unstamped build has `commit: null` and
-  `executable`, the SHA-256 of its own executable, instead. A plan for a bare
+  stamped source commit (null when unstamped) and `executable` the SHA-256 of
+  the running executable, so the same commit built with another toolchain or
+  image never reuses results; plans from builds that recorded only a commit
+  remain readable. A plan for a bare
   host adds `execution_host`: the SHA-256 of the canonical `{gpu_vendor,
   gpu_arch, runtime_files}` of the `--execution-host` contract that `prepare`
   and `identity` were given, so another GPU architecture or ROCm runtime never

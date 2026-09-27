@@ -99,6 +99,20 @@ void Score(const WorkerOptions& options, const json& plan,
            std::vector<std::string>& errors) {
   const ScoringSettings settings = SettingsFromScoring(plan["scoring"]);
   RequireBuiltInBackends(settings);
+  // Opening the scorer hashes the whole model, which cannot stop midway, so
+  // an exhausted deadline is reported before starting it.
+  const auto expired = [&] {
+    if (Clock::now() <= deadline) {
+      return false;
+    }
+    errors.push_back("worker deadline exceeded with " +
+                     std::to_string(assignment["keys"].size()) +
+                     " files unscored");
+    return true;
+  };
+  if (expired()) {
+    return;
+  }
   std::unique_ptr<cache_io::FileLock> lease;
   if (options.execution_host.has_value()) {
     ApplyEnvironment(
@@ -106,6 +120,9 @@ void Score(const WorkerOptions& options, const json& plan,
     progress.Phase("waiting for the shared GPU");
     lease =
         AcquireGpuLease(*options.execution_host, options.host_paths, deadline);
+    if (expired()) {
+      return;
+    }
   }
   StoreEntropyTier tier(*options.store);
   ScorerSession session =

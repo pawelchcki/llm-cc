@@ -49,8 +49,9 @@ int main() {  // NOLINT(bugprone-exception-escape)
              scorer["backend_configuration"].is_string() &&
              scorer["analysis_version"].is_number_integer(),
          "the scorer names its build");
-  Expect(scorer["commit"].is_null() != scorer["executable"].is_null(),
-         "a build is named by its commit, or unstamped by its executable");
+  Expect(llmcc::compare::IsHexDigest(
+             scorer["executable"].get_ref<const std::string&>(), 64),
+         "every build is named by its executable, stamped or not");
 
   const llmcc::compare::ModelPin pin{.sha256 = std::string(64, 'a'),
                                      .bytes = 1234};

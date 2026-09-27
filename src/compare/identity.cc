@@ -60,10 +60,11 @@ bool IsHexDigest(std::string_view value, std::size_t length) {
 json ScorerJson(std::string_view inference_abi,
                 const std::optional<std::string>& execution_host) {
   const std::string_view commit = build_info::GitSha();
+  // The executable's digest even for a stamped build: the same commit built
+  // with another toolchain or image can compute different results.
   json scorer = {{"version", build_info::Version()},
                  {"commit", commit.empty() ? json() : json(commit)},
-                 {"executable",
-                  commit.empty() ? json(RunningExecutableIdentity()) : json()},
+                 {"executable", RunningExecutableIdentity()},
                  {"backend_configuration", build_info::BackendConfiguration()},
                  {"inference_abi", inference_abi},
                  {"analysis_version", kAnalysisVersion}};
@@ -105,14 +106,16 @@ void ValidateScorer(const json& scorer) {
         "analysis_version have the wrong types");
   }
   // A stamped build names its commit; an unstamped one its own digest.
+  // Builds name their executable's digest and, when stamped, their commit;
+  // plans from builds that named only the commit are still read.
   const bool commit = text("commit");
   const bool executable =
       scorer["executable"].is_string() &&
       IsHexDigest(scorer["executable"].get_ref<const std::string&>(), 64);
-  if (commit == executable || !(commit || scorer["commit"].is_null()) ||
+  if (!(commit || executable) || !(commit || scorer["commit"].is_null()) ||
       !(executable || scorer["executable"].is_null())) {
     throw std::invalid_argument(
-        "scorer needs either a commit or an executable SHA-256, not both");
+        "scorer needs a commit or an executable SHA-256");
   }
 }
 

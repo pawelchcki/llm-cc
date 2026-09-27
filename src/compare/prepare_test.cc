@@ -398,10 +398,10 @@ int main() {  // NOLINT(bugprone-exception-escape)
          "a plan's scoring settings are validated");
   json scorerless = llmcc::compare::Prepare(
       Options(repo, repository.head, repository.base, root / "scorerless"));
-  json both = scorerless["scorer"];
-  both["commit"] = "abc";
-  both["executable"] = std::string(64, 'a');
-  for (const json& scorer : std::vector<json>{json::object(), both}) {
+  json neither = scorerless["scorer"];
+  neither["commit"] = nullptr;
+  neither["executable"] = nullptr;
+  for (const json& scorer : std::vector<json>{json::object(), neither}) {
     scorerless["scorer"] = scorer;
     scorerless["fingerprint"] = llmcc::compare::Fingerprint(
         scorer, scorerless["model"], scorerless["scoring"]);
