@@ -441,11 +441,17 @@ int main() {  // NOLINT(bugprone-exception-escape)
   llmcc::compare::test::Git(bytes, {"init", "-q"});
   llmcc::compare::test::Write(bytes / "a.cc", "int a;\n");
   const std::string bytes_base = llmcc::compare::test::Commit(bytes, "base");
-  llmcc::compare::test::Write(bytes / fs::path(std::string("bad\xff.py")),
-                              "x = 1\n");
   // A valid name spelling the same escape stays a different path.
   llmcc::compare::test::Write(bytes / "bad\\xff.py", "x = 2\n");
-  const std::string bytes_head = llmcc::compare::test::Commit(bytes, "head");
+  llmcc::compare::test::Git(bytes, {"add", "-A"});
+  // macOS refuses names that are not UTF-8, so stage the entry directly.
+  const std::string bad_blob = llmcc::compare::test::Git(
+      bytes, {"hash-object", "-w", "--stdin"}, "x = 1\n");
+  llmcc::compare::test::Git(bytes, {"update-index", "--add", "--cacheinfo",
+                                    "100644," + bad_blob + ",bad\xff.py"});
+  llmcc::compare::test::Git(bytes, {"commit", "-q", "-m", "head"});
+  const std::string bytes_head =
+      llmcc::compare::test::Git(bytes, {"rev-parse", "HEAD"});
   const json escaped = llmcc::compare::Prepare(
       Options(bytes, bytes_head, bytes_base, root / "bytes-plan"));
   const auto escaped_head = ByPath(escaped["inventories"]["head"]);

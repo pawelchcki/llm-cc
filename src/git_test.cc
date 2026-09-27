@@ -79,6 +79,7 @@ bool Throws(const auto& function, std::string_view fragment) {
 int main() {  // NOLINT(bugprone-exception-escape)
   const char* temporary = std::getenv("TEST_TMPDIR");
   Expect(temporary != nullptr, "TEST_TMPDIR is set");
+  llmcc::test::StopGitDiscoveryAboveTestTmpdir();
   const fs::path root = fs::path(temporary) / "git repository";
   fs::create_directories(root);
   Git(root, {"init", "-q"});

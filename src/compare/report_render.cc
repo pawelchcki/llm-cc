@@ -513,7 +513,8 @@ std::string RenderBaseline(const nlohmann::json& report) {
   for (const std::string_view name : kCategories) {
     std::vector<nlohmann::json> selected;
     for (const nlohmann::json& entry : ranked) {
-      if (entry["category"] == name && selected.size() < 20) {
+      // MSVC finds json == std::string_view ambiguous; compare as strings.
+      if (entry["category"] == std::string(name) && selected.size() < 20) {
         selected.push_back(entry);
       }
     }
