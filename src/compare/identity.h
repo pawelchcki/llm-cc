@@ -85,6 +85,8 @@ std::string ResultKey(std::string_view blob_id, std::string_view language,
                       std::string_view fingerprint);
 
 bool IsHexDigest(std::string_view value, std::size_t length);
+// A lowercase SHA-1 or SHA-256 Git object name.
+bool IsGitObjectId(std::string_view value);
 
 }  // namespace llmcc::compare
 

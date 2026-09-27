@@ -71,6 +71,11 @@ class FilesystemStore:
         try:
             descriptor = os.open(self.root, flags)
         except FileNotFoundError:
+            if create:
+                # Without a descriptor, writes would land in the cwd.
+                raise StoreError(
+                    "store root %s disappeared while writing %s" % (self.root, key)
+                ) from None
             return None, parts[-1]
         try:
             for part in parts[:-1]:

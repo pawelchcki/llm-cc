@@ -441,6 +441,16 @@ def scorer_environment(environ=None):
     return environment
 
 
+def _printable(message):
+    """Undecodable path bytes spelled \\xhh, as llm-cc spells them: llm-cc
+    refuses the lone surrogate escapes json.dumps would write instead."""
+    try:
+        raw = message.encode("utf-8", "surrogateescape")
+    except UnicodeEncodeError:
+        return message.encode("utf-8", "backslashreplace").decode("utf-8")
+    return raw.decode("utf-8", "backslashreplace")
+
+
 def _failed_artifact(worker_id, plan, errors, elapsed):
     return {
         "schema_version": 2,
@@ -449,7 +459,7 @@ def _failed_artifact(worker_id, plan, errors, elapsed):
         "worker_id": worker_id,
         "status": "failed",
         "results": {},
-        "errors": errors,
+        "errors": [_printable(str(error)) for error in errors],
         "elapsed_seconds": elapsed,
     }
 

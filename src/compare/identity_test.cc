@@ -133,6 +133,11 @@ int main() {  // NOLINT(bugprone-exception-escape)
                "abi", {.image = "registry.example/scorer:latest"}));
          }),
          "a scorer image must be pinned by digest");
+  json unstamped = scorer;
+  unstamped["commit"] = "unknown";
+  Expect(Throws<std::invalid_argument>(
+             [&] { llmcc::compare::ValidateScorer(unstamped); }),
+         "a recorded commit is a Git object name");
   json unhashed = hosted;
   unhashed["execution_host"] = "gfx1100";
   Expect(Throws<std::invalid_argument>(

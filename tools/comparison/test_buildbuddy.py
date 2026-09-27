@@ -29,7 +29,14 @@ from .buildbuddy import (
     upload_plan,
     worker_request,
 )
-from .common import aggregate_report, llm_cc, pipeline_prefix, read_json, write_json
+from .common import (
+    aggregate_report,
+    canonical_bytes,
+    llm_cc,
+    pipeline_prefix,
+    read_json,
+    write_json,
+)
 from .fixtures import commit_files, fake_scoring, git
 from .github import GitHub
 from .store import FilesystemStore
@@ -173,6 +180,13 @@ class BuildBuddyTest(unittest.TestCase):
         command = shlex.split(request["steps"][0]["run"])
         index = command.index("remote-worker")
         return buildbuddy.main(command[index:])
+
+    def test_failed_artifacts_spell_undecodable_bytes(self):
+        artifact = buildbuddy._failed_artifact(
+            0, None, ["cannot open " + os.fsdecode(b"bad\xff/plan.json")], 1.0
+        )
+        self.assertEqual(artifact["errors"], ["cannot open bad\\xff/plan.json"])
+        self.assertNotIn(b"\\ud", canonical_bytes(artifact))
 
     def test_scorer_inherits_only_store_and_cache_settings(self):
         environment = buildbuddy.scorer_environment(

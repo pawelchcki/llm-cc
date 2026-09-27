@@ -187,6 +187,16 @@ int main() {  // NOLINT(bugprone-exception-escape)
              fs::exists(root / "expired/worker-0.json"),
          "an expired worker still reports");
   Expect(!opened, "an expired worker never opens the scorer");
+#ifndef _WIN32
+  // An error naming a path that is not UTF-8 still yields the artifact.
+  const json undecodable = llmcc::compare::RunWorker(
+      harness.Worker(root / "bad\xff/plan.json", 0, root / "undecodable"));
+  Expect(undecodable["status"] == "failed" &&
+             undecodable["errors"][0].get<std::string>().find("bad\\xff") !=
+                 std::string::npos &&
+             fs::exists(root / "undecodable/worker-0.json"),
+         "an undecodable path in an error is escaped in the artifact");
+#endif
 
   // Wrong weights, builds and assignments are refused.
   llmcc::compare::test::Write(root / "other.gguf", "other weights");

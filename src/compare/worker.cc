@@ -296,7 +296,12 @@ json RunWorker(const WorkerOptions& options) {
       artifact["results"].size() == assigned) {
     artifact["status"] = "complete";
   }
-  artifact["errors"] = errors;
+  // Paths from arguments need not be UTF-8, and the artifact must encode.
+  json escaped = json::array();
+  for (const std::string& error : errors) {
+    escaped.push_back(EscapeInvalidUtf8(error));
+  }
+  artifact["errors"] = std::move(escaped);
   artifact["elapsed_seconds"] =
       std::chrono::duration<double>(Clock::now() - started).count();
   WriteJsonFile(options.output /

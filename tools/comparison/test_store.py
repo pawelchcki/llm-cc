@@ -6,6 +6,7 @@ import tempfile
 import threading
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from tools.comparison.store import FilesystemStore, S3Store, StoreError, open_store
@@ -19,6 +20,17 @@ class FilesystemStoreTest(unittest.TestCase):
             for key in ("", "/absolute", "a/../b", "a//b", "./a", "..\\up", "C:/x", "a:b"):
                 with self.subTest(key=key), self.assertRaises(StoreError):
                     store.put(key, b"x")
+
+    def test_writes_refuse_a_store_root_that_disappears(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = FilesystemStore(Path(temporary) / "store")
+            # The root vanishes between creating and opening it.
+            with unittest.mock.patch.object(Path, "mkdir"):
+                with self.assertRaisesRegex(StoreError, "disappeared"):
+                    store.put("pipelines/x/report.json", b"{}")
+                with self.assertRaisesRegex(StoreError, "disappeared"):
+                    store.put_if("pipelines/x/publication.json", b"{}", None)
+            self.assertEqual(os.listdir(temporary), [])
 
     def test_concurrent_atomic_writes_leave_a_complete_object(self):
         with tempfile.TemporaryDirectory() as directory:

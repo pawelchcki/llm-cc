@@ -212,7 +212,9 @@ Descriptor OpenParent(const std::filesystem::path& root, std::string_view key,
   }
   Descriptor current(open(root.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
   if (current.get() < 0) {
-    if (errno == ENOENT) {
+    // A root that vanished after being created is an error for a write,
+    // never a miss.
+    if (errno == ENOENT && !create) {
       return Descriptor();
     }
     Fail(action, key, errno);

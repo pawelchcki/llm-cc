@@ -57,12 +57,18 @@ bool IsHexDigest(std::string_view value, std::size_t length) {
          });
 }
 
+bool IsGitObjectId(std::string_view value) {
+  return IsHexDigest(value, 40) || IsHexDigest(value, 64);
+}
+
 json ScorerJson(std::string_view inference_abi, const ScorerContext& context) {
-  const std::string_view commit = build_info::GitSha();
+  // A dirty or unstamped tree records no commit, only its executable.
+  const std::string_view stamp = build_info::GitSha();
+  const json commit = IsGitObjectId(stamp) ? json(stamp) : json();
   // The executable's digest even for a stamped build: the same commit built
   // with another toolchain or image can compute different results.
   json scorer = {{"version", build_info::Version()},
-                 {"commit", commit.empty() ? json() : json(commit)},
+                 {"commit", commit},
                  {"executable", RunningExecutableIdentity()},
                  {"backend_configuration", build_info::BackendConfiguration()},
                  {"inference_abi", inference_abi},
@@ -137,10 +143,11 @@ void ValidateScorer(const json& scorer) {
         "scorer version, backend_configuration, inference_abi and "
         "analysis_version have the wrong types");
   }
-  // A stamped build names its commit; an unstamped one its own digest.
   // Builds name their executable's digest and, when stamped, their commit;
   // plans from builds that named only the commit are still read.
-  const bool commit = text("commit");
+  const bool commit =
+      scorer["commit"].is_string() &&
+      IsGitObjectId(scorer["commit"].get_ref<const std::string&>());
   const bool executable =
       scorer["executable"].is_string() &&
       IsHexDigest(scorer["executable"].get_ref<const std::string&>(), 64);
