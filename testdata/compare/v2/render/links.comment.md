@@ -20,4 +20,4 @@ Cache: 1 hits, 0 misses.
 
 Baseline ranking: <https://ci.example/o/r/baseline.md>
 
-Rules: repository `.llm-cc/comparison-rules.json`@0123456
+Rules: repository `.llm-cc/comparison-rules.json` at `0123456`

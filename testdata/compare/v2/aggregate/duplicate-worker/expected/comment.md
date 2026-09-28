@@ -25,10 +25,10 @@ Errors:
 
 | Path | Category | LM-CC base | LM-CC head | LM-CC Δ | LM-CC Δ% | Head rank |
 |---|---|---:|---:|---:|---:|---:|
-| `same.cc` | runtime | 10.5 | 17.2 | +6.8 | +64.3% | #1/8 |
-| `tests/move.cc` | tests | 1.5 | 1.5 | +0.0 | +0% | #8/8 |
+| `same.cc` | runtime | 10.5 | 17.2 | +6.8 | +64.3% | 1/8 |
+| `tests/move.cc` | tests | 1.5 | 1.5 | +0.0 | +0% | 8/8 |
 | `tools/gen.py` | tooling | 19.5 | — | — | — | — |
-| `zero.go` | runtime | — | 1.6 | — | — | #7/8 |
+| `zero.go` | runtime | — | 1.6 | — | — | 7/8 |
 
 ### Leading regressions
 
@@ -39,10 +39,9 @@ Errors:
 
 - `tools/gen.py`: -19.5 LM-CC
 
-<details>
-<summary>Top offenders on the merge base (`1d43f119f327a404e8f9633434f83e55995f2369`)</summary>
+### Top offenders on the merge base (`1d43f119f327a404e8f9633434f83e55995f2369`)
 
-| # | Path | Category | LM-CC | Touched |
+| Rank | Path | Category | LM-CC | Touched |
 |---:|---|---|---:|---|
 | 1 | `tools/gen.py` | tooling | 19.5 | yes |
 | 2 | `src_test.cc` | tests | 15.0 |  |
@@ -52,7 +51,5 @@ Errors:
 | 6 | `target.cc` | runtime | 8.2 |  |
 | 7 | `api.hpp` | runtime | 3.8 |  |
 | 8 | `move.cc` | runtime | 1.5 | yes |
-
-</details>
 
 Rules: host
