@@ -47,7 +47,8 @@ on
 
 `--model GGUF` or `--model-name NAME` hashes a local model instead; `auto`
 settings are refused, because the coordinator is not the GPU host. Planning
-options are `--max-workers` (at most 4), `--max-file-bytes` (default 65536),
+options are `--max-workers` (at most 4), `--max-file-bytes` (default and
+maximum 1 GiB, the analyzer's limit; windowed scoring handles long files),
 `--default-rules FILE`, `--presentation FILE`, `--cache-concurrency`,
 `--refresh-days` and `--expire-days`. `llm-cc compare identity @scoring.args`
 prints the scorer, model, scoring and fingerprint a plan would carry.
@@ -324,8 +325,10 @@ a strict GPU eligibility or concurrency constraint.
 
 The Bazzite scoring contract uses ROCm, context **32768**, batch **256**, Flash
 Attention on, **Q8_0** K/V with offload, device entropy reduction, structural
-hierarchy, tau 0.67 and alpha 0.8, with the default **64 KiB** file limit. The
-host configuration uses one worker because the two builders share one Radeon.
+hierarchy, tau 0.67 and alpha 0.8. The coordinator passes the analyzer's full
+**1 GiB** file limit, so long files are scored in overlapping 32768-token
+windows rather than left unmeasured. The host configuration uses one worker
+because the two builders share one Radeon.
 The CPU coordinator uses `linux-amd64-rocm` and the existing host filesystem
 store. Follow [Bazzite setup](BAZZITE.md) to install the verified assets and
 publish an atomic configuration generation.
