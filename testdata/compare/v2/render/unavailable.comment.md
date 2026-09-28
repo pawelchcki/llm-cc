@@ -1,4 +1,9 @@
-## llm-cc comparison
+### llm-cc (failed): repository LM-CC Δ unavailable
+
+runtime unavailable · tests unavailable · tooling unavailable
+
+<details>
+<summary>Full comparison</summary>
 
 Status: **failed**
 
@@ -31,3 +36,5 @@ Errors:
 | `new.cc` | runtime | — | 3.0 | — | — | 2/0 |
 
 Rules: host
+
+</details>

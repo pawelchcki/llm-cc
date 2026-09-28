@@ -1,4 +1,9 @@
-## llm-cc comparison
+### llm-cc: repository LM-CC Δ +0.0
+
+runtime +0.0 · tests +0.0 · tooling +0.0
+
+<details>
+<summary>Full comparison</summary>
 
 Status: **complete**
 
@@ -19,3 +24,5 @@ Scores and ranks use total LM-CC; LM-CC/token is secondary.
 Cache: 0 hits, 0 misses.
 
 Rules: host
+
+</details>

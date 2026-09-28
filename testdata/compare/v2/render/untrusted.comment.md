@@ -1,4 +1,9 @@
-## llm-cc comparison
+### llm-cc: repository LM-CC Δ +1.0 (+100%)
+
+runtime +1.0 · tests +1.0 · tooling +1.0
+
+<details>
+<summary>Full comparison</summary>
 
 Status: **complete**
 
@@ -29,3 +34,5 @@ Cache: 1 hits, 0 misses.
 - src&#47;&#64;&#8203;team&#47;&#91;file&#93;&#96;name&#96;&#96;x&#96;&#126;&#126;&#36;y&#36;&#124;pipe&#124;https&#58;&#47;&#47;example&#46;com&#47;a&#46;cc: +1 LM-CC/token
 
 Rules: host
+
+</details>

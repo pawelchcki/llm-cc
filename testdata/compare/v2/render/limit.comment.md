@@ -1,4 +1,9 @@
-## llm-cc comparison
+### llm-cc: repository LM-CC Δ +1.0 (+100%)
+
+runtime +1.0 · tests +1.0 · tooling +1.0
+
+<details>
+<summary>Full comparison</summary>
 
 Status: **complete**
 
@@ -101,3 +106,5 @@ _35 more changed files are listed in the full report._
 | 10 | `src/deepdeepdeepdeepdeepdeepdeepdeepdeepdeepdeepdeepdeepdeepdeepdeepdeepdeepdeepdeep/9.cc` | runtime | 1.0 | yes |
 
 Rules: host
+
+</details>

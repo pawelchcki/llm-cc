@@ -1,4 +1,9 @@
-## llm-cc comparison
+### llm-cc (incomplete): repository LM-CC Δ unavailable
+
+runtime unavailable · tests +0.0 · tooling +0.0 · largest `api.hpp` +15.8
+
+<details>
+<summary>Full comparison</summary>
 
 Status: **incomplete**
 
@@ -42,3 +47,5 @@ Cache: 0 hits, 9 misses.
 | 8 | `tests/move.cc` | tests | 1.5 |  |
 
 Rules: repository `.llm-cc/comparison-rules.json` at `265aa59`
+
+</details>

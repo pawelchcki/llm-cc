@@ -41,6 +41,18 @@ std::vector<std::string> Lines(const std::string& text) {
   return lines;
 }
 
+// The comment without its collapsible wrapper, the only HTML it may hold.
+std::string WithoutWrapper(std::string text) {
+  for (const std::string_view tag :
+       {"<details>", "</details>", "<summary>", "</summary>"}) {
+    const std::size_t at = text.find(tag);
+    if (at != std::string::npos) {
+      text.erase(at, tag.size());
+    }
+  }
+  return text;
+}
+
 void ExpectBalancedFences(const std::string& markdown) {
   for (const std::string& line : Lines(markdown)) {
     Expect(std::ranges::count(line, '`') % 2 == 0,
@@ -125,6 +137,34 @@ int main() {  // NOLINT(bugprone-exception-escape)
   Expect(Contains(headline, "- `legacy.cc`: +0.5 LM-CC/token"),
          "reports before raw headlines still render");
 
+  // Collapsed, a comment shows only its LM-CC deltas.
+  Expect(headline.starts_with(
+             "### llm-cc: repository LM-CC \xCE\x94 +1.0 (+100%)\n\n"
+             "runtime +1.0 \xC2\xB7 tests +1.0 \xC2\xB7 tooling +1.0 \xC2\xB7 "
+             "largest `a.cc` +2.5\n\n"
+             "<details>\n<summary>Full comparison</summary>\n\n"
+             "Status: **complete**\n") &&
+             headline.ends_with("Rules: host\n\n</details>\n"),
+         "the lead shows LM-CC deltas and the rest is collapsed");
+  const json partial = {{"score", Delta(nullptr, 1.0)},
+                        {"raw_llm_cc", Delta(nullptr, 1.0)},
+                        {"tokens", Delta(nullptr, 1)},
+                        {"coverage", {{"base", 0.0}, {"head", 1.0}}}};
+  const std::string incomplete = llmcc::compare::RenderComment(Report(
+      {{"status", "incomplete"},
+       {"comparisons", {{"repository", partial}}},
+       {"leading_regressions",
+        json::array(
+            {{{"path", "up.cc"}, {"change", 1.0}, {"raw_change", 1.0}}})},
+       {"leading_improvements", json::array({{{"path", "down.cc"},
+                                              {"change", -1.0},
+                                              {"raw_change", -4.0}}})}}));
+  Expect(
+      incomplete.starts_with(
+          "### llm-cc (incomplete): repository LM-CC \xCE\x94 unavailable\n\n"
+          "largest `down.cc` -4.0\n\n<details>\n"),
+      "the lead names an unfinished status and the largest change");
+
   // A path that could mention, link or open HTML is spelled with character
   // references, the only form comment publishers such as ci-toolkit accept.
   const std::string hostile =
@@ -139,8 +179,9 @@ int main() {  // NOLINT(bugprone-exception-escape)
               {"changed_files", json::array({ChangedRow(hostile, 2)})},
               {"rankings", {{"base", json::array()}, {"head", offenders}}}}));
   ExpectBalancedFences(untrusted);
-  Expect(untrusted.find_first_of("@[]<") == std::string::npos &&
-             !Contains(untrusted, "//"),
+  const std::string unwrapped = WithoutWrapper(untrusted);
+  Expect(unwrapped.find_first_of("@[]<") == std::string::npos &&
+             !Contains(unwrapped, "//"),
          "no untrusted path can mention, link or open HTML");
   const auto lines = Lines(untrusted);
   const std::string spelled =
@@ -244,8 +285,9 @@ int main() {  // NOLINT(bugprone-exception-escape)
       Report({{"changed_files", rows},
               {"rankings", {{"base", ranked}, {"head", ranked}}},
               {"errors", json::array({std::string(2000, 'e')})}}));
-  Expect(limited.size() <= llmcc::compare::markdown::kCommentLimit,
-         "the comment fits the publication limit");
+  Expect(limited.size() <= llmcc::compare::markdown::kCommentLimit &&
+             limited.ends_with("\n</details>\n"),
+         "the comment fits the publication limit and stays collapsed");
   ExpectBalancedFences(limited);
   Expect(Contains(limited, "### Changed files") &&
              Contains(limited,

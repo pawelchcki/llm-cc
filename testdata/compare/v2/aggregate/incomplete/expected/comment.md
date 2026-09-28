@@ -1,4 +1,9 @@
-## llm-cc comparison
+### llm-cc (incomplete): repository LM-CC Δ unavailable
+
+runtime unavailable · tests +1.5 · tooling unavailable
+
+<details>
+<summary>Full comparison</summary>
 
 Status: **incomplete**
 
@@ -37,3 +42,5 @@ Cache: 0 hits, 5 misses.
 | 6 | `move.cc` | runtime | 1.5 | yes |
 
 Rules: host
+
+</details>

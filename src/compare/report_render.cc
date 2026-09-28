@@ -36,6 +36,7 @@ constexpr std::string_view kDash = "\xE2\x80\x94";
 constexpr std::string_view kEmptySet = "\xE2\x88\x85";
 constexpr std::string_view kArrow = "\xE2\x86\x92";
 constexpr std::string_view kDelta = "\xCE\x94";
+constexpr std::string_view kDot = " \xC2\xB7 ";
 
 // `object.get(key)`, null for a missing key or a non-object.
 const nlohmann::json& Get(const nlohmann::json& object, std::string_view key) {
@@ -125,6 +126,60 @@ std::string PathChange(const nlohmann::json& delta) {
                          delta["change"].get<double>());
   }
   return {buffer.data(), static_cast<std::size_t>(std::max(size, 0))};
+}
+
+// The two lines a collapsed comment shows: the repository's LM-CC delta, then
+// each category's and the largest single file's.
+std::vector<std::string> Lead(const nlohmann::json& report) {
+  const nlohmann::json& comparisons =
+      GetOr(report, "comparisons", EmptyObject());
+  const auto change = [&](std::string_view name) -> const nlohmann::json& {
+    return Get(Get(comparisons, name), "raw_llm_cc");
+  };
+  const std::string status = Str(report["status"]);
+  std::string title = "### llm-cc";
+  if (status != "complete") {
+    title += " (" + status + ")";
+  }
+  const nlohmann::json& repository = change("repository");
+  title += ": repository LM-CC " + std::string(kDelta) + " " +
+           Raw(Get(repository, "absolute"), true);
+  if (!Get(repository, "percent").is_null()) {
+    title += " (" + Percent(Get(repository, "percent")) + ")";
+  }
+  std::string details;
+  for (const std::string_view name : kCategories) {
+    if (Truthy(Get(comparisons, name))) {
+      details += (details.empty() ? "" : std::string(kDot)) +
+                 std::string(name) + " " +
+                 Raw(Get(change(name), "absolute"), true);
+    }
+  }
+  // Leading changes, unlike changed-file rows, count an added or deleted
+  // file's whole score.
+  const nlohmann::json* largest = nullptr;
+  for (const std::string_view key :
+       {"leading_regressions", "leading_improvements"}) {
+    const nlohmann::json& entries = GetOr(report, key, EmptyArray());
+    if (entries.empty() || !Get(entries.front(), "raw_change").is_number()) {
+      continue;
+    }
+    const nlohmann::json& entry = entries.front();
+    if (largest == nullptr ||
+        std::abs(entry["raw_change"].get<double>()) >
+            std::abs((*largest)["raw_change"].get<double>())) {
+      largest = &entry;
+    }
+  }
+  if (largest != nullptr) {
+    details += (details.empty() ? "" : std::string(kDot)) + "largest " +
+               Code(Str((*largest)["path"])) + " " +
+               Raw((*largest)["raw_change"], true);
+  }
+  if (details.empty()) {
+    return {title};
+  }
+  return {title, "", details};
 }
 
 std::vector<std::string> Headline(const nlohmann::json& report) {
@@ -229,13 +284,15 @@ std::vector<Section> CommentSections(const nlohmann::json& report, bool full) {
                                              {"head", nlohmann::json::array()}};
   const nlohmann::json& rankings = GetOr(report, "rankings", kNoRankings);
   std::vector<Section> sections;
-  std::vector<std::string> header = {
-      "## llm-cc comparison",
-      "",
-      "Status: **" + Str(report["status"]) + "**",
-      "",
-      "Scores and ranks use total LM-CC; LM-CC/token is secondary.",
-      ""};
+  // In a comment, the lead above the collapsed sections names llm-cc.
+  std::vector<std::string> header;
+  if (full) {
+    header = {"## llm-cc comparison", ""};
+  }
+  header.insert(
+      header.end(),
+      {"Status: **" + Str(report["status"]) + "**", "",
+       "Scores and ranks use total LM-CC; LM-CC/token is secondary.", ""});
   for (std::string& line : Headline(report)) {
     header.push_back(std::move(line));
   }
@@ -296,8 +353,6 @@ std::vector<Section> CommentSections(const nlohmann::json& report, bool full) {
     // it as such: a branch behind its target would otherwise present stale
     // scores as the target branch's current state.
     const nlohmann::json& base = Get(identity, "base_sha");
-    // Comments stay plain Markdown: publishers such as ci-toolkit refuse raw
-    // HTML, so a heading replaces a collapsible block.
     std::vector<std::string> lines = {
         "",
         "### Top offenders on the merge base (" +
@@ -447,7 +502,17 @@ std::vector<std::string> RankingTable(std::span<const nlohmann::json> entries) {
 }  // namespace
 
 std::string RenderComment(const nlohmann::json& report) {
-  return markdown::Assemble(CommentSections(report, false));
+  // Bare <details> and <summary> tags are the only HTML that publishers such
+  // as ci-toolkit accept in a generated comment.
+  const std::string open =
+      Join(Lead(report)) +
+      "\n\n<details>\n<summary>Full comparison</summary>\n\n";
+  const std::string close = "\n</details>\n";
+  return open +
+         markdown::Assemble(
+             CommentSections(report, false),
+             markdown::kCommentLimit - open.size() - close.size()) +
+         close;
 }
 
 std::string RenderFullReport(const nlohmann::json& report) {
