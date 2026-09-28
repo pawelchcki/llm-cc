@@ -1,4 +1,9 @@
-## llm-cc comparison
+### llm-cc: repository LM-CC Δ -273.0 (-9.64%)
+
+runtime -382.5 · tests +109.5 · tooling +0.0 · largest `tests/gen10_test.c` +136.5
+
+<details>
+<summary>Full comparison</summary>
 
 Status: **complete**
 
@@ -92,3 +97,5 @@ _1 more changed files are listed in the full report._
 | 10 | `src/gen29.c` | runtime | 100.5 |  |
 
 Rules: host
+
+</details>

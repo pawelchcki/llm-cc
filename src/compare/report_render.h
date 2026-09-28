@@ -7,7 +7,8 @@
 
 namespace llmcc::compare {
 
-// The pull-request comment: prioritized sections within the comment limit.
+// The pull-request comment: two lines of LM-CC deltas, then prioritized
+// sections, collapsed by default, within the comment limit.
 std::string RenderComment(const nlohmann::json& report);
 // report.md: every comment section in full, then totals, coverage, changes
 // and both inventories.

@@ -1,4 +1,9 @@
-## llm-cc comparison
+### llm-cc (incomplete): repository LM-CC Δ unavailable
+
+runtime unavailable · tests +4.0 · tooling -4.0 · largest `zero.go` +4.0
+
+<details>
+<summary>Full comparison</summary>
 
 Status: **incomplete**
 
@@ -52,3 +57,5 @@ Cache: 5 hits, 4 misses.
 Baseline ranking: <https://ci.example/o/r/baseline.md>
 
 Rules: host
+
+</details>

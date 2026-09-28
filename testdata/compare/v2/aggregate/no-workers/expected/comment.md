@@ -1,4 +1,9 @@
-## llm-cc comparison
+### llm-cc (failed): repository LM-CC Δ unavailable
+
+runtime unavailable · tests unavailable · tooling unavailable
+
+<details>
+<summary>Full comparison</summary>
 
 Status: **failed**
 
@@ -23,3 +28,5 @@ Errors:
 - `unmeasured unique files: 9`
 
 Rules: host
+
+</details>

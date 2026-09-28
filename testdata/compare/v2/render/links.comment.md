@@ -1,4 +1,9 @@
-## llm-cc comparison
+### llm-cc: repository LM-CC Δ +1.0 (+100%)
+
+runtime +1.0 · tests +1.0 · tooling +1.0
+
+<details>
+<summary>Full comparison</summary>
 
 Status: **complete**
 
@@ -21,3 +26,5 @@ Cache: 1 hits, 0 misses.
 Baseline ranking: <https://ci.example/o/r/baseline.md>
 
 Rules: repository `.llm-cc/comparison-rules.json` at `0123456`
+
+</details>

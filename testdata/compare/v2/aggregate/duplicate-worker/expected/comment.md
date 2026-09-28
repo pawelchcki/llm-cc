@@ -1,4 +1,9 @@
-## llm-cc comparison
+### llm-cc (failed): repository LM-CC Δ unavailable
+
+runtime unavailable · tests +1.5 · tooling -19.5 · largest `tools/gen.py` -19.5
+
+<details>
+<summary>Full comparison</summary>
 
 Status: **failed**
 
@@ -53,3 +58,5 @@ Errors:
 | 8 | `move.cc` | runtime | 1.5 | yes |
 
 Rules: host
+
+</details>

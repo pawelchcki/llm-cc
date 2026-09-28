@@ -205,9 +205,13 @@ important first. Repository-controlled text is neutralized: control and
 bidirectional characters, mentions and Markdown syntax cannot escape their
 code spans, and a path holding an at-sign, a bracket, `<`, `//` or `www.` is
 spelled with character references instead (an at-sign as `&#64;&#8203;`).
-Without report links the comment is plain Markdown that ci-toolkit's generated
-comments accept: no raw HTML, at-signs, brackets, URLs or `#<number>` (ranks
-read `3/130`). It ends by naming its rules: ``Rules: repository `<path>` at
+It opens with ``### llm-cc[ (<status>)]: repository LM-CC Δ <delta>[ (<percent>)]``
+and a line of per-category deltas and the largest leading change, then wraps
+every section in one `<details>` block titled `<summary>Full comparison</summary>`.
+Without report links the comment is Markdown that ci-toolkit's generated
+comments accept: no raw HTML besides those bare `<details>` and `<summary>`
+tags, and no at-signs, brackets, URLs or `#<number>` (ranks read `3/130`). Its
+sections end by naming the rules: ``Rules: repository `<path>` at
 `<commit>` ``, `Rules: host` or `Rules: built-in`.
 
 `baseline.json` is `{schema_version: 2, identity, fingerprint, status,

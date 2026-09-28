@@ -101,7 +101,11 @@ Rankings sort by descending total LM-CC, with paths breaking ties. LM-CC/token
 remains a separately labeled secondary metric; it can rise while total LM-CC
 falls when a refactor removes proportionally more tokens than complexity.
 
-`comment.md` is the bounded pull-request comment, at most 24 KiB. It opens with
+`comment.md` is the bounded pull-request comment, at most 24 KiB. Collapsed, it
+shows two lines: the repository's LM-CC delta (and the status unless it is
+complete), then each category's LM-CC delta and the largest single-file change.
+Everything else sits in a **Full comparison** block that GitHub shows collapsed.
+That block opens with
 the status and one headline line per category, then the category table, the cache
 line and any errors, a **Changed files** table of the paths this comparison
 touched with their absolute base and head scores and the head's repository rank,

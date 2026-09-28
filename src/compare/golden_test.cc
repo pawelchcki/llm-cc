@@ -55,10 +55,12 @@ void CompareFiles(const fs::path& expected, const fs::path& actual,
 // The text rules ci-toolkit applies before posting a generated comment, plus
 // "#<digit>", which GitHub renders as an issue link ci-toolkit also refuses.
 bool Publishable(std::string text) {
-  static constexpr std::string_view kNeutralAt = "&#64;&#8203;";
-  for (std::size_t at = text.find(kNeutralAt); at != std::string::npos;
-       at = text.find(kNeutralAt, at)) {
-    text.erase(at, kNeutralAt.size());
+  for (const std::string_view accepted :
+       {"&#64;&#8203;", "<details>", "</details>", "<summary>", "</summary>"}) {
+    for (std::size_t at = text.find(accepted); at != std::string::npos;
+         at = text.find(accepted, at)) {
+      text.erase(at, accepted.size());
+    }
   }
   std::string lower = text;
   for (char& character : lower) {
