@@ -1672,6 +1672,7 @@ cc_test(
     # Windows test actions otherwise lose the PATH entry that finds git.exe.
     env_inherit = ["PATH"],
     deps = [
+        ":compare_test_repository",
         ":git",
         ":sha1",
         ":subprocess",

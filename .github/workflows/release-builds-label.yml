@@ -1,0 +1,22 @@
+name: Release builds label
+
+# Adding `ci: release-builds` to a pull request runs the Reusable builds
+# matrix for its head; later pushes run it through that workflow's own
+# pull_request trigger. Listening for `labeled` there instead would post
+# skipped checks, under the real checks' names, for every other label.
+# Calling it from this pull_request run, unlike a dispatch, keeps the
+# results on the pull request.
+on:
+  pull_request:
+    branches: [main]
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  builds:
+    name: release builds
+    if: >-
+      github.event.label.name == 'ci: release-builds'
+    uses: ./.github/workflows/reusable-builds.yml

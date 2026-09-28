@@ -197,8 +197,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
   // Shared stores are group-writable within the umask.
   const fs::path shared = fs::path(temporary) / "shared";
   fs::create_directories(shared);
-  fs::permissions(
-      shared, fs::perms::owner_all | fs::perms::group_all | fs::perms::set_gid);
+  fs::permissions(shared, fs::perms::owner_all | fs::perms::group_all);
   llmcc::compare::FilesystemStore group(shared);
   for (const auto& [mask, mode] :
        {std::pair{0007U, 0660U}, std::pair{0077U, 0600U},

@@ -3,67 +3,25 @@
 #include <algorithm>
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
 #include <map>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "src/compare/test_repository.h"
 #include "src/subprocess.h"
 #include "src/test_util.h"
 
 namespace {
 
 namespace fs = std::filesystem;
+using llmcc::compare::test::Git;
+using llmcc::compare::test::Utf8;
+using llmcc::compare::test::Write;
 using llmcc::git::ObjectFormat;
 using llmcc::test::Expect;
 using llmcc::test::ExpectEq;
-
-std::string Utf8(const fs::path& path) {
-  const std::u8string value = path.u8string();
-  return {reinterpret_cast<const char*>(value.data()), value.size()};
-}
-
-// Runs git in `repository` and returns its trimmed standard output.
-std::string Git(const fs::path& repository,
-                const std::vector<std::string>& arguments,
-                const std::string& input = {}) {
-  std::vector<std::string> command = {
-      "git",
-      "-C",
-      Utf8(repository),
-      "-c",
-      "user.name=Fixture",
-      "-c",
-      "user.email=fixture@example.invalid",
-      "-c",
-      "commit.gpgsign=false",
-      "-c",
-      "core.autocrlf=false",
-  };
-  command.insert(command.end(), arguments.begin(), arguments.end());
-  auto result = llmcc::RunProcess(
-      command, input.empty() ? llmcc::ProcessOptions{}
-                             : llmcc::ProcessOptions{.stdin_data = input});
-  if (result.exit_code != 0) {
-    std::string description;
-    for (const std::string& argument : arguments) {
-      description += argument + " ";
-    }
-    Expect(false, "git " + description + "failed: " + result.stderr_data);
-  }
-  while (!result.stdout_data.empty() && (result.stdout_data.back() == '\n' ||
-                                         result.stdout_data.back() == '\r')) {
-    result.stdout_data.pop_back();
-  }
-  return result.stdout_data;
-}
-
-void Write(const fs::path& path, std::string_view value) {
-  fs::create_directories(path.parent_path());
-  std::ofstream(path, std::ios::binary) << value;
-}
 
 bool Throws(const auto& function, std::string_view fragment) {
   try {
@@ -79,6 +37,7 @@ bool Throws(const auto& function, std::string_view fragment) {
 int main() {  // NOLINT(bugprone-exception-escape)
   const char* temporary = std::getenv("TEST_TMPDIR");
   Expect(temporary != nullptr, "TEST_TMPDIR is set");
+  llmcc::test::StopGitDiscoveryAbove(temporary);
   const fs::path root = fs::path(temporary) / "git repository";
   fs::create_directories(root);
   Git(root, {"init", "-q"});
@@ -240,7 +199,8 @@ int main() {  // NOLINT(bugprone-exception-escape)
   // Name-status changes with rename detection.
   std::map<std::string, llmcc::git::Change> changes;
   for (const auto& change : repository.Diff(base, head)) {
-    changes.emplace(change.new_path.value_or(*change.old_path), change);
+    changes.emplace(change.new_path.value_or(change.old_path.value_or("")),
+                    change);
   }
   Expect(changes.at("tests/move.cc").status.starts_with("R") &&
              changes.at("tests/move.cc").old_path == "move.cc",

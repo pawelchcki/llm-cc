@@ -666,9 +666,11 @@ std::optional<std::string> BackendArtifactDigest(BackendKind backend) {
 }
 
 BackendRuntime::BackendRuntime(
-    BackendKind requested, std::int32_t gpu_layers, std::string_view version,
-    const std::optional<std::filesystem::path>& backend_directory,
-    bool no_download, bool fetch_backend) {
+    BackendKind requested, std::int32_t gpu_layers,
+    [[maybe_unused]] std::string_view version,
+    [[maybe_unused]] const std::optional<std::filesystem::path>&
+        backend_directory,
+    [[maybe_unused]] bool no_download, [[maybe_unused]] bool fetch_backend) {
   ReportPhase("resolving backend and probing GPU hardware");
   if (gpu_layers < -1) {
     throw std::invalid_argument("--gpu-layers must be -1 or greater");
@@ -760,10 +762,6 @@ BackendRuntime::BackendRuntime(
     plugin.driver_handle = nullptr;
   }
 #else
-  static_cast<void>(version);
-  static_cast<void>(backend_directory);
-  static_cast<void>(no_download);
-  static_cast<void>(fetch_backend);
 #ifdef LLM_CC_BUILTIN_GPU
   if (requested == BackendKind::kCuda || requested == BackendKind::kRocm) {
     throw std::runtime_error(std::string(BackendName(requested)) +
@@ -774,6 +772,11 @@ BackendRuntime::BackendRuntime(
         "--backend cpu cannot be used with nonzero --gpu-layers");
   }
   selected_ = requested;
+  // Registering Metal initializes each device and compiles its shaders,
+  // which CPU execution never uses and which has hung for over an hour on
+  // Intel macOS runners. ggml then registers Metal without devices. This
+  // must precede the first registry access below.
+  if (selected_ == BackendKind::kCpu) setenv("GGML_METAL_DEVICES", "0", 1);
 #else
   selected_ = SelectBackend(requested, gpu_layers, {});
   if (selected_ != BackendKind::kCpu && requested != BackendKind::kAuto) {

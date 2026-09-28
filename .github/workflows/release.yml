@@ -110,6 +110,9 @@ jobs:
           python tools/release_assets.py binary --version "$VERSION" --commit "$COMMIT" \
             --platform "$PLATFORM" --binary "bazel-bin/$BINARY" --output "$RUNNER_TEMP/release-assets"
       - name: Smoke test standalone package with a real model
+        # A healthy run takes about a minute; fail a hang early instead of
+        # holding the release until the job timeout.
+        timeout-minutes: 15
         env:
           VERSION: ${{ steps.release.outputs.version }}
           PLATFORM: ${{ matrix.platform }}

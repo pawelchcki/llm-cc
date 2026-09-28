@@ -484,19 +484,16 @@ std::string RenderBaseline(const nlohmann::json& report) {
       "",
       "| Category | LM-CC | LM-CC/token | Tokens | Measured paths |",
       "|---|---:|---:|---:|---:|"};
-  for (const std::string_view name : kCategories) {
-    const nlohmann::json& values = categories[std::string(name)];
+  const nlohmann::json& totals = report["sides"]["head"]["totals"];
+  for (const std::string_view name : kComparisons) {
+    const nlohmann::json& values =
+        name == "repository" ? totals : categories[std::string(name)];
     lines.push_back("| " + std::string(name) + " | " + Raw(values["llm_cc"]) +
                     " | " + Fmt(values["score"]) + " | " +
                     Fmt(values["token_count"]) + " | " +
                     Integer(values["measured_paths"]) + "/" +
                     Integer(values["supported_paths"]) + " |");
   }
-  const nlohmann::json& totals = report["sides"]["head"]["totals"];
-  lines.push_back("| repository | " + Raw(totals["llm_cc"]) + " | " +
-                  Fmt(totals["score"]) + " | " + Fmt(totals["token_count"]) +
-                  " | " + Integer(totals["measured_paths"]) + "/" +
-                  Integer(totals["supported_paths"]) + " |");
   const std::vector<nlohmann::json> ranked(rankings.begin(), rankings.end());
   const auto append = [&lines](std::vector<std::string> more) {
     for (std::string& line : more) {
@@ -513,7 +510,7 @@ std::string RenderBaseline(const nlohmann::json& report) {
   for (const std::string_view name : kCategories) {
     std::vector<nlohmann::json> selected;
     for (const nlohmann::json& entry : ranked) {
-      if (entry["category"] == name && selected.size() < 20) {
+      if (Str(entry["category"]) == name && selected.size() < 20) {
         selected.push_back(entry);
       }
     }

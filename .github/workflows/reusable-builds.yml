@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # release-builds-label.yml calls this when a PR gets `ci: release-builds`.
+  workflow_call:
   workflow_dispatch:
 
 concurrency:
@@ -16,15 +18,14 @@ permissions:
 
 jobs:
   platform:
-    # Ordinary PRs use BuildBuddy; full platform and consumer builds run for
-    # main and same-repository release-please branches before release.
+    # Ordinary PRs use BuildBuddy. Full platform and consumer builds run for
+    # main, dispatches, same-repository release-please branches, and PRs
+    # labeled `ci: release-builds` (when labeled, and on each later push).
     if: >-
-      (github.event_name == 'pull_request' &&
-       github.event.pull_request.head.repo.full_name == github.repository &&
-       startsWith(github.head_ref, 'release-please--branches--')) ||
-      (github.event_name != 'pull_request' &&
-       (github.ref == 'refs/heads/main' ||
-        startsWith(github.ref, 'refs/heads/release-please--branches--')))
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'ci: release-builds') ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       startsWith(github.head_ref, 'release-please--branches--'))
     strategy:
       fail-fast: false
       matrix:
@@ -55,7 +56,8 @@ jobs:
         if: runner.os == 'Windows'
         run: echo 'BAZEL_SH=C:/PROGRA~1/Git/bin/bash.exe' >> "$GITHUB_ENV"
       - name: Unit, integration and TLS regression tests
-        run: bazel test --config=release --config=${{ matrix.backend }} --jobs=4 --test_output=errors //:unit //:integration //:tls_integration_test
+        # --keep_going reports every failing target in one run, not the first.
+        run: bazel test --config=release --config=${{ matrix.backend }} --jobs=4 --keep_going --test_output=errors //:unit //:integration //:tls_integration_test
       - name: Link distribution executable
         run: bazel build --config=release --config=${{ matrix.backend }} --jobs=4 //:llm-cc
       - name: Check Linux ABI
@@ -90,15 +92,14 @@ jobs:
           path: MODULE.bazel.lock
 
   consumer:
-    # Ordinary PRs use BuildBuddy; full platform and consumer builds run for
-    # main and same-repository release-please branches before release.
+    # Ordinary PRs use BuildBuddy. Full platform and consumer builds run for
+    # main, dispatches, same-repository release-please branches, and PRs
+    # labeled `ci: release-builds` (when labeled, and on each later push).
     if: >-
-      (github.event_name == 'pull_request' &&
-       github.event.pull_request.head.repo.full_name == github.repository &&
-       startsWith(github.head_ref, 'release-please--branches--')) ||
-      (github.event_name != 'pull_request' &&
-       (github.ref == 'refs/heads/main' ||
-        startsWith(github.ref, 'refs/heads/release-please--branches--')))
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'ci: release-builds') ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       startsWith(github.head_ref, 'release-please--branches--'))
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:

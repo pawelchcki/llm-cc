@@ -214,13 +214,16 @@ class FileLock {
 #endif
 };
 
-// `mode` is the POSIX permission requested before the umask applies.
+// `mode` is the POSIX permission requested before the umask applies. The
+// Windows file is not hidden: AtomicWriteFile renames it into place,
+// attributes and all, and its targets include reports people open. Windows
+// also refuses to truncate a hidden file opened without the hidden attribute.
 inline void WritePrivateFile(const std::filesystem::path& path,
-                             std::string_view bytes, unsigned int mode = 0600) {
+                             std::string_view bytes,
+                             [[maybe_unused]] unsigned int mode = 0600) {
 #if defined(_WIN32)
-  static_cast<void>(mode);
   HANDLE handle = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr,
-                              CREATE_NEW, FILE_ATTRIBUTE_HIDDEN, nullptr);
+                              CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
   if (handle == INVALID_HANDLE_VALUE)
     throw std::system_error(static_cast<int>(GetLastError()),
                             std::system_category(),

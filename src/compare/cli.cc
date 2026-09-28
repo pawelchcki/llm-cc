@@ -553,8 +553,8 @@ int RunLocal(const std::vector<std::string_view>& args,
                .open_session = runtime.open_session,
                .inference_abi = runtime.inference_abi,
                .model = parsed.model.request,
-               .backend_artifact = runtime.backend_artifact,
                .deadline = parsed.deadline,
+               .backend_artifact = runtime.backend_artifact,
                .progress = &progress});
     artifacts.push_back(cache_io::PathUtf8(
         options.output / ("worker-" + std::to_string(worker_id) + ".json")));
