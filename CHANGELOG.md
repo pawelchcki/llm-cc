@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.4.0](https://github.com/pawelchcki/llm-cc/compare/v0.3.0...v0.4.0) (2026-09-28)
+
+
+### Features
+
+* **ci:** publish artifacts and clean merged PRs with Runnerless ([#61](https://github.com/pawelchcki/llm-cc/issues/61)) ([1185bdf](https://github.com/pawelchcki/llm-cc/commit/1185bdf67ef70bf3d13f84841eae85814feae20e))
+* **comparison:** score files of any size the analyzer accepts ([#59](https://github.com/pawelchcki/llm-cc/issues/59)) ([2ea658a](https://github.com/pawelchcki/llm-cc/commit/2ea658aada6080322e9fef033200e3d12e434ef5))
+* **comparison:** move the comparison pipeline into llm-cc compare ([#56](https://github.com/pawelchcki/llm-cc/issues/56)) ([e1740fc](https://github.com/pawelchcki/llm-cc/commit/e1740fc5b722b4bebb1693c0ef549f8086283b1f))
+* **comparison:** render reports and read stores in llm-cc ([#55](https://github.com/pawelchcki/llm-cc/issues/55)) ([ba0e600](https://github.com/pawelchcki/llm-cc/commit/ba0e600eec537b3b994d60f8354e0d220f621dea))
+* one rules engine and shell-free Git for llm-cc ([#54](https://github.com/pawelchcki/llm-cc/issues/54)) ([68bc7f3](https://github.com/pawelchcki/llm-cc/commit/68bc7f3d532f29e6afe0f37465f7558819d45058))
+
+### Bug Fixes
+
+* build and test the release on Windows and macOS ([#58](https://github.com/pawelchcki/llm-cc/issues/58)) ([4df0cb7](https://github.com/pawelchcki/llm-cc/commit/4df0cb7ca2accd4c0730849c889c00cc9f2817d7))
+* **comparison:** render comments ci-toolkit can publish ([#60](https://github.com/pawelchcki/llm-cc/issues/60)) ([5a17ccf](https://github.com/pawelchcki/llm-cc/commit/5a17ccfa1eae991c2853dfcc6b2e63ac13d09883))
+* **comparison:** use total LM-CC consistently ([#53](https://github.com/pawelchcki/llm-cc/issues/53)) ([2ade5c0](https://github.com/pawelchcki/llm-cc/commit/2ade5c0e1067f6ae5064d72226270106850828ec))
+
 ## [0.3.0](https://github.com/pawelchcki/llm-cc/compare/v0.2.0...v0.3.0) (2026-09-24)
 
 
