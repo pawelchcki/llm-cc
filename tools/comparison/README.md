@@ -239,14 +239,18 @@ through [dogfood.sh](dogfood.sh), so pull requests exercise coordinator changes
 before the host bundle is refreshed; consuming repositories call the published
 launcher instead. The coordinator derives its own head, branch and default branch
 from the checkout, unwrapping BuildBuddy's synthetic merge commit to the actual
-pull-request head. ci-toolkit consumes the completed BuildBuddy status and
-publishes the generated table and report links using `.ci-toolkit.yml` from the
-PR's target commit. The publication policy must land on the target branch before
-a fresh PR comparison can publish automatically.
+pull-request head. Runnerless consumes the completed BuildBuddy status and
+publishes the generated table and report links using
+[`.runnerless-ci.ts`](../../.runnerless-ci.ts) from the PR's target commit. The
+program must land on the target branch before a fresh PR comparison can publish
+automatically. It retains one complete main set, explicitly cleans merged PR
+copies, and uses a 14-day fallback for abandoned PRs while protecting active
+release inputs.
 
-In this BuildBuddy flow, ci-toolkit owns comment markers, serialization,
-ordering, and PR-state rechecks, and the coordinator never posts comments. See
-[ci-toolkit.example.yml](ci-toolkit.example.yml) for the publication policy.
+In this BuildBuddy flow, the publication host owns comment markers, serialization,
+ordering, and PR-state rechecks, and the coordinator never posts comments.
+[ci-toolkit.example.yml](ci-toolkit.example.yml) remains the YAML publication
+policy for consuming repositories that have not migrated to Runnerless.
 Other CI systems can use the native `publish` command instead; see
 [CI_RECIPE.md](CI_RECIPE.md#7-publication-with-ordering-protection).
 
