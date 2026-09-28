@@ -325,8 +325,10 @@ a strict GPU eligibility or concurrency constraint.
 
 The Bazzite scoring contract uses ROCm, context **32768**, batch **256**, Flash
 Attention on, **Q8_0** K/V with offload, device entropy reduction, structural
-hierarchy, tau 0.67 and alpha 0.8, with the default **64 KiB** file limit. The
-host configuration uses one worker because the two builders share one Radeon.
+hierarchy, tau 0.67 and alpha 0.8. The coordinator passes the analyzer's full
+**1 GiB** file limit, so long files are scored in overlapping 32768-token
+windows rather than left unmeasured. The host configuration uses one worker
+because the two builders share one Radeon.
 The CPU coordinator uses `linux-amd64-rocm` and the existing host filesystem
 store. Follow [Bazzite setup](BAZZITE.md) to install the verified assets and
 publish an atomic configuration generation.
