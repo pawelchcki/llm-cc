@@ -9,10 +9,13 @@
 
 #include "src/compare/result_cache.h"
 #include "src/compare/store.h"
+#include "src/input_limits.h"
 
 namespace llmcc::compare {
 
-inline constexpr std::uint64_t kDefaultMaxFileBytes = 65536;
+// Windowed scoring handles any file the analyzer accepts, so by default a
+// comparison leaves nothing it could read unscored.
+inline constexpr std::uint64_t kDefaultMaxFileBytes = kMaxSourceBytes;
 
 struct PrepareOptions {
   std::filesystem::path repository = ".";

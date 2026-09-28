@@ -39,6 +39,8 @@ from .store import open_store
 WORKER_SECONDS = 6600
 # No plan is larger; a larger object is corrupt and is never buffered whole.
 PLAN_BYTES = 256 * 1024 * 1024
+# llm-cc's analyzer limit (kMaxSourceBytes); larger files are oversized.
+MAX_SOURCE_BYTES = 1024 * 1024 * 1024
 
 
 class BuildBuddy:
@@ -615,6 +617,10 @@ def prepare_plan(config, repo, head, identity, output):
         str(config.get("refresh_days", 20)),
         "--expire-days",
         str(config.get("expire_days", 30)),
+        # Score every file the analyzer accepts, as current llm-cc does by
+        # default; a scorer pinned before that would stop at 64 KiB.
+        "--max-file-bytes",
+        str(MAX_SOURCE_BYTES),
     ]
     if config.get("default_rules"):
         command += ["--default-rules", config["default_rules"]]

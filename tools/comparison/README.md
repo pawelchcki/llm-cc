@@ -47,7 +47,8 @@ on
 
 `--model GGUF` or `--model-name NAME` hashes a local model instead; `auto`
 settings are refused, because the coordinator is not the GPU host. Planning
-options are `--max-workers` (at most 4), `--max-file-bytes` (default 65536),
+options are `--max-workers` (at most 4), `--max-file-bytes` (default and
+maximum 1 GiB, the analyzer's limit; windowed scoring handles long files),
 `--default-rules FILE`, `--presentation FILE`, `--cache-concurrency`,
 `--refresh-days` and `--expire-days`. `llm-cc compare identity @scoring.args`
 prints the scorer, model, scoring and fingerprint a plan would carry.
