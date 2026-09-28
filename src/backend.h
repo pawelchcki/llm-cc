@@ -108,6 +108,10 @@ ResolvedBackendPlugin ResolveBackendPlugin(
 
 // Loads exactly the backend plugins needed by this inference invocation. The
 // object must outlive all llama.cpp objects created by the caller.
+//
+// Metal builds register ggml backends once per process. A CPU runtime created
+// before any other registers Metal without devices, so later runtimes in the
+// same process cannot use Metal.
 class BackendRuntime {
  public:
   BackendRuntime(BackendKind requested, std::int32_t gpu_layers,
