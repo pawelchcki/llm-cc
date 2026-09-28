@@ -435,7 +435,8 @@ int main() {  // NOLINT(bugprone-exception-escape)
 
 #ifndef _WIN32
   // A path that is not UTF-8 is spelled the same, escaped, in the inventory
-  // and the changes, and is never scored.
+  // and the changes, and is never scored. POSIX only: on Windows the
+  // backslash in the second name separates directories.
   const fs::path bytes = root / "bytes";
   fs::create_directories(bytes);
   llmcc::compare::test::Git(bytes, {"init", "-q"});
@@ -444,11 +445,12 @@ int main() {  // NOLINT(bugprone-exception-escape)
   // A valid name spelling the same escape stays a different path.
   llmcc::compare::test::Write(bytes / "bad\\xff.py", "x = 2\n");
   llmcc::compare::test::Git(bytes, {"add", "-A"});
-  // macOS refuses names that are not UTF-8, so stage the entry directly.
+  // macOS refuses names that are not UTF-8, so stage the entry directly,
+  // through standard input because Windows process arguments must be UTF-8.
   const std::string bad_blob = llmcc::compare::test::Git(
       bytes, {"hash-object", "-w", "--stdin"}, "x = 1\n");
-  llmcc::compare::test::Git(bytes, {"update-index", "--add", "--cacheinfo",
-                                    "100644," + bad_blob + ",bad\xff.py"});
+  llmcc::compare::test::Git(bytes, {"update-index", "--index-info"},
+                            "100644 " + bad_blob + "\tbad\xff.py\n");
   llmcc::compare::test::Git(bytes, {"commit", "-q", "-m", "head"});
   const std::string bytes_head =
       llmcc::compare::test::Git(bytes, {"rev-parse", "HEAD"});
