@@ -45,7 +45,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
   namespace fs = std::filesystem;
   const char* temporary = std::getenv("TEST_TMPDIR");
   llmcc::test::Expect(temporary != nullptr, "TEST_TMPDIR is set");
-  llmcc::test::StopGitDiscoveryAboveTestTmpdir();
+  llmcc::test::StopGitDiscoveryAbove(temporary);
   const fs::path repository = fs::path(temporary) / "project";
   fs::create_directories(repository);
   Run("git -C " + Quote(repository) + " init -q");

@@ -24,22 +24,21 @@ void ExpectEq(const Left& left, const Right& right, std::string_view message) {
   }
 }
 
+// Sets an environment variable that child processes inherit.
+inline void SetEnvironment(const char* name, const std::string& value) {
+#ifdef _WIN32
+  _putenv_s(name, value.c_str());
+#else
+  setenv(name, value.c_str(), 1);  // NOLINT(concurrency-mt-unsafe)
+#endif
+}
+
 // Without a sandbox (always on Windows), TEST_TMPDIR lies inside Bazel's
 // execroot, which links the workspace's .git and .llm-cc. Stop Git's
-// repository discovery just above TEST_TMPDIR so a fixture there is outside
-// any repository. Child processes inherit the setting.
-inline void StopGitDiscoveryAboveTestTmpdir() {
-  const char* temporary = std::getenv("TEST_TMPDIR");
-  Expect(temporary != nullptr, "TEST_TMPDIR is set");
-  const std::string ceiling =
-      std::filesystem::path(temporary).parent_path().string();
-#ifdef _WIN32
-  Expect(_putenv_s("GIT_CEILING_DIRECTORIES", ceiling.c_str()) == 0,
-         "GIT_CEILING_DIRECTORIES is set");
-#else
-  Expect(setenv("GIT_CEILING_DIRECTORIES", ceiling.c_str(), 1) == 0,
-         "GIT_CEILING_DIRECTORIES is set");
-#endif
+// repository discovery just above `directory` so a fixture there is outside
+// any repository.
+inline void StopGitDiscoveryAbove(const std::filesystem::path& directory) {
+  SetEnvironment("GIT_CEILING_DIRECTORIES", directory.parent_path().string());
 }
 
 }  // namespace llmcc::test

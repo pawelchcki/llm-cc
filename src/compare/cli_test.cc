@@ -20,6 +20,7 @@ namespace fs = std::filesystem;
 using llmcc::compare::ReadJsonFile;
 using llmcc::test::Expect;
 using llmcc::test::ExpectEq;
+using llmcc::test::SetEnvironment;
 using nlohmann::json;
 
 int Compare(std::vector<std::string> arguments, std::string* output = nullptr) {
@@ -48,14 +49,6 @@ json Comparable(const fs::path& directory) {
   report.erase("cache_stats");
   report["identity"].erase("started_at");
   return report;
-}
-
-void SetEnvironment(const char* name, const std::string& value) {
-#ifdef _WIN32
-  _putenv_s(name, value.c_str());
-#else
-  setenv(name, value.c_str(), 1);  // NOLINT(concurrency-mt-unsafe)
-#endif
 }
 
 }  // namespace

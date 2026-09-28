@@ -72,7 +72,7 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
   llmcc::test::Expect(
       argc == 3 && test_srcdir != nullptr && test_tmpdir != nullptr,
       "Bazel test environment");
-  llmcc::test::StopGitDiscoveryAboveTestTmpdir();
+  llmcc::test::StopGitDiscoveryAbove(test_tmpdir);
   const fs::path entropy_root = fs::path(test_tmpdir) / "entropy-cache";
   setenv("LLM_CC_ENTROPY_CACHE_DIR", entropy_root.c_str(), 1);
   const fs::path binary = fs::path(test_srcdir) / argv[1];
