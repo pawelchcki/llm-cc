@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/pawelchcki/llm-cc/compare/v0.4.0...v0.5.0) (2026-09-28)
+
+
+### Features
+
+* **comparison:** collapse the PR comment behind two LM-CC delta lines ([#62](https://github.com/pawelchcki/llm-cc/issues/62)) ([4f15d77](https://github.com/pawelchcki/llm-cc/commit/4f15d77f8452a2481e75936a089bdaa5bb5fc077))
+
 ## [0.4.0](https://github.com/pawelchcki/llm-cc/compare/v0.3.0...v0.4.0) (2026-09-28)
 
 
