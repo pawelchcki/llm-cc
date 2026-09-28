@@ -1,10 +1,13 @@
-// Byte-for-byte agreement with the Python renderer the C++ port replaced.
+// Byte-for-byte golden reports, first captured from the Python renderer the
+// C++ port replaced; comments since follow publishers' safe-Markdown rules.
 // With LLM_CC_UPDATE_GOLDENS naming the source golden directory, run under
 // --spawn_strategy=local, mismatching expectations are rewritten instead.
+#include <cctype>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <nlohmann/json.hpp>
+#include <regex>
 #include <string>
 #include <vector>
 
@@ -45,8 +48,45 @@ void CompareFiles(const fs::path& expected, const fs::path& actual,
           fs::path(update) / label / "expected" / name, got);
       continue;
     }
-    Check(want == got, label + "/" + name + " matches the Python renderer");
+    Check(want == got, label + "/" + name + " matches its golden");
   }
+}
+
+// The text rules ci-toolkit applies before posting a generated comment, plus
+// "#<digit>", which GitHub renders as an issue link ci-toolkit also refuses.
+bool Publishable(std::string text) {
+  static constexpr std::string_view kNeutralAt = "&#64;&#8203;";
+  for (std::size_t at = text.find(kNeutralAt); at != std::string::npos;
+       at = text.find(kNeutralAt, at)) {
+    text.erase(at, kNeutralAt.size());
+  }
+  std::string lower = text;
+  for (char& character : lower) {
+    character =
+        static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
+  }
+  if (text.find_first_of("@[]<") != std::string::npos ||
+      lower.find("//") != std::string::npos ||
+      lower.find("www.") != std::string::npos ||
+      std::regex_search(lower, std::regex("&(?:commat|#0*64|#x0*40);"))) {
+    return false;
+  }
+  for (std::size_t index = 0; index + 1 < text.size(); ++index) {
+    if (text[index] == '#' &&
+        std::isdigit(static_cast<unsigned char>(text[index + 1])) != 0 &&
+        (index == 0 || text[index - 1] != '&')) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Report links render as autolinks, for publishers that allow them; a
+// comment without them must be publishable anywhere.
+bool HasReportLinks(const nlohmann::json& report) {
+  return !report.value("presentation", nlohmann::json::object())
+              .value("report_links", nlohmann::json::object())
+              .empty();
 }
 
 std::string FromHex(const std::string& hex) {
@@ -79,6 +119,11 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
     fs::current_path(original);
     CompareFiles(entry.path() / "expected", output,
                  "aggregate/" + entry.path().filename().string());
+    if (!HasReportLinks(ReadJsonFile(output / "report.json"))) {
+      Check(Publishable(ReadFileBytes(output / "comment.md")),
+            "aggregate/" + entry.path().filename().string() +
+                " comment is publishable");
+    }
     ++cases;
   }
   Check(cases >= 10, "aggregate goldens are present");
@@ -100,8 +145,20 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
     const nlohmann::json report = ReadJsonFile(entry.path());
     fs::path comment = entry.path();
     comment.replace_extension(".comment.md");
-    Check(llmcc::compare::RenderComment(report) == ReadFileBytes(comment),
-          "render/" + entry.path().filename().string() + " comment matches");
+    const std::string rendered = llmcc::compare::RenderComment(report);
+    const char* update = std::getenv("LLM_CC_UPDATE_GOLDENS");
+    if (update != nullptr && rendered != ReadFileBytes(comment)) {
+      llmcc::compare::WriteFileAtomic(
+          fs::path(update) / "render" / comment.filename(), rendered);
+    } else {
+      Check(rendered == ReadFileBytes(comment),
+            "render/" + entry.path().filename().string() + " comment matches");
+    }
+    if (!HasReportLinks(report)) {
+      Check(Publishable(rendered), "render/" +
+                                       entry.path().filename().string() +
+                                       " comment is publishable");
+    }
   }
 
   for (const nlohmann::json& row : ReadJsonFile(root / "code_spans.json")) {

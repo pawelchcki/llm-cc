@@ -22,10 +22,10 @@ Cache: 1 hits, 0 misses.
 
 | Path | Category | LM-CC base | LM-CC head | LM-CC Δ | LM-CC Δ% | Head rank |
 |---|---|---:|---:|---:|---:|---:|
-| ```src/@team/[file]`name``x`~~$y$\|pipe\|https://example.com/a.cc``` | runtime | 1.0 | 4.0 | +3.0 | +100% | #3/130 |
+| src&#47;&#64;&#8203;team&#47;&#91;file&#93;&#96;name&#96;&#96;x&#96;&#126;&#126;&#36;y&#36;&#124;pipe&#124;https&#58;&#47;&#47;example&#46;com&#47;a&#46;cc | runtime | 1.0 | 4.0 | +3.0 | +100% | 3/130 |
 
 ### Leading regressions
 
-- ```src/@team/[file]`name``x`~~$y$|pipe|https://example.com/a.cc```: +1 LM-CC/token
+- src&#47;&#64;&#8203;team&#47;&#91;file&#93;&#96;name&#96;&#96;x&#96;&#126;&#126;&#36;y&#36;&#124;pipe&#124;https&#58;&#47;&#47;example&#46;com&#47;a&#46;cc: +1 LM-CC/token
 
 Rules: host

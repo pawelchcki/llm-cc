@@ -22,16 +22,15 @@ Cache: 0 hits, 9 misses.
 
 | Path | Category | LM-CC base | LM-CC head | LM-CC Δ | LM-CC Δ% | Head rank |
 |---|---|---:|---:|---:|---:|---:|
-| `api.hpp` | runtime | 3.8 | 19.5 | +15.8 | +420% | #1/8 |
+| `api.hpp` | runtime | 3.8 | 19.5 | +15.8 | +420% | 1/8 |
 
 ### Leading regressions
 
 - `api.hpp`: +15.8 LM-CC (+0.835 LM-CC/token)
 
-<details>
-<summary>Top offenders on the merge base (`39be199bcdc7b54f6258e08e4f585fee7eb6e20c`)</summary>
+### Top offenders on the merge base (`39be199bcdc7b54f6258e08e4f585fee7eb6e20c`)
 
-| # | Path | Category | LM-CC | Touched |
+| Rank | Path | Category | LM-CC | Touched |
 |---:|---|---|---:|---|
 | 1 | `same.cc` | runtime | 17.2 |  |
 | 2 | `src_test.cc` | runtime | 15.0 |  |
@@ -42,6 +41,4 @@ Cache: 0 hits, 9 misses.
 | 7 | `api.hpp` | runtime | 3.8 | yes |
 | 8 | `tests/move.cc` | tests | 1.5 |  |
 
-</details>
-
-Rules: repository `.llm-cc/comparison-rules.json`@265aa59
+Rules: repository `.llm-cc/comparison-rules.json` at `265aa59`

@@ -26,8 +26,8 @@ Errors:
 
 | Path | Category | LM-CC base | LM-CC head | LM-CC Δ | LM-CC Δ% | Head rank |
 |---|---|---:|---:|---:|---:|---:|
-| `zero.cc` | runtime | 1.0 | 4.0 | +0.0 | +100% | #3/0 |
+| `zero.cc` | runtime | 1.0 | 4.0 | +0.0 | +100% | 3/0 |
 | `gone.cc` | runtime | 1.0 | — | — | — | — |
-| `new.cc` | runtime | — | 3.0 | — | — | #2/0 |
+| `new.cc` | runtime | — | 3.0 | — | — | 2/0 |
 
 Rules: host

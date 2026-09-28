@@ -203,8 +203,12 @@ repository), `changes`, `change_counts`, `rankings: {base, head}`,
 `comment.md` is at most 24 KiB of UTF-8: sections are dropped from the least
 important first. Repository-controlled text is neutralized: control and
 bidirectional characters, mentions and Markdown syntax cannot escape their
-code spans. The comment ends by naming its rules: `Rules: repository
-<path>@<commit>`, `Rules: host` or `Rules: built-in`.
+code spans, and a path holding an at-sign, a bracket, `<`, `//` or `www.` is
+spelled with character references instead (an at-sign as `&#64;&#8203;`).
+Without report links the comment is plain Markdown that ci-toolkit's generated
+comments accept: no raw HTML, at-signs, brackets, URLs or `#<number>` (ranks
+read `3/130`). It ends by naming its rules: ``Rules: repository `<path>` at
+`<commit>` ``, `Rules: host` or `Rules: built-in`.
 
 `baseline.json` is `{schema_version: 2, identity, fingerprint, status,
 categories, rankings}` with the head side's ranking; `baseline.md` opens with

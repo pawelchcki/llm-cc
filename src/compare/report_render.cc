@@ -205,7 +205,8 @@ std::vector<std::string> ChangedTableLines(std::span<const nlohmann::json> rows,
         Truthy(head) ? head : (Truthy(base) ? base : EmptyObject());
     std::string rank = dash;
     if (Truthy(head) && !Get(head, "rank").is_null()) {
-      rank = "#" + Integer(head["rank"]) + "/" + std::to_string(total_head);
+      // No "#": GitHub links #N to issue N wherever the comment appears.
+      rank = Integer(head["rank"]) + "/" + std::to_string(total_head);
     }
     const nlohmann::json& category = Get(side, "category");
     // An added or deleted path has no opposite side at all, which reads
@@ -295,13 +296,13 @@ std::vector<Section> CommentSections(const nlohmann::json& report, bool full) {
     // it as such: a branch behind its target would otherwise present stale
     // scores as the target branch's current state.
     const nlohmann::json& base = Get(identity, "base_sha");
+    // Comments stay plain Markdown: publishers such as ci-toolkit refuse raw
+    // HTML, so a heading replaces a collapsible block.
     std::vector<std::string> lines = {
         "",
-        "<details>",
-        "<summary>Top offenders on the merge base (" +
-            Code(Truthy(base) ? Str(base) : "base") + ")</summary>",
-        "",
-        "| # | Path | Category | LM-CC | Touched |",
+        "### Top offenders on the merge base (" +
+            Code(Truthy(base) ? Str(base) : "base") + ")",
+        "", "| Rank | Path | Category | LM-CC | Touched |",
         "|---:|---|---|---:|---|"};
     std::size_t count = 0;
     for (const nlohmann::json& entry : base_rankings) {
@@ -313,8 +314,6 @@ std::vector<Section> CommentSections(const nlohmann::json& report, bool full) {
                       Str(entry["category"]) + " | " + Raw(entry["llm_cc"]) +
                       " | " + (Truthy(entry["changed"]) ? "yes" : "") + " |");
     }
-    lines.emplace_back("");
-    lines.emplace_back("</details>");
     sections.push_back({.priority = 6, .lines = std::move(lines)});
   }
 
@@ -336,8 +335,9 @@ std::vector<Section> CommentSections(const nlohmann::json& report, bool full) {
     const std::string commit_text = Truthy(commit) ? Str(commit) : "";
     sections.push_back(
         {.priority = 8,
+         // " at ", not "@": a raw at-sign reads as a mention.
          .lines = {"", "Rules: repository " + Code(Str(Get(source, "path"))) +
-                           "@" + commit_text.substr(0, 7)}});
+                           " at " + Code(commit_text.substr(0, 7))}});
   } else if (kind == "host") {
     sections.push_back({.priority = 8, .lines = {"", "Rules: host"}});
   } else if (kind == "builtin") {

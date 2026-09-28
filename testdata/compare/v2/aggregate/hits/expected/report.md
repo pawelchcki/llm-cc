@@ -22,10 +22,10 @@ Cache: 5 hits, 4 misses.
 
 | Path | Category | LM-CC base | LM-CC head | LM-CC Δ | LM-CC Δ% | Head rank |
 |---|---|---:|---:|---:|---:|---:|
-| `same.cc` | runtime | 4.0 | 7.2 | +3.2 | +81.2% | #3/8 |
-| `tests/move.cc` | tests | 4.0 | 4.0 | +0.0 | +0% | #7/8 |
+| `same.cc` | runtime | 4.0 | 7.2 | +3.2 | +81.2% | 3/8 |
+| `tests/move.cc` | tests | 4.0 | 4.0 | +0.0 | +0% | 7/8 |
 | `tools/gen.py` | tooling | 4.0 | — | — | — | — |
-| `zero.go` | runtime | — | 4.0 | — | — | #8/8 |
+| `zero.go` | runtime | — | 4.0 | — | — | 8/8 |
 
 ### Leading regressions
 
@@ -36,10 +36,9 @@ Cache: 5 hits, 4 misses.
 
 - `tools/gen.py`: -4.0 LM-CC
 
-<details>
-<summary>Top offenders on the merge base (`1d43f119f327a404e8f9633434f83e55995f2369`)</summary>
+### Top offenders on the merge base (`1d43f119f327a404e8f9633434f83e55995f2369`)
 
-| # | Path | Category | LM-CC | Touched |
+| Rank | Path | Category | LM-CC | Touched |
 |---:|---|---|---:|---|
 | 1 | `api.hpp` | runtime | 7.2 |  |
 | 2 | `odd\u000aname.py` | runtime | 7.2 |  |
@@ -49,8 +48,6 @@ Cache: 5 hits, 4 misses.
 | 6 | `same.cc` | runtime | 4.0 | yes |
 | 7 | `src_test.cc` | tests | 4.0 |  |
 | 8 | `tools/gen.py` | tooling | 4.0 | yes |
-
-</details>
 
 Baseline ranking: <https://ci.example/o/r/baseline.md>
 
