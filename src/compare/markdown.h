@@ -22,6 +22,9 @@ std::string NeutralizeControls(std::string_view text);
 
 // Untrusted text as one balanced code span Markdown cannot escape from. In a
 // table, pipes are escaped because GFM splits cells on them even inside code.
+// Text that could still form a mention, link or HTML (an at-sign, a bracket,
+// "<", "//" or "www.") is instead plain text of character references, which
+// comment publishers accept.
 std::string Code(std::string_view text, bool table = false);
 
 struct Section {

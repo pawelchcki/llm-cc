@@ -22,13 +22,12 @@ Cache: 0 hits, 5 misses.
 
 | Path | Category | LM-CC base | LM-CC head | LM-CC Δ | LM-CC Δ% | Head rank |
 |---|---|---:|---:|---:|---:|---:|
-| `tests/move.cc` | tests | 1.5 | 1.5 | +0.0 | +0% | #5/5 |
+| `tests/move.cc` | tests | 1.5 | 1.5 | +0.0 | +0% | 5/5 |
 | `same.cc` | runtime | 6.0 | unavailable | unavailable | unavailable | — |
 
-<details>
-<summary>Top offenders on the merge base (`1d43f119f327a404e8f9633434f83e55995f2369`)</summary>
+### Top offenders on the merge base (`1d43f119f327a404e8f9633434f83e55995f2369`)
 
-| # | Path | Category | LM-CC | Touched |
+| Rank | Path | Category | LM-CC | Touched |
 |---:|---|---|---:|---|
 | 1 | `src_test.cc` | tests | 10.5 |  |
 | 2 | `odd\u000aname.py` | runtime | 8.2 |  |
@@ -36,8 +35,6 @@ Cache: 0 hits, 5 misses.
 | 4 | `same.cc` | runtime | 6.0 | yes |
 | 5 | `target.cc` | runtime | 3.8 |  |
 | 6 | `move.cc` | runtime | 1.5 | yes |
-
-</details>
 
 Rules: host
 

@@ -125,7 +125,8 @@ int main() {  // NOLINT(bugprone-exception-escape)
   Expect(Contains(headline, "- `legacy.cc`: +0.5 LM-CC/token"),
          "reports before raw headlines still render");
 
-  // Untrusted paths stay inside balanced code spans with escaped pipes.
+  // A path that could mention, link or open HTML is spelled with character
+  // references, the only form comment publishers such as ci-toolkit accept.
   const std::string hostile =
       "src/@team/[file]`name``x`~~$y$|pipe|https://example.com/a.cc";
   json offenders = json::array();
@@ -138,18 +139,24 @@ int main() {  // NOLINT(bugprone-exception-escape)
               {"changed_files", json::array({ChangedRow(hostile, 2)})},
               {"rankings", {{"base", json::array()}, {"head", offenders}}}}));
   ExpectBalancedFences(untrusted);
+  Expect(untrusted.find_first_of("@[]<") == std::string::npos &&
+             !Contains(untrusted, "//"),
+         "no untrusted path can mention, link or open HTML");
   const auto lines = Lines(untrusted);
-  const auto row = std::ranges::find_if(
-      lines, [](const std::string& line) { return line.starts_with("| ``"); });
-  Expect(row != lines.end() && Contains(*row, "\\|pipe\\|") &&
-             Contains(*row, "#3/130"),
-         "table cells escape pipes and show the head rank");
-  const auto bullet = std::ranges::find_if(lines, [](const std::string& line) {
-    return line.starts_with("- ``") && Contains(line, "@team");
+  const std::string spelled =
+      "src&#47;&#64;&#8203;team&#47;&#91;file&#93;&#96;name&#96;&#96;x&#96;"
+      "&#126;&#126;&#36;y&#36;&#124;pipe&#124;https&#58;&#47;&#47;example&#46;"
+      "com&#47;a&#46;cc";
+  const auto row = std::ranges::find_if(lines, [&](const std::string& line) {
+    return line.starts_with("| " + spelled + " |");
   });
-  Expect(bullet != lines.end() && Contains(*bullet, "[file]") &&
-             Contains(*bullet, "https://example.com"),
-         "bullets keep the whole untrusted path inside code");
+  Expect(row != lines.end() && Contains(*row, "| 3/130 |"),
+         "table cells spell the path and show the head rank without #");
+  Expect(std::ranges::any_of(lines,
+                             [&](const std::string& line) {
+                               return line.starts_with("- " + spelled + ":");
+                             }),
+         "bullets spell the whole untrusted path");
 
   // Code spans fence backticks and shorten long paths.
   ExpectEq(Code("plain"), std::string("`plain`"), "plain text is one span");
@@ -163,8 +170,17 @@ int main() {  // NOLINT(bugprone-exception-escape)
          "long paths keep their start around an ellipsis");
   ExpectEq(Code("a|b", true), std::string("`a\\|b`"),
            "table pipes are escaped");
-  ExpectEq(Code("a\\|@team.cc", true), std::string("`a\\\\\\|@team.cc`"),
+  ExpectEq(Code("a\\|team.cc", true), std::string("`a\\\\\\|team.cc`"),
            "a backslash before a pipe is doubled");
+  ExpectEq(Code("a\\|@team.cc", true),
+           std::string("a&#92;&#124;&#64;&#8203;team&#46;cc"),
+           "an at-sign spells the path with references, pipes included");
+  ExpectEq(Code("pages/[slug].js"),
+           std::string("pages&#47;&#91;slug&#93;&#46;js"),
+           "brackets spell the path with references");
+  ExpectEq(Code("docs/WWW.site/a.md"),
+           std::string("docs&#47;WWW&#46;site&#47;a&#46;md"),
+           "a www. segment in any case spells the path with references");
   ExpectEq(Code("odd\\u000aname.py", true), std::string("`odd\\u000aname.py`"),
            "other backslashes stay literal");
   for (const std::string path : {"a|b", "a\\|b", "a\\\\|b"}) {
@@ -195,8 +211,9 @@ int main() {  // NOLINT(bugprone-exception-escape)
              !Contains(announced, "]("),
          "the baseline link is an autolink");
   Expect(Contains(announced,
-                  "Rules: repository `.llm-cc/comparison-rules.json`@0123456"),
-         "repository rules name their commit");
+                  "Rules: repository `.llm-cc/comparison-rules.json` at "
+                  "`0123456`"),
+         "repository rules name their commit without an at-sign");
   Expect(Contains(llmcc::compare::RenderComment(Report()), "Rules: host"),
          "host rules are announced");
   Expect(Contains(llmcc::compare::RenderComment(
@@ -316,7 +333,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
          {"head", head_rankings}}}}));
   Expect(Contains(density,
                   "| `test_url_parse.c` | tests | 48.2 | 45.4 | "
-                  "-2.8 | -5.81% | #2/4 |") &&
+                  "-2.8 | -5.81% | 2/4 |") &&
              Contains(density, "| 1 | `large.c` | tests | 100.0 |"),
          "file tables follow total LM-CC");
   const json missing_side = llmcc::compare::ChangedFiles(

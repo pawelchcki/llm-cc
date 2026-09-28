@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -159,6 +160,43 @@ std::string RenderLines(const std::vector<const Section*>& kept) {
   return text + "\n";
 }
 
+// Publishers such as ci-toolkit refuse a comment holding these anywhere, code
+// spans included: they can start a mention, a link or raw HTML.
+bool NeedsReferences(std::string_view text) {
+  if (text.find_first_of("@[]<") != std::string_view::npos ||
+      text.find("//") != std::string_view::npos) {
+    return true;
+  }
+  for (std::size_t index = 0; index + 4 <= text.size(); ++index) {
+    const std::string_view candidate = text.substr(index, 4);
+    if (std::ranges::equal(
+            candidate, std::string_view("www."), [](char left, char right) {
+              return std::tolower(static_cast<unsigned char>(left)) == right;
+            })) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Spells every ASCII punctuation character as a numeric character reference,
+// so Markdown sees plain text. An at-sign also gets a zero-width space so it
+// cannot mention anyone.
+std::string References(std::string_view text) {
+  std::string output;
+  for (const char character : text) {
+    const auto byte = static_cast<unsigned char>(character);
+    if (character == '@') {
+      output += "&#64;&#8203;";
+    } else if (byte < 0x80 && std::ispunct(byte) != 0) {
+      output += "&#" + std::to_string(byte) + ";";
+    } else {
+      output.push_back(character);
+    }
+  }
+  return output;
+}
+
 }  // namespace
 
 std::string NeutralizeControls(std::string_view text) {
@@ -193,6 +231,9 @@ std::string Code(std::string_view text, bool table) {
     const std::span<const char32_t> all(points);
     value = Encode(all.first(head)) + std::string(kEllipsis) +
             Encode(all.last(tail));
+  }
+  if (NeedsReferences(value)) {
+    return References(value);
   }
   if (table) {
     // GFM splits table cells on every unescaped pipe, code spans included.
