@@ -215,6 +215,8 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      commit: ${{ steps.release.outputs.commit }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -255,7 +257,13 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       TAG: ${{ needs.assemble.outputs.tag }}
+      VERSION: ${{ needs.assemble.outputs.version }}
+      COMMIT: ${{ needs.assemble.outputs.commit }}
     steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
       - uses: actions/download-artifact@v8
         with:
           name: complete-release
@@ -266,6 +274,9 @@ jobs:
             gh release create "$TAG" --verify-tag --draft --title "$TAG" --generate-notes
           fi
           gh release upload "$TAG" release-assets/* --clobber
+          gh api "repos/$GH_REPO/releases/tags/$TAG" > "$RUNNER_TEMP/published-release.json"
+          python tools/release_assets.py verify-published --version "$VERSION" --commit "$COMMIT" \
+            --output release-assets --assets-json "$RUNNER_TEMP/published-release.json"
           gh release edit "$TAG" --draft=false
       - name: Verify publicly downloadable checksums and bundle metadata
         run: |

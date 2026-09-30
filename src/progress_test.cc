@@ -2,9 +2,11 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <thread>
@@ -16,6 +18,32 @@
 
 namespace {
 using llmcc::test::Expect;
+// Observe flushed reports without reading a stream while the worker writes it.
+class ReportBuffer : public std::stringbuf {
+ public:
+  bool WaitForReports(std::size_t count) {
+    std::unique_lock lock(mutex_);
+    return changed_.wait_for(lock, std::chrono::seconds(5),
+                             [&] { return reports_ >= count; });
+  }
+
+ protected:
+  int sync() override {
+    const int result = std::stringbuf::sync();
+    {
+      std::lock_guard lock(mutex_);
+      ++reports_;
+    }
+    changed_.notify_all();
+    return result;
+  }
+
+ private:
+  std::mutex mutex_;
+  std::condition_variable changed_;
+  std::size_t reports_ = 0;
+};
+
 template <typename F>
 bool Fails(F work, std::string_view message) {
   try {
@@ -207,18 +235,23 @@ int main() {
   std::this_thread::sleep_for(20ms);
   Expect(output.str() == stopped, "worker stopped");
   // Worker advances while the calling thread blocks and joins on exception.
-  std::ostringstream blocked;
+  ReportBuffer blocked_buffer;
+  std::ostream blocked(&blocked_buffer);
+  bool worker_reported = false;
   try {
     llmcc::ProgressReporter progress("always", blocked,
                                      llmcc::ProgressReporter::Clock::now, 10ms);
     progress.Phase("blocked model load");
-    std::this_thread::sleep_for(65ms);
+    // Wait for an actual worker report; loaded CI runners may not schedule
+    // the worker within a fixed, short sleep.
+    worker_reported = blocked_buffer.WaitForReports(2);
     throw std::runtime_error("fixture");
   } catch (const std::runtime_error&) {
   }
-  const auto first = blocked.str().find("blocked model load");
-  Expect(first != std::string::npos &&
-             blocked.str().find("blocked model load", first + 1) !=
+  const auto blocked_output = blocked_buffer.str();
+  const auto first = blocked_output.find("blocked model load");
+  Expect(worker_reported && first != std::string::npos &&
+             blocked_output.find("blocked model load", first + 1) !=
                  std::string::npos,
          "scoped worker reports blocked work independently");
   std::ostringstream silent;
