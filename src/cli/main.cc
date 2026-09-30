@@ -40,6 +40,7 @@
 #include "src/build_info.h"
 #include "src/cache.h"
 #include "src/compare/cli.h"
+#include "src/doctor.h"
 #include "src/download.h"
 #include "src/entropy_cache.h"
 #include "src/input_limits.h"
@@ -101,6 +102,7 @@ constexpr std::string_view kUsageBeforeContext =
     "[--prompt TEXT | --file PATH] [OPTIONS]\n"
     "  llm-cc models list [--available]|remove FILE|path\n"
     "  llm-cc backends list|fetch|path|remove\n"
+    "  llm-cc doctor [--format json|text] [--model GGUF | --model-name NAME]\n"
     "  llm-cc backends fetch cuda|rocm [--url URL] [--assume-yes|-y]\n"
     "      [--no-download] [--progress auto|always|never]\n"
     "  llm-cc cache status|prune [PATH] [--format text|json]\n"
@@ -137,6 +139,10 @@ constexpr std::string_view kUsageBeforeContext =
     "  --kv-offload M       on or off (default: on)\n"
     "  --backend-diagnostics  show backend warnings, allocations, and bounded "
     "operation placement\n"
+    "  --gpu-policy POLICY   preserve (default) or most-free (single GPU)\n"
+    "  --device NAME         explicit visible GPU, e.g. CUDA0; overrides "
+    "policy\n"
+    "  --gpu-min-free BYTES  minimum free VRAM for single-device selection\n"
     "  --backend-dir DIR     GPU backend bundle/shared-library directory\n"
     "  --context N           tokens per inference window (default: ";
 
@@ -744,6 +750,13 @@ nlohmann::json ConfigurationJson(
       {"alpha", scoring.alpha},
       {"backend", llmcc::RequestedBackendCacheIdentity(scoring)},
       {"gpu_layers", scoring.gpu_layers},
+      {"gpu_policy", scoring.gpu_selection.policy == llmcc::GpuPolicy::kMostFree
+                         ? "most-free"
+                         : "preserve"},
+      {"device", scoring.gpu_selection.device
+                     ? nlohmann::json(*scoring.gpu_selection.device)
+                     : nlohmann::json(nullptr)},
+      {"gpu_min_free_bytes", scoring.gpu_selection.min_free_bytes},
       {"inference_abi", llmcc::InferenceAbi()},
       {"cache",
        {{"enabled",
@@ -1201,7 +1214,9 @@ int RunAnalyze(const AnalyzeArguments& arguments) {
 int Main(int argc, char** argv) {
   try {
     int result = 0;
-    if (argc > 1 && std::string_view(argv[1]) == "score") {
+    if (argc > 1 && std::string_view(argv[1]) == "doctor") {
+      result = llmcc::RunDoctorCommand(argc - 1, argv + 1);
+    } else if (argc > 1 && std::string_view(argv[1]) == "score") {
       result = llmcc::RunScoreCommand(argc - 1, argv + 1);
     } else if (argc > 1 && std::string_view(argv[1]) == "models") {
       try {

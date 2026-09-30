@@ -104,6 +104,22 @@ int main() {  // NOLINT(bugprone-exception-escape)
                        "/definitely/not/a/directory"),
            "a backend directory must exist");
 
+  ExpectEq(
+      Invalid({{"--backend", "cpu"}, {"--device", "CUDA0"}}),
+      std::string("GPU selection options cannot be used with CPU execution"),
+      "GPU override cannot override CPU intent");
+  ExpectEq(Invalid({{"--gpu-policy", "unknown"}}),
+           std::string("--gpu-policy expects preserve or most-free"),
+           "invalid GPU policies rejected");
+  const auto gpu_options = Parse({{"--backend", "cuda"},
+                                  {"--gpu-policy", "most-free"},
+                                  {"--device", "CUDA1"},
+                                  {"--gpu-min-free", "900"}});
+  Expect(gpu_options.gpu_selection.policy == llmcc::GpuPolicy::kMostFree &&
+             gpu_options.gpu_selection.device == "CUDA1" &&
+             gpu_options.gpu_selection.min_free_bytes == 900,
+         "analysis and comparison parser retains device policy");
+
   // The scorer parses --gpu-layers as int32 and refuses anything wider.
   ExpectEq(Invalid({{"--gpu-layers", "2147483647"}, {"--backend", "cpu"}}),
            Invalid({{"--gpu-layers", "2147483647"}, {"--backend", "cpu"}}),

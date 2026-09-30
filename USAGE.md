@@ -240,6 +240,84 @@ The [large-file experiment](experiments/large-files/README.md) records dense
 10 MiB fixtures across all supported languages and 100 MiB C++/Python runs,
 including elapsed preprocessing time and peak host memory.
 
+### Prepared assets and unattended agents
+
+Run a local readiness check before a job:
+
+```sh
+llm-cc doctor --format json --model /srv/models/coder.gguf \
+  --backend cuda --gpu-policy most-free --gpu-min-free 6000000000
+```
+
+`doctor` never downloads, loads model weights, creates an inference context or
+scores input. It reads GGUF metadata and vocabulary, checks tensor data bounds,
+and initializes the prepared backend to query usable visible devices. Its JSON
+contains `schema_version`, `ready`, `executable`, `model`, `backend`, `devices`
+(with names and free/total bytes), `visibility`, and actionable `errors`. Exit
+status is 0 when ready, 1 when assets/devices are unready, and 2 for invalid
+options. `--model-name NAME` resolves the same local `models/` and model cache
+paths as analysis; omitting both model options checks the default model.
+`--force-cpu` checks CPU readiness without probing GPUs. Backend readiness proves
+that its plugin can load with this executable and enumerate devices. This is a
+preflight estimate: allocations, full weight integrity and context capacity are
+verified by the actual job. Other jobs can change available VRAM after the check.
+
+`--gpu-policy preserve` is the default and retains llama.cpp's existing placement
+across visible GPUs. Opt into `--gpu-policy most-free` for a single GPU with the
+most free memory (ties keep visible order). `--device CUDA0` selects the exact
+visible backend device name reported by `doctor` and overrides the policy; the
+name is relative to the existing visibility, not the host's physical GPU index.
+Neither option changes `CUDA_VISIBLE_DEVICES`, `HIP_VISIBLE_DEVICES` or
+`ROCR_VISIBLE_DEVICES`. Explicit CPU options reject contradictory GPU selection
+flags. Keep `preserve` for intentional multi-GPU execution, or set existing
+visibility variables as usual. Explicit backend choices are respected.
+
+Single-device selection requires enough free memory for the full model's file
+size plus 10% weight headroom when `--gpu-layers -1` is used. The optional
+`--gpu-min-free BYTES` sets a larger floor, allowing space for your expected
+context and temporary buffers. Partial offload uses only that explicit floor
+because its weight allocation depends on architecture. Insufficient memory
+fails with the selected device's available bytes; it does not silently switch
+to CPU or another model. CUDA access/initialization errors retain driver error
+codes and advise checking process permissions and container/sandbox GPU access.
+
+With matching local backends already installed and model weights prepared,
+an agent can use the CLI directly:
+
+```sh
+model=/srv/models/coder.gguf
+llm-cc doctor --format json --model "$model" --backend cuda \
+  --gpu-policy most-free --gpu-min-free 6000000000 &&
+llm-cc src/ --model "$model" --no-download --backend cuda \
+  --gpu-policy most-free --gpu-min-free 6000000000 \
+  --context 8192 --batch-size 64 --entropy-reduction host \
+  --flash-attn on --kv-cache-type q8_0 --kv-offload on \
+  --tau 0.67 --alpha 0.8 --hierarchy structural --progress never
+
+llm-cc score --file src/example.cpp --model "$model" --no-download \
+  --backend cuda --gpu-policy most-free --gpu-min-free 6000000000 \
+  --context-size 8192 --batch-size 64 --threads 2 --bos auto --entropy \
+  --entropy-reduction host --flash-attn on --kv-cache-type q8_0 \
+  --kv-offload on --progress never
+
+llm-cc compare run --target main --head HEAD --output-dir /tmp/comparison \
+  --model "$model" --no-download --backend cuda --gpu-policy most-free \
+  --gpu-min-free 6000000000 --context 8192 --batch-size 64 \
+  --entropy-reduction host --flash-attn on --kv-cache-type q8_0 \
+  --kv-offload on --tau 0.67 --alpha 0.8 --hierarchy structural --progress never
+```
+
+Comparison workers require prepared local assets and prohibit downloads.
+`compare run --no-download` also prevents downloads during initial resolution.
+Both analysis and comparisons reuse their caches. Device selection is applied
+when inference is needed; a cache hit does not require loading a GPU. Keep the
+model, build, backend and scoring options fixed for reproducible comparisons;
+GPU policy/device names are host placement choices and do not change comparison
+fingerprints. Cross-device results may still have normal floating-point variation.
+`compare worker` accepts `--gpu-policy`, `--device` and `--gpu-min-free` as local
+execution options. Pass them to each worker in a distributed workflow; a
+`prepare` plan does not carry device names across hosts.
+
 ### Selection and classification rules
 
 One rules engine decides which files are analyzed, which language scores each

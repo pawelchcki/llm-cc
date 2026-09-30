@@ -87,6 +87,11 @@ name is hard to predict. `density` and `mean` summarize the same uncertainty
 is JSONL for tools; see [USAGE.md](USAGE.md#usage) for its events and exit
 codes.
 
+For prepared local assets on shared GPU hosts, `llm-cc doctor --format json`
+checks readiness without downloads or inference. `--gpu-policy most-free` picks
+one visible GPU by free memory; `--device CUDA0` pins a visible device. See the
+[unattended workflow](USAGE.md#prepared-assets-and-unattended-agents).
+
 ## Compare a branch
 
 ```sh

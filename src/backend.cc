@@ -311,10 +311,29 @@ LoadedPlugin LoadPlugin(
     auto count =
         reinterpret_cast<Count>(dlsym(driver_handle, "cuDeviceGetCount"));
     int devices = 0;
-    if (!init || !count || init(0) != 0 || count(&devices) != 0 ||
-        devices == 0) {
+    const int init_status = init ? init(0) : -1;
+    const int count_status = init_status == 0 && count ? count(&devices) : -1;
+    if (init_status != 0 || count_status != 0 || devices == 0) {
+      std::string message;
+      if (!init || !count) {
+        message = "CUDA driver is missing device-probe symbols";
+      } else if (init_status == 100 ||
+                 (init_status == 0 && count_status == 0 && devices == 0)) {
+        message = "no CUDA device found by driver probe";
+      } else {
+        using ErrorName = int (*)(int, const char**);
+        const auto error_name =
+            reinterpret_cast<ErrorName>(dlsym(driver_handle, "cuGetErrorName"));
+        const int status = init_status != 0 ? init_status : count_status;
+        const char* name = nullptr;
+        if (error_name) error_name(status, &name);
+        message = "CUDA device access/initialization failed (" +
+                  std::string(name ? name : "driver error") + ", code " +
+                  std::to_string(status) +
+                  "); check device permissions, container/sandbox GPU access "
+                  "and CUDA_VISIBLE_DEVICES";
+      }
       close_driver();
-      const std::string message = "no CUDA device found by driver probe";
       if (required) throw std::runtime_error(message + "; " + GpuOffloadHelp());
       return {.backend = backend,
               .registry = nullptr,
@@ -816,6 +835,26 @@ BackendRuntime::BackendRuntime(
                               : BackendName(selected_)) +
               " device=" + (description.empty() ? "CPU" : description) +
               " gpu_layers=" + std::to_string(gpu_layers));
+}
+
+std::vector<GpuDeviceInfo> VisibleGpuDevices() {
+  std::vector<GpuDeviceInfo> devices;
+  for (std::size_t index = 0; index < ggml_backend_dev_count(); ++index) {
+    auto device = ggml_backend_dev_get(index);
+    const auto type = ggml_backend_dev_type(device);
+    if (type != GGML_BACKEND_DEVICE_TYPE_GPU &&
+        type != GGML_BACKEND_DEVICE_TYPE_IGPU)
+      continue;
+    std::size_t free_bytes = 0;
+    std::size_t total_bytes = 0;
+    ggml_backend_dev_memory(device, &free_bytes, &total_bytes);
+    devices.push_back({.runtime_index = index,
+                       .name = ggml_backend_dev_name(device),
+                       .description = ggml_backend_dev_description(device),
+                       .free_bytes = free_bytes,
+                       .total_bytes = total_bytes});
+  }
+  return devices;
 }
 
 BackendRuntime::~BackendRuntime() {

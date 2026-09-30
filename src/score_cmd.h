@@ -30,6 +30,7 @@ struct InferenceOptions {
   FlashAttention flash_attention = FlashAttention::kOn;
   KvCacheType kv_cache_type = KvCacheType::kQ8_0;
   bool kv_offload = true;
+  GpuSelectionOptions gpu_selection;
   bool backend_diagnostics = false;
   std::function<void(std::size_t, std::size_t)> progress;
   std::optional<std::filesystem::path> backend_directory;

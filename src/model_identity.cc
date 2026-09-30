@@ -413,6 +413,11 @@ std::string ModelDigest(const std::vector<HashedFile>& files) {
 
 }  // namespace
 
+std::vector<std::filesystem::path> LocalModelFiles(
+    const std::filesystem::path& model) {
+  return ModelFiles(std::filesystem::canonical(model));
+}
+
 ModelIdentity InspectModel(
     const std::filesystem::path& model, std::string_view inference_abi,
     std::string_view backend, std::uint32_t context_limit,

@@ -41,6 +41,7 @@ struct ScoringSettings {
   FlashAttention flash_attention = FlashAttention::kOn;
   KvCacheType kv_cache_type = KvCacheType::kQ8_0;
   bool kv_offload = true;
+  GpuSelectionOptions gpu_selection;
   HierarchyMode hierarchy_mode = HierarchyMode::kStructural;
   std::optional<double> tau;
   std::optional<double> tau_percentile;

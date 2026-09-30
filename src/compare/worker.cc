@@ -134,7 +134,9 @@ void Score(const WorkerOptions& options, const json& plan,
            const json& assignment, Clock::time_point deadline,
            ProgressReporter& progress, json& results,
            std::vector<std::string>& errors) {
-  const ScoringSettings settings = SettingsFromScoring(plan["scoring"]);
+  ScoringSettings settings = SettingsFromScoring(plan["scoring"]);
+  settings.gpu_selection = options.gpu_selection;
+  ValidateGpuSelection(settings.gpu_selection, settings.gpu_layers);
   RequireBuiltInBackends(settings);
   // Opening the scorer hashes the whole model, which cannot stop midway, so
   // an exhausted deadline is reported before starting it.

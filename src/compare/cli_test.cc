@@ -23,7 +23,9 @@ using llmcc::test::ExpectEq;
 using llmcc::test::SetEnvironment;
 using nlohmann::json;
 
-int Compare(std::vector<std::string> arguments, std::string* output = nullptr) {
+int Compare(std::vector<std::string> arguments, std::string* output = nullptr,
+            const llmcc::ScorerSessionFactory& open_session =
+                llmcc::compare::DeterministicScorerFactory()) {
   arguments.insert(arguments.begin(), "compare");
   std::vector<char*> argv;
   argv.reserve(arguments.size());
@@ -35,7 +37,7 @@ int Compare(std::vector<std::string> arguments, std::string* output = nullptr) {
   const int status = llmcc::compare::RunCompareCommand(
       static_cast<int>(argv.size()), argv.data(),
       {.inference_abi = std::string(llmcc::compare::kFakeInferenceAbi),
-       .open_session = llmcc::compare::DeterministicScorerFactory()});
+       .open_session = open_session});
   std::cout.rdbuf(previous);
   if (output != nullptr) {
     *output = captured.str();
@@ -78,6 +80,53 @@ int main() {  // NOLINT(bugprone-exception-escape)
     arguments.insert(arguments.end(), extra.begin(), extra.end());
     return Compare(arguments);
   };
+
+  // Host device policy must reach both the model preflight and actual workers,
+  // but must not enter a portable plan's scoring/cache fingerprint.
+  int gpu_sessions = 0;
+  std::string expected_device = "CUDA1";
+  const auto fake = llmcc::compare::DeterministicScorerFactory();
+  const llmcc::ScorerSessionFactory inspect =
+      [&](const llmcc::ScorerRequest& request,
+          llmcc::ProgressReporter& progress) {
+        ++gpu_sessions;
+        Expect(request.no_download,
+               "comparison preflight and worker prohibit downloads");
+        Expect(request.settings.gpu_selection.device == expected_device &&
+                   request.settings.gpu_selection.min_free_bytes == 900,
+               "comparison passes host device and memory floor to scorer");
+        return fake(request, progress);
+      };
+  const fs::path gpu_run = root / "gpu-run";
+  std::vector<std::string> gpu_args = {"run"};
+  gpu_args.insert(gpu_args.end(), revisions.begin(), revisions.end());
+  for (const std::string& arg : std::vector<std::string>{
+           "--output-dir", gpu_run.string(), "--cache",
+           (root / "gpu-store").string(), "--model", model, "--no-download",
+           "--backend", "cuda", "--entropy-reduction", "host", "--gpu-policy",
+           "most-free", "--device", "CUDA1", "--gpu-min-free", "900",
+           "--progress", "never"}) {
+    gpu_args.push_back(arg);
+  }
+  ExpectEq(Compare(gpu_args, nullptr, inspect), 0,
+           "GPU policy comparison completes with fake scorer");
+  Expect(gpu_sessions >= 2, "GPU policy reaches worker after preflight");
+  const json gpu_plan = ReadJsonFile(gpu_run / "plan.json");
+  Expect(!gpu_plan["scoring"].contains("device") &&
+             !gpu_plan["scoring"].contains("gpu_policy"),
+         "host policy is excluded from portable scoring identity");
+  expected_device = "CUDA2";
+  const int before_worker = gpu_sessions;
+  ExpectEq(
+      Compare(
+          {"worker", "--plan", (gpu_run / "plan.json").string(), "--worker-id",
+           "0", "--output-dir", (root / "gpu-worker").string(), "--cache",
+           (root / "gpu-worker-store").string(), "--model", model, "--device",
+           "CUDA2", "--gpu-min-free", "900", "--progress", "never"},
+          nullptr, inspect),
+      0, "standalone worker accepts local device override");
+  Expect(gpu_sessions > before_worker,
+         "standalone worker executes with local policy");
 
   // A local run resolves auto settings, scores every file and reports.
   const fs::path cold = root / "cold";
