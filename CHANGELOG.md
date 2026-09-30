@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/pawelchcki/llm-cc/compare/v0.5.0...v0.5.1) (2026-09-30)
+
+
+### Bug Fixes
+
+* publish releases only after all artifacts are uploaded ([#64](https://github.com/pawelchcki/llm-cc/issues/64)) ([16341c4](https://github.com/pawelchcki/llm-cc/commit/16341c4b49b36da81eb7b4727bea62246fa5f7a1))
+
 ## [0.5.0](https://github.com/pawelchcki/llm-cc/compare/v0.4.0...v0.5.0) (2026-09-28)
 
 
