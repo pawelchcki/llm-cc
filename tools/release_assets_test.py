@@ -68,6 +68,44 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Backend commit mismatch"):
             assets.verify(self.args)
 
+    def published_assets(self):
+        self.prepare()
+        assets.verify(self.args)
+        return [{
+            "name": path.name, "state": "uploaded", "size": path.stat().st_size,
+            "digest": f"sha256:{assets.digest(path)}",
+        } for path in self.root.iterdir()]
+
+    def verify_published(self, published):
+        # Keep the API response outside the directory of release assets.
+        with tempfile.TemporaryDirectory() as directory:
+            response = Path(directory) / "release.json"
+            response.write_text(json.dumps({"assets": published}))
+            self.args.assets_json = str(response)
+            assets.verify_published(self.args)
+
+    def test_complete_published_release(self):
+        self.verify_published(self.published_assets())
+
+    def test_missing_published_asset_fails(self):
+        with self.assertRaisesRegex(ValueError, "Incomplete published asset set"):
+            self.verify_published(self.published_assets()[1:])
+
+    def test_incomplete_published_upload_fails(self):
+        complete = self.published_assets()
+        for field, value in (("state", "starter"), ("size", 0)):
+            with self.subTest(field=field):
+                published = [asset.copy() for asset in complete]
+                published[0][field] = value
+                with self.assertRaisesRegex(ValueError, "Incomplete upload"):
+                    self.verify_published(published)
+
+    def test_corrupt_published_asset_fails(self):
+        published = self.published_assets()
+        published[0]["digest"] = "sha256:" + "0" * 64
+        with self.assertRaisesRegex(ValueError, "Published checksum mismatch"):
+            self.verify_published(published)
+
     def test_installer_platform_selection(self):
         for system, machine, expected in (
             ("Linux", "x86_64", "linux-x86_64"),

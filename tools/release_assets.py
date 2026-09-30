@@ -126,9 +126,29 @@ def verify(args):
     )
 
 
+def verify_published(args):
+    """Compare GitHub's uploaded assets with the verified local asset set."""
+    published = json.loads(Path(args.assets_json).read_text())
+    assets = published["assets"]
+    expected = {path.name: path for path in args.output.iterdir()}
+    actual = {asset["name"]: asset for asset in assets}
+    if actual.keys() != expected.keys() or len(actual) != len(assets):
+        raise ValueError(
+            f"Incomplete published asset set: missing={expected.keys() - actual.keys()}, "
+            f"extra={actual.keys() - expected.keys()}"
+        )
+    for name, path in expected.items():
+        asset = actual[name]
+        if asset["state"] != "uploaded" or asset["size"] != path.stat().st_size:
+            raise ValueError(f"Incomplete upload: {name}")
+        # Older GitHub uploads may not have a server-computed digest.
+        if asset.get("digest") and asset["digest"] != f"sha256:{digest(path)}":
+            raise ValueError(f"Published checksum mismatch: {name}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("binary", "backend", "verify"))
+    parser.add_argument("command", choices=("binary", "backend", "verify", "verify-published"))
     parser.add_argument("--version", required=True)
     parser.add_argument("--commit", required=True)
     parser.add_argument("--output", required=True, type=Path)
@@ -137,13 +157,15 @@ def main():
     parser.add_argument("--backend", choices=BACKENDS)
     parser.add_argument("--bundle")
     parser.add_argument("--manifest")
+    parser.add_argument("--assets-json")
     args = parser.parse_args()
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", args.version):
         parser.error("version must be MAJOR.MINOR.PATCH")
     if not re.fullmatch(r"[0-9a-f]{40}", args.commit):
         parser.error("commit must be a full Git SHA")
     args.output.mkdir(parents=True, exist_ok=True)
-    {"binary": stage_binary, "backend": stage_backend, "verify": verify}[args.command](args)
+    {"binary": stage_binary, "backend": stage_backend, "verify": verify,
+     "verify-published": verify_published}[args.command](args)
 
 
 if __name__ == "__main__":

@@ -9,5 +9,8 @@ releases:
   with:
     strategy: simple
     version_file: version.txt
+    # Create the tag to trigger release.yml. That workflow owns the draft,
+    # uploads every verified artifact, and only then publishes the release.
+    skip_github_release: true
 
 # GPU bundles and comparison reports are declared in .runnerless-ci.ts.

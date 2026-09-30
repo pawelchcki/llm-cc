@@ -33,6 +33,7 @@ jobs:
           - { runner: ubuntu-24.04, backend: cpu, platform: linux-x86_64 }
           - { runner: ubuntu-22.04-arm, backend: cpu, platform: linux-arm64 }
           - { runner: macos-15, backend: metal, platform: macos-arm64 }
+          - { runner: macos-15-intel, backend: metal, platform: macos-x86_64 }
           - { runner: windows-2025, backend: cpu, platform: windows-x86_64 }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -68,7 +69,7 @@ jobs:
           tools/check_glibc_version.sh bazel-bin/llm-cc "$maximum"
           if readelf -d bazel-bin/llm-cc | grep -E 'NEEDED.*(libcrypto|libssl|libstdc\+\+|libc\+\+)'; then exit 1; fi
       - name: Resolve macOS CUDA lock entries
-        if: runner.os == 'macOS'
+        if: matrix.platform == 'macos-arm64'
         run: |
           bazel mod deps
           # Force the downstream Linux job to resolve its own components, even
@@ -86,7 +87,7 @@ jobs:
           path.write_text(json.dumps(lock, indent=2) + "\n")
           PYLOCK
       - uses: actions/upload-artifact@v4
-        if: runner.os == 'macOS'
+        if: matrix.platform == 'macos-arm64'
         with:
           name: macos-module-lock
           path: MODULE.bazel.lock
