@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.2](https://github.com/pawelchcki/llm-cc/compare/v0.5.1...v0.5.2) (2026-10-01)
+
+
+### Bug Fixes
+
+* verify draft release assets by release ID ([#68](https://github.com/pawelchcki/llm-cc/issues/68)) ([407e1f1](https://github.com/pawelchcki/llm-cc/commit/407e1f1be0dc590252bf283645fb9363c075ed34))
+
 ## [0.5.1](https://github.com/pawelchcki/llm-cc/compare/v0.5.0...v0.5.1) (2026-09-30)
 
 
