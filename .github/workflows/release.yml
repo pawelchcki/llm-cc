@@ -274,7 +274,10 @@ jobs:
             gh release create "$TAG" --verify-tag --draft --title "$TAG" --generate-notes
           fi
           gh release upload "$TAG" release-assets/* --clobber
-          gh api "repos/$GH_REPO/releases/tags/$TAG" > "$RUNNER_TEMP/published-release.json"
+          # The lookup-by-tag REST endpoint excludes draft releases. Resolve
+          # the draft through gh, then fetch its assets by release ID.
+          release_api_url="$(gh release view "$TAG" --json apiUrl --jq .apiUrl)"
+          gh api "$release_api_url" > "$RUNNER_TEMP/published-release.json"
           python tools/release_assets.py verify-published --version "$VERSION" --commit "$COMMIT" \
             --output release-assets --assets-json "$RUNNER_TEMP/published-release.json"
           gh release edit "$TAG" --draft=false
