@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, 'release-please--branches--*']
   # release-builds-label.yml calls this when a PR gets `ci: release-builds`.
   workflow_call:
   workflow_dispatch:
@@ -19,10 +19,12 @@ permissions:
 jobs:
   platform:
     # Ordinary PRs use BuildBuddy. Full platform and consumer builds run for
-    # main, dispatches, same-repository release-please branches, and PRs
+    # main, dispatches, PRs into release-please branches, and PRs from
+    # same-repository release-please branches, as well as PRs
     # labeled `ci: release-builds` (when labeled, and on each later push).
     if: >-
       github.event_name != 'pull_request' ||
+      startsWith(github.base_ref, 'release-please--branches--') ||
       contains(github.event.pull_request.labels.*.name, 'ci: release-builds') ||
       (github.event.pull_request.head.repo.full_name == github.repository &&
        startsWith(github.head_ref, 'release-please--branches--'))
@@ -94,10 +96,12 @@ jobs:
 
   consumer:
     # Ordinary PRs use BuildBuddy. Full platform and consumer builds run for
-    # main, dispatches, same-repository release-please branches, and PRs
+    # main, dispatches, PRs into release-please branches, and PRs from
+    # same-repository release-please branches, as well as PRs
     # labeled `ci: release-builds` (when labeled, and on each later push).
     if: >-
       github.event_name != 'pull_request' ||
+      startsWith(github.base_ref, 'release-please--branches--') ||
       contains(github.event.pull_request.labels.*.name, 'ci: release-builds') ||
       (github.event.pull_request.head.repo.full_name == github.repository &&
        startsWith(github.head_ref, 'release-please--branches--'))
