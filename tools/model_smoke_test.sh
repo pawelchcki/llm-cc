@@ -6,6 +6,18 @@ model="$2"
 source_file="$3"
 output="$TEST_TMPDIR/model-smoke-output.jsonl"
 
+# Doctor must validate a real prepared model without weights or inference.
+"$binary" doctor --format json --model "$model" --force-cpu >"$TEST_TMPDIR/doctor.json"
+python3 - "$TEST_TMPDIR/doctor.json" <<'PY_DOCTOR'
+import json
+import sys
+with open(sys.argv[1]) as stream:
+    readiness = json.load(stream)
+assert readiness["ready"] and readiness["model"]["ready"]
+assert readiness["backend"]["selected"] == "cpu"
+assert readiness["errors"] == []
+PY_DOCTOR
+
 "$binary" "$source_file" \
   --model "$model" \
   --backend cpu \

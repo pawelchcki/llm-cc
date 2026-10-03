@@ -66,6 +66,7 @@ const nlohmann::json& FileEvent(const std::vector<nlohmann::json>& events) {
 
 int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
   using llmcc::test::Expect;
+  using llmcc::test::ExpectEq;
   namespace fs = std::filesystem;
   const char* test_srcdir = std::getenv("TEST_SRCDIR");
   const char* test_tmpdir = std::getenv("TEST_TMPDIR");
@@ -77,6 +78,39 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
   setenv("LLM_CC_ENTROPY_CACHE_DIR", entropy_root.c_str(), 1);
   const fs::path binary = fs::path(test_srcdir) / argv[1];
   const fs::path fixtures = (fs::path(test_srcdir) / argv[2]).parent_path();
+
+  const fs::path doctor_output = fs::path(test_tmpdir) / "doctor.json";
+  const fs::path doctor_errors = fs::path(test_tmpdir) / "doctor.stderr";
+  const std::string doctor =
+      Quote(binary) + " doctor --format json --force-cpu";
+  ExpectEq(
+      WEXITSTATUS(Run(doctor + " --model /missing/prepared.gguf >" +
+                      Quote(doctor_output) + " 2>" + Quote(doctor_errors))),
+      1, "doctor missing local assets exits unready");
+  auto readiness = nlohmann::json::parse(Read(doctor_output));
+  Expect(!readiness["ready"].get<bool>() &&
+             readiness["executable"]["ready"] == true &&
+             readiness["backend"]["ready"] == true &&
+             readiness["backend"]["selected"] == "cpu" &&
+             readiness["devices"].empty() &&
+             readiness["errors"][0]["component"] == "model",
+         "readiness checks executable and CPU backend independently of missing "
+         "assets");
+  Expect(Read(doctor_errors).empty(), "JSON doctor keeps routine logs silent");
+  const fs::path invalid_gguf = fs::path(test_tmpdir) / "invalid.gguf";
+  Write(invalid_gguf, "not a model");
+  ExpectEq(
+      WEXITSTATUS(Run(doctor + " --model " + Quote(invalid_gguf) + " >" +
+                      Quote(doctor_output) + " 2>" + Quote(doctor_errors))),
+      1, "doctor rejects malformed prepared model");
+  readiness = nlohmann::json::parse(Read(doctor_output));
+  Expect(readiness["model"]["ready"] == false, "malformed GGUF is not ready");
+  ExpectEq(WEXITSTATUS(Run(doctor + " --device CUDA0 >" + Quote(doctor_output) +
+                           " 2>" + Quote(doctor_errors))),
+           2, "doctor rejects contradictory CPU/device settings");
+  readiness = nlohmann::json::parse(Read(doctor_output));
+  Expect(readiness["errors"][0]["component"] == "options",
+         "doctor option errors remain JSON");
 
   const fs::path analyze_help = fs::path(test_tmpdir) / "analyze-help.txt";
   llmcc::test::ExpectEq(Run(Quote(binary) + " --help 2>" + Quote(analyze_help)),

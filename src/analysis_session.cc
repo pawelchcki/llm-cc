@@ -161,6 +161,7 @@ ScorerSession OpenScorerSession(const ScorerRequest& request,
                 .flash_attention = settings.flash_attention,
                 .kv_cache_type = settings.kv_cache_type,
                 .kv_offload = settings.kv_offload,
+                .gpu_selection = settings.gpu_selection,
                 .backend_diagnostics = backend_diagnostics,
                 .progress =
                     [&progress](std::size_t completed, std::size_t total) {

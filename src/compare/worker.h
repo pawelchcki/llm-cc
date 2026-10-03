@@ -34,6 +34,7 @@ struct WorkerOptions {
   std::optional<ExecutionHost> execution_host;
   HostPaths host_paths;
   ProgressReporter* progress = nullptr;
+  GpuSelectionOptions gpu_selection;
 };
 
 // Scores one worker's assignment with one model session, storing every

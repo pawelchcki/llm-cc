@@ -51,6 +51,7 @@
 #include "src/download.h"
 #include "src/inference_guard.h"
 #include "src/input_limits.h"
+#include "src/model_identity.h"
 #include "src/models.h"
 #include "src/progress.h"
 #include "src/scoring.h"
@@ -87,6 +88,7 @@ struct Arguments {
   bool kv_offload = true;
   bool backend_diagnostics = false;
   std::optional<std::filesystem::path> backend_directory;
+  llmcc::GpuSelectionOptions gpu_selection;
   bool entropy = false;
   bool no_download = false;
   bool override_memory_check = false;
@@ -124,6 +126,10 @@ constexpr std::string_view kUsageAfterContext =
     "  --kv-offload M         on or off (default: on)\n"
     "  --backend-diagnostics  show backend warnings, allocations, and bounded "
     "operation placement\n"
+    "  --gpu-policy POLICY   preserve (default) or most-free (single GPU)\n"
+    "  --device NAME         explicit visible GPU, e.g. CUDA0; overrides "
+    "policy\n"
+    "  --gpu-min-free BYTES  minimum free VRAM for single-device selection\n"
     "  --backend-dir DIR      GPU backend bundle/shared-library directory\n"
     "  --override-memory-check  bypass the preflight memory check\n"
     "  --progress M           auto, always, or never on stderr\n"
@@ -251,6 +257,12 @@ bool SetExecutionOption(Arguments& arguments, std::string_view option,
     }
     return true;
   }
+  try {
+    if (llmcc::ParseGpuSelectionOption(arguments.gpu_selection, option, value))
+      return true;
+  } catch (const std::invalid_argument& error) {
+    Usage(error.what());
+  }
   if (option == "--gpu-layers") {
     arguments.gpu_layers = ParseInteger<std::int32_t>(option, value);
     arguments.requested_gpu_layers = arguments.gpu_layers;
@@ -376,6 +388,7 @@ Arguments ParseArguments(int argc, char** argv) {
         arguments.backend, arguments.requested_gpu_layers, arguments.force_cpu);
     arguments.backend = execution.backend;
     arguments.gpu_layers = execution.gpu_layers;
+    llmcc::ValidateGpuSelection(arguments.gpu_selection, arguments.gpu_layers);
   } catch (const std::invalid_argument& error) {
     Usage(error.what());
   }
@@ -518,17 +531,16 @@ void WriteScore(std::ostream& output, std::size_t position, llama_token token,
 }
 
 std::uint64_t ModelFileSize(const std::filesystem::path& path) {
-  std::error_code error;
-  const std::uintmax_t size = std::filesystem::file_size(path, error);
-  if (error) {
-    throw std::runtime_error("could not stat model: " + path.string() + ": " +
-                             error.message());
+  std::uint64_t total = 0;
+  for (const auto& file : llmcc::LocalModelFiles(path)) {
+    const auto size = std::filesystem::file_size(file);
+    if (size > std::numeric_limits<std::uint64_t>::max() - total) {
+      throw std::runtime_error("model files are too large to measure: " +
+                               path.string());
+    }
+    total += size;
   }
-  if (size > std::numeric_limits<std::uint64_t>::max()) {
-    throw std::runtime_error("model file is too large to measure: " +
-                             path.string());
-  }
-  return static_cast<std::uint64_t>(size);
+  return total;
 }
 
 std::optional<std::uint64_t> HostAvailableMemory() {
@@ -600,6 +612,34 @@ std::optional<std::uint64_t> GpuAvailableMemory() {
   }
   return found ? std::optional<std::uint64_t>(aggregate) : std::nullopt;
 }
+
+struct GpuPlacement {
+  std::array<ggml_backend_dev_t, 2> devices{};
+  std::optional<std::uint64_t> available;
+
+  GpuPlacement(const llmcc::GpuSelectionOptions& options,
+               std::int32_t gpu_layers, std::uint64_t model_bytes) {
+    const auto inventory = gpu_layers == 0 ? std::vector<llmcc::GpuDeviceInfo>{}
+                                           : llmcc::VisibleGpuDevices();
+    const auto selected =
+        llmcc::SelectGpuDevice(options, gpu_layers, model_bytes, inventory);
+    available = gpu_layers == 0 ? std::nullopt : GpuAvailableMemory();
+    if (selected) {
+      devices[0] = ggml_backend_dev_get(inventory[*selected].runtime_index);
+      available = inventory[*selected].free_bytes;
+      llmcc::ReportPhase("selected GPU=" + inventory[*selected].name +
+                         " free_bytes=" + std::to_string(*available));
+    }
+  }
+
+  void Apply(llama_model_params& parameters) {
+    if (devices[0] != nullptr) {
+      parameters.devices = devices.data();
+      parameters.split_mode = LLAMA_SPLIT_MODE_NONE;
+      parameters.main_gpu = 0;
+    }
+  }
+};
 
 void CheckAvailableMemory(const Arguments& arguments, bool use_gpu,
                           const std::optional<std::uint64_t>& gpu_available) {
@@ -1017,6 +1057,7 @@ void CheckBatchSize(std::uint32_t batch_size) {
 
 void CheckInferenceOptions(const llmcc::InferenceOptions& options) {
   CheckBatchSize(options.batch_size);
+  llmcc::ValidateGpuSelection(options.gpu_selection, options.gpu_layers);
   if (options.context_size == 0) {
     throw std::invalid_argument("context size must be positive");
   }
@@ -1364,8 +1405,10 @@ int Run(const Arguments& arguments, std::string_view input,
   llmcc::InferenceGuard inference_guard(llmcc::BackendName(backend.selected()));
   ReportBackendLog(backend_log, arguments.backend_diagnostics);
   const bool use_gpu = arguments.gpu_layers != 0;
-  const std::optional<std::uint64_t> gpu_available =
-      use_gpu ? GpuAvailableMemory() : std::nullopt;
+  GpuPlacement placement_policy(
+      arguments.gpu_selection, arguments.gpu_layers,
+      arguments.override_memory_check ? 0 : ModelFileSize(arguments.model));
+  const auto gpu_available = placement_policy.available;
   const bool device_available =
       llmcc::DeviceOutputGuaranteed(backend.selected(), arguments.gpu_layers,
                                     llmcc::CompiledBackend() == "metal");
@@ -1384,6 +1427,7 @@ int Run(const Arguments& arguments, std::string_view input,
 
   llama_model_params model_parameters = llama_model_default_params();
   model_parameters.n_gpu_layers = arguments.gpu_layers;
+  placement_policy.Apply(model_parameters);
   const std::string model_path = Utf8Path(arguments.model);
   llmcc::ReportPhase("loading model");
   backend_log.Clear();
@@ -1504,10 +1548,14 @@ class EntropyScorer::Impl {
         (inference_options.entropy_reduction == EntropyReduction::kAuto &&
          device_available);
     const bool use_gpu = inference_options.gpu_layers != 0;
-    const auto gpu_available = use_gpu ? GpuAvailableMemory() : std::nullopt;
+    GpuPlacement placement_policy(inference_options.gpu_selection,
+                                  inference_options.gpu_layers,
+                                  ModelFileSize(model_path));
+    const auto gpu_available = placement_policy.available;
     CheckAvailableMemory(arguments, use_gpu, gpu_available);
     llama_model_params parameters = llama_model_default_params();
     parameters.n_gpu_layers = inference_options.gpu_layers;
+    placement_policy.Apply(parameters);
     const std::string utf8_model_path = Utf8Path(model_path);
     ReportPhase("loading model");
     backend_log_.Clear();

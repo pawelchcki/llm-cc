@@ -28,6 +28,12 @@ void ApplyBackendDirectoryEnvironment(ScoringSettings& settings) {
 
 bool ParseExecutionOption(ScoringSettings& settings, std::string_view option,
                           std::string_view value) {
+  try {
+    if (ParseGpuSelectionOption(settings.gpu_selection, option, value))
+      return true;
+  } catch (const std::invalid_argument& error) {
+    throw UsageError(error.what());
+  }
   if (option == "--gpu-layers") {
     settings.gpu_layers = ParseOptionNumber<std::int32_t>(option, value);
     settings.requested_gpu_layers = settings.gpu_layers;
@@ -145,6 +151,7 @@ void ValidateScoringSettings(ScoringSettings& settings) {
         settings.backend, settings.requested_gpu_layers, settings.force_cpu);
     settings.backend = execution.backend;
     settings.gpu_layers = execution.gpu_layers;
+    ValidateGpuSelection(settings.gpu_selection, settings.gpu_layers);
   } catch (const std::invalid_argument& error) {
     throw UsageError(error.what());
   }

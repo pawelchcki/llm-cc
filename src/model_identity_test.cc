@@ -1,10 +1,13 @@
 #include "src/model_identity.h"
 
+#include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <utility>
 
 #include "src/entropy_cache.h"
@@ -27,6 +30,34 @@ namespace {
 void Write(const fs::path& path, std::string_view contents) {
   std::ofstream output(path, std::ios::binary | std::ios::trunc);
   output << contents;
+}
+
+std::int64_t ChangeTime(const fs::path& path) {
+  struct stat details{};
+  llmcc::test::Expect(stat(path.c_str(), &details) == 0, "stat changed file");
+#if defined(__APPLE__)
+  const auto& changed = details.st_ctimespec;
+#else
+  const auto& changed = details.st_ctim;
+#endif
+  return static_cast<std::int64_t>(changed.tv_sec) * 1000000000LL +
+         changed.tv_nsec;
+}
+
+void RewriteKeepingMtime(const fs::path& path, std::string_view contents) {
+  const auto modified = fs::last_write_time(path);
+  const auto changed = ChangeTime(path);
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  // Fast rewrites can share a filesystem timestamp tick. Establish the changed
+  // ctime that this cache-invalidation case requires, while retaining mtime.
+  do {
+    Write(path, contents);
+    fs::last_write_time(path, modified);
+    if (ChangeTime(path) != changed) return;
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  } while (std::chrono::steady_clock::now() < deadline);
+  llmcc::test::Expect(false, "rewrite advances file change time");
 }
 
 }  // namespace
@@ -153,16 +184,14 @@ int main() {  // NOLINT(bugprone-exception-escape)
   const auto split_from_second = llmcc::InspectModel(shard2, "abi", "cpu", 32);
   llmcc::test::ExpectEq(split_from_second.content_digest, split.content_digest,
                         "every split entry point has the same identity");
-  const auto shard2_mtime = fs::last_write_time(shard2);
-  Write(shard2, std::string(second_shard_bytes.size(), 'x'));
-  fs::last_write_time(shard2, shard2_mtime);
+  RewriteKeepingMtime(shard2, std::string(second_shard_bytes.size(), 'x'));
   const auto changed_split = llmcc::InspectModel(shard1, "abi", "cpu", 32);
   llmcc::test::Expect(changed_split.content_digest != split.content_digest,
                       "changing a companion shard invalidates model identity");
 
   const auto preserved_mtime = fs::last_write_time(model);
-  Write(model, "second modelbytes");  // Same size as the original contents.
-  fs::last_write_time(model, preserved_mtime);
+  // Same size as the original contents.
+  RewriteKeepingMtime(model, "second modelbytes");
   const auto replaced = llmcc::InspectModel(model, "abi", "cpu", 32);
   llmcc::test::Expect(replaced.content_digest != first.content_digest,
                       "same-size preserved-mtime replacement invalidates memo");

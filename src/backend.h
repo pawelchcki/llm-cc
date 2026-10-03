@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace llmcc {
 
@@ -23,6 +24,37 @@ struct ExecutionOptions {
   BackendKind backend = BackendKind::kAuto;
   std::int32_t gpu_layers = -1;
 };
+
+enum class GpuPolicy : std::uint8_t { kPreserve, kMostFree };
+
+struct GpuSelectionOptions {
+  GpuPolicy policy = GpuPolicy::kPreserve;
+  // ggml name within the caller's existing visibility, e.g. CUDA0.
+  std::optional<std::string> device;
+  std::uint64_t min_free_bytes = 0;
+};
+
+struct GpuDeviceInfo {
+  std::size_t runtime_index;
+  std::string name;
+  std::string description;
+  std::uint64_t free_bytes;
+  std::uint64_t total_bytes;
+};
+
+bool ParseGpuSelectionOption(GpuSelectionOptions& options,
+                             std::string_view option, std::string_view value);
+void ValidateGpuSelection(const GpuSelectionOptions& options,
+                          std::int32_t gpu_layers);
+// nullopt preserves llama.cpp's placement across every visible GPU.
+std::optional<std::size_t> SelectGpuDevice(
+    const GpuSelectionOptions& options, std::int32_t gpu_layers,
+    std::uint64_t model_bytes, std::span<const GpuDeviceInfo> devices);
+std::uint64_t GpuMemoryRequirement(const GpuSelectionOptions& options,
+                                   std::int32_t gpu_layers,
+                                   std::uint64_t model_bytes);
+// Query only after BackendRuntime has initialized the chosen backend.
+std::vector<GpuDeviceInfo> VisibleGpuDevices();
 
 class GpuRecoverableError : public std::runtime_error {
  public:

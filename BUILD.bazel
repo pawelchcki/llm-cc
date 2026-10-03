@@ -959,6 +959,7 @@ cc_library(
         "//conditions:default": ["LLMCC_BACKEND_CPU"],
     }),
     deps = [
+        ":entropy_cache",
         ":build_info",
         ":progress",
         ":backend_fetch",
@@ -972,6 +973,25 @@ cc_library(
         ":llama",
         ":models",
         ":scoring",
+    ],
+    tags = ["manual"],
+)
+
+cc_library(
+    name = "doctor",
+    srcs = ["src/doctor.cc"],
+    hdrs = ["src/doctor.h"],
+    deps = [
+        ":entropy_cache",
+        ":cache_io",
+        ":backend_runtime",
+        ":build_info",
+        ":cache",
+        ":llama",
+        ":models",
+        ":score_cmd",
+        ":scoring_settings",
+        "@nlohmann_json//:json",
     ],
     tags = ["manual"],
 )
@@ -1044,6 +1064,7 @@ cc_binary(
         "//conditions:default": [],
     }),
     deps = [
+        ":doctor",
         ":build_info",
         ":progress",
         ":analysis_session",
@@ -1079,6 +1100,7 @@ cc_binary(
         "-Wl,--dynamic-list=$(location //third_party:ggml_backend_abi.list)",
     ],
     deps = [
+        ":doctor",
         ":build_info",
         ":progress",
         ":analysis_session",
@@ -1750,6 +1772,12 @@ cc_test(
     ],
 )
 
+cc_test(
+    name = "gpu_policy_test",
+    srcs = ["src/gpu_policy_test.cc"],
+    deps = [":backend_policy", ":test_util"],
+)
+
 test_suite(
     name = "unit",
     tests = [
@@ -1773,6 +1801,7 @@ test_suite(
         ":format_test",
         ":git_test",
         ":glob_test",
+        ":gpu_policy_test",
         ":jsonl_test",
         ":lang_test",
         ":large_file_parse_test",

@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace llmcc {
 
@@ -51,6 +52,11 @@ struct ModelIdentity {
   bool kv_offload = true;
   std::string content_digest;
 };
+
+// Resolves local split-GGUF companions without reading or hashing weights.
+// Returns canonical paths; missing companions are errors.
+std::vector<std::filesystem::path> LocalModelFiles(
+    const std::filesystem::path& model);
 
 ModelIdentity InspectModel(
     const std::filesystem::path& model, std::string_view inference_abi,

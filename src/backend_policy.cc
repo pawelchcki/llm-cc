@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <charconv>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -28,6 +29,101 @@ ExecutionOptions ResolveExecutionOptions(BackendKind backend,
     return {BackendKind::kCpu, 0};
   }
   return {backend, gpu_layers.value_or(-1)};
+}
+
+bool ParseGpuSelectionOption(GpuSelectionOptions& options,
+                             std::string_view option, std::string_view value) {
+  if (option == "--gpu-policy") {
+    if (value == "preserve")
+      options.policy = GpuPolicy::kPreserve;
+    else if (value == "most-free")
+      options.policy = GpuPolicy::kMostFree;
+    else
+      throw std::invalid_argument("--gpu-policy expects preserve or most-free");
+  } else if (option == "--device") {
+    if (value.empty())
+      throw std::invalid_argument(
+          "--device expects a visible GPU name, e.g. CUDA0");
+    options.device = std::string(value);
+  } else if (option == "--gpu-min-free") {
+    std::uint64_t bytes = 0;
+    const auto [end, error] =
+        std::from_chars(value.data(), value.data() + value.size(), bytes);
+    if (error != std::errc{} || end != value.data() + value.size()) {
+      throw std::invalid_argument(
+          "--gpu-min-free expects a non-negative byte count");
+    }
+    options.min_free_bytes = bytes;
+  } else {
+    return false;
+  }
+  return true;
+}
+
+void ValidateGpuSelection(const GpuSelectionOptions& options,
+                          std::int32_t gpu_layers) {
+  if (options.min_free_bytes != 0 && !options.device &&
+      options.policy == GpuPolicy::kPreserve) {
+    throw std::invalid_argument(
+        "--gpu-min-free requires --device or --gpu-policy most-free");
+  }
+  if (gpu_layers == 0 &&
+      (options.device.has_value() || options.policy != GpuPolicy::kPreserve ||
+       options.min_free_bytes != 0)) {
+    throw std::invalid_argument(
+        "GPU selection options cannot be used with CPU execution");
+  }
+}
+
+std::uint64_t GpuMemoryRequirement(const GpuSelectionOptions& options,
+                                   std::int32_t gpu_layers,
+                                   std::uint64_t model_bytes) {
+  // Match the existing full-offload weight check (10% headroom). Partial
+  // offload is architecture dependent; require only the explicit floor.
+  const auto margin = model_bytes / 10 + (model_bytes % 10 != 0 ? 1 : 0);
+  const auto required =
+      margin > std::numeric_limits<std::uint64_t>::max() - model_bytes
+          ? std::numeric_limits<std::uint64_t>::max()
+          : model_bytes + margin;
+  return std::max(options.min_free_bytes, gpu_layers == -1 ? required : 0);
+}
+
+std::optional<std::size_t> SelectGpuDevice(
+    const GpuSelectionOptions& options, std::int32_t gpu_layers,
+    std::uint64_t model_bytes, std::span<const GpuDeviceInfo> devices) {
+  ValidateGpuSelection(options, gpu_layers);
+  if (gpu_layers == 0) return std::nullopt;
+  const auto required = GpuMemoryRequirement(options, gpu_layers, model_bytes);
+  std::optional<std::size_t> selected;
+  for (std::size_t i = 0; i < devices.size(); ++i) {
+    if (options.device.has_value()) {
+      if (devices[i].name == *options.device) {
+        selected = i;
+        break;
+      }
+    } else if (options.policy == GpuPolicy::kMostFree &&
+               (!selected ||
+                devices[i].free_bytes > devices[*selected].free_bytes)) {
+      selected = i;
+    }
+  }
+  if (options.device.has_value() && !selected) {
+    throw GpuRecoverableError("requested GPU " + *options.device +
+                              " is not usable within the current visibility; "
+                              "run llm-cc doctor --format json");
+  }
+  if (options.policy == GpuPolicy::kMostFree && !selected) {
+    throw GpuRecoverableError(
+        "no usable visible GPU for --gpu-policy most-free");
+  }
+  if (selected && devices[*selected].free_bytes < required) {
+    throw GpuRecoverableError(
+        "insufficient free memory on " + devices[*selected].name +
+        ": required " + std::to_string(required) + " bytes, available " +
+        std::to_string(devices[*selected].free_bytes) +
+        "; choose a smaller model, free GPU memory, or adjust --gpu-min-free");
+  }
+  return selected;
 }
 
 std::string CpuRecoveryCommand(int argc, char** argv, bool score) {
@@ -72,7 +168,8 @@ std::string CpuRecoveryCommand(int argc, char** argv, bool score) {
   for (int i = 1; i < argc; ++i) {
     const std::string_view arg = argv[i];
     if (arg == "--backend" || arg == "--gpu-layers" || arg == "--backend-dir" ||
-        arg == "--entropy-reduction") {
+        arg == "--entropy-reduction" || arg == "--gpu-policy" ||
+        arg == "--device" || arg == "--gpu-min-free") {
       ++i;
       continue;
     }

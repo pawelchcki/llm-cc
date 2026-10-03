@@ -97,6 +97,21 @@ std::string Bundle(std::string_view name) {
 }  // namespace
 
 int main() try {
+  std::vector<std::string> recovery_args = {
+      "llm-cc",         "src/file.cpp", "--backend",    "cuda",
+      "--gpu-policy",   "most-free",    "--device",     "CUDA1",
+      "--gpu-min-free", "1000",         "--no-download"};
+  std::vector<char*> recovery_argv;
+  for (auto& argument : recovery_args) recovery_argv.push_back(argument.data());
+  const auto recovery = llmcc::CpuRecoveryCommand(
+      static_cast<int>(recovery_argv.size()), recovery_argv.data());
+  llmcc::test::Expect(
+      recovery.find("--force-cpu") != std::string::npos &&
+          recovery.find("--gpu-policy") == std::string::npos &&
+          recovery.find("--device") == std::string::npos &&
+          recovery.find("--gpu-min-free") == std::string::npos &&
+          recovery.find("--no-download") != std::string::npos,
+      "CPU recovery removes GPU selection and retains prepared-asset policy");
   using llmcc::BackendDevice;
   using llmcc::BackendKind;
   using llmcc::SelectBackend;

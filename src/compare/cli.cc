@@ -67,7 +67,8 @@ constexpr std::string_view kUsage =
     "it prepares a plan, scores every miss in this process and aggregates.\n"
     "Results are cached in LOCATION, a directory or s3://BUCKET/PREFIX\n"
     "(default: compare/ beside the model cache). Auto backend and entropy\n"
-    "reduction are resolved on this machine.\n\n"
+    "reduction are resolved on this machine. --no-download requires prepared\n"
+    "local assets even during model/backend resolution.\n\n"
     "prepare, worker and aggregate are the same stages for CI, where a\n"
     "coordinator and GPU workers must run the same llm-cc build. prepare\n"
     "writes plan.json and the bytes of each miss to blobs/; worker N scores\n"
@@ -81,6 +82,7 @@ constexpr std::string_view kUsage =
     "MODEL is --model GGUF, --model-name NAME, or --model-sha256 HEX with\n"
     "--model-bytes N to pin weights this machine does not have. SCORING takes\n"
     "the analysis options (--backend, --gpu-layers, --context, --batch-size,\n"
+    "--gpu-policy preserve|most-free, --device NAME, --gpu-min-free BYTES,\n"
     "--entropy-reduction, --flash-attn, --kv-cache-type, --kv-offload,\n"
     "--hierarchy, --tau, --tau-percentile, --alpha, --force-cpu).\n"
     "--flash-attn must be on or off, and outside run so must --backend and\n"
@@ -94,6 +96,7 @@ constexpr std::string_view kUsage =
     "FILE, one per line; blank lines and lines starting with # are ignored.\n\n"
     "worker --execution-host FILE verifies a bare-metal AMD GPU host and\n"
     "holds its lock while scoring. The deadline defaults to 6600 seconds.\n"
+    "worker also accepts --gpu-policy, --device and --gpu-min-free locally.\n"
     "prepare and identity take the same --execution-host FILE: its GPU\n"
     "architecture and runtime checksums join the scorer identity, and a\n"
     "worker refuses a plan made for another host.\n\n"
@@ -282,6 +285,7 @@ struct PlanArguments {
   std::optional<fs::path> presentation;
   ModelArguments model;
   ScoringSettings scoring;
+  bool no_download = false;
   std::chrono::seconds deadline = kDefaultWorkerDeadline;
   std::string progress = "auto";
 };
@@ -339,6 +343,10 @@ PlanArguments ParsePlanArguments(const std::vector<std::string_view>& args,
   Arguments arguments(args);
   while (arguments.More()) {
     const std::string option = arguments.Next();
+    if (option == "--no-download") {
+      parsed.no_download = true;
+      continue;
+    }
     if (ParseModel(parsed.model, option, arguments, command != Command::kRun) ||
         ParseScoring(parsed.scoring, option, arguments) ||
         (command != Command::kIdentity &&
@@ -406,6 +414,7 @@ ResolvedScoring ResolveScoring(const CompareRuntime& runtime,
     const ScorerSession session =
         runtime.open_session(ScorerRequest{.settings = settings,
                                            .model = model.request,
+                                           .no_download = parsed.no_download,
                                            .hotspots = 0,
                                            .require_model_digest = true},
                              progress);
@@ -555,7 +564,8 @@ int RunLocal(const std::vector<std::string_view>& args,
                .model = parsed.model.request,
                .deadline = parsed.deadline,
                .backend_artifact = runtime.backend_artifact,
-               .progress = &progress});
+               .progress = &progress,
+               .gpu_selection = parsed.scoring.gpu_selection});
     artifacts.push_back(cache_io::PathUtf8(
         options.output / ("worker-" + std::to_string(worker_id) + ".json")));
   }
@@ -580,6 +590,12 @@ int RunWorkerCommand(const std::vector<std::string_view>& args,
   Arguments arguments(args);
   while (arguments.More()) {
     const std::string option = arguments.Next();
+    if (option == "--gpu-policy" || option == "--device" ||
+        option == "--gpu-min-free") {
+      ParseGpuSelectionOption(options.gpu_selection, option,
+                              arguments.Value(option));
+      continue;
+    }
     if (ParseModel(model, option, arguments, false)) {
       continue;
     }
