@@ -187,7 +187,9 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
                " --prompt x --progress never " + cpu_option + " >/dev/null 2>" +
                Quote(backend_error)) != 0,
            "CPU scoring reports a missing model");
-    Expect(Read(backend_error).find("CPU rerun:") == std::string::npos,
+    Expect(Read(backend_error).find(missing_score_model.string()) !=
+                   std::string::npos &&
+               Read(backend_error).find("CPU rerun:") == std::string::npos,
            "CPU scoring failures do not suggest another CPU rerun");
   }
   Expect(Run(Quote(binary) + " score --model " + Quote(missing_score_model) +
@@ -224,17 +226,18 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
          "analysis rejects a sparse source larger than one GiB");
   Expect(
       Read(backend_error).find("maximum supported size") != std::string::npos &&
-          Read(backend_error).find("could not stat model") == std::string::npos,
+          Read(backend_error).find(missing_score_model.string()) ==
+              std::string::npos,
       "oversize analysis fails before model resolution");
 #ifdef LLMCC_TEST_BACKEND_METAL
   Expect(Run(Quote(binary) + " score --model " + Quote(missing_score_model) +
              " --prompt x --gpu-layers -1 --progress never >/dev/null 2>" +
              Quote(backend_error)) != 0,
          "scoring validates a missing model after GPU initialization");
-  Expect(
-      Read(backend_error).find("could not stat model") != std::string::npos &&
-          Read(backend_error).find("CPU rerun:") == std::string::npos,
-      "model-stat failures do not suggest a CPU rerun");
+  Expect(Read(backend_error).find(missing_score_model.string()) !=
+                 std::string::npos &&
+             Read(backend_error).find("CPU rerun:") == std::string::npos,
+         "model-stat failures do not suggest a CPU rerun");
 #endif
 
   const fs::path empty_repository = fs::path(test_tmpdir) / "empty-repository";
