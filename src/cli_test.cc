@@ -83,10 +83,11 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
   const fs::path doctor_errors = fs::path(test_tmpdir) / "doctor.stderr";
   const std::string doctor =
       Quote(binary) + " doctor --format json --force-cpu";
-  ExpectEq(
-      WEXITSTATUS(Run(doctor + " --model /missing/prepared.gguf >" +
-                      Quote(doctor_output) + " 2>" + Quote(doctor_errors))),
-      1, "doctor missing local assets exits unready");
+  const int missing_model =
+      Run(doctor + " --model /missing/prepared.gguf >" + Quote(doctor_output) +
+          " 2>" + Quote(doctor_errors));
+  Expect(WIFEXITED(missing_model) && WEXITSTATUS(missing_model) == 1,
+         "doctor missing local assets exits unready");
   auto readiness = nlohmann::json::parse(Read(doctor_output));
   Expect(!readiness["ready"].get<bool>() &&
              readiness["executable"]["ready"] == true &&
@@ -99,15 +100,18 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
   Expect(Read(doctor_errors).empty(), "JSON doctor keeps routine logs silent");
   const fs::path invalid_gguf = fs::path(test_tmpdir) / "invalid.gguf";
   Write(invalid_gguf, "not a model");
-  ExpectEq(
-      WEXITSTATUS(Run(doctor + " --model " + Quote(invalid_gguf) + " >" +
-                      Quote(doctor_output) + " 2>" + Quote(doctor_errors))),
-      1, "doctor rejects malformed prepared model");
+  const int malformed_model =
+      Run(doctor + " --model " + Quote(invalid_gguf) + " >" +
+          Quote(doctor_output) + " 2>" + Quote(doctor_errors));
+  Expect(WIFEXITED(malformed_model) && WEXITSTATUS(malformed_model) == 1,
+         "doctor rejects malformed prepared model");
   readiness = nlohmann::json::parse(Read(doctor_output));
   Expect(readiness["model"]["ready"] == false, "malformed GGUF is not ready");
-  ExpectEq(WEXITSTATUS(Run(doctor + " --device CUDA0 >" + Quote(doctor_output) +
-                           " 2>" + Quote(doctor_errors))),
-           2, "doctor rejects contradictory CPU/device settings");
+  const int conflicting_device =
+      Run(doctor + " --device CUDA0 >" + Quote(doctor_output) + " 2>" +
+          Quote(doctor_errors));
+  Expect(WIFEXITED(conflicting_device) && WEXITSTATUS(conflicting_device) == 2,
+         "doctor rejects contradictory CPU/device settings");
   readiness = nlohmann::json::parse(Read(doctor_output));
   Expect(readiness["errors"][0]["component"] == "options",
          "doctor option errors remain JSON");
