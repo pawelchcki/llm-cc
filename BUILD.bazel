@@ -1565,6 +1565,7 @@ cc_test(
         ":entropy_cache",
         ":input_limits",
         ":lang",
+        ":progress",
         ":test_util",
         "@nlohmann_json//:json",
     ],

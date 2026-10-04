@@ -19,6 +19,7 @@
 #include "src/entropy_cache.h"
 #include "src/input_limits.h"
 #include "src/lang.h"
+#include "src/progress.h"
 #include "src/test_util.h"
 
 namespace {
@@ -37,7 +38,7 @@ std::string Read(const std::filesystem::path& path) {
 }
 
 int Run(const std::string& command) {
-  std::cerr << "Running: " << command << std::endl;
+  std::cerr << "Running: " << llmcc::TerminalSafe(command) << std::endl;
   return std::system(command.c_str());  // NOLINT(bugprone-command-processor)
 }
 
