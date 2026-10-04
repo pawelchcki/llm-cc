@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/pawelchcki/llm-cc/compare/v0.5.2...v0.6.0) (2026-10-03)
+
+
+### Features
+
+* add native readiness checks and GPU selection ([#67](https://github.com/pawelchcki/llm-cc/issues/67)) ([962cfa1](https://github.com/pawelchcki/llm-cc/commit/962cfa1acb82c4257167665de27b79112e0046d4))
+
 ## [0.5.2](https://github.com/pawelchcki/llm-cc/compare/v0.5.1...v0.5.2) (2026-10-01)
 
 
