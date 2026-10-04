@@ -1485,6 +1485,7 @@ cc_test(
         "//conditions:default": ["@platforms//:incompatible"],
     }),
     deps = [
+        ":backend_runtime",
         ":llama",
         ":test_util",
     ],
