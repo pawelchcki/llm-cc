@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <iterator>
 #include <map>
 #include <nlohmann/json.hpp>
@@ -36,6 +37,7 @@ std::string Read(const std::filesystem::path& path) {
 }
 
 int Run(const std::string& command) {
+  std::cerr << "Running: " << command << std::endl;
   return std::system(command.c_str());  // NOLINT(bugprone-command-processor)
 }
 
