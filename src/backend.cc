@@ -791,9 +791,8 @@ BackendRuntime::BackendRuntime(
         "--backend cpu cannot be used with nonzero --gpu-layers");
   }
   selected_ = requested;
-  // Registering Metal initializes each device and compiles its shaders,
-  // which CPU execution never uses and which has hung for over an hour on
-  // Intel macOS runners. ggml then registers Metal without devices. This
+  // Registering Metal probes devices, which CPU execution never uses.
+  // ggml then registers Metal without devices. This
   // must precede the first registry access below.
   if (selected_ == BackendKind::kCpu) setenv("GGML_METAL_DEVICES", "0", 1);
 #else

@@ -13,6 +13,7 @@ exports_files([
     "llama_cpp_deterministic_hip_cuid.patch",
     "llama_cpp_deepseek_flash_attention.patch",
     "llama_cpp_namespaced_backends.patch",
+    "llama_cpp_lazy_metal_library.patch",
     "curl_boringssl_runtime.patch",
     "rules_foreign_cc_reproducible_logs.patch",
     "rules_cuda_explicit_tools.patch",

@@ -1473,6 +1473,24 @@ cc_test(
 )
 
 cc_test(
+    name = "metal_library_test",
+    srcs = ["src/metal_library_test.cc"],
+    # Exercise actual shader compilation on an Apple Silicon GPU. Intel
+    # runners still run every CLI regression, including device preflight.
+    target_compatible_with = [
+        "@platforms//cpu:arm64",
+        "@platforms//os:macos",
+    ] + select({
+        ":backend_metal": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":llama",
+        ":test_util",
+    ],
+)
+
+cc_test(
     name = "cache_test",
     target_compatible_with = select({
         ":host_windows": ["@platforms//:incompatible"],
@@ -1807,6 +1825,7 @@ test_suite(
         ":lang_test",
         ":large_file_parse_test",
         ":model_identity_test",
+        ":metal_library_test",
         ":models_test",
         ":project_test",
         ":progress_test",

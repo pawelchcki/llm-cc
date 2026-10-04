@@ -234,13 +234,17 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
       "oversize analysis fails before model resolution");
 #ifdef LLMCC_TEST_BACKEND_METAL
   Expect(Run(Quote(binary) + " score --model " + Quote(missing_score_model) +
-             " --prompt x --gpu-layers -1 --progress never >/dev/null 2>" +
+             " --prompt x --gpu-layers -1 --backend-diagnostics --progress "
+             "never >/dev/null 2>" +
              Quote(backend_error)) != 0,
          "scoring validates a missing model after GPU initialization");
   Expect(Read(backend_error).find(missing_score_model.string()) !=
                  std::string::npos &&
              Read(backend_error).find("CPU rerun:") == std::string::npos,
          "model-stat failures do not suggest a CPU rerun");
+  Expect(Read(backend_error).find("using embedded metal library") ==
+             std::string::npos,
+         "missing model validation does not compile Metal shaders");
 #endif
 
   const fs::path empty_repository = fs::path(test_tmpdir) / "empty-repository";
