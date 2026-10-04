@@ -83,10 +83,11 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
   const fs::path doctor_errors = fs::path(test_tmpdir) / "doctor.stderr";
   const std::string doctor =
       Quote(binary) + " doctor --format json --force-cpu";
-  ExpectEq(
-      WEXITSTATUS(Run(doctor + " --model /missing/prepared.gguf >" +
-                      Quote(doctor_output) + " 2>" + Quote(doctor_errors))),
-      1, "doctor missing local assets exits unready");
+  const int missing_model =
+      Run(doctor + " --model /missing/prepared.gguf >" + Quote(doctor_output) +
+          " 2>" + Quote(doctor_errors));
+  Expect(WIFEXITED(missing_model) && WEXITSTATUS(missing_model) == 1,
+         "doctor missing local assets exits unready");
   auto readiness = nlohmann::json::parse(Read(doctor_output));
   Expect(!readiness["ready"].get<bool>() &&
              readiness["executable"]["ready"] == true &&
@@ -99,15 +100,18 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
   Expect(Read(doctor_errors).empty(), "JSON doctor keeps routine logs silent");
   const fs::path invalid_gguf = fs::path(test_tmpdir) / "invalid.gguf";
   Write(invalid_gguf, "not a model");
-  ExpectEq(
-      WEXITSTATUS(Run(doctor + " --model " + Quote(invalid_gguf) + " >" +
-                      Quote(doctor_output) + " 2>" + Quote(doctor_errors))),
-      1, "doctor rejects malformed prepared model");
+  const int malformed_model =
+      Run(doctor + " --model " + Quote(invalid_gguf) + " >" +
+          Quote(doctor_output) + " 2>" + Quote(doctor_errors));
+  Expect(WIFEXITED(malformed_model) && WEXITSTATUS(malformed_model) == 1,
+         "doctor rejects malformed prepared model");
   readiness = nlohmann::json::parse(Read(doctor_output));
   Expect(readiness["model"]["ready"] == false, "malformed GGUF is not ready");
-  ExpectEq(WEXITSTATUS(Run(doctor + " --device CUDA0 >" + Quote(doctor_output) +
-                           " 2>" + Quote(doctor_errors))),
-           2, "doctor rejects contradictory CPU/device settings");
+  const int conflicting_device =
+      Run(doctor + " --device CUDA0 >" + Quote(doctor_output) + " 2>" +
+          Quote(doctor_errors));
+  Expect(WIFEXITED(conflicting_device) && WEXITSTATUS(conflicting_device) == 2,
+         "doctor rejects contradictory CPU/device settings");
   readiness = nlohmann::json::parse(Read(doctor_output));
   Expect(readiness["errors"][0]["component"] == "options",
          "doctor option errors remain JSON");
@@ -183,7 +187,9 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
                " --prompt x --progress never " + cpu_option + " >/dev/null 2>" +
                Quote(backend_error)) != 0,
            "CPU scoring reports a missing model");
-    Expect(Read(backend_error).find("CPU rerun:") == std::string::npos,
+    Expect(Read(backend_error).find(missing_score_model.string()) !=
+                   std::string::npos &&
+               Read(backend_error).find("CPU rerun:") == std::string::npos,
            "CPU scoring failures do not suggest another CPU rerun");
   }
   Expect(Run(Quote(binary) + " score --model " + Quote(missing_score_model) +
@@ -220,17 +226,18 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
          "analysis rejects a sparse source larger than one GiB");
   Expect(
       Read(backend_error).find("maximum supported size") != std::string::npos &&
-          Read(backend_error).find("could not stat model") == std::string::npos,
+          Read(backend_error).find(missing_score_model.string()) ==
+              std::string::npos,
       "oversize analysis fails before model resolution");
 #ifdef LLMCC_TEST_BACKEND_METAL
   Expect(Run(Quote(binary) + " score --model " + Quote(missing_score_model) +
              " --prompt x --gpu-layers -1 --progress never >/dev/null 2>" +
              Quote(backend_error)) != 0,
          "scoring validates a missing model after GPU initialization");
-  Expect(
-      Read(backend_error).find("could not stat model") != std::string::npos &&
-          Read(backend_error).find("CPU rerun:") == std::string::npos,
-      "model-stat failures do not suggest a CPU rerun");
+  Expect(Read(backend_error).find(missing_score_model.string()) !=
+                 std::string::npos &&
+             Read(backend_error).find("CPU rerun:") == std::string::npos,
+         "model-stat failures do not suggest a CPU rerun");
 #endif
 
   const fs::path empty_repository = fs::path(test_tmpdir) / "empty-repository";
