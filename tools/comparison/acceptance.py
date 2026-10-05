@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import threading
 import time
 import uuid
 
@@ -25,9 +26,25 @@ def check_publication_store(location, options=None):
     """Check real conditional writes in the invocation's private namespace."""
     store = open_store(location, **(read_json(options) if options else {}))
     key = "publications/conditional.json"
-    first = store.put_if(key, b"first", None)
-    if first is None or store.put_if(key, b"racing create", None) is not None:
-        raise RuntimeError("store did not enforce conditional creation")
+    create_attempts = 8
+    ready = threading.Barrier(create_attempts)
+
+    def create(index):
+        value = ("creator-%d" % index).encode()
+        ready.wait(timeout=10)
+        return value, store.put_if(key, value, None)
+
+    with ThreadPoolExecutor(max_workers=create_attempts) as pool:
+        creations = list(pool.map(create, range(create_attempts)))
+    winners = [(value, token) for value, token in creations if token is not None]
+    if len(winners) != 1:
+        raise RuntimeError(
+            "store allowed %d of %d simultaneous conditional creates"
+            % (len(winners), create_attempts)
+        )
+    value, first = winners[0]
+    if store.get_versioned(key) != (value, first):
+        raise RuntimeError("conditional create did not retain its winner")
     second = store.put_if(key, b"second", first)
     if second is None or store.put_if(key, b"stale", first) is not None:
         raise RuntimeError("store did not enforce conditional replacement")
@@ -52,6 +69,8 @@ def check_publication_store(location, options=None):
         raise RuntimeError("concurrent store updates were lost: %d of 40" % stored)
     return {
         "conditional_create": True,
+        "concurrent_create_attempts": create_attempts,
+        "successful_creates": len(winners),
         "racing_create_rejected": True,
         "conditional_replace": True,
         "stale_replace_rejected": True,

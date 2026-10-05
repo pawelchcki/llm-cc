@@ -280,7 +280,7 @@ BuildBuddy run with the new stages, and a Bazzite redeploy.
 ## Issue #38 acceptance, 2026-10-05
 
 The current-main unit and comparison suites pass **39 Bazel test targets**,
-with the Metal-only test skipped on Linux. The Python comparison suite passes **120 tests**,
+with the Metal-only test skipped on Linux. The Python comparison suite passes **121 tests**,
 including the reusable acceptance driver and a missing-worker end-to-end
 failure report that is stored and published to the in-memory GitHub.
 The Python suite also passes directly; Ruff's pyflakes checks pass.
@@ -310,8 +310,9 @@ publication, image pulls and hosted object-store latency. The filesystem and
 S3 runs took 88.27 and 100.72 seconds respectively across all three cold
 comparisons, including repeated model verification/loading.
 
-The same temporary SeaweedFS service accepted conditional marker creation and
-replacement, rejected a racing create and stale replacement, and preserved
+The same temporary SeaweedFS service accepted conditional marker replacement,
+allowed exactly one winner among eight simultaneous marker creates, rejected
+stale replacement, and preserved
 **40 of 40 concurrent updates** from eight threads. No hosted AWS S3 service
 was used. Machine-readable evidence is retained under
 [`experiments/ci-recipe-acceptance/results`](../../experiments/ci-recipe-acceptance/results).

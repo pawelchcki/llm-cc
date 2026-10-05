@@ -368,8 +368,9 @@ To measure the object-store warm path separately, add
 usual `AWS_*` credentials. Each invocation uses a unique test prefix and
 leaves its objects for inspection; apply the store's test retention policy.
 This exercises result and native-entropy caches against the service as well
-as reporting. The driver also checks conditional marker creation/replacement,
-rejects racing creates and stale writes, and requires all 40 concurrent
+as reporting. The driver also requires exactly one winner among eight
+simultaneous marker creates, verifies that the winner's payload and version
+were retained, rejects stale replacements, and requires all 40 concurrent
 updates from eight threads to survive. Live PR publication remains a separate
 rollout step.
 
