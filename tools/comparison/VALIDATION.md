@@ -329,7 +329,56 @@ establish completed publication or the two-update live-comment acceptance.
 Still unverified: the CUDA model/scorer image builds and model-layer reuse,
 GPU scoring inside the recipe's scorer image, non-root artifact extraction
 in a live CI executor, a GitLab/GitHub Actions deployment of these templates,
-and live delayed-pipeline, retargeting and failure-comment scenarios. This host
+and live delayed-pipeline, retargeting and failure-comment scenarios. Bazzite
 has Radeon GPUs rather than the NVIDIA hardware the CUDA recipe requires.
 Those live steps remain open; local or ROCm evidence must not be substituted
 for them.
+
+## Container artifacts and publication follow-up, 2026-10-05
+
+The recipe's CPU coordinator Containerfile built successfully with a Linux
+x86_64 deterministic test-scorer image pinned by digest. All **124 Python
+comparison tests** pass inside it as **UID 10001**, with networking disabled.
+The container also read a read-only Git checkout owned by the host user, UID
+1000. The new `ArchiveRecipeTest` repeats the baseline, cold/warm PR, missing
+worker, delayed publication and retargeting fixtures with ZIP transport,
+checking that preparation downloads preserve previously extracted worker files.
+GitHub operations in these tests remain in-memory.
+
+The separate [container artifact experiment](../../experiments/ci-recipe-acceptance/README.md)
+ran **13 fresh rootless Podman containers** as UID 10001. Preparation produced
+four workers; each received only the preparation ZIP in its own directory.
+Aggregation downloaded every worker ZIP before the preparation ZIP, retained
+each completed worker artifact byte-for-byte, and produced a complete report.
+The warm run scheduled **zero workers**, matched the cold category totals and
+completed preparation/aggregation in **0.686 seconds**. This validates local
+container ownership and artifact transport with the deterministic native
+scorer, not CUDA inference or artifact transfer through a hosted CI executor.
+Image digests, scorer/model identities and artifact hashes are retained in
+[`container-artifacts.json`](../../experiments/ci-recipe-acceptance/results/container-artifacts.json).
+
+This run also found that an ARM base image cached under a generic tag could
+select the wrong runtime architecture. `build.sh` now explicitly builds
+`linux/amd64` and rejects registry images whose OS/architecture differs,
+even when their signatures and producer labels otherwise match. The image
+reuse regression exercises this case.
+
+Production publication has advanced since the earlier check: PR #74's
+[comparison comment](https://github.com/pawelchcki/llm-cc/pull/74#issuecomment-5986095609)
+completed on both `b020b23` and `79c4edf` using the same comment ID. The
+second [comparison](https://pawel.buildbuddy.io/invocation/24cd33ff-1141-4d80-9b10-79b5571b3aab)
+passed, and the merged-main
+[baseline comparison](https://pawel.buildbuddy.io/invocation/482724f6-4bb5-482b-9877-3fb0d56821a6)
+passed as well. This establishes the BuildBuddy/ci-toolkit production path;
+it does not establish a rollout of the GitLab or GitHub Actions templates.
+
+Bluefin has an **RTX 4060 Laptop GPU**, UUID
+`GPU-9f56b1f5-a6d8-f680-770f-a17ef761473f`, with installed NVIDIA driver
+`610.57.04`. However, both ordinary and root `nvidia-smi` report
+**"No devices were found"**. The PCI device has no bound driver, and kernel
+logs retain a stalled `nv_pci_remove_helper`/unbind operation. The NVIDIA
+container CLI also refers to a missing `libnvidia-tls.so.610.43.03` file.
+No device reset, driver reload or reboot was performed. CUDA inference remains
+blocked on host recovery; the CUDA image builds and model-layer reuse, hosted
+template rollout and live delayed/retargeted/failure publication scenarios
+remain unverified.

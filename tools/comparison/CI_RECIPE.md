@@ -105,6 +105,11 @@ contract is a separate experiment with a separate fingerprint.
 | Scorer | [scorer.Containerfile](recipe/images/scorer.Containerfile) | the model image by digest, plus one layer: `/opt/llm-cc` and user 10001; no Python | hash of commit, version, archs, model digest, base images, Bazelisk pin, Containerfile |
 | Coordinator | [coordinator.Containerfile](recipe/images/coordinator.Containerfile) | Git, Python with boto3, the provider glue, the scorer's own `llm-cc`, `scoring.args`, `planning.args`, default `rules.json`, user 10001 | hash of commit, scorer digest, scoring and planning arguments, Containerfile |
 
+The recipe targets Linux x86_64. `build.sh` passes `--platform linux/amd64`
+for every image build and verifies the OS and architecture before reusing a
+registry image. This also prevents a locally cached ARM base image from
+selecting the wrong runtime for the installed CUDA executable.
+
 The scorer's final stage starts `FROM` the model image by digest and adds the
 whole runtime as one layer above it, so every scorer rebuild on the same weights
 reuses the multi-gigabyte model layer by reference. A fresh GPU node still has
@@ -382,6 +387,6 @@ rollout step.
 | Renames, duplicates, headers, category moves, exclusions, oversized files, absent sides | `test_recipe`, `compare_prepare_test` | local |
 | Settings changes invalidate; corrupt caches miss; storage failures surface | `compare_identity_test`, `compare_result_cache_test`, `compare_store_test` | local |
 | Wrong builds, models and blobs never score; deadlines still report | `compare_worker_test`, `test_buildbuddy` | local |
-| Shared native entropy entries; non-root artifact extraction | `compare_worker_test`; ownership notes above | local; non-root extraction is a live step |
+| Shared native entropy entries; non-root artifact extraction | `compare_worker_test`; `ArchiveRecipeTest`; [container artifact experiment](../../experiments/ci-recipe-acceptance/README.md) | local; extraction passed in fresh non-root containers; hosted executor remains a live step |
 | Cold/warm image builds and layer reuse | `test_recipe` image-build tests with a fake engine | builds and layer reuse are live steps |
 | Default-branch seeding, one reused comment over two PR updates, delayed older pipelines, retargeting, failure reports | `test_recipe`, `test_publish` against in-memory GitHub | local; a live GitLab or GitHub rollout is not verified here |
