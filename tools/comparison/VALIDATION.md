@@ -382,3 +382,63 @@ No device reset, driver reload or reboot was performed. CUDA inference remains
 blocked on host recovery; the CUDA image builds and model-layer reuse, hosted
 template rollout and live delayed/retargeted/failure publication scenarios
 remain unverified.
+
+## Real CUDA image builds and reuse, 2026-10-06
+
+The original recipe Containerfiles and `build.sh` ran on Bazzite with the real
+**14,066,972,416-byte DeepSeek-Coder-V2-Lite-Base-Q6_K GGUF**. The model stage
+downloaded the immutable HTTPS URL and verified its size and SHA-256. Images
+were published to a disposable loopback TLS registry, with `TRUST_REGISTRY=1`
+for this local experiment. Alpine, Ubuntu and Python bases were pinned by
+digest, and all images were built as `linux/amd64`. No organizational build
+credentials were used. A secret-mounted Bazel configuration limited jobs to
+eight and used shared, experiment-local repository and action caches.
+
+The CUDA target was **`compute_89:sm_89`**, for Bluefin's RTX 4060 Laptop GPU
+([NVIDIA compute-capability table](https://developer.nvidia.com/cuda/gpus)).
+Builds at `bcfea9ae2ee262511f5b7ab90da9a8d776e1974d`
+and the merged baseline `7bb7671cb850b14116beafbcdf55adddc7817085` produced
+different scorer digests and fingerprints, while both scorer manifests retained
+the model image's exact first layer:
+`sha256:b74d0327a877ebe3ad45b7e6dd6bc86e5b5330b952340c68076a88295e5753d1`.
+The model manifests also matched across builds; neither coordinator contained
+that layer or `/models/model.gguf`.
+
+The cold Bazel source build passed **1,336 actions in 769.117 seconds**. The
+baseline rebuild used **1,330 action-cache hits and six executed actions in
+10.942 seconds**. These are Bazel timings, excluding model distribution and
+the other image stages. A warm `build.sh` run reused all three published
+images, retained identical digests and identity JSON, and completed in
+**1.845 seconds with zero builds and zero pushes**.
+
+Both scorer and coordinator images ran as **UID 10001** with networking
+disabled. Their installed CUDA scorer identities matched exactly, including
+the pinned source commit, executable/backend checksums, model and scoring
+contract. The real weights were hashed again inside each scorer image, matching
+the expected digest and size. These builds record analysis version **3** and
+inference ABI **`llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v4`**;
+they do not reuse the earlier ROCm experiment's scoring identity.
+
+All **124 Python provider tests** passed in the real coordinator image as
+UID 10001, with networking disabled and the full test checkout and deterministic
+fixture scorer mounted read-only. The production image copies the provider
+Python modules, not all recipe/test assets, and the five-byte model fixtures
+require the deterministic scorer. This test run does not perform CUDA inference.
+Image references, identities, layer manifests and timings are retained in
+[`cuda-image-reuse.json`](../../experiments/ci-recipe-acceptance/results/cuda-image-reuse.json).
+
+Bluefin's Optimus GPU manager was configured as `Integrated`; the
+[supergfxctl manual](https://asus-linux.org/manual/supergfxctl-manual/) defines
+that mode as disabling the discrete GPU and `Hybrid` as enabling offload.
+With the user's approval, the active graphical session was logged out, the
+original configuration was backed up, and `Hybrid` was saved without enabling
+reboots. A service restart could not recover the old daemon: systemd recorded
+that it remained after SIGKILL, and a replacement failed with `Zbus(NameTaken)`.
+Repeated restart attempts were stopped; the service remains enabled for a
+future boot. SSH and the display manager remained active, and no reboot or PCI
+device reset was performed. `nvidia-smi` still found no usable GPU.
+
+Real CUDA image builds, offline identity verification and model-layer reuse
+are now exercised. GPU inference inside the recipe image, hosted template
+artifact transfer/rollout, and live delayed-pipeline, retargeting and failure
+publication scenarios remain open acceptance steps.
