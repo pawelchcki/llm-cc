@@ -193,6 +193,12 @@ model and one driver version. Moving the pool to other hardware or drivers
 must come with a new scorer image, so its digest, and with it every key,
 changes. A bare AMD host instead declares that contract with
 `--execution-host`, which the worker verifies and the fingerprint records.
+The GitHub template exposes exactly one NVIDIA device to each worker:
+`LLM_CC_GPU_DEVICE` selects its index or UUID, defaulting to `0`. GitLab GPU
+runners must likewise allocate one device per job. The GitHub preparation job
+checks `LLM_CC_GPU_POOL` only when the plan has misses; a fully cached run
+needs no GPU pool configuration. Both adapters reject duplicate worker IDs
+and plans exceeding configured capacity.
 
 ## 4. Two cache layers with explicit provenance
 
@@ -253,6 +259,8 @@ worker artifact is reported by ID. Scorer images run as user 10001. GitLab's
 Docker executor extracts artifacts world-writable by default (keep
 `FF_DISABLE_UMASK_FOR_DOCKER_EXECUTOR` off); on Kubernetes set the pod's
 `fsGroup`; the GitHub workflow runs containers as the runner's own user.
+The GitHub worker-artifact download may fail without stopping aggregation:
+missing files become explicit worker failures in the retained report.
 
 ## 6. Reporting
 
@@ -334,6 +342,37 @@ commenting on this repository. Neither template runs for fork pushes.
 Local checks run with `bazel test //:unit //tools/comparison:comparison_test`.
 The C++ tests cover the comparison core; the Python tests run the real stages
 through `llm-cc-compare-fake`, llm-cc with a deterministic scorer.
+
+Run the same fixture with an installed scorer and real weights before rollout:
+
+```sh
+python3 -m tools.comparison.acceptance \
+  --executable /opt/llm-cc/bin/llm-cc --model /models/model.gguf \
+  --scoring-args scoring.args --output-dir acceptance
+```
+
+`scoring.args` must pin the model and explicit execution settings. On a bare
+AMD host, add `--execution-host execution-host.json`; the worker verifies the
+host and holds its shared GPU lock. The output directory must be new. The
+driver creates a local Git fixture and isolated result/native caches, runs
+one worker, four workers sequentially, and reversed inputs, then requires
+exact per-file parity. It checks a warm preparation/aggregation against the
+60-second budget, with zero workers, and checks that renames, copies and
+category moves reuse the same results. Each stage retains stdout, stderr,
+plans, worker artifacts and reports; `acceptance.json` records the actual
+scorer/model/settings fingerprint and timings. Worker count parity does not
+establish cross-device or concurrent GPU determinism.
+
+To measure the object-store warm path separately, add
+`--store s3://BUCKET/PREFIX --store-options store-options.json` and supply the
+usual `AWS_*` credentials. Each invocation uses a unique test prefix and
+leaves its objects for inspection; apply the store's test retention policy.
+This exercises result and native-entropy caches against the service as well
+as reporting. The driver also requires exactly one winner among eight
+simultaneous marker creates, verifies that the winner's payload and version
+were retained, rejects stale replacements, and requires all 40 concurrent
+updates from eight threads to survive. Live PR publication remains a separate
+rollout step.
 
 | Issue checkbox | Evidence | Status |
 |---|---|---|

@@ -139,7 +139,7 @@ class RecipeTest(unittest.TestCase):
         run.jobs[name] = completed
         return completed
 
-    def pipeline(self, branch, head):
+    def pipeline(self, branch, head, missing_worker=None):
         """The parent pipeline and its generated child, short of publication."""
         self.ordinal += 1
         run = Run(str(9000 + self.ordinal), self.ordinal, head, self.root)
@@ -212,11 +212,16 @@ class RecipeTest(unittest.TestCase):
         )
         for name, job in run.child.items():
             if name.startswith("comparison-worker-"):
+                if name == "comparison-worker-%s" % missing_worker:
+                    continue
                 self.run_job(run, name, job)
         aggregate = self.run_job(
             run, "comparison-aggregate", run.child["comparison-aggregate"]
         )
-        self.assertEqual(aggregate.returncode, 0, aggregate.stderr)
+        if missing_worker is None:
+            self.assertEqual(aggregate.returncode, 0, aggregate.stderr)
+        else:
+            self.assertNotEqual(aggregate.returncode, 0, aggregate.stderr)
         return run
 
     def publish(self, run):
@@ -264,6 +269,20 @@ class RecipeTest(unittest.TestCase):
         run = self.pipeline("main", base)
         self.assertEqual(self.workers(run), ["comparison-worker-0"])
         self.assertEqual(self.report(run)["status"], "complete")
+
+    def test_missing_worker_still_stores_and_publishes_failure(self):
+        base = self.push("main", {"src/base.cc": "int base;\n"}, "baseline")
+        self.pipeline("main", base)
+        head = self.push("feature", {"src/new.cc": "int added;\n"}, "new file")
+        self.github.open_pull(1, "feature", head)
+        run = self.pipeline("feature", head, missing_worker=0)
+        report = self.report(run)
+        self.assertEqual(report["status"], "failed")
+        self.assertTrue(report["errors"])
+        self.assertEqual(self.publish(run), "published")
+        [comment] = self.github.pull_comments(1)
+        self.assertIn("pipeline=%s" % run.pipeline_id, comment["body"])
+        self.assertIn("worker", comment["body"].lower())
 
     def test_recipe_from_baseline_to_retargeted_pull_request(self):
         engine = "int engine() { return 1; }\n"
@@ -646,6 +665,7 @@ class TemplateTest(unittest.TestCase):
             "fromJSON(needs.prepare.outputs.matrix)",
             "self-hosted",
             "--gpus",
+            '--gpus "device=$GPU_DEVICE"',
             # Aggregation and publication survive failed workers, not cancellation.
             "if: ${{ !cancelled() && needs.prepare.outputs.skip == '0' }}",
             "if: ${{ !cancelled() && needs.prepare.outputs.skip != '1' }}",
@@ -661,6 +681,30 @@ class TemplateTest(unittest.TestCase):
         self.assertIn("pull-requests: write", publish)
         before = workflow.split("\n  publish:", 1)[0]
         self.assertNotIn("pull-requests: write", before)
+
+    def test_github_missing_worker_download_does_not_block_aggregation(self):
+        aggregate = (
+            self.read("github", "comparison.yml")
+            .split("\n  aggregate:", 1)[1]
+            .split("\n  publish:", 1)[0]
+        )
+        worker_download = aggregate.split(
+            "- if: needs.prepare.outputs.has_workers == 'true'", 1
+        )[1].split("      - run:", 1)[0]
+        self.assertIn("continue-on-error: true", worker_download)
+        self.assertIn("llm-cc compare aggregate", aggregate)
+
+    def test_github_pool_is_required_only_for_cache_misses(self):
+        prepare = (
+            self.read("github", "comparison.yml")
+            .split("\n  prepare:", 1)[1]
+            .split("\n  score:", 1)[0]
+        )
+        pool_check = prepare.split('test -n "$GPU_POOL"', 1)[0]
+        self.assertIn("- if: steps.plan.outputs.has_workers == 'true'", pool_check)
+        self.assertLess(
+            prepare.index("ci github-matrix"), prepare.index('test -n "$GPU_POOL"')
+        )
 
     def test_example_configuration_is_valid(self):
         config = load_config(RECIPE / "config" / "ci.example.json")

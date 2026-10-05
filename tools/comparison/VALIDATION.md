@@ -276,3 +276,60 @@ Linux x86_64. These results establish local correctness only.
 
 Not verified here: the image builds, a live GitLab, GitHub Actions or
 BuildBuddy run with the new stages, and a Bazzite redeploy.
+
+## Issue #38 acceptance, 2026-10-05
+
+The current-main unit and comparison suites pass **39 Bazel test targets**,
+with the Metal-only test skipped on Linux. The Python comparison suite passes **121 tests**,
+including the reusable acceptance driver and a missing-worker end-to-end
+failure report that is stored and published to the in-memory GitHub.
+The Python suite also passes directly; Ruff's pyflakes checks pass.
+
+`python3 -m tools.comparison.acceptance` also ran with the installed **0.5.2
+ROCm scorer**, source commit `30fea59668b2b4350954f0700623f40f1ba99cdc`, on the
+verified gfx1100 Radeon host. These real-inference results apply to that exact
+installed scorer, rather than establishing GPU acceptance for current main.
+The pinned DeepSeek Q6_K model is 14,066,972,416 bytes, SHA-256
+`5a2e25280075d769abdb111de8211d9d3367f2ae0d0e6166a288ee6e8ed0345d`.
+The profile uses context 32768, batch 256, Flash Attention on, Q8_0 K/V,
+device entropy reduction, structural hierarchy, tau 0.67 and alpha 0.8.
+Each worker acquired the existing shared GPU lock and verified its model and
+host; the fixture used private caches and made no PR updates.
+
+| Store | Unique results | One/four/reversed parity | Warm workers | Warm preparation + aggregation |
+|---|---:|---|---:|---:|
+| Atomic filesystem | 4 | exact | 0 | 1.824 s |
+| Local SeaweedFS 4.47 S3 API | 4 | exact | 0 | 2.242 s |
+
+The fixture includes two languages, a header, duplicate contents, an excluded
+vendor file, and unsupported documentation. A later rename, duplicate and
+category move needed no inference in either store. Four workers ran
+sequentially on one GPU; this checks worker-count and input-order parity, not
+concurrent or cross-device determinism. Timings exclude PR discovery,
+publication, image pulls and hosted object-store latency. The filesystem and
+S3 runs took 88.27 and 100.72 seconds respectively across all three cold
+comparisons, including repeated model verification/loading.
+
+The same temporary SeaweedFS service accepted conditional marker replacement,
+allowed exactly one winner among eight simultaneous marker creates, rejected
+stale replacement, and preserved
+**40 of 40 concurrent updates** from eight threads. No hosted AWS S3 service
+was used. Machine-readable evidence is retained under
+[`experiments/ci-recipe-acceptance/results`](../../experiments/ci-recipe-acceptance/results).
+
+The deployed `/var/lib/llm-cc/comparison-v2.json` now names the native 0.5.2
+scorer and its verified execution host, so the earlier statement that Bazzite
+had not been redeployed is historical. The native-stage production
+[comparison for PR #67](https://pawel.buildbuddy.io/invocation/de57df13-b695-4066-9885-a69e5b7d0438)
+reports success. However, its retained
+[complexity comment](https://github.com/pawelchcki/llm-cc/pull/67#issuecomment-5921893484)
+still says pending as of this check. A successful analysis therefore does not
+establish completed publication or the two-update live-comment acceptance.
+
+Still unverified: the CUDA model/scorer image builds and model-layer reuse,
+GPU scoring inside the recipe's scorer image, non-root artifact extraction
+in a live CI executor, a GitLab/GitHub Actions deployment of these templates,
+and live delayed-pipeline, retargeting and failure-comment scenarios. This host
+has Radeon GPUs rather than the NVIDIA hardware the CUDA recipe requires.
+Those live steps remain open; local or ROCm evidence must not be substituted
+for them.

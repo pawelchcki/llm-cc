@@ -296,9 +296,7 @@ def write_yaml(path, document):
 
 def github_matrix(plan, config):
     """Outputs for a dynamic matrix; an empty matrix must skip the GPU job."""
-    ids = [worker["worker_id"] for worker in plan["workers"]]
-    if any(type(value) is not int or not 0 <= value < 4 for value in ids):
-        raise ValueError("plan has invalid worker IDs")
+    ids = _workers(plan, config)
     outputs = {
         "matrix": json.dumps(
             {"include": [{"worker_id": value} for value in sorted(ids)]},
