@@ -1,6 +1,7 @@
 // Worker behavior ported from the Python comparison tests.
 #include "src/compare/worker.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -159,6 +160,16 @@ int main() {  // NOLINT(bugprone-exception-escape)
   Expect(four["workers"].size() > 1, "four workers split the misses");
   ExpectEq(four_workers.RunAll(four, root / "four/plan"), cold_results,
            "worker count never changes results");
+
+  // Reversing inputs in one model session must not change their scores.
+  Harness reversed_workers(root / "reversed");
+  json reversed =
+      reversed_workers.Prepare(repository, root / "reversed/plan", 1);
+  auto& reversed_keys = reversed["workers"][0]["keys"];
+  std::reverse(reversed_keys.begin(), reversed_keys.end());
+  llmcc::compare::WriteJsonFile(root / "reversed/plan/plan.json", reversed);
+  ExpectEq(reversed_workers.RunAll(reversed, root / "reversed/plan"),
+           cold_results, "input order never changes results");
 
   // Incremental: only the new file is scored.
   llmcc::compare::test::Write(repository.root / "incremental.go",

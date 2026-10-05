@@ -1,0 +1,13 @@
+{
+  "checked_on": "2026-10-05",
+  "concurrent_updates": 40,
+  "conditional_create": true,
+  "conditional_replace": true,
+  "driver": "tools.comparison.acceptance.check_publication_store",
+  "racing_create_rejected": true,
+  "scope": "temporary local S3-compatible service; no hosted AWS S3 validation",
+  "service": "SeaweedFS 4.47",
+  "service_image": "docker.io/chrislusf/seaweedfs@sha256:f83509b0721dfd8e2e07faf76c0a899f67a8a889c89abe2fa0a5227ba1320362",
+  "stale_replace_rejected": true,
+  "stored_counter": 40
+}
