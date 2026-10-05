@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/pawelchcki/llm-cc/compare/v0.6.0...v0.6.1) (2026-10-04)
+
+
+### Bug Fixes
+
+* **metal:** defer shader compilation during device preflight ([#72](https://github.com/pawelchcki/llm-cc/issues/72)) ([7d274b3](https://github.com/pawelchcki/llm-cc/commit/7d274b3a405cdac97c967719e804820f1757d4ac))
+
 ## [0.6.0](https://github.com/pawelchcki/llm-cc/compare/v0.5.2...v0.6.0) (2026-10-03)
 
 
