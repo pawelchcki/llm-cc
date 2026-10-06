@@ -17,6 +17,7 @@ import tempfile
 import time
 import unittest
 from unittest import mock
+import zipfile
 
 from .__main__ import main
 from .ci import capacity, gitlab_child, gitlab_skipped, load_config, write_yaml
@@ -397,6 +398,37 @@ class RecipeTest(unittest.TestCase):
         )
 
 
+class ArchiveRecipeTest(RecipeTest):
+    """Repeat the pipeline with ZIP transport, as CI artifact downloads use.
+
+    Run this class inside the coordinator image to check extraction as its
+    non-root user. The native test scorer keeps inference deterministic.
+    """
+
+    def download(self, job_directory, source_directory, paths):
+        workers = job_directory / "comparison/workers"
+        completed = {
+            path.relative_to(job_directory): path.read_bytes()
+            for path in workers.rglob("*")
+            if path.is_file()
+        }
+        with tempfile.TemporaryFile() as archive:
+            with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
+                for path in paths:
+                    source = source_directory / path
+                    if source.exists():
+                        for file in sorted(source.rglob("*")):
+                            if file.is_file():
+                                bundle.write(file, file.relative_to(source_directory))
+            archive.seek(0)
+            with zipfile.ZipFile(archive) as bundle:
+                bundle.extractall(job_directory)
+        # run_job downloads workers first, then preparation. A preparation
+        # placeholder must never replace an already completed worker file.
+        for path, contents in completed.items():
+            self.assertEqual((job_directory / path).read_bytes(), contents, str(path))
+
+
 class TemplateTest(unittest.TestCase):
     def read(self, *parts):
         return RECIPE.joinpath(*parts).read_text(encoding="utf-8")
@@ -520,6 +552,7 @@ class TemplateTest(unittest.TestCase):
         self.assertEqual(len(models), 2)
         for line in models:
             self.assertIn("--build-arg FETCH_IMAGE=" + fetch, line)
+            self.assertIn("--platform linux/amd64", line)
         context = Path(environment["ENGINE_LOG"] + ".context").read_text()
         # Only the scorer builds from the source tree.
         self.assertIn("./.gitignore", context.splitlines())
@@ -564,6 +597,7 @@ class TemplateTest(unittest.TestCase):
             '#!/bin/sh\necho "$4" >> "$REGISTRY_LOG"\ncase "$3" in\n'
             '  \'{{.Digest}}\') echo "${4##*:}" > "$REGISTRY_LOG.tag"\n'
             "    printf 'sha256:%064d\\n' 5 ;;\n"
+            "  '{{.Os}}/{{.Architecture}}') echo \"${REGISTRY_PLATFORM:-linux/amd64}\" ;;\n"
             '  *model.sha256*) echo "$MODEL_SHA256" ;;\n'
             '  *model.bytes*) echo "$REGISTRY_BYTES" ;;\n'
             '  *revision*) echo "$LLM_CC_COMMIT" ;;\n'
@@ -594,6 +628,20 @@ class TemplateTest(unittest.TestCase):
                 if line.startswith("build ")
             ]
         )
+        # A signed tag with matching producer labels can still name an ARM
+        # image. CUDA workers in this recipe run Linux x86_64 binaries.
+        environment["REGISTRY_PLATFORM"] = "linux/arm64"
+        completed = self.build_images(source, environment)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("platform is 'linux/arm64'", completed.stderr)
+        builds = [
+            line
+            for line in engine.read_text().splitlines()
+            if line.startswith("build ")
+        ]
+        self.assertEqual(len(builds), 3)
+        self.assertTrue(all("--platform linux/amd64" in line for line in builds))
+        environment["REGISTRY_PLATFORM"] = "linux/amd64"
         # scoring.args pins MODEL_BYTES, so an image recording another size
         # is rebuilt, and the build's own size check decides.
         environment["REGISTRY_BYTES"] = "2"
@@ -605,7 +653,7 @@ class TemplateTest(unittest.TestCase):
         environment |= {"REGISTRY_BYTES": "1", "BAZELISK_SHA256": "6" * 64}
         completed = self.build_images(source, environment)
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        first, _, changed = scorer_tags()
+        first, changed = scorer_tags()[0], scorer_tags()[-1]
         self.assertNotEqual(first, changed)
         # A tag moved to another signed image of the same revision is rebuilt,
         # and the rebuilt images record the tags they were built for.

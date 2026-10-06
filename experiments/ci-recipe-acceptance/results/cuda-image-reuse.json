@@ -1,0 +1,298 @@
+{
+  "bases": {
+    "builder_and_runtime": "docker.io/library/ubuntu@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55",
+    "fetch": "docker.io/library/alpine@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc",
+    "python": "docker.io/library/python@sha256:02108f5d322dd89f1c9e552442c25acb0543dfdbc455693a5599624f20d9155d"
+  },
+  "bazelisk": {
+    "sha256": "22e7d3a188699982f661cf4687137ee52d1f24fec1ec893d91a6c4d791a75de8",
+    "url": "https://github.com/bazelbuild/bazelisk/releases/download/v1.28.1/bazelisk-linux-amd64"
+  },
+  "cold": {
+    "coordinator_has_no_model": true,
+    "identity": {
+      "fingerprint": "1576b21973cc8cd10e06c75d7c6598932d4cee0fe27cb487bb6a4aa380c22df4",
+      "model": {
+        "bytes": 14066972416,
+        "sha256": "5a2e25280075d769abdb111de8211d9d3367f2ae0d0e6166a288ee6e8ed0345d"
+      },
+      "scorer": {
+        "analysis_version": 3,
+        "backend_artifact": "9df846b54ba5a8a8070d1fd73cc4b29e6c91ee8995376a597047f7ca8da6ef6e",
+        "backend_configuration": "eca8794046e56892ec45311cc28cd0c57ba3abcb49dfa324baa81e4f9eecd884",
+        "commit": "bcfea9ae2ee262511f5b7ab90da9a8d776e1974d",
+        "executable": "1b3a470609b252571a09bd977ad6d6c92b93af7b52b85ce2f9cde90169b69fd4",
+        "image": "127.0.0.1:18339/llm-cc/scorer@sha256:a6e4afb576d030be429eb7d62c627402afcf050f58877f8f1cffb487c34f8625",
+        "inference_abi": "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v4",
+        "version": "0.6.1-dev.77+gbcfea9a"
+      },
+      "scoring": {
+        "alpha": 0.8,
+        "backend": "cuda/gpu-layers=-1",
+        "batch_size": 256,
+        "context": 131072,
+        "entropy_reduction": "device",
+        "flash_attn": "on",
+        "hierarchy": "structural",
+        "kv_cache_type": "q8_0",
+        "kv_offload": "on",
+        "tau": 0.67,
+        "tau_percentile": null
+      }
+    },
+    "images": {
+      "COORDINATOR_IMAGE": "127.0.0.1:18339/llm-cc/coordinator@sha256:c34c012413dae60e7be8053a02ddf7906a25174700c7b0846bd296624b39e2a6",
+      "MODEL_IMAGE": "127.0.0.1:18339/llm-cc/model@sha256:c8f44e0fd0f341d4feb83b408e463a0ddafedf97dd669c1d0b7bbe370fe68652",
+      "SCORER_IMAGE": "127.0.0.1:18339/llm-cc/scorer@sha256:a6e4afb576d030be429eb7d62c627402afcf050f58877f8f1cffb487c34f8625"
+    },
+    "layers": {
+      "COORDINATOR_IMAGE": [
+        {
+          "digest": "sha256:9643fad16e85249ae5896308abd97b621a5c32612789b564ac006a1285deedfc",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 31864459
+        },
+        {
+          "digest": "sha256:0367d8493a44f18d35c1ba87a50a1d53f761cdd90767c6c8a6e3c02e1a358239",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 4402057
+        },
+        {
+          "digest": "sha256:2f445313ef6e27c25d86a51339ae6e3a0c6a5b80153ecd14fe4de24c6a4fa4ee",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 12544285
+        },
+        {
+          "digest": "sha256:9950c6a7bef749eec7fd47fd64e583b058cb4a1ea95ca95c5759736c17a3d631",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 269
+        },
+        {
+          "digest": "sha256:bd9ddc54bea929a22b334e73e026d4136e5b73f5cc29942896c72e4ece69b13d",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 34
+        },
+        {
+          "digest": "sha256:a8b22512841b138795a1472af930427cb2e8224a67465ea106dac1bcf8e847d9",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 9929
+        },
+        {
+          "digest": "sha256:ce9acee1bdb78414f6379e7dc7b030045e7f88c66db9500affe7949a56b5167a",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 56648619
+        },
+        {
+          "digest": "sha256:9f9a3bc9a40248f2741e7772842cea39188a474ee1e576ba6dd7ab9c3355414f",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 362553967
+        },
+        {
+          "digest": "sha256:6605567635dde38f6e49852baa2a32f01b3ebcea89fa96a07d243787f90345c1",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 181
+        },
+        {
+          "digest": "sha256:d68eb4a324700152f100741b05464b841fef6bdbcfa1a4e3c9c59456f6668872",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 72816
+        },
+        {
+          "digest": "sha256:9203ca17dbed7452ba2363832fc7f01f80be02dba53daed31d2630c8c9555a30",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 642
+        },
+        {
+          "digest": "sha256:bd9ddc54bea929a22b334e73e026d4136e5b73f5cc29942896c72e4ece69b13d",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 34
+        }
+      ],
+      "MODEL_IMAGE": [
+        {
+          "digest": "sha256:b74d0327a877ebe3ad45b7e6dd6bc86e5b5330b952340c68076a88295e5753d1",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 14058247115
+        }
+      ],
+      "SCORER_IMAGE": [
+        {
+          "digest": "sha256:b74d0327a877ebe3ad45b7e6dd6bc86e5b5330b952340c68076a88295e5753d1",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 14058247115
+        },
+        {
+          "digest": "sha256:910ee6be7449c73bebfdf0e38082680a605d0ade2a58ff418e345229577c8837",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 395153715
+        }
+      ]
+    },
+    "offline_identity_equal": true,
+    "runtime_model_verified": {
+      "bytes": 14066972416,
+      "sha256": "5a2e25280075d769abdb111de8211d9d3367f2ae0d0e6166a288ee6e8ed0345d"
+    },
+    "runtime_uid": 10001
+  },
+  "cold_bazel_build": {
+    "actions": 1336,
+    "organizational_credentials": false,
+    "seconds": 769.117
+  },
+  "coordinator_fixture_suite": {
+    "network": "none",
+    "runtime_uid": 10001,
+    "scorer": "deterministic-test/entropy-v1 read-only mount",
+    "seconds": 9.01,
+    "source_checkout": "read-only mount",
+    "tests": 124
+  },
+  "cuda_archs": "compute_89:sm_89",
+  "date": "2026-10-06",
+  "gpu_inference_exercised": false,
+  "host": "bazzite",
+  "model_layer_reused_across_revisions": true,
+  "platform": "linux/amd64",
+  "rebuild": {
+    "coordinator_has_no_model": true,
+    "identity": {
+      "fingerprint": "94600a21c0de17e05fc5d9f6963f16af9d2070d0903e449e645592bfc771b688",
+      "model": {
+        "bytes": 14066972416,
+        "sha256": "5a2e25280075d769abdb111de8211d9d3367f2ae0d0e6166a288ee6e8ed0345d"
+      },
+      "scorer": {
+        "analysis_version": 3,
+        "backend_artifact": "9df846b54ba5a8a8070d1fd73cc4b29e6c91ee8995376a597047f7ca8da6ef6e",
+        "backend_configuration": "eca8794046e56892ec45311cc28cd0c57ba3abcb49dfa324baa81e4f9eecd884",
+        "commit": "7bb7671cb850b14116beafbcdf55adddc7817085",
+        "executable": "83e85e5c03b596347fba81ec99c1f647c3df415a2732e24c676fe897cd1cb99a",
+        "image": "127.0.0.1:18339/llm-cc/scorer@sha256:0411a3530673c41ffed857085b46f800d0879415cfa5ebbca5f2a1d4cd168bd0",
+        "inference_abi": "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v4",
+        "version": "0.6.1-dev.76+g7bb7671"
+      },
+      "scoring": {
+        "alpha": 0.8,
+        "backend": "cuda/gpu-layers=-1",
+        "batch_size": 256,
+        "context": 131072,
+        "entropy_reduction": "device",
+        "flash_attn": "on",
+        "hierarchy": "structural",
+        "kv_cache_type": "q8_0",
+        "kv_offload": "on",
+        "tau": 0.67,
+        "tau_percentile": null
+      }
+    },
+    "images": {
+      "COORDINATOR_IMAGE": "127.0.0.1:18339/llm-cc/coordinator@sha256:ad705312e7988efe8e2d0c76189a05288cd03093684482ede5dfee42a41282f9",
+      "MODEL_IMAGE": "127.0.0.1:18339/llm-cc/model@sha256:c8f44e0fd0f341d4feb83b408e463a0ddafedf97dd669c1d0b7bbe370fe68652",
+      "SCORER_IMAGE": "127.0.0.1:18339/llm-cc/scorer@sha256:0411a3530673c41ffed857085b46f800d0879415cfa5ebbca5f2a1d4cd168bd0"
+    },
+    "layers": {
+      "COORDINATOR_IMAGE": [
+        {
+          "digest": "sha256:9643fad16e85249ae5896308abd97b621a5c32612789b564ac006a1285deedfc",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 31864459
+        },
+        {
+          "digest": "sha256:0367d8493a44f18d35c1ba87a50a1d53f761cdd90767c6c8a6e3c02e1a358239",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 4402057
+        },
+        {
+          "digest": "sha256:2f445313ef6e27c25d86a51339ae6e3a0c6a5b80153ecd14fe4de24c6a4fa4ee",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 12544285
+        },
+        {
+          "digest": "sha256:9950c6a7bef749eec7fd47fd64e583b058cb4a1ea95ca95c5759736c17a3d631",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 269
+        },
+        {
+          "digest": "sha256:bd9ddc54bea929a22b334e73e026d4136e5b73f5cc29942896c72e4ece69b13d",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 34
+        },
+        {
+          "digest": "sha256:c900a9690602d2809ccd6991fa7a5ee0ad2a586e7c4b97f9c08c1187652eff7b",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 9928
+        },
+        {
+          "digest": "sha256:4de0a171d371ae942ff85bd3cc82a9b60e94b7e77f97e6e8b93c47e6afd68c28",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 56647540
+        },
+        {
+          "digest": "sha256:71ce776897f9902728d21810685ce3f833f5f25a499063760a28bcdae309df3d",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 362554054
+        },
+        {
+          "digest": "sha256:758313b666cbfa8ab4f1022162a1a4c728832491d5c13c66ccc349f85a3c70a8",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 179
+        },
+        {
+          "digest": "sha256:76f6e200bffb9c802d543a789d38e26a3793e9cbea6d68190cca6158dcd14a5b",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 72108
+        },
+        {
+          "digest": "sha256:60bf6f1f7db56c98dc3d026edd6cfee71223605b61957a08590bdbcb80e14a97",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 640
+        },
+        {
+          "digest": "sha256:bd9ddc54bea929a22b334e73e026d4136e5b73f5cc29942896c72e4ece69b13d",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 34
+        }
+      ],
+      "MODEL_IMAGE": [
+        {
+          "digest": "sha256:b74d0327a877ebe3ad45b7e6dd6bc86e5b5330b952340c68076a88295e5753d1",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 14058247115
+        }
+      ],
+      "SCORER_IMAGE": [
+        {
+          "digest": "sha256:b74d0327a877ebe3ad45b7e6dd6bc86e5b5330b952340c68076a88295e5753d1",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 14058247115
+        },
+        {
+          "digest": "sha256:168126255420fc02aa210192ab73edd00245033145a30dbe6caf8d255285efbc",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+          "size": 395153777
+        }
+      ]
+    },
+    "offline_identity_equal": true,
+    "runtime_model_verified": {
+      "bytes": 14066972416,
+      "sha256": "5a2e25280075d769abdb111de8211d9d3367f2ae0d0e6166a288ee6e8ed0345d"
+    },
+    "runtime_uid": 10001
+  },
+  "rebuild_bazel_build": {
+    "action_cache_hits": 1330,
+    "executed_actions": 6,
+    "seconds": 10.942
+  },
+  "registry": "disposable loopback TLS registry; TRUST_REGISTRY=1",
+  "warm_build": {
+    "built_images": 0,
+    "identity_unchanged": true,
+    "image_digests_unchanged": true,
+    "pushed_images": 0,
+    "reused_images": 3,
+    "seconds": 1.8451549340970814
+  }
+}
