@@ -1,11 +1,11 @@
 # Bazzite host setup
 
-The two Bazzite BuildBuddy executors share one Radeon RX 7900 XTX. The `ccd1`
-executor uses the dedicated `linux-amd64-rocm` pool for bare-host dogfooding;
-`ccd0` retains the general `linux-amd64-kvm` pool. Use the ROCm scoring contract
-and one worker. Both the CPU coordinator and GPU child target the dedicated pool, where
-the executor's 12 logical CPUs and 60 GiB memory allow both jobs to run together
-at their requested one compute unit each. The worker also holds a host-wide file
+The two Bazzite BuildBuddy executors share one Radeon RX 7900 XTX and register
+in the general `linux-amd64-kvm` pool. Only `ccd1` advertises the custom resources
+`bazzite-radeon-0: 1` and `bazzite-host: 4`. Use the ROCm scoring contract and one
+worker. The CPU coordinator requests `resources:bazzite-host` and the GPU child
+`resources:bazzite-radeon-0`, so both run on `ccd1`, where its 12 logical CPUs and
+60 GiB memory allow them to run together at one compute unit each. The worker also holds a host-wide file
 lock so independent invocations cannot score concurrently. The lock covers this
 comparison pipeline; unrelated GPU applications must follow the same convention
 to participate.

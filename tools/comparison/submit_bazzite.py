@@ -11,6 +11,10 @@ from .buildbuddy import BuildBuddy, bundle_command, coordinate
 from .common import read_json
 
 
+# Custom resource advertised only by the Bazzite executor that hosts /var/lib/llm-cc.
+HOST_RESOURCE = "resources:bazzite-host"
+
+
 def runner_metadata(name, artifact_directory=None, environment=None):
     """Read only allowlisted metadata from the runner's credential-bearing rc."""
     if name not in {"PARENT_INVOCATION_ID", "BRANCH_NAME", "COMMIT_SHA"}:
@@ -154,6 +158,9 @@ def coordinator_request(config, config_path, repository, head, branch, default_b
             "workload-isolation-type": "none",
             "container-image": "none",
             "EstimatedComputeUnits": "1",
+            # Only the Bazzite executor advertises this; the coordinator needs
+            # its host filesystem store.
+            HOST_RESOURCE: "1",
         },
     }
 
