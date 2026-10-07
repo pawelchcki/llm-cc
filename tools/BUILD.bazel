@@ -141,6 +141,6 @@ genrule(
 cc_binary(
     name = "tls_download_probe",
     srcs = ["tls_download_probe.cc"],
-    deps = ["//:download", "//:linux_compat"],
+    deps = ["//:download", "//:linux_compat", "//:progress"],
     testonly = True,
 )
