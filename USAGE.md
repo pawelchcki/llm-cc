@@ -236,6 +236,14 @@ Long phases keep emitting five-second heartbeats with phase time and stalled
 time; decoding also reports token throughput. `--progress never` suppresses
 this status output.
 
+Model and backend downloads report `resolving`, `connecting` (including TLS),
+and `fetching` on stderr. Fetching shows transferred bytes, a percentage when
+the server supplies a size, and the average transfer rate. Resumed bytes count
+toward completion but not transfer speed. While a connection or transfer
+waits, five-second heartbeats continue to show phase time and `stalled_s`, the
+time since bytes last advanced. These updates also appear in redirected logs;
+`--progress never` suppresses them.
+
 The [large-file experiment](experiments/large-files/README.md) records dense
 10 MiB fixtures across all supported languages and 100 MiB C++/Python runs,
 including elapsed preprocessing time and peak host memory.
