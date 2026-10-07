@@ -69,7 +69,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pass
 
 
-class PausedTLSHTTPServer(http.server.ThreadingHTTPServer):
+class TLSHTTPServer(http.server.ThreadingHTTPServer):
+    def shutdown_request(self, request):
+        # A close-delimited response ends at TLS close_notify, not an abrupt
+        # TCP EOF. Schannel correctly rejects the latter as a truncated body.
+        if isinstance(request, ssl.SSLSocket):
+            try:
+                request.settimeout(5)
+                request = request.unwrap()
+            except (ssl.SSLError, OSError):
+                # Clients rejecting the certificate or closing an already
+                # complete, length-delimited response may leave first.
+                pass
+        super().shutdown_request(request)
+
+
+class PausedTLSHTTPServer(TLSHTTPServer):
     def get_request(self):
         connection, address = super().get_request()
         self.connection_started.set()
@@ -119,7 +134,7 @@ authorityKeyIdentifier = keyid:always
                     "-CA", str(fixtures / "ca.pem"), "-CAkey", str(fixtures / "ca.key"),
                     "-set_serial", "1", "-days", "7", "-extfile", str(extensions),
                     "-out", str(root / "server.pem")], check=True, capture_output=True)
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server = TLSHTTPServer(("127.0.0.1", 0), Handler)
     server.download_started = threading.Event()
     server.release_download = threading.Event()
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -194,9 +209,12 @@ authorityKeyIdentifier = keyid:always
                 if endpoint == "paused-unknown":
                     assert "percent=" not in line, (name, line)
                 server.release_download.set()
-                assert process.wait(timeout=10) == 0, name
+                returncode = process.wait(timeout=10)
                 reader.join(timeout=5)
                 assert not reader.is_alive(), name
+                while not lines.empty():
+                    observed.append(lines.get_nowait())
+                assert returncode == 0, (name, returncode, "".join(observed))
                 assert process.stdout.read() == "", name
                 assert target.read_bytes() == PAYLOAD, name
             finally:
