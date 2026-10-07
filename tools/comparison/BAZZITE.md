@@ -97,11 +97,19 @@ Workers use the ZIP bootstrap's checksum verification before loading any bundled
 Python code, fetch the plan and blobs, and run
 `llm-cc compare worker --execution-host`. Device identity and runtime checksums
 must validate before inference, and the worker holds the lock while it scores;
-label routing remains a best-effort scheduling preference. The dedicated pool
-keeps host-local packages, model, and cache accessible to both stages. The generic
-pool also contains other machines, so GPU labels alone cannot make it suitable.
+the GPU custom resource restricts scheduling to the executor advertising that
+device. The coordinator's separate host resource keeps it where the host-local
+packages, model, and cache live without occupying the GPU slot. The shared pool
+also contains other machines, so pool membership and labels alone are insufficient.
 A wrong host fails with an explicit worker artifact. Only actual cache misses
 create GPU worker requests.
+
+When moving from the dedicated `linux-amd64-rocm` pool, re-run setup from the
+custom-resource implementation checkout after updating the executor's pool and
+resource advertisement. Editing only `comparison-v2.json` leaves the consumer
+launcher pinned to its older immutable generation and Python package. Setup
+publishes the new package, generation, current configuration, and launcher in
+order while preserving the shared GPU lock inode.
 
 To submit a manual **CPU coordinator** from the implementation checkout, export
 `BUILDBUDDY_API_KEY` through your existing credential
