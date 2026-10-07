@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/pawelchcki/llm-cc/compare/v0.7.0...v0.7.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* **test:** close TLS fixtures gracefully on native TLS backends ([#80](https://github.com/pawelchcki/llm-cc/issues/80)) ([ab0ea53](https://github.com/pawelchcki/llm-cc/commit/ab0ea53d643b64f543121d0fa2c91feef4ebeacc))
+
 ## [0.7.0](https://github.com/pawelchcki/llm-cc/compare/v0.6.1...v0.7.0) (2026-10-07)
 
 
