@@ -301,9 +301,12 @@ for executed checks and remaining live acceptance.
 
 ## Bazzite executor labels
 
-The two host executors (`ccd0` and `ccd1`) expose the same Radeon. `ccd1` uses
-the dedicated `linux-amd64-rocm` pool for dogfooding; `ccd0` retains the general
-`linux-amd64-kvm` pool. Their shared host configuration advertises:
+The two host executors (`ccd0` and `ccd1`) expose the same Radeon and both
+register in the general `linux-amd64-kvm` pool. Only `ccd1` advertises the
+custom resources `bazzite-radeon-0: 1` and `bazzite-host: 4`; the GPU worker
+requests `resources:<resource_id>` and the CPU coordinator requests
+`resources:bazzite-host`, so both run on `ccd1` while other pool work can use
+its free CPUs. Their shared host configuration also advertises these labels:
 
 ```yaml
 gpu-vendor: amd
@@ -327,10 +330,10 @@ replaces it, and the worker never creates it. Lock waiting counts against the
 worker deadline. Other GPU applications must cooperate with this lock to
 participate in serialization.
 
-Continue selecting the executor pool explicitly. BuildBuddy's
+Route by custom resource, not label. BuildBuddy's
 [`debug-executor-labels` selector](https://github.com/buildbuddy-io/buildbuddy/blob/master/enterprise/server/scheduling/scheduler_server/scheduler_server.go)
-uses best-effort routing and can fall back when labels do not match; it is not
-a strict GPU eligibility or concurrency constraint.
+uses best-effort routing and falls back when labels do not match; a requested
+custom resource is a hard eligibility and concurrency constraint.
 
 The Bazzite scoring contract uses ROCm, context **32768**, batch **256**, Flash
 Attention on, **Q8_0** K/V with offload, device entropy reduction, structural
@@ -338,6 +341,6 @@ hierarchy, tau 0.67 and alpha 0.8. The coordinator passes the analyzer's full
 **1 GiB** file limit, so long files are scored in overlapping 32768-token
 windows rather than left unmeasured. The host configuration uses one worker
 because the two builders share one Radeon.
-The CPU coordinator uses `linux-amd64-rocm` and the existing host filesystem
-store. Follow [Bazzite setup](BAZZITE.md) to install the verified assets and
+The CPU coordinator requests `resources:bazzite-host` and uses the existing
+host filesystem store. Follow [Bazzite setup](BAZZITE.md) to install the verified assets and
 publish an atomic configuration generation.
