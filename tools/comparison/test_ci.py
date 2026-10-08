@@ -182,7 +182,9 @@ class GitLabChildTest(unittest.TestCase):
         other = "registry.example/other@sha256:" + "3" * 64
         planned["scorer"] = {"image": other}
         with self.assertRaisesRegex(ValueError, "differs from"):
-            gitlab_child(planned, PLAN_PATH, self.config, STORE, coordinator=COORDINATOR)
+            gitlab_child(
+                planned, PLAN_PATH, self.config, STORE, coordinator=COORDINATOR
+            )
         with self.assertRaisesRegex(ValueError, "differs from"):
             github_matrix(planned, self.config)
         del self.config["images"]["scorer"]
@@ -244,6 +246,17 @@ class GitLabChildTest(unittest.TestCase):
 
 
 class GitHubMatrixTest(unittest.TestCase):
+    def test_capacity_and_duplicate_workers_are_rejected(self):
+        config = load_config()
+        config["images"]["scorer"] = SCORER
+        config["max_workers"] = 2
+        with self.assertRaisesRegex(ValueError, "allows 2"):
+            github_matrix(plan(3), config)
+        duplicate = plan(2)
+        duplicate["workers"][1]["worker_id"] = 0
+        with self.assertRaisesRegex(ValueError, "invalid worker IDs"):
+            github_matrix(duplicate, config)
+
     def test_matrix_outputs(self):
         with without_scorer_environment():
             config = load_config()

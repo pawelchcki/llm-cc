@@ -130,7 +130,7 @@ class BuildBuddyTest(unittest.TestCase):
             "execution_host": str(self.host),
             "execution_commit": "2" * 40,
             "execution_repository": "https://github.com/owner/tool",
-            "pool": "linux-amd64-rocm",
+            "pool": "linux-amd64-kvm",
             "model": str(self.model),
             "max_workers": 1,
         }
@@ -262,12 +262,11 @@ class BuildBuddyTest(unittest.TestCase):
         self.assertEqual(request["commit_sha"], "2" * 40)
         self.assertEqual(request["timeout"], "2h")
         properties = request["platform_properties"]
-        self.assertEqual(properties["Pool"], "linux-amd64-rocm")
+        self.assertEqual(properties["Pool"], "linux-amd64-kvm")
         self.assertEqual(properties["container-image"], "none")
         self.assertEqual(properties["workload-isolation-type"], "none")
-        self.assertEqual(
-            properties["debug-executor-labels"], "gpu-resource=bazzite-radeon-0"
-        )
+        self.assertEqual(properties["resources:bazzite-radeon-0"], "1")
+        self.assertNotIn("debug-executor-labels", properties)
         run = request["steps"][0]["run"]
         self.assertIn("--plan-sha256", run)
         self.assertIn("--execution-host " + str(self.host), run)

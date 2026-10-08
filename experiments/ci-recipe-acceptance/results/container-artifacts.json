@@ -1,0 +1,32 @@
+{
+  "cold_workers": 4,
+  "container_uid": 10001,
+  "coordinator_image": "localhost/llmcc-issue38-test-coordinator@sha256:0bd4b7042cd4a759b51a5002a27a1c57953fd158bb8edcf871ba7d897c958cb7",
+  "fresh_containers": 13,
+  "identical_cold_warm_totals": true,
+  "inference": "deterministic test scorer; no GPU inference",
+  "model": {
+    "bytes": 5,
+    "sha256": "9372c470eeadd5ecd9c3c74c2b3cb633f8e2f2fad799250a0f70d652b6b825e4"
+  },
+  "reports_complete": true,
+  "scorer": {
+    "analysis_version": 3,
+    "backend_configuration": "5b423a8d437a20a3e7c407f6df6f7dbd6958c73f9ce274051903b47760e1e47d",
+    "commit": null,
+    "executable": "1d47969812327440f926c1081f9e3c7eecada73bfdd2803b321fdaafcc68b7d5",
+    "image": "localhost/llmcc-issue38-test-scorer@sha256:ad0f1d0baa6eaee77f7099af04edb579e98aa788a32cec5365ee171357693855",
+    "inference_abi": "deterministic-test/entropy-v1",
+    "version": "0.6.1-dev.0+unknown"
+  },
+  "scorer_image": "localhost/llmcc-issue38-test-scorer@sha256:ad0f1d0baa6eaee77f7099af04edb579e98aa788a32cec5365ee171357693855",
+  "warm_seconds": 0.6857848009094596,
+  "warm_workers": 0,
+  "worker_artifact_sha256": {
+    "comparison/workers/0/worker-0.json": "6bf8eb3ee607b31572376e7a63a4b6c05b6d0495143a7d63e7f41ca047d11b73",
+    "comparison/workers/1/worker-1.json": "3f16b510f8f9125fefc2b2b8c7f5f3cef70d81c25583f73940488a8138124794",
+    "comparison/workers/2/worker-2.json": "0906f261d8ad3309d2689625caa8af6fe65f50894d60f46ed1b88b9f9248bdd7",
+    "comparison/workers/3/worker-3.json": "49315db371c4a70e6f4cc75f262e93b45ffd22afb78893b218c427ccf029e953"
+  },
+  "worker_first_zip_extraction_preserved_results": true
+}
