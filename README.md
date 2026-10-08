@@ -38,6 +38,18 @@ with [Bazelisk](https://github.com/bazelbuild/bazelisk):
 `bazel run --config=release --config=cpu //:install` (or `metal`, `cuda`,
 `rocm`). [USAGE.md](USAGE.md#installation) has every option.
 
+Release packages also support these installation paths:
+
+```sh
+npx llm-cc --version          # run without a global install
+npm install -g llm-cc
+pip install llm-cc
+```
+
+The npm and Python packages wrap the matching native executable. These
+channels become available with the first release using the
+[publishing setup](dist/README.md).
+
 ```sh
 llm-cc src --format text                                                    # GPU
 llm-cc src --force-cpu --model-name qwen2.5-coder-3b-q6_k -y --format text  # CPU
