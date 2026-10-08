@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/pawelchcki/llm-cc/compare/v0.7.1...v0.8.0) (2026-10-08)
+
+
+### Features
+
+* distribute prebuilt binaries through npm and PyPI ([#82](https://github.com/pawelchcki/llm-cc/issues/82)) ([d2cc08e](https://github.com/pawelchcki/llm-cc/commit/d2cc08e3be9325cdd98bfe7a67cdd5348d083017))
+
 ## [0.7.1](https://github.com/pawelchcki/llm-cc/compare/v0.7.0...v0.7.1) (2026-10-07)
 
 
