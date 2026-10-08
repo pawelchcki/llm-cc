@@ -45,6 +45,9 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
       - uses: bazel-contrib/setup-bazel@0.19.0
         with:
           bazelisk-cache: true
@@ -127,6 +130,17 @@ jobs:
           "$binary" score --model-name qwen2.5-coder-0.5b-q4_k_m --prompt 'int add(int a, int b) { return a + b; }' \
             --context-size 512 --batch-size 8 --threads 4 --force-cpu --assume-yes > smoke.json
           python -c 'import json; rows=[json.loads(line) for line in open("smoke.json")]; assert any(isinstance(row.get("log_probability"), (int, float)) for row in rows), rows'
+      - name: Install and exercise pip, npm and npx wrappers
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          python tools/distribution_packages.py --assets "$RUNNER_TEMP/release-assets" \
+            --output "$RUNNER_TEMP/packages" --version "$VERSION" --platform "$PLATFORM"
+          suffix=""
+          if [[ "$PLATFORM" == windows-x86_64 ]]; then suffix=.exe; fi
+          python tools/distribution_smoke.py --packages "$RUNNER_TEMP/packages" --version "$VERSION" \
+            --binary "$RUNNER_TEMP/release-assets/llm-cc-$VERSION-$PLATFORM$suffix"
       - uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.platform }}

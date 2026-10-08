@@ -94,6 +94,27 @@ llm-cc --version
 
 ### Prebuilt releases
 
+Package managers install the same executable as the standalone release:
+
+```sh
+npx llm-cc --version
+npm install --global llm-cc
+python3 -m pip install llm-cc
+```
+
+Use `npx llm-cc@X.Y.Z`, `npm install --global llm-cc@X.Y.Z`, or
+`python3 -m pip install llm-cc==X.Y.Z` to pin a version. Python requires
+3.9+; npm requires Node.js 18+ and optional dependencies enabled. For an
+isolated Python installation, use `pipx install llm-cc` or a virtual
+environment. `python3 -m llm_cc` also runs the installed executable.
+
+Pip wheels contain the platform binary; npm selects an exact-version platform
+package. Neither wrapper builds code or downloads binaries at execution time.
+Linux x86-64 requires glibc 2.28+, Linux ARM64 requires glibc
+2.35+, macOS requires 14+, and Windows requires x64. GPU bundles and model
+weights are downloaded separately by the native CLI. Registry
+publishing must be configured for the first release; see [dist/README.md](dist/README.md).
+
 On Linux or macOS, install the latest release with one command:
 
 ```sh
