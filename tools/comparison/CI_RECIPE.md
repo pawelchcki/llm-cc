@@ -381,12 +381,58 @@ rollout step.
 
 | Issue checkbox | Evidence | Status |
 |---|---|---|
-| Cold fixture run produces a complete comparison | `test_recipe`, `compare_worker_test` | local |
-| One- and four-worker runs agree | `compare_worker_test`, `compare_prepare_test` (stable partitioning) | local |
-| Fully cached run schedules zero GPUs within budget | `test_recipe` (warm push: aggregation-only child, 60 s budget), `test_ci`, `test_buildbuddy` | local; object-store latency is measured separately in [VALIDATION.md](VALIDATION.md) |
+| Cold fixture run produces a complete comparison | `test_recipe`, `compare_worker_test`; [real ROCm fixture runs](VALIDATION.md#issue-38-acceptance-2026-10-05) | local tests and recorded real inference |
+| One- and four-worker runs agree | `compare_worker_test`, `compare_prepare_test`; [one/four/reversed ROCm runs](VALIDATION.md#issue-38-acceptance-2026-10-05) | exact parity recorded; workers ran sequentially on one GPU |
+| Fully cached run schedules zero GPUs within budget | `test_recipe`, `test_ci`, `test_buildbuddy`; [filesystem and S3 API timings](VALIDATION.md#issue-38-acceptance-2026-10-05) | recorded warm preparation/aggregation: 1.824 s filesystem, 2.242 s local S3 API; hosted-store latency remains unmeasured |
 | Renames, duplicates, headers, category moves, exclusions, oversized files, absent sides | `test_recipe`, `compare_prepare_test` | local |
 | Settings changes invalidate; corrupt caches miss; storage failures surface | `compare_identity_test`, `compare_result_cache_test`, `compare_store_test` | local |
 | Wrong builds, models and blobs never score; deadlines still report | `compare_worker_test`, `test_buildbuddy` | local |
 | Shared native entropy entries; non-root artifact extraction | `compare_worker_test`; `ArchiveRecipeTest`; [container artifact experiment](../../experiments/ci-recipe-acceptance/README.md) | local; extraction passed in fresh non-root containers; hosted executor remains a live step |
-| Cold/warm image builds and layer reuse | `test_recipe` image-build tests with a fake engine | builds and layer reuse are live steps |
-| Default-branch seeding, one reused comment over two PR updates, delayed older pipelines, retargeting, failure reports | `test_recipe`, `test_publish` against in-memory GitHub | local; a live GitLab or GitHub rollout is not verified here |
+| Cold/warm image builds and layer reuse | `test_recipe`; [real CUDA image builds and reuse](VALIDATION.md#real-cuda-image-builds-and-reuse-2026-10-06), including retained image manifests | recorded builds and offline verification passed; GPU inference inside the CUDA image remains unverified |
+| Default-branch seeding and one reused comment over two PR updates | `test_recipe`, `test_publish`; [PR #74 production publication](VALIDATION.md#container-artifacts-and-publication-follow-up-2026-10-05) | recorded BuildBuddy/ci-toolkit publication; these GitLab/GitHub Actions templates still need rollout |
+| Delayed older pipelines, retargeting and failure reports | `test_recipe`, `test_publish` against in-memory GitHub | local tests; live scenarios remain unverified |
+
+The recorded inference runs above use the pinned 0.5.2 ROCm scorer; the CUDA
+image builds use the separate commits and fingerprints recorded in
+[VALIDATION.md](VALIDATION.md). They establish those exact profiles. Re-run
+acceptance when deploying another scorer or execution profile.
+
+### Remaining live rollout checks
+
+Use a dedicated fixture repository and store prefix for these checks. Copy the
+selected template, replace its repository, registry, runner and storage values,
+and retain the exact coordinator/scorer image digests and scoring identity with
+every run. The reusable recipe is implemented; issue #38 remains open for the
+following execution evidence.
+
+1. Run the scorer image on a working NVIDIA runner with the pinned model and
+   scoring settings. Retain successful worker artifacts and complete reports
+   from GPU inference inside that image. Offline image verification alone
+   does not establish this step.
+2. Push the fixture's default branch. Require a complete baseline report with
+   identical base/head revisions and stored results. Record the pipeline ID,
+   scorer fingerprint and store prefix.
+3. Open a fixture PR with new supported contents. Require the generated GPU
+   jobs to receive their declared preparation artifacts and aggregation to
+   retain every worker result under the executor's actual user. Record measured
+   coverage, worker count, report identity and the published comment ID.
+4. Push a second revision that only renames or copies already scored contents.
+   Require zero GPU jobs, a complete report with the expected path accounting,
+   and an update to the same comment ID with the new head and pipeline identity.
+   Measure the warm pipeline duration separately from preparation/aggregation.
+5. Hold an older publisher until the newer pipeline has published, then run or
+   retry it. Require `stale`, an unchanged newer comment and no reduction in
+   the stored publication ordinal. If the CI normally cancels older pipelines,
+   retain an older publisher artifact for this deliberate fixture check.
+6. Retarget the fixture PR after discovery and before publication. Require
+   `suppressed` and no stale update. In a separate run, fail a worker or omit
+   its artifact; require a retained incomplete/error report and a failure
+   comment. Also exercise the publisher's failure path before preparation
+   produces a report.
+
+For each scenario retain pipeline/job URLs, the plan and worker artifacts,
+`report.json`, `publication.json`, publication outcome, and comment ID/body
+before and after the check. Mark a scenario complete only when these artifacts
+show the expected behavior on the deployed provider. The local tests, non-root
+container experiment and BuildBuddy publication evidence remain useful
+prerequisites; they do not complete a hosted template rollout.
