@@ -18,7 +18,7 @@ function comment(payload = data, actorId = 317265358, attribution = '') {
     '\nSummary\nLM-CC/token data: `' + JSON.stringify(payload) + '`\n' };
 }
 
-async function run(items, { proposed = '', paged = false, details = {} } = {}) {
+async function run(items, { proposed = '', paged = false, details = {}, pull = {} } = {}) {
   let exports, response = new Uint8Array();
   const checks = [], workflows = [];
   const event = { event: 'pull_request', action: 'opened', state: 'open',
@@ -42,7 +42,7 @@ async function run(items, { proposed = '', paged = false, details = {} } = {}) {
         const { capability, args } = request;
         let value = null, ok = true;
         if (capability === 'event.details') value = event;
-        else if (capability === 'pulls.get') value = { number: 42, state: 'open', head, base };
+        else if (capability === 'pulls.get') value = { number: 42, state: 'open', head, base, ...pull };
         else if (capability === 'comments.list') value = paged && args.page === 1
           ? { items: [{ actorId: 1, body: 'unrelated' }], nextPage: 2 }
           : { items, nextPage: null };
@@ -101,6 +101,8 @@ large.body = large.body.replace('Summary', '### llm-cc: LM-CC Δ +554.6 · LM-CC
 await expect([large], true);
 await expect([{ actorId: 317265358, body: 'Unrelated automation\n'.repeat(1000) }, large], true);
 await expect([comment(data, 317265358, 'Unicode: Δ → 🦀, escapes: " \\ \t \r \b \f\n')], true);
+await expect([large], true, { pull: { title: 'feat: ratio gate', body: 'PR details\n'.repeat(500) } });
+await expect([large], true, { pull: { body: 'Details\n'.repeat(6000) } });
 for (const proposed of producers) await expect([comment()], false, { proposed });
 await expect([comment()], true, { details: { event: 'runnerless_completion' } });
 await expect([], null, { details: { event: 'push', pullNumber: null } });

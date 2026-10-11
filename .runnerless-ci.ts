@@ -3,7 +3,7 @@ import {
   ArtifactComment, ArtifactSpec, ArtifactStatus, artifacts, workflow,
 } from "runnerless/v1";
 import {
-  checks, comments, configuration, event, jobs, packages, pulls, repo,
+  capabilities, checks, comments, configuration, event, jobs, packages, repo,
   OperationRef, OperationRequest, PageRequest, RegistryPublishRequest, Value, WriteResult,
 } from "runnerless";
 
@@ -62,8 +62,12 @@ function commentBody(value: Value): string {
 function reportRatio(): void {
   const details = event.details();
   if (details.get("pullNumber").isNull()) return;
-  const pr = pulls.get();
-  if (pr.state != "open") return;
+  // The typed PR wrapper also decodes the unused title and description.
+  const pr = capabilities.call("pulls.get").require();
+  if (pr.get("state").string() != "open") return;
+  const prNumber = pr.get("number").integer();
+  const prHead = pr.get("head").string();
+  const prBase = pr.get("base").string();
   // The host coordinator is checksum-pinned and isolated from PR imports.
   // A PR cannot replace its entrypoint, annotation, or source-selection policy.
   const producers = ["buildbuddy.yaml", "tools/comparison/dogfood.sh",
@@ -95,9 +99,9 @@ function reportRatio(): void {
       const identity = data.get("identity");
       if (data.get("schema_version").integer() != 1
         || identity.get("repository").string() != details.get("fullName").string()
-        || identity.get("pr_number").integer() != pr.number
-        || identity.get("head_sha").string() != pr.head
-        || identity.get("target_sha").string() != pr.base) continue;
+        || identity.get("pr_number").integer() != prNumber
+        || identity.get("head_sha").string() != prHead
+        || identity.get("target_sha").string() != prBase) continue;
       const base = F64.parseFloat(data.get("base_ratio").json);
       const head = F64.parseFloat(data.get("head_ratio").json);
       const valid = data.get("status").string() == "complete"
