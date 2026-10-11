@@ -82,20 +82,22 @@ function reportRatio(): void {
   }
   let nextPage: i32 = 1;
   while (nextPage > 0) {
-    const page = comments.list(new PageRequest(nextPage, 20));
+    // A page of full artifact reports can exhaust the guest's fuel budget.
+    const page = comments.list(new PageRequest(nextPage, 1));
     for (let i = 0; i < page.items.length; i++) {
       const comment = page.items[i];
       if (comment.get("actorId").integer() != publisherActorId) continue;
-      const body = commentBody(comment.get("body"));
+      // Keep the report escaped and decode only its small machine-data block.
+      const body = comment.get("body").json;
       // Publication attribution can appear between these two host markers.
-      if (!body.startsWith("<!-- codex-review-artifact-publisher -->")
+      if (!body.startsWith('"<!-- codex-review-artifact-publisher -->')
         || body.indexOf("<!-- ci-toolkit:complexity -->") < 0) continue;
       const start = body.indexOf(ratioPrefix);
       if (start < 0) continue;
       const first = start + ratioPrefix.length;
       const end = body.indexOf("`", first);
       if (end < 0) continue;
-      const data = new Value(body.substring(first, end));
+      const data = new Value(commentBody(new Value('"' + body.substring(first, end) + '"')));
       const identity = data.get("identity");
       if (data.get("schema_version").integer() != 1
         || identity.get("repository").string() != details.get("fullName").string()
@@ -104,12 +106,14 @@ function reportRatio(): void {
         || identity.get("target_sha").string() != prBase) continue;
       const base = F64.parseFloat(data.get("base_ratio").json);
       const head = F64.parseFloat(data.get("head_ratio").json);
-      const valid = data.get("status").string() == "complete"
-        && isFinite(base) && isFinite(head) && base >= 0 && head >= 0;
-      checks.report("LM-CC/token", valid && head <= base,
-        valid ? "Repository LM-CC/token: " + base.toString() + " -> " + head.toString()
-          + (head <= base ? "; maintained or improved." : "; regression.")
-          : "The current comparison has no complete, finite LM-CC/token measurements.");
+      if (data.get("status").string() != "complete" || !isFinite(base) || !isFinite(head) || base < 0 || head < 0) {
+        checks.report("LM-CC/token", false,
+          "The current comparison has no complete, finite LM-CC/token measurements.");
+        return;
+      }
+      checks.report("LM-CC/token", head <= base,
+        "Repository LM-CC/token: " + base.toString() + " -> " + head.toString()
+          + (head <= base ? "; maintained or improved." : "; regression."));
       return;
     }
     nextPage = page.nextPage;
