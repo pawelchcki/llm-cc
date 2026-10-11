@@ -86,17 +86,18 @@ function reportRatio(): void {
     const page = comments.list(new PageRequest(nextPage, 1));
     for (let i = 0; i < page.items.length; i++) {
       const comment = page.items[i];
-      if (comment.get("actorId").integer() != publisherActorId) continue;
-      // Keep the report escaped and decode only its small machine-data block.
-      const body = comment.get("body").json;
+      // The host serializes compact JSON. Filter its escaped body before scanning
+      // publisher fields; unrelated reports also consume the guest's fuel.
+      const body = comment.json;
       // Publication attribution can appear between these two host markers.
-      if (!body.startsWith('"<!-- codex-review-artifact-publisher -->')
+      if (body.indexOf('"body":"<!-- codex-review-artifact-publisher -->') < 0
         || body.indexOf("<!-- ci-toolkit:complexity -->") < 0) continue;
       const start = body.indexOf(ratioPrefix);
       if (start < 0) continue;
       const first = start + ratioPrefix.length;
       const end = body.indexOf("`", first);
       if (end < 0) continue;
+      if (comment.get("actorId").integer() != publisherActorId) continue;
       const data = new Value(commentBody(new Value('"' + body.substring(first, end) + '"')));
       const identity = data.get("identity");
       if (data.get("schema_version").integer() != 1
