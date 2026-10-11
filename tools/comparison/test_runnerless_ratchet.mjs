@@ -95,6 +95,12 @@ for (const [field, value] of [['repository', 'other/repo'], ['pr_number', 43],
 }
 await expect([comment()], true, { paged: true });
 await expect([comment(data, 317265358, '> Automation policy from the trusted base.\n\n')], true);
+const large = comment();
+large.body = large.body.replace('Summary', '### llm-cc: LM-CC Δ +554.6 · LM-CC/token 0.110017 → 0.109755\n' +
+  '| `src/parser.cc` | runtime | +35.6 |\n'.repeat(650));
+await expect([large], true);
+await expect([{ actorId: 317265358, body: 'Unrelated automation\n'.repeat(1000) }, large], true);
+await expect([comment(data, 317265358, 'Unicode: Δ → 🦀, escapes: " \\ \t \r \b \f\n')], true);
 for (const proposed of producers) await expect([comment()], false, { proposed });
 await expect([comment()], true, { details: { event: 'runnerless_completion' } });
 await expect([], null, { details: { event: 'push', pullNumber: null } });

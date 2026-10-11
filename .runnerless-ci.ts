@@ -33,6 +33,32 @@ const program = workflow()
 const ratioPrefix = "LM-CC/token data: `";
 const publisherActorId: i64 = 317265358;
 
+function commentBody(value: Value): string {
+  // The stub runtime retains every allocation. Decode once into UTF-16 units
+  // instead of the SDK's repeated string concatenation for long reports.
+  const json = value.json;
+  if (!json.startsWith('"')) return "";
+  const units = new Array<i32>(json.length - 2);
+  let length = 0;
+  for (let i = 1; i < json.length - 1; i++) {
+    let c = json.charCodeAt(i);
+    if (c == 92) {
+      c = json.charCodeAt(++i);
+      if (c == 117) {
+        c = I32.parseInt(json.substring(i + 1, i + 5), 16);
+        i += 4;
+      } else if (c == 110) c = 10;
+      else if (c == 114) c = 13;
+      else if (c == 116) c = 9;
+      else if (c == 98) c = 8;
+      else if (c == 102) c = 12;
+    }
+    units[length++] = c;
+  }
+  units.length = length;
+  return String.fromCharCodes(units);
+}
+
 function reportRatio(): void {
   const details = event.details();
   if (details.get("pullNumber").isNull()) return;
@@ -56,7 +82,7 @@ function reportRatio(): void {
     for (let i = 0; i < page.items.length; i++) {
       const comment = page.items[i];
       if (comment.get("actorId").integer() != publisherActorId) continue;
-      const body = comment.get("body").string();
+      const body = commentBody(comment.get("body"));
       // Publication attribution can appear between these two host markers.
       if (!body.startsWith("<!-- codex-review-artifact-publisher -->")
         || body.indexOf("<!-- ci-toolkit:complexity -->") < 0) continue;
