@@ -2,21 +2,16 @@
 
 from contextlib import ExitStack
 import fcntl
-from functools import partial
 import os
 import pty
 import select
 import subprocess
+import sys
 import termios
 import time
 
 
 PROMPT = b"Download? [y/N] "
-
-
-def attach_terminal(slave):
-    os.setsid()
-    fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
 
 
 def read_terminal(master, remaining):
@@ -50,10 +45,12 @@ def run_terminal(command, responses, *, source=b"", env=None, timeout=5):
         # Keep the parent slave open until exit so EOF cannot race with the
         # prompt reader. Child exit is observed through process.poll().
         cleanup.callback(os.close, slave)
+        # Attach in a fresh interpreter: callers can have server threads.
         process = cleanup.enter_context(subprocess.Popen(
-            command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            [sys.executable, os.path.abspath(__file__), str(slave), *command],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, env=env, pass_fds=(slave,),
-            preexec_fn=partial(attach_terminal, slave),
+            start_new_session=True,
         ))
         # Popen.kill() tolerates an exited child; its context manager reaps it.
         cleanup.callback(process.kill)
@@ -63,3 +60,10 @@ def run_terminal(command, responses, *, source=b"", env=None, timeout=5):
         transcript = answer_prompts(process, master, responses, timeout)
         stdout, stderr = process.communicate(timeout=1)
         return process.returncode, stdout, stderr, transcript
+
+
+if __name__ == "__main__":
+    slave = int(sys.argv[1])
+    fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+    os.close(slave)
+    os.execvpe(sys.argv[2], sys.argv[2:], os.environ)
