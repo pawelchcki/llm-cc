@@ -216,7 +216,8 @@ nlohmann::json WriteFailureReport(const std::filesystem::path& output,
   for (const std::string_view field : kIdentityFields) {
     normalized[std::string(field)] = Get(identity, field);
   }
-  const json unavailable = {{"score", Delta(json(), json())},
+  const json unavailable = {{"lmcc_per_token", Delta(json(), json())},
+                            {"score", Delta(json(), json())},
                             {"raw_llm_cc", Delta(json(), json())},
                             {"tokens", Delta(json(), json())},
                             {"coverage", {{"base", 0.0}, {"head", 0.0}}}};

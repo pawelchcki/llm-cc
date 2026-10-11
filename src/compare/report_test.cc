@@ -118,7 +118,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
   Expect(!Contains(neutral, "\xE2\x80\xAE") && Contains(neutral, "\\u202e"),
          "a right-to-left override is escaped");
 
-  // Raw LM-CC is the headline; per-token deltas are secondary.
+  // Raw LM-CC and per-token ratios appear together in the summary.
   const std::string headline = llmcc::compare::RenderComment(Report(
       {{"leading_regressions",
         json::array({{{"path", "a.cc"}, {"change", 1.0}, {"raw_change", 2.5}},
@@ -137,15 +137,16 @@ int main() {  // NOLINT(bugprone-exception-escape)
   Expect(Contains(headline, "- `legacy.cc`: +0.5 LM-CC/token"),
          "reports before raw headlines still render");
 
-  // Collapsed, a comment shows only its LM-CC deltas.
+  // Collapsed, a comment shows its LM-CC delta and base/head ratios.
   Expect(headline.starts_with(
-             "### llm-cc: repository LM-CC \xCE\x94 +1.0 (+100%)\n\n"
+             "### llm-cc: repository LM-CC \xCE\x94 +1.0 (+100%) \xC2\xB7 "
+             "LM-CC/token 1 \xE2\x86\x92 2 (+100%)\n\n"
              "runtime +1.0 \xC2\xB7 tests +1.0 \xC2\xB7 tooling +1.0 \xC2\xB7 "
              "largest `a.cc` +2.5\n\n"
              "<details>\n<summary>Full comparison</summary>\n\n"
              "Status: **complete**\n") &&
              headline.ends_with("Rules: host\n\n</details>\n"),
-         "the lead shows LM-CC deltas and the rest is collapsed");
+         "the lead shows LM-CC deltas and ratios and the rest is collapsed");
   const json partial = {{"score", Delta(nullptr, 1.0)},
                         {"raw_llm_cc", Delta(nullptr, 1.0)},
                         {"tokens", Delta(nullptr, 1)},
@@ -159,11 +160,20 @@ int main() {  // NOLINT(bugprone-exception-escape)
        {"leading_improvements", json::array({{{"path", "down.cc"},
                                               {"change", -1.0},
                                               {"raw_change", -4.0}}})}}));
-  Expect(
-      incomplete.starts_with(
-          "### llm-cc (incomplete): repository LM-CC \xCE\x94 unavailable\n\n"
-          "largest `down.cc` -4.0\n\n<details>\n"),
-      "the lead names an unfinished status and the largest change");
+  Expect(incomplete.starts_with(
+             "### llm-cc (incomplete): repository LM-CC \xCE\x94 unavailable "
+             "\xC2\xB7 LM-CC/token unavailable \xE2\x86\x92 1\n\n"
+             "largest `down.cc` -4.0\n\n<details>\n"),
+         "the lead names an unfinished status and the largest change");
+  const std::string zero_ratio = llmcc::compare::RenderComment(
+      Report({{"comparisons",
+               {{"repository",
+                 {{"lmcc_per_token", Delta(0.0, 0.25)},
+                  {"raw_llm_cc", Delta(0.0, 1.0)},
+                  {"tokens", Delta(4, 4)},
+                  {"coverage", {{"base", 1.0}, {"head", 1.0}}}}}}}}));
+  Expect(Contains(zero_ratio, "LM-CC/token 0 \xE2\x86\x92 0.25\n"),
+         "named ratios render without a legacy field or zero-base percentage");
 
   // A path that could mention, link or open HTML is spelled with character
   // references, the only form comment publishers such as ci-toolkit accept.
@@ -344,6 +354,21 @@ int main() {  // NOLINT(bugprone-exception-escape)
   const json head_inventory =
       json::array({File("test_url_parse.c", "head"), File("small.c", "small"),
                    File("large.c", "large"), File("empty.c", "empty")});
+  const json totals = llmcc::compare::Side(base_inventory, results)["totals"];
+  Expect(totals["lmcc_per_token"] == totals["score"] &&
+             std::abs(totals["lmcc_per_token"].get<double>() -
+                      150.2 / 11433.0) < 1e-15 &&
+             json::parse(totals.dump())["lmcc_per_token"] ==
+                 totals["lmcc_per_token"],
+         "named ratios use repository totals and retain JSON precision");
+  const json empty_totals = llmcc::compare::Side(
+      json::array({File("empty.c", "empty")}), results)["totals"];
+  const json incomplete_side =
+      llmcc::compare::Side(base_inventory, json::object());
+  Expect(empty_totals["lmcc_per_token"].is_null() &&
+             incomplete_side["totals"]["lmcc_per_token"].is_null() &&
+             incomplete_side["categories"]["tests"]["lmcc_per_token"].is_null(),
+         "zero tokens and missing coverage leave named ratios unavailable");
   const std::set<std::string> changed = {"test_url_parse.c"};
   const json head_rankings =
       llmcc::compare::Rankings(head_inventory, results, changed);
@@ -408,6 +433,20 @@ int main() {  // NOLINT(bugprone-exception-escape)
       .presentation = nullptr,
       .cache_stats = {{"hits", 0}, {"misses", 0}}};
   const json built = llmcc::compare::BuildReport(inputs);
+  const json& per_token = built["comparisons"]["repository"]["lmcc_per_token"];
+  Expect(per_token == built["comparisons"]["repository"]["score"] &&
+             per_token == Delta(0.85, 2.375) &&
+             built["sides"]["head"]["categories"]["tests"]["lmcc_per_token"] ==
+                 2.375,
+         "comparisons expose named full-precision ratios and deltas");
+  const json baseline = llmcc::compare::BaselineJson(built);
+  Expect(baseline["totals"] == built["sides"]["head"]["totals"] &&
+             baseline["totals"]["lmcc_per_token"] == 2.375,
+         "baseline JSON includes the head repository totals and ratio");
+  Expect(Contains(llmcc::compare::RenderBaseline(built),
+                  "Repository: LM-CC 9.5 \xC2\xB7 LM-CC/token 2.375 "
+                  "\xC2\xB7 tokens 4\n"),
+         "the baseline summary includes the head ratio beside raw totals");
   const json& regressions = built["leading_regressions"];
   ExpectEq(regressions.size(), std::size_t{2}, "two paths regress");
   Expect(regressions[0]["path"] == "added.cc" &&
@@ -442,6 +481,11 @@ int main() {  // NOLINT(bugprone-exception-escape)
   const json failure = llmcc::compare::WriteFailureReport(
       root / "failure", {{"repository", "o/r"}, {"extra", 1}}, nullptr,
       {"boom"});
+  Expect(failure["comparisons"]["repository"]["lmcc_per_token"] ==
+                 Delta(nullptr, nullptr) &&
+             llmcc::compare::BaselineJson(failure)["totals"]["lmcc_per_token"]
+                 .is_null(),
+         "failure artifacts expose unavailable ratios for downstream checks");
   Expect(failure["identity"].size() == 8 &&
              failure["identity"]["repository"] == "o/r" &&
              !failure["identity"].contains("extra"),

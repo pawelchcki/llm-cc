@@ -2,6 +2,8 @@ Baseline ranking for o/r@unknown (main)
 
 Status: **failed**
 
+Repository: LM-CC 0.0 · LM-CC/token unavailable · tokens 0
+
 | Category | LM-CC | LM-CC/token | Tokens | Measured paths |
 |---|---:|---:|---:|---:|
 | runtime | 0.0 | unavailable | 0 | 0/0 |

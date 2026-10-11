@@ -1,4 +1,4 @@
-### llm-cc (incomplete): repository LM-CC Δ unavailable
+### llm-cc (incomplete): repository LM-CC Δ unavailable · LM-CC/token unavailable → unavailable
 
 runtime unavailable · tests +0.0 · tooling +0.0 · largest `api.hpp` +15.8
 
@@ -7,19 +7,19 @@ runtime unavailable · tests +0.0 · tooling +0.0 · largest `api.hpp` +15.8
 
 Status: **incomplete**
 
-Scores and ranks use total LM-CC; LM-CC/token is secondary.
+Scores and ranks use total LM-CC. LM-CC/token is total LM-CC divided by scored tokens.
 
-- runtime unavailable → unavailable LM-CC (unavailable)
-- tests 1.5 → 1.5 LM-CC (+0%)
-- tooling 0.0 → 0.0 LM-CC (unavailable)
-- repository unavailable → unavailable LM-CC (unavailable)
+- runtime unavailable → unavailable LM-CC (unavailable) · LM-CC/token unavailable → unavailable
+- tests 1.5 → 1.5 LM-CC (+0%) · LM-CC/token 0.5 → 0.5 (+0%)
+- tooling 0.0 → 0.0 LM-CC (unavailable) · LM-CC/token unavailable → unavailable
+- repository unavailable → unavailable LM-CC (unavailable) · LM-CC/token unavailable → unavailable
 
-| Category | LM-CC base | LM-CC head | LM-CC Δ | LM-CC Δ% | LM-CC/token Δ | Tokens Δ | Coverage |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| runtime | unavailable | unavailable | unavailable | unavailable | unavailable | unavailable | 87.5% / 87.5% |
-| tests | 1.5 | 1.5 | +0.0 | +0% | 0 | 0 | 100.0% / 100.0% |
-| tooling | 0.0 | 0.0 | +0.0 | unavailable | unavailable | 0 | 100.0% / 100.0% |
-| repository | unavailable | unavailable | unavailable | unavailable | unavailable | unavailable | 88.9% / 88.9% |
+| Category | LM-CC base | LM-CC head | LM-CC Δ | LM-CC Δ% | LM-CC/token base | LM-CC/token head | LM-CC/token Δ | LM-CC/token Δ% | Tokens Δ | Coverage |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| runtime | unavailable | unavailable | unavailable | unavailable | unavailable | unavailable | unavailable | unavailable | unavailable | 87.5% / 87.5% |
+| tests | 1.5 | 1.5 | +0.0 | +0% | 0.5 | 0.5 | 0 | +0% | 0 | 100.0% / 100.0% |
+| tooling | 0.0 | 0.0 | +0.0 | unavailable | unavailable | unavailable | unavailable | unavailable | 0 | 100.0% / 100.0% |
+| repository | unavailable | unavailable | unavailable | unavailable | unavailable | unavailable | unavailable | unavailable | unavailable | 88.9% / 88.9% |
 
 Cache: 0 hits, 9 misses.
 
