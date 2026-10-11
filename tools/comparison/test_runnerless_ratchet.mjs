@@ -92,6 +92,11 @@ for (const status of ['incomplete', 'failed']) await expect([comment({ ...data, 
 await expect([comment({ ...data, schema_version: 2 })], false);
 await expect([], false);
 await expect([comment(data, 1)], false);
+await expect([{ actorId: 317265358, body: 'Unrelated', other: comment().body }], false);
+await expect([{ actorId: 317265358, body: 'Unrelated "body":"' + comment().body }], false);
+await expect([{ actorId: 317265358, body: publisher + artifact },
+  { actorId: 317265358, body: publisher + '<!-- ci-toolkit:gpu-backends -->\n' + 'x'.repeat(4000) },
+  { actorId: 1, body: 'Unrelated\n'.repeat(200) }], false);
 await expect([{ ...comment(), body: 'unverified ' + comment().body }], false);
 await expect([{ ...comment(), body: comment().body.replace(artifact, '<!-- ci-toolkit:gpu-backends -->') }], false);
 for (const [field, value] of [['repository', 'other/repo'], ['pr_number', 43],
