@@ -88,6 +88,7 @@ http_archive(
         "//third_party:llama_cpp_deepseek_flash_attention.patch",
         "//third_party:llama_cpp_deterministic_hip_cuid.patch",
         "//third_party:llama_cpp_namespaced_backends.patch",
+        "//third_party:llama_cpp_lazy_metal_library.patch",
     ],
     sha256 = "682bdd1f58907d0bbfbd38bdfd7b8601de804bfda5ee15a739744e59c6585dd8",
     strip_prefix = "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0",

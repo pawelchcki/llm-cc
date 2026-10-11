@@ -237,7 +237,9 @@ def worker_request(config, plan, worker, prefix, plan_digest):
             "Pool": config["pool"],
             "container-image": "none",
             "workload-isolation-type": "none",
-            "debug-executor-labels": "gpu-resource=" + host["resource_id"],
+            # A custom resource is a hard scheduling constraint: only the executor
+            # advertising this device can take the worker, one at a time.
+            "resources:" + host["resource_id"]: "1",
         }
     )
     # Secrets travel in remote headers, which BuildBuddy treats as sensitive.

@@ -9,7 +9,8 @@ consuming repository only supplies configuration.
 ## Prerequisites
 
 - The BuildBuddy GitHub app is installed on the repository, and the repository's
-  BuildBuddy group has access to the `linux-amd64-rocm` pool.
+  BuildBuddy group has access to the `linux-amd64-kvm` pool, where `ccd1`
+  advertises the `bazzite-host` custom resource.
 - The ci-toolkit GitHub app is installed on the repository.
 - `/var/lib/llm-cc/bin/llm-cc-coordinate` exists on the host. Re-run
   `python3 -m tools.comparison.setup_bazzite` after any llm-cc or comparison

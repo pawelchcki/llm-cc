@@ -6,11 +6,11 @@
 actions:
   - name: "Complexity comparison"
     self_hosted: true
-    pool: "linux-amd64-rocm"
+    pool: "linux-amd64-kvm"
     platform_properties:
       workload-isolation-type: "none"
       container-image: "none"
-      debug-executor-labels: "machine=bazzite"
+      resources:bazzite-host: "1"
     resource_requests: { disk: 10GB }
     timeout: 130m
     allow_concurrent_runs: false

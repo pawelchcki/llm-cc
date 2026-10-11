@@ -19,6 +19,7 @@ PROVENANCE_CONFIGURATION = [
     Label("//third_party:llama_cpp_backend_score.patch"),
     Label("//third_party:llama_cpp_deterministic_hip_cuid.patch"),
     Label("//third_party:llama_cpp_namespaced_backends.patch"),
+    Label("//third_party:llama_cpp_lazy_metal_library.patch"),
     Label("//third_party:backend_module.lds"),
     Label("//third_party:ggml_backend_abi.list"),
     Label("//third_party:cuda_host_toolchain.BUILD.bazel"),

@@ -17,6 +17,7 @@ import tempfile
 import time
 import unittest
 from unittest import mock
+import zipfile
 
 from .__main__ import main
 from .ci import capacity, gitlab_child, gitlab_skipped, load_config, write_yaml
@@ -139,7 +140,7 @@ class RecipeTest(unittest.TestCase):
         run.jobs[name] = completed
         return completed
 
-    def pipeline(self, branch, head):
+    def pipeline(self, branch, head, missing_worker=None):
         """The parent pipeline and its generated child, short of publication."""
         self.ordinal += 1
         run = Run(str(9000 + self.ordinal), self.ordinal, head, self.root)
@@ -212,11 +213,16 @@ class RecipeTest(unittest.TestCase):
         )
         for name, job in run.child.items():
             if name.startswith("comparison-worker-"):
+                if name == "comparison-worker-%s" % missing_worker:
+                    continue
                 self.run_job(run, name, job)
         aggregate = self.run_job(
             run, "comparison-aggregate", run.child["comparison-aggregate"]
         )
-        self.assertEqual(aggregate.returncode, 0, aggregate.stderr)
+        if missing_worker is None:
+            self.assertEqual(aggregate.returncode, 0, aggregate.stderr)
+        else:
+            self.assertNotEqual(aggregate.returncode, 0, aggregate.stderr)
         return run
 
     def publish(self, run):
@@ -264,6 +270,20 @@ class RecipeTest(unittest.TestCase):
         run = self.pipeline("main", base)
         self.assertEqual(self.workers(run), ["comparison-worker-0"])
         self.assertEqual(self.report(run)["status"], "complete")
+
+    def test_missing_worker_still_stores_and_publishes_failure(self):
+        base = self.push("main", {"src/base.cc": "int base;\n"}, "baseline")
+        self.pipeline("main", base)
+        head = self.push("feature", {"src/new.cc": "int added;\n"}, "new file")
+        self.github.open_pull(1, "feature", head)
+        run = self.pipeline("feature", head, missing_worker=0)
+        report = self.report(run)
+        self.assertEqual(report["status"], "failed")
+        self.assertTrue(report["errors"])
+        self.assertEqual(self.publish(run), "published")
+        [comment] = self.github.pull_comments(1)
+        self.assertIn("pipeline=%s" % run.pipeline_id, comment["body"])
+        self.assertIn("worker", comment["body"].lower())
 
     def test_recipe_from_baseline_to_retargeted_pull_request(self):
         engine = "int engine() { return 1; }\n"
@@ -376,6 +396,37 @@ class RecipeTest(unittest.TestCase):
             (marker["ordinal"], marker["state"], marker["comment_id"]),
             (retargeted.ordinal, "suppressed", comment["id"]),
         )
+
+
+class ArchiveRecipeTest(RecipeTest):
+    """Repeat the pipeline with ZIP transport, as CI artifact downloads use.
+
+    Run this class inside the coordinator image to check extraction as its
+    non-root user. The native test scorer keeps inference deterministic.
+    """
+
+    def download(self, job_directory, source_directory, paths):
+        workers = job_directory / "comparison/workers"
+        completed = {
+            path.relative_to(job_directory): path.read_bytes()
+            for path in workers.rglob("*")
+            if path.is_file()
+        }
+        with tempfile.TemporaryFile() as archive:
+            with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
+                for path in paths:
+                    source = source_directory / path
+                    if source.exists():
+                        for file in sorted(source.rglob("*")):
+                            if file.is_file():
+                                bundle.write(file, file.relative_to(source_directory))
+            archive.seek(0)
+            with zipfile.ZipFile(archive) as bundle:
+                bundle.extractall(job_directory)
+        # run_job downloads workers first, then preparation. A preparation
+        # placeholder must never replace an already completed worker file.
+        for path, contents in completed.items():
+            self.assertEqual((job_directory / path).read_bytes(), contents, str(path))
 
 
 class TemplateTest(unittest.TestCase):
@@ -501,6 +552,7 @@ class TemplateTest(unittest.TestCase):
         self.assertEqual(len(models), 2)
         for line in models:
             self.assertIn("--build-arg FETCH_IMAGE=" + fetch, line)
+            self.assertIn("--platform linux/amd64", line)
         context = Path(environment["ENGINE_LOG"] + ".context").read_text()
         # Only the scorer builds from the source tree.
         self.assertIn("./.gitignore", context.splitlines())
@@ -545,6 +597,7 @@ class TemplateTest(unittest.TestCase):
             '#!/bin/sh\necho "$4" >> "$REGISTRY_LOG"\ncase "$3" in\n'
             '  \'{{.Digest}}\') echo "${4##*:}" > "$REGISTRY_LOG.tag"\n'
             "    printf 'sha256:%064d\\n' 5 ;;\n"
+            "  '{{.Os}}/{{.Architecture}}') echo \"${REGISTRY_PLATFORM:-linux/amd64}\" ;;\n"
             '  *model.sha256*) echo "$MODEL_SHA256" ;;\n'
             '  *model.bytes*) echo "$REGISTRY_BYTES" ;;\n'
             '  *revision*) echo "$LLM_CC_COMMIT" ;;\n'
@@ -575,6 +628,20 @@ class TemplateTest(unittest.TestCase):
                 if line.startswith("build ")
             ]
         )
+        # A signed tag with matching producer labels can still name an ARM
+        # image. CUDA workers in this recipe run Linux x86_64 binaries.
+        environment["REGISTRY_PLATFORM"] = "linux/arm64"
+        completed = self.build_images(source, environment)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("platform is 'linux/arm64'", completed.stderr)
+        builds = [
+            line
+            for line in engine.read_text().splitlines()
+            if line.startswith("build ")
+        ]
+        self.assertEqual(len(builds), 3)
+        self.assertTrue(all("--platform linux/amd64" in line for line in builds))
+        environment["REGISTRY_PLATFORM"] = "linux/amd64"
         # scoring.args pins MODEL_BYTES, so an image recording another size
         # is rebuilt, and the build's own size check decides.
         environment["REGISTRY_BYTES"] = "2"
@@ -586,7 +653,7 @@ class TemplateTest(unittest.TestCase):
         environment |= {"REGISTRY_BYTES": "1", "BAZELISK_SHA256": "6" * 64}
         completed = self.build_images(source, environment)
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        first, _, changed = scorer_tags()
+        first, changed = scorer_tags()[0], scorer_tags()[-1]
         self.assertNotEqual(first, changed)
         # A tag moved to another signed image of the same revision is rebuilt,
         # and the rebuilt images record the tags they were built for.
@@ -646,6 +713,7 @@ class TemplateTest(unittest.TestCase):
             "fromJSON(needs.prepare.outputs.matrix)",
             "self-hosted",
             "--gpus",
+            '--gpus "device=$GPU_DEVICE"',
             # Aggregation and publication survive failed workers, not cancellation.
             "if: ${{ !cancelled() && needs.prepare.outputs.skip == '0' }}",
             "if: ${{ !cancelled() && needs.prepare.outputs.skip != '1' }}",
@@ -661,6 +729,30 @@ class TemplateTest(unittest.TestCase):
         self.assertIn("pull-requests: write", publish)
         before = workflow.split("\n  publish:", 1)[0]
         self.assertNotIn("pull-requests: write", before)
+
+    def test_github_missing_worker_download_does_not_block_aggregation(self):
+        aggregate = (
+            self.read("github", "comparison.yml")
+            .split("\n  aggregate:", 1)[1]
+            .split("\n  publish:", 1)[0]
+        )
+        worker_download = aggregate.split(
+            "- if: needs.prepare.outputs.has_workers == 'true'", 1
+        )[1].split("      - run:", 1)[0]
+        self.assertIn("continue-on-error: true", worker_download)
+        self.assertIn("llm-cc compare aggregate", aggregate)
+
+    def test_github_pool_is_required_only_for_cache_misses(self):
+        prepare = (
+            self.read("github", "comparison.yml")
+            .split("\n  prepare:", 1)[1]
+            .split("\n  score:", 1)[0]
+        )
+        pool_check = prepare.split('test -n "$GPU_POOL"', 1)[0]
+        self.assertIn("- if: steps.plan.outputs.has_workers == 'true'", pool_check)
+        self.assertLess(
+            prepare.index("ci github-matrix"), prepare.index('test -n "$GPU_POOL"')
+        )
 
     def test_example_configuration_is_valid(self):
         config = load_config(RECIPE / "config" / "ci.example.json")

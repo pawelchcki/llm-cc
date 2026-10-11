@@ -37,8 +37,9 @@ class ProgressReporter {
                  const std::filesystem::path& path);
   void Tokens(std::size_t completed, std::size_t total);
   // A zero total means that the amount of work is not yet known.
+  // Exclude initial_completed (e.g. resumed bytes) from the average rate.
   void Counter(std::uint64_t completed, std::uint64_t total,
-               std::string_view unit);
+               std::string_view unit, std::uint64_t initial_completed = 0);
   void FinishFile(bool cache_hit);
   void FailFile();
   void Heartbeat();  // Also permits deterministic clock-driven tests.
@@ -60,6 +61,7 @@ class ProgressReporter {
   std::string unit_;
   std::uint64_t completed_ = 0;
   std::uint64_t total_ = 0;
+  std::uint64_t initial_completed_ = 0;
   Clock::time_point started_;
   Clock::time_point phase_started_;
   Clock::time_point advanced_;
@@ -84,7 +86,7 @@ class CliSession {
 bool CliSessionActive();
 void ReportPhase(std::string_view phase);
 void ReportCounter(std::uint64_t completed, std::uint64_t total,
-                   std::string_view unit);
+                   std::string_view unit, std::uint64_t initial_completed = 0);
 void ReportWarning(std::string_view message);
 void ReportDiagnostic(std::string_view message);
 // The seam deliberately accepts a separate terminal stream, never scoring

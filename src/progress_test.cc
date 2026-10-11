@@ -218,6 +218,8 @@ int main() {
            "phase retains current file");
     progress.Phase("downloading");
     progress.Counter(25, 0, "bytes");
+    Expect(output.str().find("25/? bytes stalled_s=0") != std::string::npos,
+           "first byte count is visible without waiting for a heartbeat");
     ticks = 15;
     progress.Heartbeat();
     Expect(output.str().find("25/? bytes stalled_s=5") != std::string::npos,
@@ -227,9 +229,31 @@ int main() {
     progress.Counter(25, 25, "bytes");
     Expect(output.str().find("25/25 bytes") != std::string::npos,
            "completion is reported when the total becomes known");
+    Expect(output.str().find("percent=100.0") != std::string::npos,
+           "known download size includes a percentage");
     const auto complete = output.str();
     progress.Counter(25, 25, "bytes");
     Expect(output.str() == complete, "repeated completion is throttled");
+    progress.Phase("fetching resumed model");
+    progress.Counter(1000, 0, "bytes", 1000);
+    const auto unknown = output.str();
+    progress.Counter(1000, 2000, "bytes", 1000);
+    Expect(output.str() != unknown &&
+               output.str().find("percent=50.0") != std::string::npos,
+           "learning the size updates the percentage immediately");
+    ticks = 20;
+    progress.Heartbeat();
+    Expect(output.str().find(
+               "1000/2000 bytes stalled_s=5 percent=50.0 bytes_per_s=0") !=
+               std::string::npos,
+           "stalled resumed download does not count existing bytes as speed");
+    progress.Counter(1050, 2000, "bytes", 1000);
+    ticks = 25;
+    progress.Heartbeat();
+    Expect(output.str().find(
+               "1050/2000 bytes stalled_s=5 percent=52.5 bytes_per_s=5") !=
+               std::string::npos,
+           "resumed speed counts only newly downloaded bytes");
   }
   const auto stopped = output.str();
   std::this_thread::sleep_for(20ms);

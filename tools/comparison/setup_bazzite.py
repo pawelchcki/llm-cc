@@ -329,7 +329,7 @@ def configure(args):
         "endpoint": args.endpoint,
         "api_key_env": "BUILDBUDDY_API_KEY",
         "github_token_env": "GITHUB_TOKEN",
-        "pool": "linux-amd64-rocm",
+        "pool": "linux-amd64-kvm",
         "execution_repository": args.execution_repository,
         "execution_commit": args.execution_commit,
         "execution_image": "none",

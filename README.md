@@ -1,5 +1,7 @@
 # llm-cc
 
+[![Runnerless CI: slowest job](https://badges.runnerlesshq.com/github.com/pawelchcki/llm-cc/badge.svg)](https://app.runnerlesshq.com)
+
 [![Latest release](https://img.shields.io/github/v/release/pawelchcki/llm-cc)](https://github.com/pawelchcki/llm-cc/releases/latest)
 [![License: MIT](https://img.shields.io/github/license/pawelchcki/llm-cc)](LICENSE)
 
@@ -37,6 +39,18 @@ detects that GPU. On Windows, run `py -3 install_release.py` from a
 with [Bazelisk](https://github.com/bazelbuild/bazelisk):
 `bazel run --config=release --config=cpu //:install` (or `metal`, `cuda`,
 `rocm`). [USAGE.md](USAGE.md#installation) has every option.
+
+Release packages also support these installation paths:
+
+```sh
+npx llm-cc --version          # run without a global install
+npm install -g llm-cc
+pip install llm-cc
+```
+
+The npm and Python packages wrap the matching native executable. These
+channels become available with the first release using the
+[publishing setup](dist/README.md).
 
 ```sh
 llm-cc src --format text                                                    # GPU

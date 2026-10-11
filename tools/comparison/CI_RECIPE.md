@@ -105,6 +105,11 @@ contract is a separate experiment with a separate fingerprint.
 | Scorer | [scorer.Containerfile](recipe/images/scorer.Containerfile) | the model image by digest, plus one layer: `/opt/llm-cc` and user 10001; no Python | hash of commit, version, archs, model digest, base images, Bazelisk pin, Containerfile |
 | Coordinator | [coordinator.Containerfile](recipe/images/coordinator.Containerfile) | Git, Python with boto3, the provider glue, the scorer's own `llm-cc`, `scoring.args`, `planning.args`, default `rules.json`, user 10001 | hash of commit, scorer digest, scoring and planning arguments, Containerfile |
 
+The recipe targets Linux x86_64. `build.sh` passes `--platform linux/amd64`
+for every image build and verifies the OS and architecture before reusing a
+registry image. This also prevents a locally cached ARM base image from
+selecting the wrong runtime for the installed CUDA executable.
+
 The scorer's final stage starts `FROM` the model image by digest and adds the
 whole runtime as one layer above it, so every scorer rebuild on the same weights
 reuses the multi-gigabyte model layer by reference. A fresh GPU node still has
@@ -193,6 +198,12 @@ model and one driver version. Moving the pool to other hardware or drivers
 must come with a new scorer image, so its digest, and with it every key,
 changes. A bare AMD host instead declares that contract with
 `--execution-host`, which the worker verifies and the fingerprint records.
+The GitHub template exposes exactly one NVIDIA device to each worker:
+`LLM_CC_GPU_DEVICE` selects its index or UUID, defaulting to `0`. GitLab GPU
+runners must likewise allocate one device per job. The GitHub preparation job
+checks `LLM_CC_GPU_POOL` only when the plan has misses; a fully cached run
+needs no GPU pool configuration. Both adapters reject duplicate worker IDs
+and plans exceeding configured capacity.
 
 ## 4. Two cache layers with explicit provenance
 
@@ -253,6 +264,8 @@ worker artifact is reported by ID. Scorer images run as user 10001. GitLab's
 Docker executor extracts artifacts world-writable by default (keep
 `FF_DISABLE_UMASK_FOR_DOCKER_EXECUTOR` off); on Kubernetes set the pod's
 `fsGroup`; the GitHub workflow runs containers as the runner's own user.
+The GitHub worker-artifact download may fail without stopping aggregation:
+missing files become explicit worker failures in the retained report.
 
 ## 6. Reporting
 
@@ -335,6 +348,37 @@ Local checks run with `bazel test //:unit //tools/comparison:comparison_test`.
 The C++ tests cover the comparison core; the Python tests run the real stages
 through `llm-cc-compare-fake`, llm-cc with a deterministic scorer.
 
+Run the same fixture with an installed scorer and real weights before rollout:
+
+```sh
+python3 -m tools.comparison.acceptance \
+  --executable /opt/llm-cc/bin/llm-cc --model /models/model.gguf \
+  --scoring-args scoring.args --output-dir acceptance
+```
+
+`scoring.args` must pin the model and explicit execution settings. On a bare
+AMD host, add `--execution-host execution-host.json`; the worker verifies the
+host and holds its shared GPU lock. The output directory must be new. The
+driver creates a local Git fixture and isolated result/native caches, runs
+one worker, four workers sequentially, and reversed inputs, then requires
+exact per-file parity. It checks a warm preparation/aggregation against the
+60-second budget, with zero workers, and checks that renames, copies and
+category moves reuse the same results. Each stage retains stdout, stderr,
+plans, worker artifacts and reports; `acceptance.json` records the actual
+scorer/model/settings fingerprint and timings. Worker count parity does not
+establish cross-device or concurrent GPU determinism.
+
+To measure the object-store warm path separately, add
+`--store s3://BUCKET/PREFIX --store-options store-options.json` and supply the
+usual `AWS_*` credentials. Each invocation uses a unique test prefix and
+leaves its objects for inspection; apply the store's test retention policy.
+This exercises result and native-entropy caches against the service as well
+as reporting. The driver also requires exactly one winner among eight
+simultaneous marker creates, verifies that the winner's payload and version
+were retained, rejects stale replacements, and requires all 40 concurrent
+updates from eight threads to survive. Live PR publication remains a separate
+rollout step.
+
 | Issue checkbox | Evidence | Status |
 |---|---|---|
 | Cold fixture run produces a complete comparison | `test_recipe`, `compare_worker_test` | local |
@@ -343,6 +387,6 @@ through `llm-cc-compare-fake`, llm-cc with a deterministic scorer.
 | Renames, duplicates, headers, category moves, exclusions, oversized files, absent sides | `test_recipe`, `compare_prepare_test` | local |
 | Settings changes invalidate; corrupt caches miss; storage failures surface | `compare_identity_test`, `compare_result_cache_test`, `compare_store_test` | local |
 | Wrong builds, models and blobs never score; deadlines still report | `compare_worker_test`, `test_buildbuddy` | local |
-| Shared native entropy entries; non-root artifact extraction | `compare_worker_test`; ownership notes above | local; non-root extraction is a live step |
+| Shared native entropy entries; non-root artifact extraction | `compare_worker_test`; `ArchiveRecipeTest`; [container artifact experiment](../../experiments/ci-recipe-acceptance/README.md) | local; extraction passed in fresh non-root containers; hosted executor remains a live step |
 | Cold/warm image builds and layer reuse | `test_recipe` image-build tests with a fake engine | builds and layer reuse are live steps |
 | Default-branch seeding, one reused comment over two PR updates, delayed older pipelines, retargeting, failure reports | `test_recipe`, `test_publish` against in-memory GitHub | local; a live GitLab or GitHub rollout is not verified here |

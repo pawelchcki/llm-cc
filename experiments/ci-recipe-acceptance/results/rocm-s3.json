@@ -1,0 +1,44 @@
+{
+  "checked_on": "2026-10-05",
+  "cold_seconds": 100.71598354005255,
+  "exact_result_parity": true,
+  "fingerprint": "2ba2e65104ba0f7043e0d63f7e727c253cd65cffcbe2761b9be85a9444323f6c",
+  "model": {
+    "bytes": 14066972416,
+    "sha256": "5a2e25280075d769abdb111de8211d9d3367f2ae0d0e6166a288ee6e8ed0345d"
+  },
+  "rename_copy_category_move_reused": true,
+  "scorer": {
+    "analysis_version": 3,
+    "backend_artifact": "e82f0f9fe2d2fb65c3446bc46ccd1de217360d3865b0edabe596c2b6e7f7efa8",
+    "backend_configuration": "d16a4a74eb4888a4e5ce1d368a40cdd440285aee4cb2215fa99d097c3d567105",
+    "commit": "30fea59668b2b4350954f0700623f40f1ba99cdc",
+    "executable": "7664a5ae9b5d7ce44eeb2cac22d07cc346c0c6cad88958b0bcf6c58979999d60",
+    "execution_host": "bbc75810e1cb3483470085ca6a7da5338b22f91f79b74d43bf6e9fb39dcda6c2",
+    "inference_abi": "llama.cpp-c589f0ed10c643678c4707dd160c21ac7633ebc0/entropy-v4",
+    "version": "0.5.2"
+  },
+  "scoring": {
+    "alpha": 0.8,
+    "backend": "rocm/gpu-layers=-1",
+    "batch_size": 256,
+    "context": 32768,
+    "entropy_reduction": "device",
+    "flash_attn": "on",
+    "hierarchy": "structural",
+    "kv_cache_type": "q8_0",
+    "kv_offload": "on",
+    "tau": 0.67,
+    "tau_percentile": null
+  },
+  "store_prefix": "s3://llmcc-acceptance/issue38/acceptance-4fab5a5c8b0941cab63b488045b1c86f",
+  "unique_results": 4,
+  "warm_seconds": 2.2422619599383324,
+  "worker_execution": "sequential on one verified Radeon gfx1100 device",
+  "workers": {
+    "four": 4,
+    "one": 1,
+    "reversed": 1,
+    "warm": 0
+  }
+}

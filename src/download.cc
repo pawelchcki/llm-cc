@@ -7,25 +7,16 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#include <io.h>
 #include <windows.h>
-#define STDERR_FILENO 2
-#define isatty _isatty
-#else
-#include <unistd.h>
 #endif
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
-#include <iomanip>
-#include <iostream>
 #include <limits>
 #include <memory>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -63,27 +54,11 @@ struct WriteContext {
   std::string error;
 };
 
-std::string FormatBytes(double bytes) {
-  constexpr std::array<std::string_view, 5> kUnits = {"B", "KiB", "MiB", "GiB",
-                                                      "TiB"};
-  std::size_t unit = 0;
-  while (bytes >= 1024.0 && unit + 1 < kUnits.size()) {
-    bytes /= 1024.0;
-    ++unit;
-  }
-  std::ostringstream output;
-  output << std::fixed << std::setprecision(unit == 0 ? 0 : 1) << bytes << ' '
-         << kUnits[unit];
-  return output.str();
-}
-
 class DownloadProgress {
  public:
-  explicit DownloadProgress(std::uint64_t resume_offset)
-      : resume_offset_(resume_offset),
-        interactive_(isatty(STDERR_FILENO) != 0),
-        started_(Clock::now()),
-        last_update_(started_) {}
+  DownloadProgress(std::uint64_t resume_offset, CURL* curl,
+                   std::string_view noun, std::string_view url)
+      : resume_offset_(resume_offset), curl_(curl), noun_(noun), url_(url) {}
 
   DownloadProgress(const DownloadProgress&) = delete;
   DownloadProgress& operator=(const DownloadProgress&) = delete;
@@ -94,100 +69,59 @@ class DownloadProgress {
     auto* progress = static_cast<DownloadProgress*>(opaque);
     progress->download_total_ = std::max<curl_off_t>(0, download_total);
     progress->downloaded_ = std::max<curl_off_t>(0, downloaded);
-    const bool complete = progress->download_total_ > 0 &&
-                          progress->downloaded_ >= progress->download_total_;
-    if (llmcc::CliSessionActive()) {
-      const std::uint64_t total =
-          progress->download_total_ > 0
-              ? progress->resume_offset_ + progress->download_total_
-              : 0;
-      llmcc::ReportCounter(progress->resume_offset_ + progress->downloaded_,
-                           total, "bytes");
-    } else {
-      progress->Render(complete);
-    }
+    progress->Report();
     return 0;
   }
 
+  static int Resolving(void* /*resolver*/, void* /*reserved*/, void* opaque) {
+    static_cast<DownloadProgress*>(opaque)->Phase("resolving");
+    return 0;
+  }
+
+  static int Connecting(void* opaque, curl_socket_t /*socket*/,
+                        curlsocktype /*purpose*/) {
+    static_cast<DownloadProgress*>(opaque)->Phase("connecting");
+    return CURL_SOCKOPT_OK;
+  }
+
+  static int Fetching(void* opaque, char* /*remote_ip*/, char* /*local_ip*/,
+                      int /*remote_port*/, int /*local_port*/) {
+    static_cast<DownloadProgress*>(opaque)->Phase("fetching");
+    return CURL_PREREQFUNC_OK;
+  }
+
+  void Phase(std::string_view phase) {
+    char* effective_url = nullptr;
+    curl_easy_getinfo(curl_, CURLINFO_EFFECTIVE_URL, &effective_url);
+    const std::string description =
+        std::string(phase) + " " + noun_ + " from " +
+        SanitizeUrlForDiagnostic(effective_url ? effective_url : url_);
+    if (phase_ == description) return;
+    phase_ = description;
+    ReportPhase(phase_);
+    Report();
+  }
+
   void Finish() {
-    if (llmcc::CliSessionActive()) return;
-    Render(true);
-    if (interactive_ && rendered_) {
-      std::cerr << '\n';
-    }
+    // Close-delimited responses learn their final size only at EOF.
+    if (download_total_ == 0) download_total_ = downloaded_;
+    Report();
   }
 
  private:
-  using Clock = std::chrono::steady_clock;
-
-  void Render(bool force) {
-    const auto now = Clock::now();
-    if (force && rendered_ && download_total_ == rendered_total_ &&
-        downloaded_ == rendered_downloaded_) {
-      return;
-    }
-    if (!force && now - last_update_ < std::chrono::milliseconds(100)) {
-      return;
-    }
-    if (!interactive_ && !force) {
-      return;
-    }
-    last_update_ = now;
-
-    const auto elapsed =
-        std::chrono::duration_cast<std::chrono::duration<double>>(now -
-                                                                  started_)
-            .count();
-    const auto transferred = static_cast<std::uint64_t>(downloaded_);
-    const std::uint64_t current = resume_offset_ + transferred;
-    const double speed =
-        elapsed > 0.0 ? static_cast<double>(transferred) / elapsed : 0.0;
-
-    std::ostringstream line;
-    if (download_total_ > 0) {
-      const std::uint64_t total =
-          resume_offset_ + static_cast<std::uint64_t>(download_total_);
-      const double fraction = std::clamp(
-          static_cast<double>(current) / static_cast<double>(total), 0.0, 1.0);
-      constexpr std::size_t kBarWidth = 28;
-      const auto filled =
-          static_cast<std::size_t>(fraction * static_cast<double>(kBarWidth));
-      line << '[' << std::string(filled, '#')
-           << std::string(kBarWidth - filled, '-') << "] " << std::fixed
-           << std::setprecision(1) << (fraction * 100.0) << "% "
-           << FormatBytes(static_cast<double>(current)) << "/"
-           << FormatBytes(static_cast<double>(total));
-    } else {
-      line << FormatBytes(static_cast<double>(current));
-    }
-    line << "  " << FormatBytes(speed) << "/s";
-
-    const std::string rendered = line.str();
-    if (interactive_) {
-      std::cerr << '\r' << rendered;
-      if (rendered.size() < previous_width_) {
-        std::cerr << std::string(previous_width_ - rendered.size(), ' ');
-      }
-      std::cerr.flush();
-      previous_width_ = rendered.size();
-    } else {
-      std::cerr << rendered << '\n';
-    }
-    rendered_ = true;
-    rendered_total_ = download_total_;
-    rendered_downloaded_ = downloaded_;
+  void Report() const {
+    const std::uint64_t total =
+        download_total_ > 0 ? resume_offset_ + download_total_ : 0;
+    ReportCounter(resume_offset_ + downloaded_, total, "bytes", resume_offset_);
   }
 
   std::uint64_t resume_offset_;
-  bool interactive_;
-  Clock::time_point started_;
-  Clock::time_point last_update_;
+  CURL* curl_;
+  std::string noun_;
+  std::string url_;
+  std::string phase_;
   curl_off_t download_total_ = 0;
   curl_off_t downloaded_ = 0;
-  curl_off_t rendered_total_ = -1;
-  curl_off_t rendered_downloaded_ = -1;
-  std::size_t previous_width_ = 0;
-  bool rendered_ = false;
 };
 
 std::size_t WriteBytes(char* contents, std::size_t size, std::size_t count,
@@ -333,8 +267,14 @@ void DownloadFile(std::string_view download_url,
                   const std::filesystem::path& target,
                   const DownloadOptions& options) {
   CheckDownloadAllowed();
-  ReportPhase("downloading " + std::string(options.noun) + " from " +
-              SanitizeUrlForDiagnostic(download_url));
+  // Share CLI progress and its independent heartbeat with explicit standalone
+  // progress requests, including when stderr is redirected to a pipe or log.
+  std::unique_ptr<ProgressReporter> owned_progress;
+  std::unique_ptr<CliSession> owned_session;
+  if (options.show_progress && !CliSessionActive()) {
+    owned_progress = std::make_unique<ProgressReporter>("auto");
+    owned_session = std::make_unique<CliSession>(*owned_progress, true, false);
+  }
   const std::string url(download_url);
   if (target.has_parent_path()) {
     std::filesystem::create_directories(target.parent_path());
@@ -348,16 +288,6 @@ void DownloadFile(std::string_view download_url,
   }
   CurlGlobal global;
   for (;;) {
-    if (options.show_progress && !CliSessionActive()) {
-      std::cerr << (resume_offset == 0 ? "Downloading " : "Resuming ")
-                << options.noun
-                << (resume_offset == 0 ? " from " : " download from ")
-                << (resume_offset == 0
-                        ? url
-                        : std::to_string(resume_offset) + " bytes")
-                << '\n';
-    }
-
     Curl curl(curl_easy_init(), curl_easy_cleanup);
     if (!curl) {
       throw std::runtime_error("failed to create libcurl request");
@@ -370,7 +300,7 @@ void DownloadFile(std::string_view download_url,
                                partial.string());
     }
     WriteContext write_context{.output = &output, .error = {}};
-    DownloadProgress progress(resume_offset);
+    DownloadProgress progress(resume_offset, curl.get(), options.noun, url);
     std::array<char, CURL_ERROR_SIZE> error_buffer{};
     SetOption(curl.get(), CURLOPT_URL, url.c_str());
     SetOption(curl.get(), CURLOPT_FOLLOWLOCATION, 1L);
@@ -389,6 +319,15 @@ void DownloadFile(std::string_view download_url,
       SetOption(curl.get(), CURLOPT_XFERINFOFUNCTION,
                 &DownloadProgress::Update);
       SetOption(curl.get(), CURLOPT_XFERINFODATA, &progress);
+      SetOption(curl.get(), CURLOPT_RESOLVER_START_FUNCTION,
+                &DownloadProgress::Resolving);
+      SetOption(curl.get(), CURLOPT_RESOLVER_START_DATA, &progress);
+      SetOption(curl.get(), CURLOPT_SOCKOPTFUNCTION,
+                &DownloadProgress::Connecting);
+      SetOption(curl.get(), CURLOPT_SOCKOPTDATA, &progress);
+      SetOption(curl.get(), CURLOPT_PREREQFUNCTION,
+                &DownloadProgress::Fetching);
+      SetOption(curl.get(), CURLOPT_PREREQDATA, &progress);
     }
     if (resume_offset > 0) {
       SetOption(curl.get(), CURLOPT_RESUME_FROM_LARGE,
@@ -401,10 +340,8 @@ void DownloadFile(std::string_view download_url,
       SetOption(curl.get(), CURLOPT_CAINFO, certificate_path.c_str());
     }
 
+    progress.Phase("resolving");
     const CURLcode result = curl_easy_perform(curl.get());
-    if (options.show_progress) {
-      progress.Finish();
-    }
     long status = 0;
     curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status);
     char* effective_url = nullptr;
@@ -435,6 +372,7 @@ void DownloadFile(std::string_view download_url,
       throw std::runtime_error("download returned unexpected HTTP status " +
                                std::to_string(status) + " for " + failed_url);
     }
+    progress.Finish();
     break;
   }
 #if defined(_WIN32)

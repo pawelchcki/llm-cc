@@ -81,11 +81,11 @@ actions:
   # Seed main's baseline and compare pull requests using the same pinned scorer.
   - name: "Complexity comparison"
     self_hosted: true
-    pool: "linux-amd64-rocm"
+    pool: "linux-amd64-kvm"
     platform_properties:
       workload-isolation-type: "none"
       container-image: "none"
-      debug-executor-labels: "machine=bazzite"
+      resources:bazzite-host: "1"
     env:
       LLM_CC_COMPARISON_CONFIG: "/var/lib/llm-cc/comparison-v2.json"
     resource_requests: { disk: 10GB }

@@ -80,6 +80,12 @@ existing() {
   shift 2
   digest="$(skopeo inspect --format '{{.Digest}}' "docker://$name:$tag" 2>/dev/null)" ||
     return 1
+  platform="$(skopeo inspect --format '{{.Os}}/{{.Architecture}}' "docker://$name@$digest")" ||
+    return 1
+  if [ "$platform" != linux/amd64 ]; then
+    echo "not reusing $name@$digest: platform is '$platform', expected 'linux/amd64'" >&2
+    return 1
+  fi
   while [ "$#" -gt 0 ]; do
     label="$(skopeo inspect --format "{{index .Labels \"$1\"}}" "docker://$name@$digest")"
     if [ "$label" != "$2" ]; then
@@ -99,7 +105,7 @@ existing() {
 publish() {
   name=$1 tag=$2 context=$3 file=$4
   shift 4
-  "$ENGINE" build --file "$file" --tag "$name:$tag" --label "io.llm-cc.input-key=$tag" \
+  "$ENGINE" build --platform linux/amd64 --file "$file" --tag "$name:$tag" --label "io.llm-cc.input-key=$tag" \
     "$@" "$context" >&2
   "$ENGINE" push --digestfile "$OUTPUT/.digest" "$name:$tag" >&2
   reference="$name@$(cat "$OUTPUT/.digest")"

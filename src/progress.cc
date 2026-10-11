@@ -1,7 +1,10 @@
 #include "src/progress.h"
 
+#include <algorithm>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 
@@ -174,10 +177,20 @@ void ProgressReporter::Render(Clock::time_point now) {
             << " stalled_s="
             << std::chrono::duration_cast<std::chrono::seconds>(now - advanced_)
                    .count();
+    if (unit_ == "bytes" && total_ != 0) {
+      std::ostringstream percent;
+      percent << std::fixed << std::setprecision(1)
+              << std::clamp(100.0 * static_cast<double>(completed_) /
+                                static_cast<double>(total_),
+                            0.0, 100.0);
+      output_ << " percent=" << percent.str();
+    }
     const double seconds = std::chrono::duration<double>(phase_elapsed).count();
-    if (completed_ != 0 && seconds > 0.0) {
+    const auto transferred =
+        completed_ - std::min(completed_, initial_completed_);
+    if ((completed_ != 0 || unit_ == "bytes") && seconds > 0.0) {
       output_ << ' ' << unit_
-              << "_per_s=" << static_cast<double>(completed_) / seconds;
+              << "_per_s=" << static_cast<double>(transferred) / seconds;
     }
   }
   output_ << '\n' << std::flush;
@@ -187,6 +200,7 @@ void ProgressReporter::Phase(std::string_view message) {
   phase_ = TerminalSafe(message);
   unit_.clear();
   completed_ = total_ = 0;
+  initial_completed_ = 0;
   phase_started_ = now_();
   advanced_ = phase_started_;
   if (enabled_ && !paused_) Render(advanced_);
@@ -201,17 +215,22 @@ void ProgressReporter::StartFile(std::size_t index, std::size_t total,
   Phase("analyzing");
 }
 void ProgressReporter::Counter(std::uint64_t completed, std::uint64_t total,
-                               std::string_view unit) {
+                               std::string_view unit,
+                               std::uint64_t initial_completed) {
   std::lock_guard lock(mutex_);
   const auto now = now_();
-  const bool advanced = completed != completed_ || unit_ != unit;
+  const bool started = unit_ != unit;
+  const bool advanced = completed != completed_ || started;
   if (advanced) advanced_ = now;
   const bool finished =
       (advanced || total != total_) && total != 0 && completed == total;
+  const bool learned_total = total_ == 0 && total != 0;
   completed_ = completed;
   total_ = total;
   unit_ = unit;
-  if (enabled_ && !paused_ && (finished || now - rendered_ >= interval_))
+  initial_completed_ = initial_completed;
+  if (enabled_ && !paused_ &&
+      (started || learned_total || finished || now - rendered_ >= interval_))
     Render(now);
 }
 void ProgressReporter::Tokens(std::size_t completed, std::size_t total) {
@@ -248,8 +267,9 @@ void ReportPhase(std::string_view phase) {
   if (session) session->progress.Phase(phase);
 }
 void ReportCounter(std::uint64_t completed, std::uint64_t total,
-                   std::string_view unit) {
-  if (session) session->progress.Counter(completed, total, unit);
+                   std::string_view unit, std::uint64_t initial_completed) {
+  if (session)
+    session->progress.Counter(completed, total, unit, initial_completed);
 }
 void ReportWarning(std::string_view message) {
   if (session)

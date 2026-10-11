@@ -163,7 +163,7 @@ class BazziteSetupTest(unittest.TestCase):
             "execution_image": "none",
             "execution_bundle": "/var/lib/llm-cc/packages/code.zip",
             "execution_bundle_sha256": "a" * 64,
-            "pool": "linux-amd64-rocm",
+            "pool": "linux-amd64-kvm",
         }
         with mock.patch.dict(
             os.environ,
@@ -186,7 +186,8 @@ class BazziteSetupTest(unittest.TestCase):
         # A non-default default branch must survive the hop.
         self.assertIn("--branch topic", request["steps"][0]["run"])
         self.assertIn("--default-branch trunk", request["steps"][0]["run"])
-        self.assertEqual(request["platform_properties"]["Pool"], "linux-amd64-rocm")
+        self.assertEqual(request["platform_properties"]["Pool"], "linux-amd64-kvm")
+        self.assertEqual(request["platform_properties"]["resources:bazzite-host"], "1")
         self.assertNotIn("skip_auto_checkout", request)
         self.assertNotIn("synthetic-secret", request["steps"][0]["run"])
         self.assertNotIn("gpu-resource", str(request["platform_properties"]))
@@ -597,7 +598,8 @@ class ConsumerTemplateTest(unittest.TestCase):
     def test_templates_name_the_action_pool_launcher_and_artifacts(self):
         workflow = self.read("buildbuddy.yaml")
         self.assertIn('name: "Complexity comparison"', workflow)
-        self.assertIn('pool: "linux-amd64-rocm"', workflow)
+        self.assertIn('pool: "linux-amd64-kvm"', workflow)
+        self.assertIn('resources:bazzite-host: "1"', workflow)
         self.assertIn("self_hosted: true", workflow)
         self.assertIn("/var/lib/llm-cc/bin/llm-cc-coordinate", workflow)
         self.assertIn("--repository OWNER/REPO", workflow)

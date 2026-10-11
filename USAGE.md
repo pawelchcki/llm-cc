@@ -94,6 +94,27 @@ llm-cc --version
 
 ### Prebuilt releases
 
+Package managers install the same executable as the standalone release:
+
+```sh
+npx llm-cc --version
+npm install --global llm-cc
+python3 -m pip install llm-cc
+```
+
+Use `npx llm-cc@X.Y.Z`, `npm install --global llm-cc@X.Y.Z`, or
+`python3 -m pip install llm-cc==X.Y.Z` to pin a version. Python requires
+3.9+; npm requires Node.js 18+ and optional dependencies enabled. For an
+isolated Python installation, use `pipx install llm-cc` or a virtual
+environment. `python3 -m llm_cc` also runs the installed executable.
+
+Pip wheels contain the platform binary; npm selects an exact-version platform
+package. Neither wrapper builds code or downloads binaries at execution time.
+Linux x86-64 requires glibc 2.28+, Linux ARM64 requires glibc
+2.35+, macOS requires 14+, and Windows requires x64. GPU bundles and model
+weights are downloaded separately by the native CLI. Registry
+publishing must be configured for the first release; see [dist/README.md](dist/README.md).
+
 On Linux or macOS, install the latest release with one command:
 
 ```sh
@@ -235,6 +256,14 @@ megabytes can take much longer, depending on hardware, model, and context.
 Long phases keep emitting five-second heartbeats with phase time and stalled
 time; decoding also reports token throughput. `--progress never` suppresses
 this status output.
+
+Model and backend downloads report `resolving`, `connecting` (including TLS),
+and `fetching` on stderr. Fetching shows transferred bytes, a percentage when
+the server supplies a size, and the average transfer rate. Resumed bytes count
+toward completion but not transfer speed. While a connection or transfer
+waits, five-second heartbeats continue to show phase time and `stalled_s`, the
+time since bytes last advanced. These updates also appear in redirected logs;
+`--progress never` suppresses them.
 
 The [large-file experiment](experiments/large-files/README.md) records dense
 10 MiB fixtures across all supported languages and 100 MiB C++/Python runs,

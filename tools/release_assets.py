@@ -120,6 +120,10 @@ def verify(args):
         source = tools / installer if installer.endswith(".py") else tools.parent / installer
         shutil.copyfile(source, args.output / installer)
         expected.add(installer)
+    # Package only after the complete binary/backend contract has passed.
+    from distribution_packages import build
+    build(args.output, args.output, args.version)
+    expected.update(path.name for path in args.output.iterdir())
     (args.output / "SHA256SUMS").write_text(
         "".join(f"{digest(args.output / name)}  {name}\n" for name in sorted(expected)),
         encoding="utf-8",

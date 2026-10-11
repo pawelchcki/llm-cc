@@ -1,0 +1,44 @@
+--- a/ggml/src/ggml-metal/ggml-metal-device.m
++++ b/ggml/src/ggml-metal/ggml-metal-device.m
+@@ -829,6 +829,7 @@
+     ggml_metal_rsets_t rsets;
+ 
+     ggml_metal_library_t library;
++    bool library_initialized;
+ 
+     struct ggml_metal_device_props props;
+ 
+@@ -1218,10 +1219,8 @@
+                     snprintf(dev->props.desc, sizeof(dev->props.desc), "%s", gpu_name);
+                 }
+ 
+-                dev->library = ggml_metal_library_init(dev);
+-                if (!dev->library) {
+-                    GGML_LOG_ERROR("%s: error: failed to create library\n", __func__);
+-                }
++                // Device inventory does not need compiled shaders. The first
++                // backend context initializes the library through the getter.
+ 
+                 if (dev->props.use_residency_sets) {
+                     dev->rsets = ggml_metal_rsets_init(dev);
+@@ -1309,7 +1308,19 @@
+ }
+ 
+ ggml_metal_library_t ggml_metal_device_get_library(ggml_metal_device_t dev) {
+-    return dev->library;
++    if (dev->mtl_device == nil) {
++        return NULL;
++    }
++    @synchronized (dev->mtl_device) {
++        if (!dev->library_initialized) {
++            dev->library = ggml_metal_library_init(dev);
++            dev->library_initialized = true;
++            if (!dev->library) {
++                GGML_LOG_ERROR("%s: error: failed to create library\n", __func__);
++            }
++        }
++        return dev->library;
++    }
+ }
+ 
+ void ggml_metal_device_rsets_add(ggml_metal_device_t dev, ggml_metal_rset_t rset) {
