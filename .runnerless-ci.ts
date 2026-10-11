@@ -3,8 +3,8 @@ import {
   ArtifactComment, ArtifactSpec, ArtifactStatus, artifacts, workflow,
 } from "runnerless/v1";
 import {
-  checks, configuration, event, jobs, packages, repo,
-  OperationRef, OperationRequest, RegistryPublishRequest, WriteResult,
+  checks, comments, configuration, event, jobs, packages, pulls, repo,
+  OperationRef, OperationRequest, PageRequest, RegistryPublishRequest, Value, WriteResult,
 } from "runnerless";
 
 const gpu = new ArtifactSpec("public-artifacts",
@@ -30,11 +30,72 @@ const program = workflow()
   .publishArtifacts("gpu-backends", gpu)
   .publishArtifacts("complexity", comparison);
 
+const ratioPrefix = "LM-CC/token data: `";
+const publisherActorId: i64 = 317265358;
+
+function reportRatio(): void {
+  const details = event.details();
+  if (details.get("pullNumber").isNull()) return;
+  const pr = pulls.get();
+  if (pr.state != "open") return;
+  // The host coordinator is checksum-pinned and isolated from PR imports.
+  // A PR cannot replace its entrypoint, annotation, or source-selection policy.
+  const producers = ["buildbuddy.yaml", "tools/comparison/dogfood.sh",
+                     "tools/comparison/ratchet.py", ".llm-cc/rules.json"];
+  for (let i = 0; i < producers.length; i++) {
+    const path = producers[i];
+    if (repo.readText(path, "head") != repo.readText(path, "base")) {
+      checks.report("LM-CC/token", false,
+        "The comparison producer changed: " + path + "; deploy producer updates through a trusted rollout.");
+      return;
+    }
+  }
+  let nextPage: i32 = 1;
+  while (nextPage > 0) {
+    const page = comments.list(new PageRequest(nextPage, 20));
+    for (let i = 0; i < page.items.length; i++) {
+      const comment = page.items[i];
+      if (comment.get("actorId").integer() != publisherActorId) continue;
+      const body = comment.get("body").string();
+      // Publication attribution can appear between these two host markers.
+      if (!body.startsWith("<!-- codex-review-artifact-publisher -->")
+        || body.indexOf("<!-- ci-toolkit:complexity -->") < 0) continue;
+      const start = body.indexOf(ratioPrefix);
+      if (start < 0) continue;
+      const first = start + ratioPrefix.length;
+      const end = body.indexOf("`", first);
+      if (end < 0) continue;
+      const data = new Value(body.substring(first, end));
+      const identity = data.get("identity");
+      if (data.get("schema_version").integer() != 1
+        || identity.get("repository").string() != details.get("fullName").string()
+        || identity.get("pr_number").integer() != pr.number
+        || identity.get("head_sha").string() != pr.head
+        || identity.get("target_sha").string() != pr.base) continue;
+      const base = F64.parseFloat(data.get("base_ratio").json);
+      const head = F64.parseFloat(data.get("head_ratio").json);
+      const valid = data.get("status").string() == "complete"
+        && isFinite(base) && isFinite(head) && base >= 0 && head >= 0;
+      checks.report("LM-CC/token", valid && head <= base,
+        valid ? "Repository LM-CC/token: " + base.toString() + " -> " + head.toString()
+          + (head <= base ? "; maintained or improved." : "; regression.")
+          : "The current comparison has no complete, finite LM-CC/token measurements.");
+      return;
+    }
+    nextPage = page.nextPage;
+  }
+  checks.report("LM-CC/token", false,
+    "Waiting for verified LM-CC/token data for the current PR head and target.");
+}
+
 export function configure(): void {
   badges.define(new BadgeSpec("badge", "medium", "slowest-job"));
   program.configure();
   configuration.workflow("artifact-cleanup", ["pull_request"]);
   configuration.workflow("registry-publish", ["workflow_run", "runnerless_completion"]);
+  configuration.workflow("llm-cc-token-ratio", [
+    "pull_request", "status", "runnerless_completion", "issue_comment",
+  ]);
 }
 
 function reportPublishing(key: string, name: string): void {
@@ -82,6 +143,7 @@ function publishRegistries(): void {
 
 export function run(): void {
   program.run();
+  reportRatio();
   publishRegistries();
   if (event.isMerge()) artifacts.cleanup();
 }

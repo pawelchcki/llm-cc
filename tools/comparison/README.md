@@ -170,6 +170,43 @@ stored reports, match `identity` to the intended repository and commits and
 `fingerprint` to the intended scorer settings. LM-CC/token is a heuristic;
 raw totals and file regressions provide context for a ratio change.
 
+## Repository ratchet
+
+This repository's `Runnerless / LM-CC/token` check requires the head's
+repository-wide ratio to be equal to or below the PR merge base's ratio. Raw
+LM-CC can grow when code is added; any increase in LM-CC/token fails the check.
+Missing, incomplete, non-finite, zero-token, or stale measurements also fail.
+
+`dogfood.sh` runs the installed `/var/lib/llm-cc/bin/llm-cc-coordinate`, which
+verifies its execution bundle's SHA-256 and isolates Python imports from the
+checkout. It then runs `ratchet.py` with Python `-I` to add exact ratios and
+report identity in a collapsed **Comparison data** block, preserving the
+headline and updating the comment's checksum in `publication.json`. This
+works with the existing pinned scorer as well as newer reports. Runnerless
+accepts only the comparison publisher bot (`317265358`) and its artifact
+markers, and matches the repository, PR number, head and target commit before
+comparing ratios. It does not parse rounded headline or table values.
+
+The check requires `buildbuddy.yaml`, `tools/comparison/dogfood.sh`,
+`tools/comparison/ratchet.py` and `.llm-cc/rules.json` to match the trusted base.
+Updates to those producers need a separate trusted rollout; a PR cannot
+replace the producer or redefine the measured source set and pass its own gate.
+
+Runnerless executes the base branch's policy, so the new check starts after
+this policy lands on `main`. Once an ordinary PR reports the new check, apply
+the recorded [main ruleset](../../.github/main-ruleset.json) to ruleset
+`21882868` to make it required:
+
+```sh
+gh api --method PUT repos/pawelchcki/llm-cc/rulesets/21882868 \
+  --input .github/main-ruleset.json
+```
+
+The ruleset retains the existing merge protections, requires `Runnerless`
+and `Runnerless / LM-CC/token` from app `4602759`, and requires the PR branch
+to be current with `main`. Applying it before the policy lands would leave
+this PR waiting for a check that the base policy cannot produce.
+
 ## Per-repository classification rules
 
 `prepare` reads `.llm-cc/rules.json` from the **target** commit's tree, falling
