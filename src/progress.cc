@@ -1,16 +1,43 @@
 #include "src/progress.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
+#include <streambuf>
 #include <utility>
 
 namespace llmcc {
 namespace {
 thread_local CliSession* session = nullptr;
+
+// libc++ filebuf fills its fread buffer before returning even one terminal
+// line. Read a character at a time through stdio so Enter completes the read.
+class TerminalInputBuffer : public std::streambuf {
+ public:
+  explicit TerminalInputBuffer(const char* path)
+      : file_(std::fopen(path, "r"), &std::fclose) {}
+  bool IsOpen() const { return file_ != nullptr; }
+
+ protected:
+  int_type underflow() override {
+    if (gptr() != egptr()) return traits_type::to_int_type(*gptr());
+    if (!file_) return traits_type::eof();
+    const int next = std::fgetc(file_.get());
+    if (next == EOF) return traits_type::eof();
+    character_ = static_cast<char>(next);
+    setg(&character_, &character_, &character_ + 1);
+    return traits_type::to_int_type(character_);
+  }
+
+ private:
+  std::unique_ptr<std::FILE, decltype(&std::fclose)> file_;
+  char character_ = 0;
+};
 
 std::string PathUtf8(const std::filesystem::path& path) {
 #if defined(_WIN32)
@@ -327,20 +354,21 @@ void ConfirmDownload(std::string_view url, const std::filesystem::path& target,
                              prompt);
     } else {
 #ifdef _WIN32
-      std::ifstream terminal_input("CONIN$");
-      std::ofstream terminal_output("CONOUT$");
+      constexpr const char* input_path = "CONIN$";
+      constexpr const char* output_path = "CONOUT$";
+#else
+      constexpr const char* input_path = "/dev/tty";
+      constexpr const char* output_path = "/dev/tty";
+#endif
+      TerminalInputBuffer input_buffer(input_path);
+      std::istream terminal_input(&input_buffer);
+      std::ofstream terminal_output(output_path);
       RequireDownloadConsent(
           false, session->no_download,
-          terminal_input && terminal_output ? &terminal_input : nullptr,
+          input_buffer.IsOpen() && terminal_output ? &terminal_input : nullptr,
           terminal_output ? static_cast<std::ostream&>(terminal_output)
                           : std::cerr,
           prompt);
-#else
-      std::fstream terminal("/dev/tty", std::ios::in | std::ios::out);
-      RequireDownloadConsent(
-          false, session->no_download, terminal ? &terminal : nullptr,
-          terminal ? static_cast<std::ostream&>(terminal) : std::cerr, prompt);
-#endif
     }
   } catch (...) {
     session->progress.Pause(false);

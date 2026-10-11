@@ -94,9 +94,93 @@ class PausedTLSHTTPServer(TLSHTTPServer):
         return self.context.wrap_socket(connection, server_side=True), address
 
 
+class ModelProxyHandler(Handler):
+    """Serve the CLI's pinned model URL locally, with normal TLS verification."""
+
+    def do_CONNECT(self):
+        if self.path != "huggingface.co:443":
+            self.send_error(403)
+            return
+        self.server.requests.append(self.path)
+        self.send_response(200, "Connection established")
+        self.end_headers()
+        with self.server.context.wrap_socket(self.connection, server_side=True) as tunnel:
+            Handler(tunnel, self.client_address, self.server)
+
+
+def check_first_run(cli, root, context, ca):
+    # Windows has no POSIX controlling-terminal fixture; its transport tests
+    # and the stream-level consent tests still run in the platform suite.
+    if os.name == "nt":
+        return
+    from terminal_fixture import run_terminal
+
+    proxy = http.server.ThreadingHTTPServer(("127.0.0.1", 0), ModelProxyHandler)
+    proxy.context = context
+    proxy.requests = []
+    thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+    thread.start()
+    try:
+        cache = root / "first-run-cache"
+        proxy_url = f"http://127.0.0.1:{proxy.server_port}"
+        env = dict(os.environ, SSL_CERT_FILE=str(ca),
+                   HTTPS_PROXY=proxy_url, https_proxy=proxy_url,
+                   HTTP_PROXY=proxy_url, http_proxy=proxy_url,
+                   ALL_PROXY="", all_proxy="", NO_PROXY="", no_proxy="",
+                   LLM_CC_CACHE_DIR=str(cache),
+                   LLM_CC_ENTROPY_CACHE_DIR=str(root / "first-run-entropy"))
+        command = [str(cli), "score", "--model-name", "qwen2.5-coder-0.5b-q4_k_m",
+                   "--prompt", "fixture", "--force-cpu", "--progress", "always"]
+        target = cache / "Qwen2.5-Coder-0.5B-Q4_K_M.gguf"
+        for answer in (b"n\n", b"\n"):
+            status, _, stderr, _ = run_terminal(command, [answer], env=env)
+            assert status != 0 and b"download declined" in stderr, stderr
+            assert not target.exists() and not proxy.requests
+
+        for options, diagnostic in [
+            ([], b"interactive terminal"),
+            (["--no-download", "-y"], b"not cached"),
+        ]:
+            result = subprocess.run(command + options, env=env, input=b"y\n",
+                                    capture_output=True, start_new_session=True,
+                                    timeout=10, check=False)
+            assert result.returncode != 0 and diagnostic in result.stderr, result.stderr
+            assert not target.exists() and not proxy.requests
+
+        status, _, stderr, _ = run_terminal(command, [b"y\n"], env=env, timeout=10)
+        # These bytes deliberately are not a model: inference must reject
+        # them after the real first-run consent and download have completed.
+        assert status != 0 and b"GGUF" in stderr.upper(), stderr
+        assert target.read_bytes() == PAYLOAD
+        assert not Path(str(target) + ".partial").exists()
+        assert len(proxy.requests) == 1, proxy.requests
+        assert b"fetching model" in stderr and b"percent=100.0" in stderr, stderr
+
+        status, _, stderr, transcript = run_terminal(
+            command + ["--no-download"], [], env=env, timeout=10)
+        assert status != 0 and b"GGUF" in stderr.upper(), stderr
+        assert b"Download?" not in transcript and len(proxy.requests) == 1
+        assert target.read_bytes() == PAYLOAD
+
+        unattended_cache = root / "unattended-cache"
+        unattended = subprocess.run(
+            command + ["-y", "--progress", "never"],
+            env=dict(env, LLM_CC_CACHE_DIR=str(unattended_cache)),
+            capture_output=True, start_new_session=True, timeout=10, check=False)
+        assert unattended.returncode != 0 and b"GGUF" in unattended.stderr.upper(), unattended.stderr
+        assert (unattended_cache / target.name).read_bytes() == PAYLOAD
+        assert len(proxy.requests) == 2 and b"Download?" not in unattended.stderr
+        assert b"llm-cc:" not in unattended.stderr
+    finally:
+        proxy.shutdown()
+        proxy.server_close()
+        thread.join()
+
+
 def main():
     probe = executable_runfile(sys.argv[1])
     fixtures = Path(sys.argv[2]).resolve(strict=True).parent
+    cli = executable_runfile(sys.argv[3])
     assert probe.is_file(), probe
     root = Path(os.environ["TEST_TMPDIR"])
     # A short-lived leaf with serverAuth works with Apple SecTrust as well as
@@ -125,7 +209,7 @@ authorityKeyIdentifier = keyid:always
                     "-outform", "DER", "-out", str(root / "ca.crl")], check=True, capture_output=True)
     crl_server.crl = (root / "ca.crl").read_bytes()
     extensions = root / "server.ext"
-    extensions.write_text("basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:localhost\n"
+    extensions.write_text("basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:localhost,DNS:huggingface.co\n"
                           f"crlDistributionPoints=URI:http://127.0.0.1:{crl_server.server_port}/ca.crl\n")
     subprocess.run(["openssl", "req", "-new", "-newkey", "rsa:2048", "-nodes",
                     "-keyout", str(root / "server.key"), "-out", str(root / "server.csr"),
@@ -272,7 +356,8 @@ authorityKeyIdentifier = keyid:always
             [str(probe), f"https://localhost:{server.server_port}/data", str(root / "silent"), "never"],
             env=env, capture_output=True, text=True, timeout=10)
         assert silent.returncode == 0 and silent.stdout == "" and silent.stderr == "", silent
-        print("TLS trust, hostname, redirect, resume, and live download progress checks passed")
+        check_first_run(cli, root, context, fixtures / "ca.pem")
+        print("TLS trust, hostname, redirect, resume, live progress, and first-run CLI checks passed")
     finally:
         server.shutdown()
         server.server_close()

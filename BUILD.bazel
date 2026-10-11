@@ -1839,6 +1839,7 @@ test_suite(
         ":sha256_test",
         ":starlark_test",
         ":subprocess_test",
+        ":terminal_consent_test",
         ":version_test",
     ],
 )
@@ -1866,6 +1867,25 @@ cc_test(
     deps = [":progress", ":backend_policy", ":cache", ":test_util"],
 )
 
+sh_test(
+    name = "terminal_consent_test",
+    srcs = ["//tools:terminal_consent_test.sh"],
+    args = [
+        "$(rlocationpath //tools:terminal_consent_test.py)",
+        "$(rlocationpath //tools:terminal_consent_probe)",
+    ],
+    data = [
+        "//tools:terminal_consent_test.py",
+        "//tools:terminal_consent_probe",
+        "//tools:terminal_fixture.py",
+    ],
+    env_inherit = ["PATH"],
+    target_compatible_with = select({
+        ":host_windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+)
+
 cuda_archs_flag(name = "cuda_archs", build_setting_default = DEFAULT_CUDA_ARCHS)
 
 backend_locations(name = "backend_locations", out = "generated/backend_locations.h")
@@ -1880,8 +1900,14 @@ sh_test(
         "$(rlocationpath //tools:tls_integration_test.py)",
         "$(rlocationpath //tools:tls_download_probe)",
         "$(rlocationpath testdata/tls/README.md)",
+        "$(rlocationpath :llm-cc)",
     ],
-    data = ["//tools:tls_integration_test.py", "//tools:tls_download_probe"] + glob(["testdata/tls/*"]),
+    data = [
+        "//tools:tls_integration_test.py",
+        "//tools:tls_download_probe",
+        "//tools:terminal_fixture.py",
+        ":llm-cc",
+    ] + glob(["testdata/tls/*"]),
     tags = ["requires-network"],
 )
 

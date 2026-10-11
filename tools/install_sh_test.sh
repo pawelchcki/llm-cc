@@ -53,7 +53,8 @@ with socketserver.TCPServer(("127.0.0.1", 0), Quiet) as server:
 PY
 server_pid=$!
 trap 'kill "$server_pid" 2>/dev/null || true' EXIT
-for _ in $(seq 100); do
+# Allow 30 seconds for Python imports on a busy hosted runner.
+for _ in $(seq 600); do
   [[ -s "$port_file" ]] && break
   sleep 0.05
 done

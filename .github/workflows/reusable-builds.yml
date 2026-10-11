@@ -17,6 +17,31 @@ permissions:
   contents: read
 
 jobs:
+  terminal:
+    # Exercise libc++'s actual terminal reads on every PR. This small target
+    # needs neither llama.cpp nor model weights, unlike the platform builds.
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-cache: true
+          disk-cache: terminal-${{ runner.os }}-${{ runner.arch }}
+          repository-cache: true
+      - name: Install LLVM runtime dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxml2
+      - name: Interactive download consent
+        run: bazel test --test_output=errors //:terminal_consent_test
+
   platform:
     # Ordinary PRs use BuildBuddy. Full platform and consumer builds run for
     # main, dispatches, PRs into release-please branches, and PRs from

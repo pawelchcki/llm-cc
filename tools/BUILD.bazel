@@ -54,6 +54,9 @@ exports_files([
     "__init__.py",
     "s3_fake_server.py",
     "s3_integration_test.sh",
+    "terminal_consent_test.py",
+    "terminal_consent_test.sh",
+    "terminal_fixture.py",
     "tls_integration_test.py",
     "tls_integration_test.sh",
     "gpu_sdk_repositories.bzl",
@@ -142,5 +145,12 @@ cc_binary(
     name = "tls_download_probe",
     srcs = ["tls_download_probe.cc"],
     deps = ["//:download", "//:linux_compat", "//:progress"],
+    testonly = True,
+)
+
+cc_binary(
+    name = "terminal_consent_probe",
+    srcs = ["terminal_consent_probe.cc"],
+    deps = ["//:progress"],
     testonly = True,
 )
