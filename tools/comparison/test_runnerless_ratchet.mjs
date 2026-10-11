@@ -19,7 +19,7 @@ function comment(payload = data, actorId = 317265358, attribution = '') {
 }
 
 async function run(items, { proposed = '', paged = false, details = {}, pull = {} } = {}) {
-  let exports, response = new Uint8Array();
+  let exports, response = new Uint8Array(), operations = 0;
   const checks = [], workflows = [];
   const event = { event: 'pull_request', action: 'opened', state: 'open',
     pullNumber: 42, fullName: 'pawelchcki/llm-cc', head, base, ...details };
@@ -29,6 +29,7 @@ async function run(items, { proposed = '', paged = false, details = {}, pull = {
     } },
     runnerless_v1: {
       submit(kind, ptr, length) {
+        assert.ok(++operations <= 32, 'Runnerless host-operation budget exceeded');
         const request = JSON.parse(decoder.decode(new Uint8Array(exports.memory.buffer, ptr, length)));
         if (kind === 3) { checks.push(request); response = encoder.encode('null'); return; }
         if (kind === 1) {
@@ -43,9 +44,12 @@ async function run(items, { proposed = '', paged = false, details = {}, pull = {
         let value = null, ok = true;
         if (capability === 'event.details') value = event;
         else if (capability === 'pulls.get') value = { number: 42, state: 'open', head, base, ...pull };
-        else if (capability === 'comments.list') value = paged && args.page === 1
-          ? { items: [{ actorId: 1, body: 'unrelated' }], nextPage: 2 }
-          : { items, nextPage: null };
+        else if (capability === 'comments.list') {
+          const all = paged ? [{ actorId: 1, body: 'unrelated' }, ...items] : items;
+          const first = (args.page - 1) * args.size;
+          const selected = all.slice(first, first + args.size);
+          value = { items: selected, nextPage: selected.length === args.size ? args.page + 1 : null };
+        }
         else if (capability === 'configure.workflow') workflows.push(args);
         else if (capability === 'jobs.result') ok = false;
         else assert.ok(['configure.badge', 'workflow.configure', 'workflow.artifacts.configure',
@@ -65,6 +69,7 @@ async function run(items, { proposed = '', paged = false, details = {}, pull = {
   exports.configure();
   assert.deepEqual(workflows.find(item => item.id === 'llm-cc-token-ratio').events,
     ['pull_request', 'status', 'runnerless_completion', 'issue_comment']);
+  operations = 0; // Configuration and execution have separate production budgets.
   exports.run();
   const ratios = checks.filter(check => check[0] === 'LM-CC/token');
   if (event.pullNumber === null) { assert.equal(ratios.length, 0); return null; }
