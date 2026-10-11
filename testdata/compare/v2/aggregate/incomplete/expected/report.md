@@ -2,19 +2,19 @@
 
 Status: **incomplete**
 
-Scores and ranks use total LM-CC; LM-CC/token is secondary.
+Scores and ranks use total LM-CC. LM-CC/token is total LM-CC divided by scored tokens.
 
-- runtime unavailable → unavailable LM-CC (unavailable)
-- tests 10.5 → 12.0 LM-CC (+14.3%)
-- tooling unavailable → 0.0 LM-CC (unavailable)
-- repository unavailable → unavailable LM-CC (unavailable)
+- runtime unavailable → unavailable LM-CC (unavailable) · LM-CC/token unavailable → unavailable
+- tests 10.5 → 12.0 LM-CC (+14.3%) · LM-CC/token 1.5 → 1.2 (-20%)
+- tooling unavailable → 0.0 LM-CC (unavailable) · LM-CC/token unavailable → unavailable
+- repository unavailable → unavailable LM-CC (unavailable) · LM-CC/token unavailable → unavailable
 
-| Category | LM-CC base | LM-CC head | LM-CC Δ | LM-CC Δ% | LM-CC/token Δ | Tokens Δ | Coverage |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| runtime | unavailable | unavailable | unavailable | unavailable | unavailable | unavailable | 83.3% / 42.9% |
-| tests | 10.5 | 12.0 | +1.5 | +14.3% | -0.3 | 3 | 100.0% / 100.0% |
-| tooling | unavailable | 0.0 | unavailable | unavailable | unavailable | unavailable | 0.0% / 100.0% |
-| repository | unavailable | unavailable | unavailable | unavailable | unavailable | unavailable | 75.0% / 55.6% |
+| Category | LM-CC base | LM-CC head | LM-CC Δ | LM-CC Δ% | LM-CC/token base | LM-CC/token head | LM-CC/token Δ | LM-CC/token Δ% | Tokens Δ | Coverage |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| runtime | unavailable | unavailable | unavailable | unavailable | unavailable | unavailable | unavailable | unavailable | unavailable | 83.3% / 42.9% |
+| tests | 10.5 | 12.0 | +1.5 | +14.3% | 1.5 | 1.2 | -0.3 | -20% | 3 | 100.0% / 100.0% |
+| tooling | unavailable | 0.0 | unavailable | unavailable | unavailable | unavailable | unavailable | unavailable | unavailable | 0.0% / 100.0% |
+| repository | unavailable | unavailable | unavailable | unavailable | unavailable | unavailable | unavailable | unavailable | unavailable | 75.0% / 55.6% |
 
 Cache: 0 hits, 5 misses.
 

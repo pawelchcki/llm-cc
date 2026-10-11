@@ -393,6 +393,14 @@ workers in turn, with the same results. CI runs the same stages separately
 [the comparison stage guide](tools/comparison/README.md) and
 [the schema](tools/comparison/SCHEMA.md).
 
+Comparison summaries show the base and head LM-CC/token ratio and its relative
+change alongside the raw LM-CC delta. For downstream checks, use the
+full-precision `comparisons.repository.lmcc_per_token` object in `report.json`
+(`base`, `head`, `absolute`, `percent`), or the equivalent category comparison.
+The head's `baseline.json` includes `totals.lmcc_per_token`. See
+[consuming LM-CC/token](tools/comparison/README.md#consume-lm-cctoken) for a CI
+example that rejects missing measurements and ratio increases.
+
 ## Interpreting scores
 
 The default headline (`--score raw`) is raw LM-CC, the paper's metric. It

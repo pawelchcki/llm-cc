@@ -2,6 +2,8 @@ Baseline ranking for o/r@39be199bcdc7b54f6258e08e4f585fee7eb6e20c (main)
 
 Status: **failed**
 
+Repository: LM-CC 0.0 · LM-CC/token unavailable · tokens 0
+
 | Category | LM-CC | LM-CC/token | Tokens | Measured paths |
 |---|---:|---:|---:|---:|
 | runtime | 0.0 | unavailable | 0 | 0/0 |

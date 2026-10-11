@@ -189,6 +189,13 @@ repository), `changes`, `change_counts`, `rankings: {base, head}`,
   has an LM-CC total only when every supported path was measured, so an
   oversized runtime file leaves the runtime total unavailable and the report
   incomplete.
+- Side `totals` and each `categories.<category>` include `lmcc_per_token`,
+  the full-precision `sum(llm_cc) / sum(token_count)`, with `score` as a
+  compatibility alias. The ratio is null with incomplete coverage or zero
+  tokens. `comparisons.<category|repository>.lmcc_per_token` is
+  `{base, head, absolute, percent}`, also aliased as `score`; `absolute`
+  is head minus base, and `percent` is the relative change times 100, null
+  without both ratios or with a zero base. These are additive schema-2 fields.
 - A ranking entry is `{path, category, language, size, score, llm_cc,
   token_count, rank, category_rank, changed}` over measured files, by
   descending `llm_cc`, then path.
@@ -205,7 +212,7 @@ important first. Repository-controlled text is neutralized: control and
 bidirectional characters, mentions and Markdown syntax cannot escape their
 code spans, and a path holding an at-sign, a bracket, `<`, `//` or `www.` is
 spelled with character references instead (an at-sign as `&#64;&#8203;`).
-It opens with ``### llm-cc[ (<status>)]: repository LM-CC Δ <delta>[ (<percent>)]``
+It opens with ``### llm-cc[ (<status>)]: repository LM-CC Δ <delta>[ (<percent>)] · LM-CC/token <base> → <head>[ (<percent>)]``
 and a line of per-category deltas and the largest leading change, then wraps
 every section in one `<details>` block titled `<summary>Full comparison</summary>`.
 Without report links the comment is Markdown that ci-toolkit's generated
@@ -215,10 +222,13 @@ sections end by naming the rules: ``Rules: repository `<path>` at
 `<commit>` ``, `Rules: host` or `Rules: built-in`.
 
 `baseline.json` is `{schema_version: 2, identity, fingerprint, status,
-categories, rankings}` with the head side's ranking; `baseline.md` opens with
+totals, categories, rankings}` with the head side's totals and ranking;
+`totals.lmcc_per_token` and `categories.<category>.lmcc_per_token` expose the
+head ratios. `baseline.md` opens with
 `Baseline ranking for <repository>@<head_sha> (<branch>)` and lists the head
-category scores, the top 50 files, the top 20 per category and the unmeasured
-reasons. On a default-branch run these are the repository baseline.
+repository total LM-CC, LM-CC/token and token count, category scores, the top
+50 files, the top 20 per category and the unmeasured reasons. On a default-branch
+run these are the repository baseline.
 
 `publication.json` is `{schema_version: 2, identity, fingerprint, status,
 comment: {path: "comment.md", sha256, bytes}}`. Failure reports are mandatory,

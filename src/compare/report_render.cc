@@ -128,8 +128,24 @@ std::string PathChange(const nlohmann::json& delta) {
   return {buffer.data(), static_cast<std::size_t>(std::max(size, 0))};
 }
 
-// The two lines a collapsed comment shows: the repository's LM-CC delta, then
-// each category's and the largest single file's.
+// Read older reports through their legacy per-token field.
+const nlohmann::json& PerToken(const nlohmann::json& values) {
+  return values.contains("lmcc_per_token") ? values["lmcc_per_token"]
+                                           : Get(values, "score");
+}
+
+std::string RatioChange(const nlohmann::json& comparison) {
+  const nlohmann::json& ratio = PerToken(comparison);
+  std::string text = "LM-CC/token " + Fmt(Get(ratio, "base")) + " " +
+                     std::string(kArrow) + " " + Fmt(Get(ratio, "head"));
+  if (!Get(ratio, "percent").is_null()) {
+    text += " (" + Percent(Get(ratio, "percent")) + ")";
+  }
+  return text;
+}
+
+// The collapsed lead shows the repository's LM-CC delta and per-token ratio,
+// then each category's delta and the largest single file's.
 std::vector<std::string> Lead(const nlohmann::json& report) {
   const nlohmann::json& comparisons =
       GetOr(report, "comparisons", EmptyObject());
@@ -147,6 +163,7 @@ std::vector<std::string> Lead(const nlohmann::json& report) {
   if (!Get(repository, "percent").is_null()) {
     title += " (" + Percent(Get(repository, "percent")) + ")";
   }
+  title += std::string(kDot) + RatioChange(Get(comparisons, "repository"));
   std::string details;
   for (const std::string_view name : kCategories) {
     if (Truthy(Get(comparisons, name))) {
@@ -194,7 +211,8 @@ std::vector<std::string> Headline(const nlohmann::json& report) {
     const nlohmann::json& raw = item["raw_llm_cc"];
     lines.push_back("- " + std::string(name) + " " + Raw(raw["base"]) + " " +
                     std::string(kArrow) + " " + Raw(raw["head"]) + " LM-CC (" +
-                    Percent(raw["percent"]) + ")");
+                    Percent(raw["percent"]) + ")" + std::string(kDot) +
+                    RatioChange(item));
   }
   return lines;
 }
@@ -204,9 +222,10 @@ std::vector<std::string> CategoryTable(const nlohmann::json& report) {
   std::vector<std::string> lines = {
       "",
       "| Category | LM-CC base | LM-CC head | LM-CC " + delta + " | LM-CC " +
-          delta + "% | LM-CC/token " + delta + " | Tokens " + delta +
+          delta + "% | LM-CC/token base | LM-CC/token head | LM-CC/token " +
+          delta + " | LM-CC/token " + delta + "% | Tokens " + delta +
           " | Coverage |",
-      "|---|---:|---:|---:|---:|---:|---:|---:|",
+      "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
   };
   const nlohmann::json& comparisons =
       GetOr(report, "comparisons", EmptyObject());
@@ -216,11 +235,14 @@ std::vector<std::string> CategoryTable(const nlohmann::json& report) {
       continue;
     }
     const nlohmann::json& raw = item["raw_llm_cc"];
+    const nlohmann::json& ratio = PerToken(item);
     lines.push_back(
         "| " + std::string(name) + " | " + Raw(raw["base"]) + " | " +
         Raw(raw["head"]) + " | " + Raw(raw["absolute"], true) + " | " +
-        Percent(raw["percent"]) + " | " + Fmt(item["score"]["absolute"]) +
-        " | " + Fmt(item["tokens"]["absolute"]) + " | " +
+        Percent(raw["percent"]) + " | " + Fmt(Get(ratio, "base")) + " | " +
+        Fmt(Get(ratio, "head")) + " | " + Fmt(Get(ratio, "absolute")) + " | " +
+        Percent(Get(ratio, "percent")) + " | " +
+        Fmt(item["tokens"]["absolute"]) + " | " +
         Percentage(item["coverage"]["base"].get<double>() * 100) + " / " +
         Percentage(item["coverage"]["head"].get<double>() * 100) + " |");
   }
@@ -292,7 +314,9 @@ std::vector<Section> CommentSections(const nlohmann::json& report, bool full) {
   header.insert(
       header.end(),
       {"Status: **" + Str(report["status"]) + "**", "",
-       "Scores and ranks use total LM-CC; LM-CC/token is secondary.", ""});
+       "Scores and ranks use total LM-CC. LM-CC/token is total LM-CC divided "
+       "by scored tokens.",
+       ""});
   for (std::string& line : Headline(report)) {
     header.push_back(std::move(line));
   }
@@ -537,6 +561,7 @@ std::string RenderBaseline(const nlohmann::json& report) {
   const nlohmann::json& rankings =
       GetOr(GetOr(report, "rankings", EmptyObject()), "head", EmptyArray());
   const nlohmann::json& categories = report["sides"]["head"]["categories"];
+  const nlohmann::json& totals = report["sides"]["head"]["totals"];
   const auto known = [&](std::string_view key) {
     const nlohmann::json& value = Get(identity, key);
     return Truthy(value) ? Str(value) : std::string("unknown");
@@ -547,14 +572,17 @@ std::string RenderBaseline(const nlohmann::json& report) {
       "",
       "Status: **" + Str(report["status"]) + "**",
       "",
+      "Repository: LM-CC " + Raw(totals["llm_cc"]) + std::string(kDot) +
+          "LM-CC/token " + Fmt(PerToken(totals)) + std::string(kDot) +
+          "tokens " + Fmt(totals["token_count"]),
+      "",
       "| Category | LM-CC | LM-CC/token | Tokens | Measured paths |",
       "|---|---:|---:|---:|---:|"};
-  const nlohmann::json& totals = report["sides"]["head"]["totals"];
   for (const std::string_view name : kComparisons) {
     const nlohmann::json& values =
         name == "repository" ? totals : categories[std::string(name)];
     lines.push_back("| " + std::string(name) + " | " + Raw(values["llm_cc"]) +
-                    " | " + Fmt(values["score"]) + " | " +
+                    " | " + Fmt(PerToken(values)) + " | " +
                     Fmt(values["token_count"]) + " | " +
                     Integer(values["measured_paths"]) + "/" +
                     Integer(values["supported_paths"]) + " |");
@@ -603,6 +631,7 @@ nlohmann::json BaselineJson(const nlohmann::json& report) {
           {"identity", report["identity"]},
           {"fingerprint", report["fingerprint"]},
           {"status", report["status"]},
+          {"totals", report["sides"]["head"]["totals"]},
           {"categories", report["sides"]["head"]["categories"]},
           {"rankings", GetOr(GetOr(report, "rankings", EmptyObject()), "head",
                              EmptyArray())}};

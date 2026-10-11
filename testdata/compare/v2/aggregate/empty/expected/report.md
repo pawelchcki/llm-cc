@@ -2,19 +2,19 @@
 
 Status: **complete**
 
-Scores and ranks use total LM-CC; LM-CC/token is secondary.
+Scores and ranks use total LM-CC. LM-CC/token is total LM-CC divided by scored tokens.
 
-- runtime 0.0 → 0.0 LM-CC (unavailable)
-- tests 0.0 → 0.0 LM-CC (unavailable)
-- tooling 0.0 → 0.0 LM-CC (unavailable)
-- repository 0.0 → 0.0 LM-CC (unavailable)
+- runtime 0.0 → 0.0 LM-CC (unavailable) · LM-CC/token unavailable → unavailable
+- tests 0.0 → 0.0 LM-CC (unavailable) · LM-CC/token unavailable → unavailable
+- tooling 0.0 → 0.0 LM-CC (unavailable) · LM-CC/token unavailable → unavailable
+- repository 0.0 → 0.0 LM-CC (unavailable) · LM-CC/token unavailable → unavailable
 
-| Category | LM-CC base | LM-CC head | LM-CC Δ | LM-CC Δ% | LM-CC/token Δ | Tokens Δ | Coverage |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| runtime | 0.0 | 0.0 | +0.0 | unavailable | unavailable | 0 | 100.0% / 100.0% |
-| tests | 0.0 | 0.0 | +0.0 | unavailable | unavailable | 0 | 100.0% / 100.0% |
-| tooling | 0.0 | 0.0 | +0.0 | unavailable | unavailable | 0 | 100.0% / 100.0% |
-| repository | 0.0 | 0.0 | +0.0 | unavailable | unavailable | 0 | 100.0% / 100.0% |
+| Category | LM-CC base | LM-CC head | LM-CC Δ | LM-CC Δ% | LM-CC/token base | LM-CC/token head | LM-CC/token Δ | LM-CC/token Δ% | Tokens Δ | Coverage |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| runtime | 0.0 | 0.0 | +0.0 | unavailable | unavailable | unavailable | unavailable | unavailable | 0 | 100.0% / 100.0% |
+| tests | 0.0 | 0.0 | +0.0 | unavailable | unavailable | unavailable | unavailable | unavailable | 0 | 100.0% / 100.0% |
+| tooling | 0.0 | 0.0 | +0.0 | unavailable | unavailable | unavailable | unavailable | unavailable | 0 | 100.0% / 100.0% |
+| repository | 0.0 | 0.0 | +0.0 | unavailable | unavailable | unavailable | unavailable | unavailable | 0 | 100.0% / 100.0% |
 
 Cache: 0 hits, 0 misses.
 

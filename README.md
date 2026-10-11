@@ -100,9 +100,12 @@ llm-cc compare run --target main --output-dir out
 
 This scores `HEAD` and its merge base with `main` and writes `report.md` to
 `out/`: totals per category (runtime, tests, tooling), changed files with base
-and head LM-CC, and the largest regressions and improvements. Results are
-cached by Git blob, language, scorer, model and settings, so a rerun scores
-only what changed. In CI the same stages produce the pull-request comment; see
+and head LM-CC, and the largest regressions and improvements. Summaries show
+LM-CC/token alongside total LM-CC changes. Downstream checks can read the
+full-precision `comparisons.repository.lmcc_per_token` object in `report.json`;
+see [consuming the ratio](tools/comparison/README.md#consume-lm-cctoken).
+Results are cached by Git blob, language, scorer, model and settings, so a
+rerun scores only what changed. In CI the same stages produce the pull-request comment; see
 the [comparison pipeline](tools/comparison/README.md). Which files count, and
 in which category, comes from
 [`.llm-cc/rules.json`](USAGE.md#selection-and-classification-rules).

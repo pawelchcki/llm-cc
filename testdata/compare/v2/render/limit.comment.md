@@ -1,4 +1,4 @@
-### llm-cc: repository LM-CC Δ +1.0 (+100%)
+### llm-cc: repository LM-CC Δ +1.0 (+100%) · LM-CC/token 1 → 2 (+100%)
 
 runtime +1.0 · tests +1.0 · tooling +1.0
 
@@ -7,19 +7,19 @@ runtime +1.0 · tests +1.0 · tooling +1.0
 
 Status: **complete**
 
-Scores and ranks use total LM-CC; LM-CC/token is secondary.
+Scores and ranks use total LM-CC. LM-CC/token is total LM-CC divided by scored tokens.
 
-- runtime 1.0 → 2.0 LM-CC (+100%)
-- tests 1.0 → 2.0 LM-CC (+100%)
-- tooling 1.0 → 2.0 LM-CC (+100%)
-- repository 1.0 → 2.0 LM-CC (+100%)
+- runtime 1.0 → 2.0 LM-CC (+100%) · LM-CC/token 1 → 2 (+100%)
+- tests 1.0 → 2.0 LM-CC (+100%) · LM-CC/token 1 → 2 (+100%)
+- tooling 1.0 → 2.0 LM-CC (+100%) · LM-CC/token 1 → 2 (+100%)
+- repository 1.0 → 2.0 LM-CC (+100%) · LM-CC/token 1 → 2 (+100%)
 
-| Category | LM-CC base | LM-CC head | LM-CC Δ | LM-CC Δ% | LM-CC/token Δ | Tokens Δ | Coverage |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| runtime | 1.0 | 2.0 | +1.0 | +100% | 1 | 0 | 100.0% / 100.0% |
-| tests | 1.0 | 2.0 | +1.0 | +100% | 1 | 0 | 100.0% / 100.0% |
-| tooling | 1.0 | 2.0 | +1.0 | +100% | 1 | 0 | 100.0% / 100.0% |
-| repository | 1.0 | 2.0 | +1.0 | +100% | 1 | 0 | 100.0% / 100.0% |
+| Category | LM-CC base | LM-CC head | LM-CC Δ | LM-CC Δ% | LM-CC/token base | LM-CC/token head | LM-CC/token Δ | LM-CC/token Δ% | Tokens Δ | Coverage |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| runtime | 1.0 | 2.0 | +1.0 | +100% | 1 | 2 | 1 | +100% | 0 | 100.0% / 100.0% |
+| tests | 1.0 | 2.0 | +1.0 | +100% | 1 | 2 | 1 | +100% | 0 | 100.0% / 100.0% |
+| tooling | 1.0 | 2.0 | +1.0 | +100% | 1 | 2 | 1 | +100% | 0 | 100.0% / 100.0% |
+| repository | 1.0 | 2.0 | +1.0 | +100% | 1 | 2 | 1 | +100% | 0 | 100.0% / 100.0% |
 
 Cache: 1 hits, 0 misses.
 

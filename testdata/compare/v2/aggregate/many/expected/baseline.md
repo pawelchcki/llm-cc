@@ -2,6 +2,8 @@ Baseline ranking for o/r@5bd6c43bad25626035e77c99620273074d8e9100 (main)
 
 Status: **complete**
 
+Repository: LM-CC 2557.6 · LM-CC/token 2.12425 · tokens 1204
+
 | Category | LM-CC | LM-CC/token | Tokens | Measured paths |
 |---|---:|---:|---:|---:|
 | runtime | 2373.1 | 2.12834 | 1115 | 34/34 |

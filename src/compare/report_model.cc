@@ -134,6 +134,11 @@ json SideOf(const json& inventory, const json& results) {
     const bool complete = category.measured_paths == category.supported_paths;
     const json llm_cc = complete ? json(category.measured_llm_cc) : json();
     const json tokens = complete ? json(category.measured_token_count) : json();
+    const json per_token =
+        complete && category.measured_token_count != 0
+            ? json(category.measured_llm_cc /
+                   static_cast<double>(category.measured_token_count))
+            : json();
     category_json[std::string(name)] = {
         {"paths", category.paths},
         {"supported_paths", category.supported_paths},
@@ -145,10 +150,8 @@ json SideOf(const json& inventory, const json& results) {
         {"measured_token_count", category.measured_token_count},
         {"llm_cc", llm_cc},
         {"token_count", tokens},
-        {"score", complete && category.measured_token_count != 0
-                      ? json(category.measured_llm_cc /
-                             static_cast<double>(category.measured_token_count))
-                      : json()},
+        {"lmcc_per_token", per_token},
+        {"score", per_token},
         {"coverage", Ratio(category.measured_paths, category.supported_paths)},
         {"byte_coverage",
          Ratio(category.measured_bytes, category.supported_bytes)}};
@@ -160,6 +163,10 @@ json SideOf(const json& inventory, const json& results) {
   for (const auto& [reason, count] : reasons) {
     reason_json[reason] = count;
   }
+  const json per_token =
+      complete && measured_tokens != 0
+          ? json(measured_llm_cc / static_cast<double>(measured_tokens))
+          : json();
   json totals = {{"paths", inventory.size()},
                  {"supported_paths", supported},
                  {"measured_paths", measured},
@@ -172,10 +179,8 @@ json SideOf(const json& inventory, const json& results) {
                  {"measured_token_count", measured_tokens},
                  {"llm_cc", complete ? json(measured_llm_cc) : json()},
                  {"token_count", complete ? json(measured_tokens) : json()},
-                 {"score", complete && measured_tokens != 0
-                               ? json(measured_llm_cc /
-                                      static_cast<double>(measured_tokens))
-                               : json()}};
+                 {"lmcc_per_token", per_token},
+                 {"score", per_token}};
   return {{"totals", std::move(totals)},
           {"categories", std::move(category_json)}};
 }
@@ -306,7 +311,10 @@ json ChangedFilesOf(const json& changes, const PathIndex& base_paths,
 }
 
 json Comparison(const json& base, const json& head) {
-  return {{"score", DeltaOf(base["score"], head["score"])},
+  const json per_token =
+      DeltaOf(base["lmcc_per_token"], head["lmcc_per_token"]);
+  return {{"lmcc_per_token", per_token},
+          {"score", per_token},
           {"raw_llm_cc", DeltaOf(base["llm_cc"], head["llm_cc"])},
           {"tokens", DeltaOf(base["token_count"], head["token_count"])}};
 }

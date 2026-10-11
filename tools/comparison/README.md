@@ -98,12 +98,15 @@ worker, result and report formats.
 Total LM-CC is the primary metric throughout the report: category summaries,
 changed-file values and deltas, leading improvements/regressions, and file ranks.
 Rankings sort by descending total LM-CC, with paths breaking ties. LM-CC/token
-remains a separately labeled secondary metric; it can rise while total LM-CC
-falls when a refactor removes proportionally more tokens than complexity.
+appears alongside total LM-CC in summaries and category tables. It is
+`sum(llm_cc) / sum(tokens)`, rather than the mean of file ratios, and can rise
+while total LM-CC falls when a refactor removes proportionally more tokens
+than complexity.
 
 `comment.md` is the bounded pull-request comment, at most 24 KiB. Collapsed, it
-shows two lines: the repository's LM-CC delta (and the status unless it is
-complete), then each category's LM-CC delta and the largest single-file change.
+shows two lines: the repository's LM-CC delta and base/head LM-CC/token with
+its percentage change (and the status unless it is complete), then each
+category's LM-CC delta and the largest single-file change.
 Everything else sits in a **Full comparison** block that GitHub shows collapsed.
 That block opens with
 the status and one headline line per category, then the category table, the cache
@@ -123,12 +126,49 @@ and only then are whole lines cut; nothing is ever split inside a code span.
 changed-files table, raw totals, coverage details and both inventories.
 
 `baseline.md` and `baseline.json` describe the run's head revision on its own:
-category scores, the 50 worst-scoring files overall, the 20 worst per category,
-and the unmeasured paths. On a pull-request run they describe the PR head. The
-copies published from default-branch pushes and retained by the publisher's
+repository totals and LM-CC/token, category scores, the 50 worst-scoring files
+overall, the 20 worst per category, and the unmeasured paths. On a pull-request
+run they describe the PR head. The copies published from default-branch pushes
+and retained by the publisher's
 `keep_default_branch_sets` are the repository baseline. Set
 `report_links.baseline` in the BuildBuddy configuration to that published URL and
 pull-request comments will link to it.
+
+## Consume LM-CC/token
+
+Use JSON values for downstream checks and dashboards; Markdown rounds values
+for display. `report.json` exposes the full-precision repository comparison at
+`comparisons.repository.lmcc_per_token`:
+
+```sh
+jq '.comparisons.repository.lmcc_per_token' comparison/report.json
+```
+
+The object contains `base`, `head`, `absolute` (head minus base), and `percent`
+(relative change multiplied by 100). Each `sides.base` / `sides.head` has
+`totals.lmcc_per_token` and `categories.<category>.lmcc_per_token`. The head-only
+`baseline.json` exposes `totals.lmcc_per_token` and the same category fields.
+The `score` fields in these objects remain aliases for compatibility, within
+schema 2.
+
+A downstream CI job can require a complete comparison with no ratio increase:
+
+```sh
+jq -e '
+  .status == "complete" and
+  (.comparisons.repository.lmcc_per_token |
+    (.base | type) == "number" and
+    (.head | type) == "number" and
+    .head <= .base)
+' comparison/report.json
+```
+
+Use `comparisons.runtime.lmcc_per_token` to apply the same policy to runtime
+code. Ratios are `null` without full supported-source coverage or with zero
+tokens; the percentage is also `null` when the base ratio is zero. When reading
+stored reports, match `identity` to the intended repository and commits and
+`fingerprint` to the intended scorer settings. LM-CC/token is a heuristic;
+raw totals and file regressions provide context for a ratio change.
 
 ## Per-repository classification rules
 

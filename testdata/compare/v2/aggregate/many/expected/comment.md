@@ -1,4 +1,4 @@
-### llm-cc: repository LM-CC Δ -273.0 (-9.64%)
+### llm-cc: repository LM-CC Δ -273.0 (-9.64%) · LM-CC/token 2.11713 → 2.12425 (+0.337%)
 
 runtime -382.5 · tests +109.5 · tooling +0.0 · largest `tests/gen10_test.c` +136.5
 
@@ -7,19 +7,19 @@ runtime -382.5 · tests +109.5 · tooling +0.0 · largest `tests/gen10_test.c` +
 
 Status: **complete**
 
-Scores and ranks use total LM-CC; LM-CC/token is secondary.
+Scores and ranks use total LM-CC. LM-CC/token is total LM-CC divided by scored tokens.
 
-- runtime 2755.6 → 2373.1 LM-CC (-13.9%)
-- tests 73.5 → 183.0 LM-CC (+149%)
-- tooling 1.5 → 1.5 LM-CC (+0%)
-- repository 2830.6 → 2557.6 LM-CC (-9.64%)
+- runtime 2755.6 → 2373.1 LM-CC (-13.9%) · LM-CC/token 2.12132 → 2.12834 (+0.331%)
+- tests 73.5 → 183.0 LM-CC (+149%) · LM-CC/token 2.1 → 2.12791 (+1.33%)
+- tooling 1.5 → 1.5 LM-CC (+0%) · LM-CC/token 0.5 → 0.5 (+0%)
+- repository 2830.6 → 2557.6 LM-CC (-9.64%) · LM-CC/token 2.11713 → 2.12425 (+0.337%)
 
-| Category | LM-CC base | LM-CC head | LM-CC Δ | LM-CC Δ% | LM-CC/token Δ | Tokens Δ | Coverage |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| runtime | 2755.6 | 2373.1 | -382.5 | -13.9% | 0.00701671 | -184 | 100.0% / 100.0% |
-| tests | 73.5 | 183.0 | +109.5 | +149% | 0.027907 | 51 | 100.0% / 100.0% |
-| tooling | 1.5 | 1.5 | +0.0 | +0% | 0 | 0 | 100.0% / 100.0% |
-| repository | 2830.6 | 2557.6 | -273.0 | -9.64% | 0.00712459 | -133 | 100.0% / 100.0% |
+| Category | LM-CC base | LM-CC head | LM-CC Δ | LM-CC Δ% | LM-CC/token base | LM-CC/token head | LM-CC/token Δ | LM-CC/token Δ% | Tokens Δ | Coverage |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| runtime | 2755.6 | 2373.1 | -382.5 | -13.9% | 2.12132 | 2.12834 | 0.00701671 | +0.331% | -184 | 100.0% / 100.0% |
+| tests | 73.5 | 183.0 | +109.5 | +149% | 2.1 | 2.12791 | 0.027907 | +1.33% | 51 | 100.0% / 100.0% |
+| tooling | 1.5 | 1.5 | +0.0 | +0% | 0.5 | 0.5 | 0 | +0% | 0 | 100.0% / 100.0% |
+| repository | 2830.6 | 2557.6 | -273.0 | -9.64% | 2.11713 | 2.12425 | 0.00712459 | +0.337% | -133 | 100.0% / 100.0% |
 
 Cache: 0 hits, 61 misses.
 
