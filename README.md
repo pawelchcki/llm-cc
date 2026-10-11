@@ -1,5 +1,7 @@
 # llm-cc
 
+[![Runnerless CI: slowest job](https://badges.runnerlesshq.com/github.com/pawelchcki/llm-cc/badge.svg)](https://app.runnerlesshq.com)
+
 [![Latest release](https://img.shields.io/github/v/release/pawelchcki/llm-cc)](https://github.com/pawelchcki/llm-cc/releases/latest)
 [![License: MIT](https://img.shields.io/github/license/pawelchcki/llm-cc)](LICENSE)
 

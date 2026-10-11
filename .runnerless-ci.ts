@@ -1,3 +1,4 @@
+import { badges, BadgeSpec } from "runnerless/v1";
 import {
   ArtifactComment, ArtifactSpec, ArtifactStatus, artifacts, workflow,
 } from "runnerless/v1";
@@ -30,6 +31,7 @@ const program = workflow()
   .publishArtifacts("complexity", comparison);
 
 export function configure(): void {
+  badges.define(new BadgeSpec("badge", "medium", "slowest-job"));
   program.configure();
   configuration.workflow("artifact-cleanup", ["pull_request"]);
   configuration.workflow("registry-publish", ["workflow_run", "runnerless_completion"]);
