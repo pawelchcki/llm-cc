@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <streambuf>
@@ -19,19 +20,14 @@ thread_local CliSession* session = nullptr;
 class TerminalInputBuffer : public std::streambuf {
  public:
   explicit TerminalInputBuffer(const char* path)
-      : file_(std::fopen(path, "r")) {}
-  ~TerminalInputBuffer() override {
-    if (file_) std::fclose(file_);
-  }
-  TerminalInputBuffer(const TerminalInputBuffer&) = delete;
-  TerminalInputBuffer& operator=(const TerminalInputBuffer&) = delete;
+      : file_(std::fopen(path, "r"), &std::fclose) {}
   bool IsOpen() const { return file_ != nullptr; }
 
  protected:
   int_type underflow() override {
     if (gptr() != egptr()) return traits_type::to_int_type(*gptr());
     if (!file_) return traits_type::eof();
-    const int next = std::fgetc(file_);
+    const int next = std::fgetc(file_.get());
     if (next == EOF) return traits_type::eof();
     character_ = static_cast<char>(next);
     setg(&character_, &character_, &character_ + 1);
@@ -39,7 +35,7 @@ class TerminalInputBuffer : public std::streambuf {
   }
 
  private:
-  std::FILE* file_;
+  std::unique_ptr<std::FILE, decltype(&std::fclose)> file_;
   char character_ = 0;
 };
 

@@ -94,7 +94,7 @@ class PausedTLSHTTPServer(TLSHTTPServer):
         return self.context.wrap_socket(connection, server_side=True), address
 
 
-class ModelProxyHandler(http.server.BaseHTTPRequestHandler):
+class ModelProxyHandler(Handler):
     """Serve the CLI's pinned model URL locally, with normal TLS verification."""
 
     def do_CONNECT(self):
@@ -106,9 +106,6 @@ class ModelProxyHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         with self.server.context.wrap_socket(self.connection, server_side=True) as tunnel:
             Handler(tunnel, self.client_address, self.server)
-
-    def log_message(self, *_):
-        pass
 
 
 def check_first_run(cli, root, context, ca):
