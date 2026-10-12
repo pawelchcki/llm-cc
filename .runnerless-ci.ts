@@ -27,6 +27,7 @@ comparison.comment = ArtifactComment.generated("comment.md", "publication.json",
 // Each publisher keeps one complete default-branch set and the 14-day fallback.
 // The host protects active release inputs and owns storage paths and credentials.
 const program = workflow()
+  .releasePlease()
   .publishArtifacts("gpu-backends", gpu)
   .publishArtifacts("complexity", comparison);
 

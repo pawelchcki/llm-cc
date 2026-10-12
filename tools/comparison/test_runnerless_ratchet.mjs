@@ -1,4 +1,4 @@
-// Run the compiled .runnerless-ci.ts against the versioned host ABI:
+// Verify release recipe registration and ratio checks against the versioned host ABI:
 // node tools/comparison/test_runnerless_ratchet.mjs PROGRAM.wasm
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -20,7 +20,7 @@ function comment(payload = data, actorId = 317265358, attribution = '') {
 
 async function run(items, { proposed = '', paged = false, details = {}, pull = {} } = {}) {
   let exports, response = new Uint8Array(), operations = 0;
-  const checks = [], workflows = [];
+  const checks = [], workflows = [], recipes = new Map();
   const event = { event: 'pull_request', action: 'opened', state: 'open',
     pullNumber: 42, fullName: 'pawelchcki/llm-cc', head, base, ...details };
   const { instance } = await WebAssembly.instantiate(wasm, {
@@ -52,8 +52,12 @@ async function run(items, { proposed = '', paged = false, details = {}, pull = {
         }
         else if (capability === 'configure.workflow') workflows.push(args);
         else if (capability === 'jobs.result') ok = false;
-        else assert.ok(['configure.badge', 'workflow.configure', 'workflow.artifacts.configure',
-          'workflow.run', 'workflow.artifacts.run'].includes(capability), capability);
+        else if (capability === 'workflow.configure' || capability === 'workflow.run') {
+          assert.ok(!recipes.has(capability), `${capability} called more than once`);
+          recipes.set(capability, args);
+        }
+        else assert.ok(['configure.badge', 'workflow.artifacts.configure',
+          'workflow.artifacts.run'].includes(capability), capability);
         response = encoder.encode(JSON.stringify({ version: 1, ok, value }));
       },
       poll() { return response.length; },
@@ -67,10 +71,14 @@ async function run(items, { proposed = '', paged = false, details = {}, pull = {
   exports = instance.exports;
   exports.__runnerless_init();
   exports.configure();
+  assert.deepEqual(recipes.get('workflow.configure'), { version: 1, release: true, deploy: null },
+    'Release Please must be enabled in the repository program; YAML only supplies its settings');
   assert.deepEqual(workflows.find(item => item.id === 'llm-cc-token-ratio').events,
     ['pull_request', 'status', 'runnerless_completion', 'issue_comment']);
   operations = 0; // Configuration and execution have separate production budgets.
   exports.run();
+  assert.deepEqual(recipes.get('workflow.run'), recipes.get('workflow.configure'),
+    'Execution must use the configured release recipe');
   const ratios = checks.filter(check => check[0] === 'LM-CC/token');
   if (event.pullNumber === null) { assert.equal(ratios.length, 0); return null; }
   assert.equal(ratios.length, 1);
@@ -116,4 +124,5 @@ await expect([large], true, { pull: { body: 'Details\n'.repeat(6000) } });
 for (const proposed of producers) await expect([comment()], false, { proposed });
 await expect([comment()], true, { details: { event: 'runnerless_completion' } });
 await expect([], null, { details: { event: 'push', pullNumber: null } });
-console.log(`Runnerless Wasm: ${scenarios} ratio, identity, publisher, pagination, producer and event scenarios passed.`);
+await expect([], null, { details: { event: 'runnerless_completion', pullNumber: null } });
+console.log(`Runnerless Wasm: release registration and ${scenarios} ratio, identity, publisher, pagination, producer and event scenarios passed.`);
