@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.0](https://github.com/pawelchcki/llm-cc/compare/v0.8.0...v0.9.0) (2026-10-12)
+
+
+### Features
+
+* surface complexity ratios and ratchet PR increases ([#85](https://github.com/pawelchcki/llm-cc/issues/85)) ([f78105c](https://github.com/pawelchcki/llm-cc/commit/f78105ca264b385347c5cc501c4dae39f520d18d))
+
+### Bug Fixes
+
+* restore Runnerless Release Please automation ([#89](https://github.com/pawelchcki/llm-cc/issues/89)) ([68b3d18](https://github.com/pawelchcki/llm-cc/commit/68b3d188249a959ef05a63b4c64b71158e79f2d6))
+* unblock interactive downloads and test first-run CLI paths ([#86](https://github.com/pawelchcki/llm-cc/issues/86)) ([15266ee](https://github.com/pawelchcki/llm-cc/commit/15266ee2b7d1a6afdcefa9eccf7bf904d0fe88ea))
+* filter unrelated Runnerless reports before parsing ([#88](https://github.com/pawelchcki/llm-cc/issues/88)) ([76b471c](https://github.com/pawelchcki/llm-cc/commit/76b471cddb3e630662d502b23216839885c3272b))
+* bound Runnerless ratio report parsing ([#87](https://github.com/pawelchcki/llm-cc/issues/87)) ([9639a20](https://github.com/pawelchcki/llm-cc/commit/9639a20fafbf1bc1cc011db5f122cb3aefe9978b))
+
 ## [0.8.0](https://github.com/pawelchcki/llm-cc/compare/v0.7.1...v0.8.0) (2026-10-08)
 
 
