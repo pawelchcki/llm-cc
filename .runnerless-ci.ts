@@ -96,6 +96,20 @@ function publishedData(): string | null {
   return null;
 }
 
+// The report's data when it is for this PR's current head and target, else null.
+function currentData(found: string | null, fullName: string, number: i64,
+                     head: string, base: string): Value | null {
+  if (found === null || found == "") return null;
+  const data = new Value(commentBody(new Value('"' + found! + '"')));
+  const identity = data.get("identity");
+  if (data.get("schema_version").integer() != 1
+    || identity.get("repository").string() != fullName
+    || identity.get("pr_number").integer() != number
+    || identity.get("head_sha").string() != head
+    || identity.get("target_sha").string() != base) return null;
+  return data;
+}
+
 function reportRatio(): void {
   const details = event.details();
   if (details.get("pullNumber").isNull()) return;
@@ -123,23 +137,16 @@ function reportRatio(): void {
       return;
     }
   }
-  // The publisher's own report arrives with its comment event, unless the event
-  // body was cut short; otherwise list comments up to that report.
-  let found: string | null = commented ? ratioData(details.get("commentBody").json) : null;
-  if (found === null || found == "") found = publishedData();
-  const waiting = "Waiting for verified LM-CC/token data for the current PR head and target.";
-  if (found === null || found == "") {
-    checks.report("LM-CC/token", false, waiting);
-    return;
-  }
-  const data = new Value(commentBody(new Value('"' + found! + '"')));
-  const identity = data.get("identity");
-  if (data.get("schema_version").integer() != 1
-    || identity.get("repository").string() != details.get("fullName").string()
-    || identity.get("pr_number").integer() != prNumber
-    || identity.get("head_sha").string() != prHead
-    || identity.get("target_sha").string() != prBase) {
-    checks.report("LM-CC/token", false, waiting);
+  // The publisher's own report arrives with its comment event. An event body that
+  // was cut short or delivered after a newer edit falls back to the live report.
+  const fullName = details.get("fullName").string();
+  let data: Value | null = commented
+    ? currentData(ratioData(details.get("commentBody").json), fullName, prNumber, prHead, prBase)
+    : null;
+  if (data === null) data = currentData(publishedData(), fullName, prNumber, prHead, prBase);
+  if (data === null) {
+    checks.report("LM-CC/token", false,
+      "Waiting for verified LM-CC/token data for the current PR head and target.");
     return;
   }
   const base = F64.parseFloat(data.get("base_ratio").json);
