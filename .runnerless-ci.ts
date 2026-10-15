@@ -60,9 +60,49 @@ function commentBody(value: Value): string {
   return String.fromCharCodes(units);
 }
 
+// The escaped LM-CC/token data in a publisher complexity report, given the report
+// body as compact JSON text starting at its opening quote: "" when that report has
+// no data, or null for any other text.
+function ratioData(body: string): string | null {
+  // Publication attribution can appear between these two host markers.
+  if (!body.startsWith('"<!-- codex-review-artifact-publisher -->')
+    || body.indexOf("<!-- ci-toolkit:complexity -->") < 0) return null;
+  const start = body.indexOf(ratioPrefix);
+  if (start < 0) return "";
+  const first = start + ratioPrefix.length;
+  const end = body.indexOf("`", first);
+  return end < 0 ? "" : body.substring(first, end);
+}
+
+// The data in the publisher's complexity report, of which each PR has one; null
+// when there is no such report yet.
+function publishedData(): string | null {
+  let nextPage: i32 = 1;
+  while (nextPage > 0) {
+    // A page of full artifact reports can exhaust the guest's fuel budget.
+    const page = comments.list(new PageRequest(nextPage, 1));
+    for (let i = 0; i < page.items.length; i++) {
+      const comment = page.items[i];
+      // The host serializes compact JSON. Filter its escaped body before scanning
+      // publisher fields; unrelated reports also consume the guest's fuel.
+      const at = comment.json.indexOf('"body":"<!-- codex-review-artifact-publisher -->');
+      if (at < 0) continue;
+      const data = ratioData(comment.json.substring(at + 7));
+      if (data === null || comment.get("actorId").integer() != publisherActorId) continue;
+      return data;
+    }
+    nextPage = page.nextPage;
+  }
+  return null;
+}
+
 function reportRatio(): void {
   const details = event.details();
   if (details.get("pullNumber").isNull()) return;
+  // Another author's comment cannot change the publisher's report. Skip it before
+  // any GitHub read: every read counts against the program's deadline.
+  const commented = details.get("event").string() == "issue_comment";
+  if (commented && details.get("actorId").integer() != publisherActorId) return;
   // The typed PR wrapper also decodes the unused title and description.
   const pr = capabilities.call("pulls.get").require();
   if (pr.get("state").string() != "open") return;
@@ -81,47 +121,35 @@ function reportRatio(): void {
       return;
     }
   }
-  let nextPage: i32 = 1;
-  while (nextPage > 0) {
-    // A page of full artifact reports can exhaust the guest's fuel budget.
-    const page = comments.list(new PageRequest(nextPage, 1));
-    for (let i = 0; i < page.items.length; i++) {
-      const comment = page.items[i];
-      // The host serializes compact JSON. Filter its escaped body before scanning
-      // publisher fields; unrelated reports also consume the guest's fuel.
-      const body = comment.json;
-      // Publication attribution can appear between these two host markers.
-      if (body.indexOf('"body":"<!-- codex-review-artifact-publisher -->') < 0
-        || body.indexOf("<!-- ci-toolkit:complexity -->") < 0) continue;
-      const start = body.indexOf(ratioPrefix);
-      if (start < 0) continue;
-      const first = start + ratioPrefix.length;
-      const end = body.indexOf("`", first);
-      if (end < 0) continue;
-      if (comment.get("actorId").integer() != publisherActorId) continue;
-      const data = new Value(commentBody(new Value('"' + body.substring(first, end) + '"')));
-      const identity = data.get("identity");
-      if (data.get("schema_version").integer() != 1
-        || identity.get("repository").string() != details.get("fullName").string()
-        || identity.get("pr_number").integer() != prNumber
-        || identity.get("head_sha").string() != prHead
-        || identity.get("target_sha").string() != prBase) continue;
-      const base = F64.parseFloat(data.get("base_ratio").json);
-      const head = F64.parseFloat(data.get("head_ratio").json);
-      if (data.get("status").string() != "complete" || !isFinite(base) || !isFinite(head) || base < 0 || head < 0) {
-        checks.report("LM-CC/token", false,
-          "The current comparison has no complete, finite LM-CC/token measurements.");
-        return;
-      }
-      checks.report("LM-CC/token", head <= base,
-        "Repository LM-CC/token: " + base.toString() + " -> " + head.toString()
-          + (head <= base ? "; maintained or improved." : "; regression."));
-      return;
-    }
-    nextPage = page.nextPage;
+  // The publisher's own report arrives with its comment event, unless the event
+  // body was cut short; otherwise list comments up to that report.
+  let found: string | null = commented ? ratioData(details.get("commentBody").json) : null;
+  if (found === null || found == "") found = publishedData();
+  const waiting = "Waiting for verified LM-CC/token data for the current PR head and target.";
+  if (found === null || found == "") {
+    checks.report("LM-CC/token", false, waiting);
+    return;
   }
-  checks.report("LM-CC/token", false,
-    "Waiting for verified LM-CC/token data for the current PR head and target.");
+  const data = new Value(commentBody(new Value('"' + found! + '"')));
+  const identity = data.get("identity");
+  if (data.get("schema_version").integer() != 1
+    || identity.get("repository").string() != details.get("fullName").string()
+    || identity.get("pr_number").integer() != prNumber
+    || identity.get("head_sha").string() != prHead
+    || identity.get("target_sha").string() != prBase) {
+    checks.report("LM-CC/token", false, waiting);
+    return;
+  }
+  const base = F64.parseFloat(data.get("base_ratio").json);
+  const head = F64.parseFloat(data.get("head_ratio").json);
+  if (data.get("status").string() != "complete" || !isFinite(base) || !isFinite(head) || base < 0 || head < 0) {
+    checks.report("LM-CC/token", false,
+      "The current comparison has no complete, finite LM-CC/token measurements.");
+    return;
+  }
+  checks.report("LM-CC/token", head <= base,
+    "Repository LM-CC/token: " + base.toString() + " -> " + head.toString()
+      + (head <= base ? "; maintained or improved." : "; regression."));
 }
 
 export function configure(): void {
