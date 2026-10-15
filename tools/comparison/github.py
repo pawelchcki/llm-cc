@@ -128,6 +128,14 @@ class GitHub:
     def get(self, suffix):
         return self.call("GET", "/repos/" + self.repository + suffix)
 
+    def core_remaining(self):
+        """Unused REST quota, or None if unknown. Reading it costs no quota."""
+        try:
+            limits = api_request(self.api_url + "/rate_limit", self.token)
+            return int(limits["resources"]["core"]["remaining"])
+        except Exception:
+            return None
+
     def discover(self, head, branch, default_branch):
         if branch == default_branch:
             current = self.get(

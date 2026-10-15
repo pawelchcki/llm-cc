@@ -184,6 +184,20 @@ class RateLimitTest(unittest.TestCase):
                 github.get("/commits/main")
         self.assertEqual(slept, [90])
 
+    def test_quota_is_read_without_spending_it(self):
+        github = GitHub("owner/repo")
+        with mock.patch(
+            "tools.comparison.github.api_request",
+            return_value={"resources": {"core": {"remaining": 17}}},
+        ) as request:
+            self.assertEqual(github.core_remaining(), 17)
+        self.assertEqual(request.call_args.args[0], "https://api.github.com/rate_limit")
+        with mock.patch(
+            "tools.comparison.github.api_request",
+            side_effect=urllib.error.URLError("offline"),
+        ):
+            self.assertIsNone(github.core_remaining())
+
     def test_other_errors_are_not_retried(self):
         github = GitHub("owner/repo", rate_limit_wait=3600)
         github.sleep = mock.Mock()
@@ -320,20 +334,38 @@ class GitRefDiscoveryTest(unittest.TestCase):
     def test_freshness_follows_the_pull_head_and_recorded_base(self):
         merge = self.publish_pull(self.head, self.target)
         identity, found = self.discover()
+        self.assertEqual(found, merge)
         self.assertTrue(current_from_git(self.checkout, identity, found))
-        # GitHub may recompute the same merge; the base and head still match.
-        self.assertNotEqual(self.publish_pull(self.head, self.target), merge)
-        self.assertTrue(current_from_git(self.checkout, identity, found))
-        self.publish_pull(self.head, self.later)
-        self.assertFalse(current_from_git(self.checkout, identity, found))
-        # Without the merge discovery read, or once GitHub drops it as it does
-        # when a PR closes, only the REST API knows the PR's state and base.
-        self.publish_pull(self.head, self.target)
+        # Merge parents name no target branch, so any recomputation (here
+        # onto the same base, as when retargeting to an equal branch), a merge
+        # GitHub dropped as it does on close, or no merge at all, leaves the
+        # PR's state and target to the REST API.
+        for change in (
+            lambda: self.publish_pull(self.head, self.target),
+            lambda: self.publish_pull(self.head, self.later),
+            lambda: git(self.origin, "update-ref", "-d", "refs/pull/7/merge"),
+        ):
+            change()
+            self.assertIsNone(current_from_git(self.checkout, identity, found))
         self.assertIsNone(current_from_git(self.checkout, identity, None))
-        git(self.origin, "update-ref", "-d", "refs/pull/7/merge")
-        self.assertIsNone(current_from_git(self.checkout, identity, found))
         git(self.origin, "update-ref", "refs/pull/7/head", self.later)
         self.assertFalse(current_from_git(self.checkout, identity, found))
+        self.assertFalse(current_from_git(self.checkout, identity, None))
+
+    def test_unreachable_git_endpoints_defer_to_rest(self):
+        self.github.branches["main"] = self.target
+        self.github.open_pull(7, "feature", self.head)
+        merge = self.publish_pull(self.head, self.target)
+        identity, _ = self.discover()
+        stalled = subprocess.TimeoutExpired(["git", "ls-remote"], 60)
+        with mock.patch(
+            "tools.comparison.discover._git_output", side_effect=stalled
+        ):
+            self.assertIsNone(current_from_git(self.checkout, identity, merge))
+            self.github.calls.clear()
+            resolved, found = self.discover()
+        self.assertEqual((resolved["target_sha"], found), (self.target, None))
+        self.assertEqual(self.github.calls, [("GET", "/repos/owner/repo/pulls/7")])
 
     def test_branch_names_cannot_become_options_or_patterns(self):
         self.assertEqual(branch_ref("feat/x-1"), "refs/heads/feat/x-1")

@@ -615,15 +615,66 @@ class BuildBuddyTest(unittest.TestCase):
                     "tools.comparison.buildbuddy.current_from_git",
                     return_value=git_answer,
                 ):
-                    current, seconds = buildbuddy.freshness(
+                    current, seconds, _ = buildbuddy.freshness(
                         github, "/repo", identity, merge
                     )
                     self.assertEqual((current(), seconds), (expected, interval))
         github.token = "synthetic-token"
         with patch("tools.comparison.buildbuddy.current_from_git") as git_check:
-            current, seconds = buildbuddy.freshness(github, "/repo", pull, None)
-            self.assertEqual((current(), seconds), ("rest", 10))
+            current, seconds, publishable = buildbuddy.freshness(
+                github, "/repo", pull, None
+            )
+            self.assertEqual((current(), seconds, publishable()), ("rest", 10, "rest"))
         git_check.assert_not_called()
+
+    def test_publication_asks_rest_whenever_the_shared_quota_has_room(self):
+        pull = {"head_sha": "a" * 40, "target_sha": "b" * 40,
+                "target_branch": "main", "pr_number": 7}
+        limited = RateLimited("/repos/owner/repo/pulls/7", 1_800_000_000)
+        cases = (
+            # (Git's answer, spare REST quota, REST's answer, expected)
+            (True, 60, False, False),
+            (True, 4, False, True),
+            (True, None, False, True),
+            (True, 60, limited, True),
+            (False, 60, True, False),
+            (None, 0, True, True),
+            (None, 0, limited, limited),
+        )
+        for git_answer, remaining, rest, expected in cases:
+            with self.subTest(git=git_answer, remaining=remaining, rest=rest):
+                github = GitHub("owner/repo")
+                github.core_remaining = lambda: remaining
+
+                def current(identity, rest=rest):
+                    if isinstance(rest, Exception):
+                        raise rest
+                    return rest
+
+                github.current = current
+                with patch(
+                    "tools.comparison.buildbuddy.current_from_git",
+                    return_value=git_answer,
+                ):
+                    _, _, publishable = buildbuddy.freshness(
+                        github, "/repo", pull, "c" * 40
+                    )
+                    if isinstance(expected, Exception):
+                        with self.assertRaises(RateLimited):
+                            publishable()
+                    else:
+                        self.assertIs(publishable(), expected)
+
+    def test_publication_check_replaces_the_periodic_one_last(self):
+        self.score_everything()
+        self.prepare()
+        report = self.run_plan(
+            FakeAPI(), current=lambda: True, publishable=lambda: False
+        )
+        self.assertEqual(report["status"], "failed")
+        self.assertIn(
+            "comparison superseded before report publication", report["errors"]
+        )
 
     def test_rate_limit_wait_is_bounded(self):
         self.assertEqual(buildbuddy.rate_limit_wait({}), 300)

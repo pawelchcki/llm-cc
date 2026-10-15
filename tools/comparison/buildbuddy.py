@@ -54,6 +54,8 @@ MAX_SOURCE_BYTES = 1024 * 1024 * 1024
 GITHUB_RATE_LIMIT_WAIT_SECONDS = 300
 # The CI convention for a temporary failure that a re-run can fix.
 EXIT_RETRYABLE = 75
+# Spare anonymous quota the final freshness check leaves to other clients.
+PUBLICATION_QUOTA_RESERVE = 5
 
 
 class BuildBuddy:
@@ -342,8 +344,13 @@ def run_prepared(
     poll_seconds=10,
     timeout_seconds=7200,
     current_check_seconds=0,
+    publishable=None,
 ):
-    """Schedule exactly the miss plan, retain failures, and always aggregate."""
+    """Schedule exactly the miss plan, retain failures, and always aggregate.
+
+    `publishable`, when given, replaces `current` for the check before
+    publication.
+    """
     plan = read_json(plan_path)
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
@@ -411,7 +418,7 @@ def run_prepared(
                     time.sleep(poll_seconds)
         # Completion can occur between periodic checks, including on a fully
         # cached run. Never publish a success based on a cached freshness check.
-        if not current():
+        if not (publishable or current)():
             raise RuntimeError("comparison superseded before report publication")
     except RateLimited:
         # A refused GitHub quota defers the run rather than failing it; the
@@ -685,28 +692,47 @@ def rate_limit_wait(config):
 
 
 def freshness(github, repo, identity, merge):
-    """The comparison's freshness check and the seconds between periodic calls.
+    """(periodic check, seconds between its calls, check before publication).
 
     With a token, the REST API answers. Anonymous REST reads share the host's
-    60/hour quota, so Git refs answer whenever they can; only an identity
-    found without a test merge, or a PR whose merge GitHub dropped (as it does
-    on close), asks the API, and then no more than 20 times an hour.
+    60/hour quota, so Git refs answer periodic checks whenever they can; an
+    identity found without a test merge, or a merge GitHub recomputed or
+    dropped, asks the API, and then no more than 20 times an hour.
+
+    Publication is when a stale target would show. GitHub's test merge can lag
+    the PR's recorded base, so the final check asks the API, which also
+    refreshes that merge, whenever the shared quota has room. A busy quota
+    leaves the Git refs' answer rather than deferring a finished comparison.
     """
 
-    def current():
-        if not github.token:
-            fresh = current_from_git(repo, identity, merge)
-            if fresh is not None:
-                return fresh
+    def rest():
         return github.current(identity)
 
     if github.token:
-        return current, 10
+        return rest, 10, rest
+
+    def current():
+        fresh = current_from_git(repo, identity, merge)
+        return rest() if fresh is None else fresh
+
+    def publishable():
+        fresh = current_from_git(repo, identity, merge)
+        if fresh is False:
+            return False
+        spare = (github.core_remaining() or 0) >= PUBLICATION_QUOTA_RESERVE
+        if fresh is None or spare:
+            try:
+                return rest()
+            except RateLimited:
+                if fresh is None:
+                    raise
+        return fresh
+
     if identity["pr_number"] is not None and merge is None:
-        return current, 180
+        return current, 180, publishable
     # Freshness is polled separately, so BuildBuddy completion stays
     # responsive; ls-remote is one Git request.
-    return current, 30
+    return current, 30, publishable
 
 
 def coordinate(args):
@@ -750,7 +776,7 @@ def coordinate(args):
             config.get("endpoint", "https://pawel.buildbuddy.io"),
             os.environ.get(config.get("api_key_env", "BUILDBUDDY_API_KEY"), ""),
         )
-        current, current_check_seconds = freshness(
+        current, current_check_seconds, publishable = freshness(
             github, args.repo, plan["identity"], merge
         )
         report = run_prepared(
@@ -764,6 +790,7 @@ def coordinate(args):
             # short interval stops the coordinator idling after workers finish.
             poll_seconds=2,
             current_check_seconds=current_check_seconds,
+            publishable=publishable,
         )
         return 1 if report["status"] == "failed" else 0
     except RateLimited as error:

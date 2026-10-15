@@ -26,6 +26,9 @@ SKIP_VARIABLE = "COMPARISON_SKIP"
 # GitHub computes a pull request's test merge asynchronously after a push.
 GIT_MERGE_ATTEMPTS = 12
 GIT_MERGE_DELAY_SECONDS = 5
+# A stalled Git endpoint must not hold the coordinator past its deadline.
+GIT_TIMEOUT_SECONDS = 60
+GIT_ERRORS = (subprocess.CalledProcessError, subprocess.TimeoutExpired)
 
 
 class Unresolved(Exception):
@@ -54,7 +57,11 @@ def discover_identity(github, identity, branch, default_branch):
 
 def _git_output(repo, *args):
     return subprocess.run(
-        ["git", "-C", str(repo), *args], check=True, stdout=subprocess.PIPE, text=True
+        ["git", "-C", str(repo), *args],
+        check=True,
+        stdout=subprocess.PIPE,
+        text=True,
+        timeout=GIT_TIMEOUT_SECONDS,
     ).stdout
 
 
@@ -82,15 +89,23 @@ def merge_parents(repo, ref, remote="origin"):
     subprocess.run(
         ["git", "-C", str(repo), "fetch", "--quiet", "--no-tags", remote, ref],
         check=True,
+        timeout=GIT_TIMEOUT_SECONDS,
     )
     merge = _git_output(repo, "rev-parse", "FETCH_HEAD").strip()
     return merge, _git_output(repo, "show", "-s", "--format=%P", merge).split()
 
 
+def _advertised(repo, refs, remote):
+    try:
+        return ls_remote(repo, refs, remote)
+    except GIT_ERRORS as error:
+        raise Unresolved("cannot read %s's refs: %s" % (remote, error)) from None
+
+
 def push_from_git(repo, head, branch, remote="origin"):
     """A default-branch push's identity, or ValueError once it is superseded."""
     ref = branch_ref(branch)
-    if ls_remote(repo, [ref], remote).get(ref) != head:
+    if _advertised(repo, [ref], remote).get(ref) != head:
         raise ValueError("default-branch push was superseded")
     return {
         "head_sha": head,
@@ -127,7 +142,7 @@ def pull_from_git(
     for attempt in range(attempts):
         if attempt:
             sleep(delay)
-        refs = ls_remote(repo, [branch_name, pull_head, merge_ref], remote)
+        refs = _advertised(repo, [branch_name, pull_head, merge_ref], remote)
         # Like REST discovery, require this repository's own branch to propose
         # the head: a fork's same-named branch never selects the comparison.
         if refs.get(branch_name) != head:
@@ -137,7 +152,7 @@ def pull_from_git(
             continue
         try:
             merge, parents = merge_parents(repo, merge_ref, remote)
-        except subprocess.CalledProcessError:
+        except GIT_ERRORS:
             continue
         if len(parents) == 2 and parents[1] == head:
             identity = {
@@ -190,30 +205,27 @@ def discover_anonymous(
 def current_from_git(repo, identity, merge=None, remote="origin"):
     """Freshness from Git refs: True or False, or None when only the API can tell.
 
-    A PR's head ref shows a newer push. Its test merge, while it is still the
-    merge discovery read, shows the PR is open with an unchanged recorded base;
-    GitHub recomputes it on retargeting and drops it when the PR closes. A new
-    merge must keep the same base and head to stay current.
+    A newer push moves the branch or the PR's head ref. While the test merge
+    is still the one discovery read, GitHub has recorded no other base for
+    this head. Any other merge state (recomputed, as on retargeting, or
+    dropped, as on close) and an unreachable endpoint defer to the API.
     """
     head = identity["head_sha"]
-    if identity["pr_number"] is None:
-        ref = branch_ref(identity["target_branch"])
-        return ls_remote(repo, [ref], remote).get(ref) == head
-    pull_head = "refs/pull/%d/head" % identity["pr_number"]
-    merge_ref = "refs/pull/%d/merge" % identity["pr_number"]
-    refs = ls_remote(repo, [pull_head, merge_ref], remote)
+    try:
+        if identity["pr_number"] is None:
+            ref = branch_ref(identity["target_branch"])
+            return ls_remote(repo, [ref], remote).get(ref) == head
+        pull_head = "refs/pull/%d/head" % identity["pr_number"]
+        merge_ref = "refs/pull/%d/merge" % identity["pr_number"]
+        refs = ls_remote(repo, [pull_head, merge_ref], remote)
+    except GIT_ERRORS:
+        return None
     if refs.get(pull_head) != head:
         return False
-    # The head ref alone says nothing about the PR's state or base.
-    if merge is None or merge_ref not in refs:
+    # The head ref alone says nothing about the PR's state, base or target.
+    if merge is None or refs.get(merge_ref) != merge:
         return None
-    if refs[merge_ref] == merge:
-        return True
-    try:
-        _, parents = merge_parents(repo, merge_ref, remote)
-    except subprocess.CalledProcessError:
-        return None
-    return parents == [identity["target_sha"], head]
+    return True
 
 
 def fetch_target(repo, target_sha, target_branch=None, remote="origin"):

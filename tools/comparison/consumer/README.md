@@ -71,14 +71,20 @@ token the coordinator reads Git refs instead, which use no REST quota:
   from GitHub's test merge, `refs/pull/N/merge`, whose first parent is the
   recorded base that GitHub's API reports as `base.sha`.
 - A default-branch push checks `refs/heads/<default>` with `git ls-remote`.
-- Freshness checks while GPU workers run use `git ls-remote` as well. GitHub
-  drops a PR's test merge when the PR closes and recomputes it when the PR is
-  retargeted, so an unchanged merge also shows the PR is open on the same base.
+- Freshness checks while GPU workers run use `git ls-remote` as well: a newer
+  push moves the head, and while the test merge is still the one discovery
+  read, GitHub has recorded no other base. GitHub drops the merge when a PR
+  closes and recomputes it when the PR is retargeted; either sends that check
+  to the REST API, as does a Git endpoint that does not answer within a minute.
+- Before publishing, the coordinator asks the REST API once whenever the
+  shared quota, read from `/rate_limit` at no cost, has at least five requests
+  to spare, because GitHub's test merge can lag the PR's recorded base. With
+  less, the Git refs' answer stands rather than deferring a finished run.
 
-The REST API is used only when Git refs cannot answer: GitHub has no test
-merge for the head, for example while a pull request has conflicts (one read,
-then freshness reads every three minutes), the test merge disappears during a
-run, or the run has no BuildBuddy pull-request event to name the pull request.
+The REST API is otherwise used only when Git refs cannot answer: GitHub has no
+test merge for the head, for example while a pull request has conflicts (one
+read, then freshness reads every three minutes), or the run has no BuildBuddy
+pull-request event to name the pull request.
 A refused quota is retried after the wait GitHub names, sleeping at most
 `github_rate_limit_wait_seconds` (default 300) per run, so the 130-minute action
 still fits the coordinator's two-hour deadline. A longer wait, such as an
