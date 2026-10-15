@@ -35,15 +35,8 @@ class RateLimited(RuntimeError):
         )
 
 
-def rate_limit_delay(error, now=None):
-    """Seconds GitHub asks a client to wait, or None if `error` is not a limit.
-
-    Primary limits answer 403 or 429 with x-ratelimit-remaining: 0 and the
-    window's reset time. Secondary limits send retry-after, or only a message.
-    """
-    if error.code not in (403, 429):
-        return None
-    now = time.time() if now is None else now
+def _named_wait(error, now):
+    """The wait a limit's headers name: retry-after, or a spent window's reset."""
     headers = error.headers or {}
     retry_after = headers.get("retry-after")
     if retry_after is not None and retry_after.strip().isdigit():
@@ -52,6 +45,22 @@ def rate_limit_delay(error, now=None):
     if headers.get("x-ratelimit-remaining") == "0" and reset and reset.isdigit():
         # One extra second absorbs clock skew at the window boundary.
         return max(1, int(reset) - int(now) + 1)
+    return None
+
+
+def rate_limit_delay(error, now=None, unnamed=0):
+    """Seconds GitHub asks a client to wait, or None if `error` is not a limit.
+
+    Primary limits answer 403 or 429 with x-ratelimit-remaining: 0 and the
+    window's reset time. Secondary limits send retry-after, or only a message;
+    GitHub then asks for a minute, doubled for each of the `unnamed`
+    consecutive limits before it that named no wait either.
+    """
+    if error.code not in (403, 429):
+        return None
+    named = _named_wait(error, time.time() if now is None else now)
+    if named is not None:
+        return named
     # GitHub's status line already reads "rate limit exceeded" for a primary
     # limit; a secondary limit without retry-after says so in its body.
     message = str(getattr(error, "reason", "") or "").lower()
@@ -60,7 +69,9 @@ def rate_limit_delay(error, now=None):
             message = error.read(4096).decode("utf-8", "replace").lower()
         except Exception:
             message = ""
-    return SECONDARY_LIMIT_SECONDS if "rate limit" in message else None
+    if "rate limit" not in message:
+        return None
+    return SECONDARY_LIMIT_SECONDS * 2 ** min(unnamed, 10)
 
 
 def api_request(
@@ -104,19 +115,22 @@ class GitHub:
         self.sleep = time.sleep
 
     def call(self, method, path, payload=None):
+        unnamed = 0
         while True:
             try:
                 return api_request(
                     self.api_url + path, self.token, payload, method=method
                 )
             except urllib.error.HTTPError as error:
-                delay = rate_limit_delay(error)
+                delay = rate_limit_delay(error, unnamed=unnamed)
                 if delay is None:
                     raise
                 # A limited request was not processed, so a write retries safely.
                 error.close()
                 if delay > self.rate_limit_wait:
                     raise RateLimited(path, time.time() + delay) from None
+                named = _named_wait(error, time.time()) is not None
+                unnamed = 0 if named else unnamed + 1
             print(
                 "GitHub API rate limit for %s; retrying in %d seconds" % (path, delay),
                 file=sys.stderr,

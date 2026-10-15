@@ -28,6 +28,8 @@ GIT_MERGE_ATTEMPTS = 12
 GIT_MERGE_DELAY_SECONDS = 5
 # A stalled Git endpoint must not hold the coordinator past its deadline.
 GIT_TIMEOUT_SECONDS = 60
+# Waiting for GitHub's test merge, after which discovery asks the REST API.
+GIT_DISCOVERY_SECONDS = 90
 GIT_ERRORS = (subprocess.CalledProcessError, subprocess.TimeoutExpired)
 
 
@@ -125,6 +127,8 @@ def pull_from_git(
     attempts=GIT_MERGE_ATTEMPTS,
     delay=GIT_MERGE_DELAY_SECONDS,
     sleep=time.sleep,
+    deadline_seconds=GIT_DISCOVERY_SECONDS,
+    clock=time.monotonic,
 ):
     """PR `pr_number`'s identity as GitHub records it, read from its Git refs.
 
@@ -134,13 +138,18 @@ def pull_from_git(
     SHA), or (None, None) when this repository's branch no longer proposes
     `head`, as REST discovery skips such a push. Raises Unresolved while GitHub
     has no merge for this head; it never computes one for a conflicting PR.
+    Retries stop at `deadline_seconds`, and a stalled command stops them at
+    once, so discovery never holds the run for more than about two minutes.
     """
     pull_head = "refs/pull/%d/head" % pr_number
     merge_ref = "refs/pull/%d/merge" % pr_number
     branch_name = branch_ref(branch)
     branch_ref(target_branch)
+    deadline = clock() + deadline_seconds
     for attempt in range(attempts):
         if attempt:
+            if clock() + delay > deadline:
+                break
             sleep(delay)
         refs = _advertised(repo, [branch_name, pull_head, merge_ref], remote)
         # Like REST discovery, require this repository's own branch to propose
@@ -152,7 +161,9 @@ def pull_from_git(
             continue
         try:
             merge, parents = merge_parents(repo, merge_ref, remote)
-        except GIT_ERRORS:
+        except subprocess.TimeoutExpired:
+            raise Unresolved("fetching %s timed out" % merge_ref) from None
+        except subprocess.CalledProcessError:
             continue
         if len(parents) == 2 and parents[1] == head:
             identity = {

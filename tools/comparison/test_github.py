@@ -198,6 +198,23 @@ class RateLimitTest(unittest.TestCase):
         ):
             self.assertIsNone(github.core_remaining())
 
+    def test_unnamed_secondary_limits_back_off_exponentially(self):
+        self.assertEqual(rate_limit_delay(self.limited(), now=0, unnamed=2), 240)
+        github = GitHub("owner/repo", rate_limit_wait=1000)
+        slept = []
+        github.sleep = slept.append
+        def unnamed():
+            return self.limited(reason="Forbidden", body=b"secondary rate limit")
+
+        responses = [unnamed(), unnamed(), unnamed(),
+                     self.limited(retry_after="30"), unnamed(), {"ok": True}]
+        with mock.patch(
+            "tools.comparison.github.api_request", side_effect=responses
+        ), mock.patch("sys.stderr", io.StringIO()):
+            self.assertEqual(github.get("/pulls/1"), {"ok": True})
+        # A wait GitHub names resets the backoff.
+        self.assertEqual(slept, [60, 120, 240, 30, 60])
+
     def test_other_errors_are_not_retried(self):
         github = GitHub("owner/repo", rate_limit_wait=3600)
         github.sleep = mock.Mock()
@@ -283,6 +300,36 @@ class GitRefDiscoveryTest(unittest.TestCase):
             self.checkout, self.head, "feature", 7, "main", attempts=3, sleep=publish
         )
         self.assertEqual(identity["target_sha"], self.target)
+
+    def test_merge_waits_end_at_the_discovery_deadline(self):
+        git(self.origin, "update-ref", "refs/pull/7/head", self.head)
+        now = [0.0]
+        slept = []
+
+        def sleep(seconds):
+            slept.append(seconds)
+            now[0] += seconds + 20  # each attempt's Git reads take time too
+
+        with self.assertRaises(Unresolved):
+            pull_from_git(
+                self.checkout, self.head, "feature", 7, "main", attempts=12,
+                delay=5, sleep=sleep, deadline_seconds=90, clock=lambda: now[0],
+            )
+        # Attempts run at 0, 25, 50, 75 and 100 seconds; another would start
+        # after the 90-second deadline.
+        self.assertEqual(slept, [5, 5, 5, 5])
+        # A stalled merge fetch ends discovery's Git attempt at once.
+        self.publish_pull(self.head, self.target)
+        stalled = subprocess.TimeoutExpired(["git", "fetch"], 60)
+        sleep = mock.Mock()
+        with mock.patch(
+            "tools.comparison.discover.merge_parents", side_effect=stalled
+        ):
+            with self.assertRaisesRegex(Unresolved, "timed out"):
+                pull_from_git(
+                    self.checkout, self.head, "feature", 7, "main", sleep=sleep
+                )
+        sleep.assert_not_called()
 
     def test_a_moved_branch_skips_like_rest_discovery(self):
         self.publish_pull(self.head, self.target)
