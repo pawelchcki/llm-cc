@@ -7,7 +7,7 @@ import re
 import shlex
 import subprocess
 
-from .buildbuddy import BuildBuddy, bundle_command, coordinate
+from .buildbuddy import BuildBuddy, bundle_command, coordinate, pull_request_arguments
 from .common import read_json
 
 
@@ -98,6 +98,26 @@ def resolve_checkout(repo=".", environment=None, default_branch=None):
     return head, branch, default
 
 
+def pull_request_environment(head, branch, environment=None):
+    """The PR number and target branch BuildBuddy names for this exact push.
+
+    BuildBuddy sets GIT_PR_NUMBER (0 for a push), GIT_BASE_BRANCH, GIT_BRANCH
+    and GIT_COMMIT, the PR head, from the triggering webhook. Values for any
+    other head or branch belong to another event and are not used.
+    """
+    environment = os.environ if environment is None else environment
+    number = environment.get("GIT_PR_NUMBER", "")
+    target = environment.get("GIT_BASE_BRANCH", "")
+    if (
+        not re.fullmatch(r"[1-9][0-9]{0,9}", number)
+        or not target
+        or (environment.get("GIT_COMMIT") or "").lower() != head
+        or environment.get("GIT_BRANCH") != branch
+    ):
+        return None, None
+    return int(number), target
+
+
 def parent_invocation_id(artifact_directory=None, environment=None):
     """Read and validate the parent UUID, allowing an explicit environment input."""
     environment = os.environ if environment is None else environment
@@ -113,7 +133,16 @@ def parent_invocation_id(artifact_directory=None, environment=None):
     return invocation.lower()
 
 
-def coordinator_request(config, config_path, repository, head, branch, default_branch):
+def coordinator_request(
+    config,
+    config_path,
+    repository,
+    head,
+    branch,
+    default_branch,
+    pull_request=None,
+    base_branch=None,
+):
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
         raise ValueError("repository must be owner/name")
     if not re.fullmatch(r"[0-9a-f]{40}", head):
@@ -122,6 +151,10 @@ def coordinator_request(config, config_path, repository, head, branch, default_b
         raise ValueError(
             "Bazzite coordinator requires a bare-host configuration at an absolute path"
         )
+    # A remote run has no webhook environment; carry the event's PR forward.
+    pull = []
+    if pull_request is not None:
+        pull = ["--pull-request", str(int(pull_request)), "--base-branch", base_branch]
     command = bundle_command(
         [
             "python3",
@@ -138,6 +171,7 @@ def coordinator_request(config, config_path, repository, head, branch, default_b
             branch,
             "--default-branch",
             default_branch,
+            *pull,
         ],
         config["execution_bundle"],
         config["execution_bundle_sha256"],
@@ -173,7 +207,10 @@ def main(argv=None):
     parser.add_argument("--head")
     parser.add_argument("--branch")
     parser.add_argument("--default-branch")
+    pull_request_arguments(parser)
     args = parser.parse_args(argv)
+    if (args.pull_request is None) != (args.base_branch is None):
+        parser.error("--pull-request and --base-branch go together")
     repo = os.getcwd()
     if not args.head or not args.branch or not args.default_branch:
         head, branch, default_branch = resolve_checkout(
@@ -182,6 +219,10 @@ def main(argv=None):
         args.head = args.head or head
         args.branch = args.branch or branch
         args.default_branch = args.default_branch or default_branch
+    if args.pull_request is None:
+        args.pull_request, args.base_branch = pull_request_environment(
+            args.head, args.branch
+        )
     if args.action == "run-coordinator":
         config = read_json(args.config)
         api_key_env = config.get("api_key_env", "BUILDBUDDY_API_KEY")
@@ -212,6 +253,8 @@ def main(argv=None):
         args.head,
         args.branch,
         args.default_branch,
+        args.pull_request,
+        args.base_branch,
     )
     invocation = BuildBuddy(config["endpoint"], key).submit(request)
     print(config["endpoint"].rstrip("/") + "/invocation/" + invocation)

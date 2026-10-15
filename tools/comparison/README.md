@@ -309,7 +309,9 @@ holds https URL templates published in pull-request comments; only
 `{repository}`, `{target_sha}` and `{target_branch}` may appear, and their
 values are URL-quoted. Worker secrets use named environment inputs sent as
 sensitive remote headers. The coordinator discovers the current open PR and
-actual target, cancels obsolete workers, and retains reports under a key
+actual target (without a token, from Git refs rather than the REST API; see
+[consumer/README.md](consumer/README.md#private-repositories-and-github-quota)),
+cancels obsolete workers, and retains reports under a key
 derived from the **parent invocation** identity. Default-branch pushes compare
 the head to itself and populate the baseline cache. A branch with no current PR
 skips inference.

@@ -1,6 +1,7 @@
 """GitHub client and discovery tests against an in-memory REST API."""
 
 import argparse
+import email.message
 import io
 import json
 from pathlib import Path
@@ -8,10 +9,21 @@ import subprocess
 import tempfile
 import unittest
 from unittest import mock
+import urllib.error
 
-from .discover import fetch_target, run as discover_run, write_dotenv
+from .discover import (
+    Unresolved,
+    branch_ref,
+    current_from_git,
+    discover_anonymous,
+    fetch_target,
+    new_identity,
+    pull_from_git,
+    run as discover_run,
+    write_dotenv,
+)
 from .fixtures import FakeGitHub, commit_files, git
-from .github import GitHub, api_request
+from .github import GitHub, RateLimited, api_request, rate_limit_delay
 
 HEAD = "a" * 40
 TARGET = "b" * 40
@@ -94,6 +106,318 @@ class DiscoveryTest(unittest.TestCase):
                 pull[field[0]][field[1]] = previous
         pull["state"] = "closed"
         self.assertFalse(self.github.current(identity))
+
+
+    def test_a_named_pull_request_is_read_once_and_filtered_alike(self):
+        self.github.open_pull(7, "feature", HEAD)
+        self.assertEqual(
+            self.github.discover_pull(7, HEAD, "feature"),
+            self.github.discover(HEAD, "feature", "main"),
+        )
+        self.github.calls.clear()
+        self.github.discover_pull(7, HEAD, "feature")
+        self.assertEqual(self.github.calls, [("GET", "/repos/owner/repo/pulls/7")])
+        self.github.open_pull(8, "feature", HEAD, head_repo="fork/repo")
+        for number, head, branch in ((8, HEAD, "feature"), (7, "d" * 40, "feature"),
+                                     (7, HEAD, "other")):
+            with self.subTest(number=number, head=head, branch=branch):
+                self.assertIsNone(self.github.discover_pull(number, head, branch))
+
+
+def limited(code=403, reason="rate limit exceeded", body=b"", **headers):
+    message = email.message.Message()
+    for name, value in headers.items():
+        message[name.replace("_", "-")] = value
+    return urllib.error.HTTPError(
+        "https://api.github.com/x", code, reason, message, io.BytesIO(body)
+    )
+
+
+class RateLimitTest(unittest.TestCase):
+    def setUp(self):
+        self.errors = []
+
+    def tearDown(self):
+        for error in self.errors:
+            error.close()
+
+    def limited(self, *args, **kwargs):
+        self.errors.append(limited(*args, **kwargs))
+        return self.errors[-1]
+
+    def test_primary_and_secondary_limits_name_their_wait(self):
+        limited = self.limited
+        primary = limited(x_ratelimit_remaining="0", x_ratelimit_reset="1060")
+        self.assertEqual(rate_limit_delay(primary, now=1000), 61)
+        self.assertEqual(rate_limit_delay(limited(429, retry_after="30"), now=0), 30)
+        # A secondary limit with only a message waits GitHub's documented minute.
+        secondary = limited(
+            reason="Forbidden", body=b"You have exceeded a secondary rate limit"
+        )
+        self.assertEqual(rate_limit_delay(secondary, now=0), 60)
+        # The unauthenticated limit's status line alone is enough.
+        self.assertEqual(rate_limit_delay(limited(), now=0), 60)
+        for error in (
+            limited(reason="Forbidden", body=b"Resource not accessible"),
+            limited(404, reason="Not Found", x_ratelimit_remaining="0"),
+        ):
+            with self.subTest(code=error.code):
+                self.assertIsNone(rate_limit_delay(error, now=0))
+
+    def test_client_waits_for_quota_within_its_budget(self):
+        github = GitHub("owner/repo", rate_limit_wait=120)
+        slept = []
+        github.sleep = slept.append
+        with mock.patch(
+            "tools.comparison.github.api_request",
+            side_effect=[limited(retry_after="90"), {"sha": TARGET}],
+        ) as request, mock.patch("sys.stderr", io.StringIO()):
+            self.assertEqual(github.get("/commits/main"), {"sha": TARGET})
+        self.assertEqual(slept, [90])
+        self.assertEqual(request.call_count, 2)
+        # The budget is shared by every later request of this client.
+        with mock.patch(
+            "tools.comparison.github.api_request",
+            side_effect=[limited(retry_after="60")],
+        ):
+            with self.assertRaisesRegex(RateLimited, "retry after"):
+                github.get("/commits/main")
+        self.assertEqual(slept, [90])
+
+    def test_quota_is_read_without_spending_it(self):
+        github = GitHub("owner/repo")
+        with mock.patch(
+            "tools.comparison.github.api_request",
+            return_value={"resources": {"core": {"remaining": 17}}},
+        ) as request:
+            self.assertEqual(github.core_remaining(), 17)
+        self.assertEqual(request.call_args.args[0], "https://api.github.com/rate_limit")
+        with mock.patch(
+            "tools.comparison.github.api_request",
+            side_effect=urllib.error.URLError("offline"),
+        ):
+            self.assertIsNone(github.core_remaining())
+
+    def test_unnamed_secondary_limits_back_off_exponentially(self):
+        self.assertEqual(rate_limit_delay(self.limited(), now=0, unnamed=2), 240)
+        github = GitHub("owner/repo", rate_limit_wait=1000)
+        slept = []
+        github.sleep = slept.append
+        def unnamed():
+            return self.limited(reason="Forbidden", body=b"secondary rate limit")
+
+        responses = [unnamed(), unnamed(), unnamed(),
+                     self.limited(retry_after="30"), unnamed(), {"ok": True}]
+        with mock.patch(
+            "tools.comparison.github.api_request", side_effect=responses
+        ), mock.patch("sys.stderr", io.StringIO()):
+            self.assertEqual(github.get("/pulls/1"), {"ok": True})
+        # A wait GitHub names resets the backoff.
+        self.assertEqual(slept, [60, 120, 240, 30, 60])
+
+    def test_other_errors_are_not_retried(self):
+        github = GitHub("owner/repo", rate_limit_wait=3600)
+        github.sleep = mock.Mock()
+        with mock.patch(
+            "tools.comparison.github.api_request",
+            side_effect=[self.limited(reason="Forbidden", body=b"no access")],
+        ):
+            with self.assertRaises(urllib.error.HTTPError):
+                github.get("/pulls/1")
+        github.sleep.assert_not_called()
+
+
+class GitRefDiscoveryTest(unittest.TestCase):
+    """Anonymous discovery against a local origin carrying GitHub's PR refs."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        self.origin = root / "origin"
+        self.origin.mkdir()
+        git(self.origin, "init", "-q", "-b", "main")
+        self.target = commit_files(self.origin, {"a.rs": "fn a() {}\n"}, "target")
+        git(self.origin, "checkout", "-q", "-b", "feature")
+        self.older = commit_files(self.origin, {"b.rs": "fn b() {}\n"}, "older")
+        self.head = commit_files(self.origin, {"b.rs": "fn b(_: u8) {}\n"}, "head")
+        git(self.origin, "checkout", "-q", "main")
+        self.later = commit_files(self.origin, {"c.rs": "fn c() {}\n"}, "later")
+        self.checkout = root / "checkout"
+        git(root, "clone", "-q", self.origin.as_uri(), str(self.checkout))
+        self.github = FakeGitHub()
+        self.identity = new_identity("owner/repo", "pipeline", self.head)
+
+    def publish_pull(self, head, base, number=7):
+        """GitHub's refs/pull/N/head and its test merge of head into base."""
+        self.merges = getattr(self, "merges", 0) + 1
+        tree = git(self.origin, "rev-parse", head + "^{tree}")
+        # Each recomputation is a new commit, as GitHub's are.
+        message = "merge %d" % self.merges
+        merge = git(
+            self.origin, "commit-tree", tree, "-p", base, "-p", head, "-m", message
+        )
+        git(self.origin, "update-ref", "refs/pull/%d/head" % number, head)
+        git(self.origin, "update-ref", "refs/pull/%d/merge" % number, merge)
+        return merge
+
+    def discover(self, pr_number=7, target_branch="main"):
+        with mock.patch("sys.stderr", io.StringIO()):
+            return discover_anonymous(
+                self.github,
+                self.identity,
+                self.checkout,
+                "feature",
+                "main",
+                pr_number,
+                target_branch,
+                deadline_seconds=0,
+            )
+
+    def test_target_is_the_recorded_base_without_rest_reads(self):
+        # GitHub keeps the recorded base until the PR is synchronized, even as
+        # the target branch moves on; consumers compare against that base.
+        merge = self.publish_pull(self.head, self.target)
+        identity, found = self.discover()
+        self.assertEqual(found, merge)
+        self.assertEqual(
+            {k: identity[k] for k in ("head_sha", "target_sha", "target_branch", "pr_number")},
+            {"head_sha": self.head, "target_sha": self.target, "target_branch": "main",
+             "pr_number": 7},
+        )
+        self.assertEqual(identity["pipeline_id"], "pipeline")
+        self.assertEqual(self.github.calls, [])
+
+    def test_pull_refs_that_lag_the_branch_are_awaited(self):
+        self.publish_pull(self.older, self.target)
+
+        def publish(_):
+            self.publish_pull(self.head, self.target)
+
+        identity, _ = pull_from_git(
+            self.checkout, self.head, "feature", 7, "main", sleep=publish
+        )
+        self.assertEqual(identity["target_sha"], self.target)
+
+    def test_merge_waits_end_at_the_discovery_deadline(self):
+        git(self.origin, "update-ref", "refs/pull/7/head", self.head)
+        now = [0.0]
+        slept = []
+
+        def sleep(seconds):
+            slept.append(seconds)
+            now[0] += seconds + 20  # each attempt's Git reads take time too
+
+        with self.assertRaises(Unresolved):
+            pull_from_git(
+                self.checkout, self.head, "feature", 7, "main",
+                delay=5, sleep=sleep, deadline_seconds=90, clock=lambda: now[0],
+            )
+        # Attempts run at 0, 25, 50, 75 and 100 seconds; another would start
+        # after the 90-second deadline.
+        self.assertEqual(slept, [5, 5, 5, 5])
+        # A stalled merge fetch ends discovery's Git attempt at once.
+        self.publish_pull(self.head, self.target)
+        run = subprocess.run
+
+        def stall_fetch(command, **options):
+            if "fetch" in command:
+                raise subprocess.TimeoutExpired(command, 60)
+            return run(command, **options)
+
+        sleep = mock.Mock()
+        with mock.patch("tools.comparison.discover.subprocess.run", stall_fetch):
+            with self.assertRaisesRegex(Unresolved, "timed out"):
+                pull_from_git(
+                    self.checkout, self.head, "feature", 7, "main", sleep=sleep
+                )
+        sleep.assert_not_called()
+
+    def test_a_moved_branch_skips_like_rest_discovery(self):
+        self.publish_pull(self.head, self.target)
+        git(self.origin, "update-ref", "refs/heads/feature", self.later)
+        self.assertEqual(self.discover(), (None, None))
+        self.assertEqual(self.github.calls, [])
+
+    def assert_one_rest_read(self):
+        """Discovery resolves the target with one REST read of PR #7."""
+        self.github.calls.clear()
+        identity, merge = self.discover()
+        self.assertEqual((identity["target_sha"], merge), (self.target, None))
+        self.assertEqual(self.github.calls, [("GET", "/repos/owner/repo/pulls/7")])
+
+    def test_missing_or_stale_merges_fall_back_to_one_rest_read(self):
+        self.github.branches["main"] = self.target
+        self.github.open_pull(7, "feature", self.head)
+        git(self.origin, "update-ref", "refs/pull/7/head", self.head)
+        self.assert_one_rest_read()
+        # A merge of an older head is stale.
+        self.publish_pull(self.older, self.target)
+        git(self.origin, "update-ref", "refs/pull/7/head", self.head)
+        self.assert_one_rest_read()
+        with self.assertRaises(Unresolved):
+            pull_from_git(
+                self.checkout, self.head, "feature", 7, "main", deadline_seconds=0
+            )
+
+    def test_events_without_a_pull_request_use_rest_discovery(self):
+        self.github.branches["main"] = self.target
+        self.github.open_pull(7, "feature", self.head)
+        identity, merge = self.discover(pr_number=None, target_branch=None)
+        self.assertEqual((identity["pr_number"], merge), (7, None))
+        self.assertEqual(len(self.github.calls), 2)
+
+    def test_default_branch_pushes_read_only_git(self):
+        identity = new_identity("owner/repo", "pipeline", self.later)
+        with mock.patch("sys.stderr", io.StringIO()):
+            resolved, merge = discover_anonymous(
+                self.github, identity, self.checkout, "main", "main"
+            )
+        self.assertEqual((resolved["target_sha"], merge), (self.later, None))
+        self.assertTrue(current_from_git(self.checkout, resolved))
+        stale = new_identity("owner/repo", "pipeline", self.target)
+        with self.assertRaisesRegex(ValueError, "superseded"):
+            discover_anonymous(self.github, stale, self.checkout, "main", "main")
+        self.assertEqual(self.github.calls, [])
+
+    def test_freshness_follows_the_pull_head_and_recorded_base(self):
+        merge = self.publish_pull(self.head, self.target)
+        identity, found = self.discover()
+        self.assertEqual(found, merge)
+        self.assertTrue(current_from_git(self.checkout, identity, found))
+        # Merge parents name no target branch, so any recomputation (here
+        # onto the same base, as when retargeting to an equal branch), a merge
+        # GitHub dropped as it does on close, or no merge at all, leaves the
+        # PR's state and target to the REST API.
+        for change in (
+            lambda: self.publish_pull(self.head, self.target),
+            lambda: self.publish_pull(self.head, self.later),
+            lambda: git(self.origin, "update-ref", "-d", "refs/pull/7/merge"),
+        ):
+            change()
+            self.assertIsNone(current_from_git(self.checkout, identity, found))
+        self.assertIsNone(current_from_git(self.checkout, identity, None))
+        git(self.origin, "update-ref", "refs/pull/7/head", self.later)
+        self.assertFalse(current_from_git(self.checkout, identity, found))
+        self.assertFalse(current_from_git(self.checkout, identity, None))
+
+    def test_unreachable_git_endpoints_defer_to_rest(self):
+        self.github.branches["main"] = self.target
+        self.github.open_pull(7, "feature", self.head)
+        merge = self.publish_pull(self.head, self.target)
+        identity, _ = self.discover()
+        stalled = subprocess.TimeoutExpired(["git", "ls-remote"], 60)
+        with mock.patch(
+            "tools.comparison.discover._git_output", side_effect=stalled
+        ):
+            self.assertIsNone(current_from_git(self.checkout, identity, merge))
+            self.assert_one_rest_read()
+
+    def test_branch_names_cannot_become_options_or_patterns(self):
+        self.assertEqual(branch_ref("feat/x-1"), "refs/heads/feat/x-1")
+        for name in ("a b", "a..b", "x*", "", "a\nb"):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                branch_ref(name)
 
 
 class CommentApiTest(unittest.TestCase):
