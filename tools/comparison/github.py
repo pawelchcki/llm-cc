@@ -122,22 +122,28 @@ class GitHub:
                     self.api_url + path, self.token, payload, method=method
                 )
             except urllib.error.HTTPError as error:
-                delay = rate_limit_delay(error, unnamed=unnamed)
-                if delay is None:
-                    raise
-                # A limited request was not processed, so a write retries safely.
-                error.close()
-                if delay > self.rate_limit_wait:
-                    raise RateLimited(path, time.time() + delay) from None
-                named = _named_wait(error, time.time()) is not None
-                unnamed = 0 if named else unnamed + 1
-            print(
-                "GitHub API rate limit for %s; retrying in %d seconds" % (path, delay),
-                file=sys.stderr,
-                flush=True,
-            )
-            self.rate_limit_wait -= delay
-            self.sleep(delay)
+                unnamed = self._wait(error, path, unnamed)
+
+    def _wait(self, error, path, unnamed):
+        """Sleep out a quota refusal within the budget; re-raise any other error.
+
+        Returns how many consecutive limits have now named no wait.
+        """
+        delay = rate_limit_delay(error, unnamed=unnamed)
+        if delay is None:
+            raise error
+        # A limited request was not processed, so a write retries safely.
+        error.close()
+        if delay > self.rate_limit_wait:
+            raise RateLimited(path, time.time() + delay) from None
+        print(
+            "GitHub API rate limit for %s; retrying in %d seconds" % (path, delay),
+            file=sys.stderr,
+            flush=True,
+        )
+        self.rate_limit_wait -= delay
+        self.sleep(delay)
+        return 0 if _named_wait(error, time.time()) is not None else unnamed + 1
 
     def get(self, suffix):
         return self.call("GET", "/repos/" + self.repository + suffix)

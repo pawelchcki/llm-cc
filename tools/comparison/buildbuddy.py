@@ -129,17 +129,17 @@ def upload_plan(store, plan_path):
         )
     plan = json.loads(payload)
     prefix = pipeline_prefix(plan["identity"])
-    uploaded = set()
-    for worker in plan["workers"]:
-        for key in worker["keys"]:
-            object_id = plan["items"][key]["blob_id"]
-            if object_id in uploaded:
-                continue
-            content = (plan_path.parent / "blobs" / object_id).read_bytes()
-            if blob_id(content, object_id) != object_id:
-                raise ValueError("preparation blob changed before upload")
-            store.put(prefix + "blobs/" + object_id, content)
-            uploaded.add(object_id)
+    # Each distinct blob once, in plan order.
+    object_ids = dict.fromkeys(
+        plan["items"][key]["blob_id"]
+        for worker in plan["workers"]
+        for key in worker["keys"]
+    )
+    for object_id in object_ids:
+        content = (plan_path.parent / "blobs" / object_id).read_bytes()
+        if blob_id(content, object_id) != object_id:
+            raise ValueError("preparation blob changed before upload")
+        store.put(prefix + "blobs/" + object_id, content)
     store.put(prefix + "plan.json", payload)
     return prefix, hashlib.sha256(payload).hexdigest()
 
@@ -200,6 +200,24 @@ def execution_host(config):
     return host
 
 
+def secret_overrides(config):
+    """NAME=value for each worker secret.
+
+    Secrets travel in remote headers, which BuildBuddy treats as sensitive.
+    """
+    overrides = []
+    for name in config.get("worker_secret_env", []):
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+            raise ValueError("invalid secret environment variable name")
+        value = os.environ[name]
+        if "\n" in value or "," in value:
+            raise ValueError(
+                "secret environment value cannot contain commas or newlines"
+            )
+        overrides.append(name + "=" + value)
+    return overrides
+
+
 def worker_request(config, plan, worker, prefix, plan_digest):
     host = execution_host(config)
     commit = config["execution_commit"]
@@ -236,14 +254,10 @@ def worker_request(config, plan, worker, prefix, plan_digest):
     ]
     bundle = config.get("execution_bundle")
     if bundle is not None:
-        bundle_sha = config.get("execution_bundle_sha256", "")
-        if not Path(bundle).is_absolute() or not re.fullmatch(
-            r"[0-9a-f]{64}", bundle_sha
-        ):
-            raise ValueError(
-                "bare-host execution bundle requires an absolute path and SHA-256"
-            )
-        command = bundle_command(command, bundle, bundle_sha)
+        # The bundle command refuses a relative path or a malformed SHA-256.
+        command = bundle_command(
+            command, bundle, config.get("execution_bundle_sha256", "")
+        )
     properties = dict(config.get("platform_properties", {}))
     properties.update(
         {
@@ -257,17 +271,7 @@ def worker_request(config, plan, worker, prefix, plan_digest):
             "resources:" + host["resource_id"]: "1",
         }
     )
-    # Secrets travel in remote headers, which BuildBuddy treats as sensitive.
-    secret_overrides = []
-    for name in config.get("worker_secret_env", []):
-        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
-            raise ValueError("invalid secret environment variable name")
-        value = os.environ[name]
-        if "\n" in value or "," in value:
-            raise ValueError(
-                "secret environment value cannot contain commas or newlines"
-            )
-        secret_overrides.append(name + "=" + value)
+    overrides = secret_overrides(config)
     request = {
         "repo": config["execution_repository"],
         "commit_sha": commit,
@@ -279,14 +283,31 @@ def worker_request(config, plan, worker, prefix, plan_digest):
     }
     if bundle is not None:
         request["skip_auto_checkout"] = True
-    if secret_overrides:
+    if overrides:
         request["remote_headers"] = [
-            "x-buildbuddy-platform.secret-env-overrides=" + ",".join(secret_overrides)
+            "x-buildbuddy-platform.secret-env-overrides=" + ",".join(overrides)
         ]
     return request
 
 
 REPORT_LINK_PLACEHOLDERS = ("repository", "target_sha", "target_branch")
+
+
+def placeholders(name, template):
+    """The template's fields, which must be plain {placeholder}s.
+
+    A nested spec such as {repository:{secret}} parses as the allowed field,
+    then fails or pads at format time.
+    """
+    fields = []
+    for _, field, specification, conversion in string.Formatter().parse(template):
+        if specification or conversion:
+            raise ValueError(
+                "report link %s must use plain {placeholder} fields" % name
+            )
+        if field is not None:
+            fields.append(field)
+    return fields
 
 
 def validate_report_links(links):
@@ -304,18 +325,7 @@ def validate_report_links(links):
             for character in template
         ):
             raise ValueError("report link %s contains unsupported characters" % name)
-        fields = []
-        for _, field, specification, conversion in string.Formatter().parse(template):
-            if field is None:
-                continue
-            # A nested spec such as {repository:{secret}} parses as the allowed
-            # field, then fails or pads at format time. Accept plain fields only.
-            if specification or conversion:
-                raise ValueError(
-                    "report link %s must use plain {placeholder} fields" % name
-                )
-            fields.append(field)
-        unknown = set(fields) - set(REPORT_LINK_PLACEHOLDERS)
+        unknown = set(placeholders(name, template)) - set(REPORT_LINK_PLACEHOLDERS)
         if unknown:
             raise ValueError(
                 "report link %s uses unsupported placeholders: %s"
@@ -332,6 +342,45 @@ def report_links(config, identity):
     }
     validated = validate_report_links(config.get("report_links", {}))
     return {name: template.format(**values) for name, template in validated.items()}
+
+
+def collect_finished(api, store, prefix, output, pending, artifacts, errors):
+    """Keep each finished worker's artifact and failures; it leaves `pending`."""
+    for invocation, worker_id in list(pending.items()):
+        complete = api.complete(invocation)
+        if complete is None:
+            continue
+        raw = store.get(prefix + f"workers/{worker_id}/worker-{worker_id}.json")
+        if raw is None:
+            errors.append(f"worker {worker_id} ended without an artifact ({invocation})")
+        else:
+            path = output / f"worker-{worker_id}.json"
+            path.write_bytes(raw)
+            artifacts.append(path)
+        if not complete:
+            errors.append(f"worker {worker_id} invocation failed ({invocation})")
+        del pending[invocation]
+
+
+def recheck(current, checked_at, interval):
+    """Re-run the freshness check once `interval` has passed; returns its time."""
+    if time.monotonic() - checked_at < interval:
+        return checked_at
+    if not current():
+        raise RuntimeError(
+            "comparison superseded: PR head or target changed or PR closed"
+        )
+    return time.monotonic()
+
+
+def heartbeat(waiting, reported):
+    """Report changes, plus a heartbeat, without a line per poll."""
+    count, at = reported
+    now = time.monotonic()
+    if waiting == count and now - at < 60:
+        return reported
+    print(f"Waiting for {waiting} GPU workers", flush=True)
+    return waiting, now
 
 
 def run_prepared(
@@ -377,44 +426,16 @@ def run_prepared(
                 )
                 pending[invocation] = worker["worker_id"]
                 write_json(output / "submissions.json", pending)
-            reported_count, reported_at = 0, 0.0
+            reported = (0, 0.0)
             while pending:
                 if time.monotonic() - started >= timeout_seconds:
                     raise TimeoutError(
                         "comparison workers exceeded the two-hour coordinator deadline"
                     )
-                if time.monotonic() - checked_at >= current_check_seconds:
-                    if not current():
-                        raise RuntimeError(
-                            "comparison superseded: PR head or target changed or PR closed"
-                        )
-                    checked_at = time.monotonic()
-                for invocation, worker_id in list(pending.items()):
-                    complete = api.complete(invocation)
-                    if complete is None:
-                        continue
-                    raw = store.get(
-                        prefix + f"workers/{worker_id}/worker-{worker_id}.json"
-                    )
-                    if raw is None:
-                        errors.append(
-                            f"worker {worker_id} ended without an artifact ({invocation})"
-                        )
-                    else:
-                        path = output / f"worker-{worker_id}.json"
-                        path.write_bytes(raw)
-                        artifacts.append(path)
-                    if not complete:
-                        errors.append(
-                            f"worker {worker_id} invocation failed ({invocation})"
-                        )
-                    del pending[invocation]
+                checked_at = recheck(current, checked_at, current_check_seconds)
+                collect_finished(api, store, prefix, output, pending, artifacts, errors)
                 if pending:
-                    # Report changes, plus a heartbeat, without a line per poll.
-                    now = time.monotonic()
-                    if len(pending) != reported_count or now - reported_at >= 60:
-                        print(f"Waiting for {len(pending)} GPU workers", flush=True)
-                        reported_count, reported_at = len(pending), now
+                    reported = heartbeat(len(pending), reported)
                     time.sleep(poll_seconds)
         # Completion can occur between periodic checks, including on a fully
         # cached run. Never publish a success based on a cached freshness check.
@@ -498,6 +519,107 @@ def _failed_artifact(worker_id, plan, errors, elapsed):
     }
 
 
+def fetch_worker_inputs(store, args, directory, plan, deadline):
+    """Write the verified plan and this worker's source blobs under `directory`.
+
+    `plan` is filled as soon as it parses, so a failure report can carry it.
+    Returns the plan's path.
+    """
+    raw = store.get(args.prefix + "plan.json", max_bytes=PLAN_BYTES)
+    deadline.check()
+    if raw is None or hashlib.sha256(raw).hexdigest() != args.plan_sha256:
+        raise ValueError("preparation digest mismatch or missing plan")
+    plan.update(json.loads(raw))
+    if args.prefix != pipeline_prefix(plan["identity"]):
+        raise ValueError("preparation belongs to another pipeline")
+    plan_path = directory / "plan.json"
+    plan_path.write_bytes(raw)
+    worker = next(w for w in plan["workers"] if w["worker_id"] == args.worker_id)
+    (directory / "blobs").mkdir()
+    for key in worker["keys"]:
+        deadline.check()
+        item = plan["items"][key]
+        object_id = item["blob_id"]
+        # A blob can be no larger than the plan says.
+        content = store.get(args.prefix + "blobs/" + object_id, max_bytes=item["size"])
+        deadline.check()
+        if content is None or blob_id(content, object_id) != object_id:
+            raise ValueError("missing or corrupt source blob")
+        (directory / "blobs" / object_id).write_bytes(content)
+    return plan_path
+
+
+def worker_command(args, plan_path, output, options, seconds):
+    """`llm-cc compare worker` for this worker, its store options beside the plan."""
+    command = [
+        args.llm_cc,
+        "compare",
+        "worker",
+        "--plan",
+        str(plan_path),
+        "--worker-id",
+        str(args.worker_id),
+        "--output-dir",
+        str(output),
+        "--cache",
+        args.cache,
+        "--model",
+        args.model,
+        "--execution-host",
+        args.execution_host,
+        "--deadline-seconds",
+        str(int(seconds)),
+        "--progress",
+        "never",
+    ]
+    if options:
+        store_options = plan_path.with_name("store-options.json")
+        write_json(store_options, options)
+        command += ["--store-options", str(store_options)]
+    return command
+
+
+def score(command, artifact_path, seconds, errors):
+    """Run `llm-cc compare worker`; an exit without its artifact is an error.
+
+    llm-cc verifies the host, holds the GPU lock, stores each result as it
+    lands and always writes its artifact. It cannot stop mid-file, so the
+    process gets a short grace period to finish.
+    """
+    completed = subprocess.run(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=seconds + 300,
+        env=scorer_environment(),
+    )
+    if not artifact_path.is_file():
+        stderr = completed.stderr.decode("utf-8", "replace").strip()[-2000:]
+        errors.append(
+            "llm-cc compare worker exited %d without an artifact: %s"
+            % (completed.returncode, stderr)
+        )
+
+
+def report_worker(store, args, artifact_path):
+    """Upload the worker's artifact; its exit status.
+
+    Failure reporting gets a small, bounded grace period after the main
+    deadline. Private caches and model data stay outside output.
+    """
+    result = read_json(artifact_path)
+    try:
+        with Deadline(30) as cleanup:
+            cleanup.check()
+            store.put(
+                args.prefix + f"workers/{args.worker_id}/worker-{args.worker_id}.json",
+                artifact_path.read_bytes(),
+            )
+    except DeadlineExceeded:
+        return 1
+    return 0 if result.get("status") == "complete" else 1
+
+
 def remote_worker(args):
     started = time.monotonic()
 
@@ -520,74 +642,9 @@ def remote_worker(args):
         try:
             # SIGALRM interrupts a blocked SDK retry on Linux.
             with Deadline(remaining()) as deadline:
-                raw = store.get(args.prefix + "plan.json", max_bytes=PLAN_BYTES)
-                deadline.check()
-                if raw is None or hashlib.sha256(raw).hexdigest() != args.plan_sha256:
-                    raise ValueError("preparation digest mismatch or missing plan")
-                plan = json.loads(raw)
-                if args.prefix != pipeline_prefix(plan["identity"]):
-                    raise ValueError("preparation belongs to another pipeline")
-                plan_path = directory / "plan.json"
-                plan_path.write_bytes(raw)
-                worker = next(
-                    w for w in plan["workers"] if w["worker_id"] == args.worker_id
-                )
-                (directory / "blobs").mkdir()
-                for key in worker["keys"]:
-                    deadline.check()
-                    item = plan["items"][key]
-                    object_id = item["blob_id"]
-                    # A blob can be no larger than the plan says.
-                    content = store.get(
-                        args.prefix + "blobs/" + object_id, max_bytes=item["size"]
-                    )
-                    deadline.check()
-                    if content is None or blob_id(content, object_id) != object_id:
-                        raise ValueError("missing or corrupt source blob")
-                    (directory / "blobs" / object_id).write_bytes(content)
-            # llm-cc verifies the host, holds the GPU lock, stores each result
-            # as it lands and always writes its artifact. It cannot stop
-            # mid-file, so the process gets a short grace period to finish.
-            command = [
-                args.llm_cc,
-                "compare",
-                "worker",
-                "--plan",
-                str(plan_path),
-                "--worker-id",
-                str(args.worker_id),
-                "--output-dir",
-                str(output),
-                "--cache",
-                args.cache,
-                "--model",
-                args.model,
-                "--execution-host",
-                args.execution_host,
-                "--deadline-seconds",
-                str(int(remaining())),
-                "--progress",
-                "never",
-            ]
-            if options:
-                store_options = directory / "store-options.json"
-                write_json(store_options, options)
-                command += ["--store-options", str(store_options)]
-            completed = subprocess.run(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=remaining() + 300,
-                env=scorer_environment(),
-            )
-            if not artifact_path.is_file():
-                errors.append(
-                    "llm-cc compare worker exited %d without an artifact: %s"
-                    % (
-                        completed.returncode,
-                        completed.stderr.decode("utf-8", "replace").strip()[-2000:],
-                    )
-                )
+                plan_path = fetch_worker_inputs(store, args, directory, plan, deadline)
+            score(worker_command(args, plan_path, output, options, remaining()),
+                  artifact_path, remaining(), errors)
         except BaseException as error:
             errors.append(str(error) or type(error).__name__)
         if not artifact_path.is_file():
@@ -597,20 +654,7 @@ def remote_worker(args):
                     args.worker_id, plan, errors, time.monotonic() - started
                 ),
             )
-        result = read_json(artifact_path)
-        # Failure reporting gets a small, bounded grace period after the main
-        # deadline. Private caches and model data stay outside output.
-        try:
-            with Deadline(30) as cleanup:
-                cleanup.check()
-                store.put(
-                    args.prefix
-                    + f"workers/{args.worker_id}/worker-{args.worker_id}.json",
-                    artifact_path.read_bytes(),
-                )
-        except DeadlineExceeded:
-            return 1
-        return 0 if result.get("status") == "complete" else 1
+        return report_worker(store, args, artifact_path)
 
 
 def prepare_plan(config, repo, head, identity, output):
@@ -717,22 +761,77 @@ def freshness(github, repo, identity, merge):
 
     def publishable():
         fresh = current_from_git(repo, identity, merge)
-        if fresh is False:
-            return False
-        spare = (github.core_remaining() or 0) >= PUBLICATION_QUOTA_RESERVE
-        if fresh is None or spare:
+        if fresh is None:
+            return rest()
+        if fresh and (github.core_remaining() or 0) >= PUBLICATION_QUOTA_RESERVE:
             try:
                 return rest()
             except RateLimited:
-                if fresh is None:
-                    raise
+                pass
         return fresh
 
-    if identity["pr_number"] is not None and merge is None:
-        return current, 180, publishable
     # Freshness is polled separately, so BuildBuddy completion stays
     # responsive; ls-remote is one Git request.
-    return current, 30, publishable
+    rest_polls = identity["pr_number"] is not None and merge is None
+    return current, 180 if rest_polls else 30, publishable
+
+
+def discover(github, identity, args):
+    """(identity or None, test merge or None): REST with a token, else Git refs."""
+    if github.token:
+        resolved = discover_identity(github, identity, args.branch, args.default_branch)
+        return resolved, None
+    return discover_anonymous(
+        github,
+        identity,
+        args.repo,
+        args.branch,
+        args.default_branch,
+        getattr(args, "pull_request", None),
+        getattr(args, "base_branch", None),
+    )
+
+
+def defer(output, identity, error):
+    """Exit retryable after a refused quota, publishing no failed comparison.
+
+    Nothing was measured; a re-run once quota returns completes the run.
+    """
+    write_json(
+        output / "skipped.json",
+        {"reason": str(error), "retryable": True, "identity": identity},
+    )
+    print("Comparison deferred: %s" % error, file=sys.stderr, flush=True)
+    return EXIT_RETRYABLE
+
+
+def compare(args, config, github, identity, merge, output):
+    """Score a resolved identity and publish its report; the exit status."""
+    store = open_store(config["cache"], **config.get("store_options", {}))
+    # Fetch actual PR target, then full history if this checkout is shallow.
+    fetch_target(args.repo, identity["target_sha"], identity.get("target_branch"))
+    plan = prepare_plan(config, args.repo, args.head, identity, output)
+    api = BuildBuddy(
+        config.get("endpoint", "https://pawel.buildbuddy.io"),
+        os.environ.get(config.get("api_key_env", "BUILDBUDDY_API_KEY"), ""),
+    )
+    current, current_check_seconds, publishable = freshness(
+        github, args.repo, plan["identity"], merge
+    )
+    report = run_prepared(
+        output / "plan.json",
+        config,
+        store,
+        api,
+        output,
+        current=current,
+        # A completion poll is one BuildBuddy read per pending worker, so a
+        # short interval stops the coordinator idling after workers finish.
+        poll_seconds=2,
+        current_check_seconds=current_check_seconds,
+        publishable=publishable,
+    )
+    return 1 if report["status"] == "failed" else 0
 
 
 def coordinate(args):
@@ -746,21 +845,7 @@ def coordinate(args):
             os.environ.get(config.get("github_token_env", "GITHUB_TOKEN"), ""),
             rate_limit_wait=rate_limit_wait(config),
         )
-        merge = None
-        if github.token:
-            resolved = discover_identity(
-                github, identity, args.branch, args.default_branch
-            )
-        else:
-            resolved, merge = discover_anonymous(
-                github,
-                identity,
-                args.repo,
-                args.branch,
-                args.default_branch,
-                getattr(args, "pull_request", None),
-                getattr(args, "base_branch", None),
-            )
+        resolved, merge = discover(github, identity, args)
         if resolved is None:
             write_json(
                 output / "skipped.json",
@@ -768,40 +853,9 @@ def coordinate(args):
             )
             return 0
         identity = resolved
-        store = open_store(config["cache"], **config.get("store_options", {}))
-        # Fetch actual PR target, then full history if this checkout is shallow.
-        fetch_target(args.repo, identity["target_sha"], identity.get("target_branch"))
-        plan = prepare_plan(config, args.repo, args.head, identity, output)
-        api = BuildBuddy(
-            config.get("endpoint", "https://pawel.buildbuddy.io"),
-            os.environ.get(config.get("api_key_env", "BUILDBUDDY_API_KEY"), ""),
-        )
-        current, current_check_seconds, publishable = freshness(
-            github, args.repo, plan["identity"], merge
-        )
-        report = run_prepared(
-            output / "plan.json",
-            config,
-            store,
-            api,
-            output,
-            current=current,
-            # A completion poll is one BuildBuddy read per pending worker, so a
-            # short interval stops the coordinator idling after workers finish.
-            poll_seconds=2,
-            current_check_seconds=current_check_seconds,
-            publishable=publishable,
-        )
-        return 1 if report["status"] == "failed" else 0
+        return compare(args, config, github, identity, merge, output)
     except RateLimited as error:
-        # Nothing was measured, so no failed comparison is published: the run
-        # exits as retryable, and a re-run once quota returns completes it.
-        write_json(
-            output / "skipped.json",
-            {"reason": str(error), "retryable": True, "identity": identity},
-        )
-        print("Comparison deferred: %s" % error, file=sys.stderr, flush=True)
-        return EXIT_RETRYABLE
+        return defer(output, identity, error)
     except Exception as error:
         aggregate_report(
             output,

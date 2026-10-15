@@ -261,9 +261,7 @@ class GitRefDiscoveryTest(unittest.TestCase):
         git(self.origin, "update-ref", "refs/pull/%d/merge" % number, merge)
         return merge
 
-    def discover(self, **overrides):
-        values = dict(pr_number=7, target_branch="main", attempts=2, sleep=mock.Mock())
-        values.update(overrides)
+    def discover(self, pr_number=7, target_branch="main"):
         with mock.patch("sys.stderr", io.StringIO()):
             return discover_anonymous(
                 self.github,
@@ -271,9 +269,9 @@ class GitRefDiscoveryTest(unittest.TestCase):
                 self.checkout,
                 "feature",
                 "main",
-                values.pop("pr_number"),
-                values.pop("target_branch"),
-                **values,
+                pr_number,
+                target_branch,
+                deadline_seconds=0,
             )
 
     def test_target_is_the_recorded_base_without_rest_reads(self):
@@ -297,7 +295,7 @@ class GitRefDiscoveryTest(unittest.TestCase):
             self.publish_pull(self.head, self.target)
 
         identity, _ = pull_from_git(
-            self.checkout, self.head, "feature", 7, "main", attempts=3, sleep=publish
+            self.checkout, self.head, "feature", 7, "main", sleep=publish
         )
         self.assertEqual(identity["target_sha"], self.target)
 
@@ -312,7 +310,7 @@ class GitRefDiscoveryTest(unittest.TestCase):
 
         with self.assertRaises(Unresolved):
             pull_from_git(
-                self.checkout, self.head, "feature", 7, "main", attempts=12,
+                self.checkout, self.head, "feature", 7, "main",
                 delay=5, sleep=sleep, deadline_seconds=90, clock=lambda: now[0],
             )
         # Attempts run at 0, 25, 50, 75 and 100 seconds; another would start
@@ -320,11 +318,15 @@ class GitRefDiscoveryTest(unittest.TestCase):
         self.assertEqual(slept, [5, 5, 5, 5])
         # A stalled merge fetch ends discovery's Git attempt at once.
         self.publish_pull(self.head, self.target)
-        stalled = subprocess.TimeoutExpired(["git", "fetch"], 60)
+        run = subprocess.run
+
+        def stall_fetch(command, **options):
+            if "fetch" in command:
+                raise subprocess.TimeoutExpired(command, 60)
+            return run(command, **options)
+
         sleep = mock.Mock()
-        with mock.patch(
-            "tools.comparison.discover.merge_parents", side_effect=stalled
-        ):
+        with mock.patch("tools.comparison.discover.subprocess.run", stall_fetch):
             with self.assertRaisesRegex(Unresolved, "timed out"):
                 pull_from_git(
                     self.checkout, self.head, "feature", 7, "main", sleep=sleep
@@ -337,25 +339,25 @@ class GitRefDiscoveryTest(unittest.TestCase):
         self.assertEqual(self.discover(), (None, None))
         self.assertEqual(self.github.calls, [])
 
+    def assert_one_rest_read(self):
+        """Discovery resolves the target with one REST read of PR #7."""
+        self.github.calls.clear()
+        identity, merge = self.discover()
+        self.assertEqual((identity["target_sha"], merge), (self.target, None))
+        self.assertEqual(self.github.calls, [("GET", "/repos/owner/repo/pulls/7")])
+
     def test_missing_or_stale_merges_fall_back_to_one_rest_read(self):
         self.github.branches["main"] = self.target
         self.github.open_pull(7, "feature", self.head)
         git(self.origin, "update-ref", "refs/pull/7/head", self.head)
-        for stale in (False, True):
-            with self.subTest(stale=stale):
-                if stale:
-                    self.publish_pull(self.older, self.target)
-                    git(self.origin, "update-ref", "refs/pull/7/head", self.head)
-                self.github.calls.clear()
-                identity, merge = self.discover()
-                self.assertIsNone(merge)
-                self.assertEqual(identity["target_sha"], self.target)
-                self.assertEqual(
-                    self.github.calls, [("GET", "/repos/owner/repo/pulls/7")]
-                )
+        self.assert_one_rest_read()
+        # A merge of an older head is stale.
+        self.publish_pull(self.older, self.target)
+        git(self.origin, "update-ref", "refs/pull/7/head", self.head)
+        self.assert_one_rest_read()
         with self.assertRaises(Unresolved):
             pull_from_git(
-                self.checkout, self.head, "feature", 7, "main", attempts=1
+                self.checkout, self.head, "feature", 7, "main", deadline_seconds=0
             )
 
     def test_events_without_a_pull_request_use_rest_discovery(self):
@@ -409,17 +411,13 @@ class GitRefDiscoveryTest(unittest.TestCase):
             "tools.comparison.discover._git_output", side_effect=stalled
         ):
             self.assertIsNone(current_from_git(self.checkout, identity, merge))
-            self.github.calls.clear()
-            resolved, found = self.discover()
-        self.assertEqual((resolved["target_sha"], found), (self.target, None))
-        self.assertEqual(self.github.calls, [("GET", "/repos/owner/repo/pulls/7")])
+            self.assert_one_rest_read()
 
     def test_branch_names_cannot_become_options_or_patterns(self):
         self.assertEqual(branch_ref("feat/x-1"), "refs/heads/feat/x-1")
         for name in ("a b", "a..b", "x*", "", "a\nb"):
-            with self.subTest(name=name):
-                with self.assertRaises(ValueError):
-                    branch_ref(name)
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                branch_ref(name)
 
 
 class CommentApiTest(unittest.TestCase):

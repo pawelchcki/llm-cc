@@ -159,7 +159,9 @@ class BazziteSetupTest(unittest.TestCase):
                 parent_invocation_id(artifacts, {})
 
     @unittest.skipUnless(os.name == "posix", "host paths require POSIX")
-    def test_coordinator_receives_the_pull_request_buildbuddy_names(self):
+    def coordinator_pull_request(self, *arguments):
+        """The PR `run-coordinator` passes on during BuildBuddy's PR #24 event."""
+        seen = []
         with tempfile.TemporaryDirectory() as temporary:
             config = Path(temporary) / "comparison.json"
             config.write_text("{}")
@@ -172,11 +174,6 @@ class BazziteSetupTest(unittest.TestCase):
                 "GIT_BASE_BRANCH": "release",
                 "GIT_PR_NUMBER": "24",
             }
-            seen = []
-            arguments = [
-                "run-coordinator", "--config", str(config), "--repository",
-                "owner/repo", "--head", "a" * 40, "--default-branch", "main",
-            ]
             with (
                 mock.patch.dict(os.environ, environment, clear=True),
                 mock.patch(
@@ -186,16 +183,23 @@ class BazziteSetupTest(unittest.TestCase):
                     ) or 0,
                 ),
             ):
-                main(arguments + ["--branch", "feature"])
-                main(arguments + ["--branch", "other"])
-                main(arguments + ["--branch", "other", "--pull-request", "5",
-                                  "--base-branch", "main"])
-                with (
-                    mock.patch("sys.stderr", io.StringIO()),
-                    self.assertRaises(SystemExit),
-                ):
-                    main(arguments + ["--branch", "feature", "--pull-request", "5"])
-        self.assertEqual(seen, [(24, "release"), (None, None), (5, "main")])
+                main(["run-coordinator", "--config", str(config), "--repository",
+                      "owner/repo", "--head", "a" * 40, "--default-branch", "main",
+                      *arguments])
+        return seen[0]
+
+    def test_coordinator_receives_the_pull_request_buildbuddy_names(self):
+        coordinator = self.coordinator_pull_request
+        self.assertEqual(coordinator("--branch", "feature"), (24, "release"))
+        self.assertEqual(coordinator("--branch", "other"), (None, None))
+        self.assertEqual(
+            coordinator(
+                "--branch", "other", "--pull-request", "5", "--base-branch", "main"
+            ),
+            (5, "main"),
+        )
+        with mock.patch("sys.stderr", io.StringIO()), self.assertRaises(SystemExit):
+            coordinator("--branch", "feature", "--pull-request", "5")
 
     def test_pull_request_environment_belongs_to_one_exact_push(self):
         event = {

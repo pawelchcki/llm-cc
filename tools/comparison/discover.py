@@ -24,7 +24,6 @@ from .common import write_json
 
 SKIP_VARIABLE = "COMPARISON_SKIP"
 # GitHub computes a pull request's test merge asynchronously after a push.
-GIT_MERGE_ATTEMPTS = 12
 GIT_MERGE_DELAY_SECONDS = 5
 # A stalled Git endpoint must not hold the coordinator past its deadline.
 GIT_TIMEOUT_SECONDS = 60
@@ -87,12 +86,21 @@ def ls_remote(repo, refs, remote="origin"):
 
 
 def merge_parents(repo, ref, remote="origin"):
-    """Fetch GitHub's test merge `ref`; returns its SHA and parent SHAs."""
-    subprocess.run(
-        ["git", "-C", str(repo), "fetch", "--quiet", "--no-tags", remote, ref],
-        check=True,
-        timeout=GIT_TIMEOUT_SECONDS,
-    )
+    """Fetch GitHub's test merge `ref`; returns its SHA and parent SHAs.
+
+    A refused fetch returns no parents, so the caller waits for GitHub; a
+    stalled one cannot be waited out and leaves discovery to the API.
+    """
+    try:
+        subprocess.run(
+            ["git", "-C", str(repo), "fetch", "--quiet", "--no-tags", remote, ref],
+            check=True,
+            timeout=GIT_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        raise Unresolved("fetching %s timed out" % ref) from None
+    except subprocess.CalledProcessError:
+        return None, []
     merge = _git_output(repo, "rev-parse", "FETCH_HEAD").strip()
     return merge, _git_output(repo, "show", "-s", "--format=%P", merge).split()
 
@@ -109,11 +117,16 @@ def push_from_git(repo, head, branch, remote="origin"):
     ref = branch_ref(branch)
     if _advertised(repo, [ref], remote).get(ref) != head:
         raise ValueError("default-branch push was superseded")
+    return identity_of(head, head, branch, None)
+
+
+def identity_of(head, target_sha, target_branch, pr_number):
+    """The identity fields discovery resolves."""
     return {
         "head_sha": head,
-        "target_sha": head,
-        "target_branch": branch,
-        "pr_number": None,
+        "target_sha": target_sha,
+        "target_branch": target_branch,
+        "pr_number": pr_number,
     }
 
 
@@ -124,7 +137,6 @@ def pull_from_git(
     pr_number,
     target_branch,
     remote="origin",
-    attempts=GIT_MERGE_ATTEMPTS,
     delay=GIT_MERGE_DELAY_SECONDS,
     sleep=time.sleep,
     deadline_seconds=GIT_DISCOVERY_SECONDS,
@@ -138,44 +150,32 @@ def pull_from_git(
     SHA), or (None, None) when this repository's branch no longer proposes
     `head`, as REST discovery skips such a push. Raises Unresolved while GitHub
     has no merge for this head; it never computes one for a conflicting PR.
-    Retries stop at `deadline_seconds`, and a stalled command stops them at
-    once, so discovery never holds the run for more than about two minutes.
+    Waits end at `deadline_seconds`, and a stalled command ends them at once,
+    so discovery never holds the run for more than about two minutes.
     """
-    pull_head = "refs/pull/%d/head" % pr_number
-    merge_ref = "refs/pull/%d/merge" % pr_number
-    branch_name = branch_ref(branch)
     branch_ref(target_branch)
+    refs = [
+        branch_ref(branch),
+        "refs/pull/%d/head" % pr_number,
+        "refs/pull/%d/merge" % pr_number,
+    ]
     deadline = clock() + deadline_seconds
-    for attempt in range(attempts):
-        if attempt:
-            if clock() + delay > deadline:
-                break
-            sleep(delay)
-        refs = _advertised(repo, [branch_name, pull_head, merge_ref], remote)
+    while True:
+        proposed, pull_head, merge = map(_advertised(repo, refs, remote).get, refs)
         # Like REST discovery, require this repository's own branch to propose
         # the head: a fork's same-named branch never selects the comparison.
-        if refs.get(branch_name) != head:
+        if proposed != head:
             return None, None
         # The branch moved here first; GitHub updates the PR's refs after it.
-        if refs.get(pull_head) != head or merge_ref not in refs:
-            continue
-        try:
-            merge, parents = merge_parents(repo, merge_ref, remote)
-        except subprocess.TimeoutExpired:
-            raise Unresolved("fetching %s timed out" % merge_ref) from None
-        except subprocess.CalledProcessError:
-            continue
-        if len(parents) == 2 and parents[1] == head:
-            identity = {
-                "head_sha": head,
-                "target_sha": parents[0],
-                "target_branch": target_branch,
-                "pr_number": pr_number,
-            }
-            return identity, merge
-    raise Unresolved(
-        "GitHub has no test merge of PR #%d at %s" % (pr_number, head[:12])
-    )
+        if pull_head == head and merge:
+            merge, parents = merge_parents(repo, refs[2], remote)
+            if parents[1:] == [head]:
+                return identity_of(head, parents[0], target_branch, pr_number), merge
+        if clock() + delay > deadline:
+            raise Unresolved(
+                "GitHub has no test merge of PR #%d at %s" % (pr_number, head[:12])
+            )
+        sleep(delay)
 
 
 def discover_anonymous(
@@ -195,22 +195,29 @@ def discover_anonymous(
     """
     head = identity["head_sha"]
     try:
-        if branch == default_branch:
-            resolved, merge = push_from_git(repo, head, branch), None
-        elif pr_number and target_branch:
-            resolved, merge = pull_from_git(
-                repo, head, branch, pr_number, target_branch, **retry
-            )
-        else:
-            raise Unresolved("the CI event names no pull request for " + branch)
+        resolved, merge = from_git(
+            repo, head, branch, default_branch, pr_number, target_branch, retry
+        )
     except Unresolved as reason:
         print("%s; asking the GitHub API" % reason, file=sys.stderr, flush=True)
-        merge = None
-        if pr_number:
-            resolved = github.discover_pull(pr_number, head, branch)
-        else:
-            resolved = github.discover(head, branch, default_branch)
+        resolved, merge = from_rest(github, head, branch, default_branch, pr_number)
     return (None if resolved is None else dict(identity, **resolved)), merge
+
+
+def from_git(repo, head, branch, default_branch, pr_number, target_branch, retry):
+    """Git-ref discovery: (identity or None, merge SHA or None), or Unresolved."""
+    if branch == default_branch:
+        return push_from_git(repo, head, branch), None
+    if pr_number and target_branch:
+        return pull_from_git(repo, head, branch, pr_number, target_branch, **retry)
+    raise Unresolved("the CI event names no pull request for " + branch)
+
+
+def from_rest(github, head, branch, default_branch, pr_number):
+    """REST discovery, which knows no merge: one read of a named PR, else a search."""
+    if pr_number:
+        return github.discover_pull(pr_number, head, branch), None
+    return github.discover(head, branch, default_branch), None
 
 
 def current_from_git(repo, identity, merge=None, remote="origin"):

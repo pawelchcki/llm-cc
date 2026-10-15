@@ -151,32 +151,30 @@ def coordinator_request(
         raise ValueError(
             "Bazzite coordinator requires a bare-host configuration at an absolute path"
         )
-    arguments = [
-        "python3",
-        "-m",
-        "tools.comparison.submit_bazzite",
-        "run-coordinator",
-        "--config",
-        config_path,
-        "--repository",
-        repository,
-        "--head",
-        head,
-        "--branch",
-        branch,
-        "--default-branch",
-        default_branch,
-    ]
     # A remote run has no webhook environment; carry the event's PR forward.
+    pull = []
     if pull_request is not None:
-        arguments += [
-            "--pull-request",
-            str(int(pull_request)),
-            "--base-branch",
-            base_branch,
-        ]
+        pull = ["--pull-request", str(int(pull_request)), "--base-branch", base_branch]
     command = bundle_command(
-        arguments, config["execution_bundle"], config["execution_bundle_sha256"]
+        [
+            "python3",
+            "-m",
+            "tools.comparison.submit_bazzite",
+            "run-coordinator",
+            "--config",
+            config_path,
+            "--repository",
+            repository,
+            "--head",
+            head,
+            "--branch",
+            branch,
+            "--default-branch",
+            default_branch,
+            *pull,
+        ],
+        config["execution_bundle"],
+        config["execution_bundle_sha256"],
     )
     # Run already injects a group-scoped BUILDBUDDY_API_KEY into its runner.
     # Local API credentials authenticate the submission only. Public GitHub PR
