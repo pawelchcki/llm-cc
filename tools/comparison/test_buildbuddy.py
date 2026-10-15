@@ -577,8 +577,56 @@ class BuildBuddyTest(unittest.TestCase):
         self.assertFalse((output / "report.json").exists())
         self.assertFalse((output / "comment.md").exists())
 
+    def test_refused_quota_during_scoring_defers_and_cancels_workers(self):
+        self.prepare()
+        api = FakeAPI(complete=None)
+        checks = iter([True])
+
+        def current():
+            if next(checks, False):
+                return True
+            raise RateLimited("/repos/owner/repo/pulls/7", 1_800_000_000)
+
+        with patch("builtins.print"):
+            with self.assertRaises(RateLimited):
+                self.run_plan(api, current=current, current_check_seconds=0)
+        self.assertEqual(len(api.cancelled), 1)
+        self.assertFalse((self.output / "report.json").exists())
+
+    def test_anonymous_freshness_reads_git_and_asks_rest_only_when_it_must(self):
+        pull = {"head_sha": "a" * 40, "target_sha": "b" * 40,
+                "target_branch": "main", "pr_number": 7}
+        push = dict(pull, target_sha="a" * 40, pr_number=None)
+        github = GitHub("owner/repo")
+        github.current = lambda identity: "rest"
+        cases = (
+            # (identity, merge, Git's answer, expected result, interval)
+            (pull, "c" * 40, True, True, 30),
+            (pull, "c" * 40, False, False, 30),
+            (pull, "c" * 40, None, "rest", 30),
+            (pull, None, None, "rest", 180),
+            (pull, None, False, False, 180),
+            (push, None, True, True, 30),
+        )
+        for identity, merge, git_answer, expected, interval in cases:
+            with self.subTest(identity=identity["pr_number"], merge=merge,
+                              git_answer=git_answer):
+                with patch(
+                    "tools.comparison.buildbuddy.current_from_git",
+                    return_value=git_answer,
+                ):
+                    current, seconds = buildbuddy.freshness(
+                        github, "/repo", identity, merge
+                    )
+                    self.assertEqual((current(), seconds), (expected, interval))
+        github.token = "synthetic-token"
+        with patch("tools.comparison.buildbuddy.current_from_git") as git_check:
+            current, seconds = buildbuddy.freshness(github, "/repo", pull, None)
+            self.assertEqual((current(), seconds), ("rest", 10))
+        git_check.assert_not_called()
+
     def test_rate_limit_wait_is_bounded(self):
-        self.assertEqual(buildbuddy.rate_limit_wait({}), 3900)
+        self.assertEqual(buildbuddy.rate_limit_wait({}), 300)
         self.assertEqual(
             buildbuddy.rate_limit_wait({"github_rate_limit_wait_seconds": 0}), 0
         )

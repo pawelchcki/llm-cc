@@ -48,9 +48,10 @@ WORKER_SECONDS = 6600
 PLAN_BYTES = 256 * 1024 * 1024
 # llm-cc's analyzer limit (kMaxSourceBytes); larger files are oversized.
 MAX_SOURCE_BYTES = 1024 * 1024 * 1024
-# A full anonymous REST window plus margin: a quota GitHub refuses now is
-# granted again within the hour, and every comparison on the host shares it.
-GITHUB_RATE_LIMIT_WAIT_SECONDS = 3900
+# Total quota waits per run. Covers GitHub's secondary-limit retry-after
+# (usually 60 s), and with the coordinator's 7200-second deadline still fits
+# a 130-minute action; a longer primary window defers the run instead.
+GITHUB_RATE_LIMIT_WAIT_SECONDS = 300
 # The CI convention for a temporary failure that a re-run can fix.
 EXIT_RETRYABLE = 75
 
@@ -412,6 +413,10 @@ def run_prepared(
         # cached run. Never publish a success based on a cached freshness check.
         if not current():
             raise RuntimeError("comparison superseded before report publication")
+    except RateLimited:
+        # A refused GitHub quota defers the run rather than failing it; the
+        # finally block still cancels workers, whose results stay cached.
+        raise
     except Exception as error:
         errors.append(str(error))
     finally:
@@ -679,6 +684,31 @@ def rate_limit_wait(config):
     return value
 
 
+def freshness(github, repo, identity, merge):
+    """The comparison's freshness check and the seconds between periodic calls.
+
+    With a token, the REST API answers. Anonymous REST reads share the host's
+    60/hour quota, so Git refs answer whenever they can; only an identity
+    found without a test merge, or a PR whose merge GitHub dropped (as it does
+    on close), asks the API, and then no more than 20 times an hour.
+    """
+
+    def current():
+        if not github.token:
+            fresh = current_from_git(repo, identity, merge)
+            if fresh is not None:
+                return fresh
+        return github.current(identity)
+
+    if github.token:
+        return current, 10
+    if identity["pr_number"] is not None and merge is None:
+        return current, 180
+    # Freshness is polled separately, so BuildBuddy completion stays
+    # responsive; ls-remote is one Git request.
+    return current, 30
+
+
 def coordinate(args):
     output = Path(args.output_dir)
     identity = new_identity(args.repository, args.pipeline_id, args.head)
@@ -720,13 +750,9 @@ def coordinate(args):
             config.get("endpoint", "https://pawel.buildbuddy.io"),
             os.environ.get(config.get("api_key_env", "BUILDBUDDY_API_KEY"), ""),
         )
-
-        def current():
-            if github.token:
-                return github.current(plan["identity"])
-            # Anonymous REST reads share the host's 60/hour quota; Git refs do not.
-            return current_from_git(args.repo, plan["identity"], merge)
-
+        current, current_check_seconds = freshness(
+            github, args.repo, plan["identity"], merge
+        )
         report = run_prepared(
             output / "plan.json",
             config,
@@ -737,9 +763,7 @@ def coordinate(args):
             # A completion poll is one BuildBuddy read per pending worker, so a
             # short interval stops the coordinator idling after workers finish.
             poll_seconds=2,
-            # Freshness is polled separately, so BuildBuddy completion stays
-            # responsive; ls-remote is one Git request.
-            current_check_seconds=10 if github.token else 30,
+            current_check_seconds=current_check_seconds,
         )
         return 1 if report["status"] == "failed" else 0
     except RateLimited as error:

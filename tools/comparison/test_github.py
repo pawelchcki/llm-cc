@@ -326,7 +326,12 @@ class GitRefDiscoveryTest(unittest.TestCase):
         self.assertTrue(current_from_git(self.checkout, identity, found))
         self.publish_pull(self.head, self.later)
         self.assertFalse(current_from_git(self.checkout, identity, found))
+        # Without the merge discovery read, or once GitHub drops it as it does
+        # when a PR closes, only the REST API knows the PR's state and base.
         self.publish_pull(self.head, self.target)
+        self.assertIsNone(current_from_git(self.checkout, identity, None))
+        git(self.origin, "update-ref", "-d", "refs/pull/7/merge")
+        self.assertIsNone(current_from_git(self.checkout, identity, found))
         git(self.origin, "update-ref", "refs/pull/7/head", self.later)
         self.assertFalse(current_from_git(self.checkout, identity, found))
 

@@ -188,10 +188,11 @@ def discover_anonymous(
 
 
 def current_from_git(repo, identity, merge=None, remote="origin"):
-    """Freshness from Git refs: the push or PR still proposes this comparison.
+    """Freshness from Git refs: True or False, or None when only the API can tell.
 
-    A PR's head ref shows a newer push. Its test merge, while it still has
-    the merge discovery read, shows the recorded base is unchanged; a new
+    A PR's head ref shows a newer push. Its test merge, while it is still the
+    merge discovery read, shows the PR is open with an unchanged recorded base;
+    GitHub recomputes it on retargeting and drops it when the PR closes. A new
     merge must keep the same base and head to stay current.
     """
     head = identity["head_sha"]
@@ -203,12 +204,15 @@ def current_from_git(repo, identity, merge=None, remote="origin"):
     refs = ls_remote(repo, [pull_head, merge_ref], remote)
     if refs.get(pull_head) != head:
         return False
-    if merge is None or refs.get(merge_ref) in (None, merge):
+    # The head ref alone says nothing about the PR's state or base.
+    if merge is None or merge_ref not in refs:
+        return None
+    if refs[merge_ref] == merge:
         return True
     try:
         _, parents = merge_parents(repo, merge_ref, remote)
     except subprocess.CalledProcessError:
-        return True
+        return None
     return parents == [identity["target_sha"], head]
 
 

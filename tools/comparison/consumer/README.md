@@ -71,16 +71,20 @@ token the coordinator reads Git refs instead, which use no REST quota:
   from GitHub's test merge, `refs/pull/N/merge`, whose first parent is the
   recorded base that GitHub's API reports as `base.sha`.
 - A default-branch push checks `refs/heads/<default>` with `git ls-remote`.
-- Freshness checks while GPU workers run use `git ls-remote` as well.
+- Freshness checks while GPU workers run use `git ls-remote` as well. GitHub
+  drops a PR's test merge when the PR closes and recomputes it when the PR is
+  retargeted, so an unchanged merge also shows the PR is open on the same base.
 
-The REST API is used only when GitHub has no test merge for the head, for
-example while a pull request has conflicts (one read), or when the run has no
-BuildBuddy pull-request event to name the pull request. A refused
-quota is retried after the reset GitHub reports, waiting at most
-`github_rate_limit_wait_seconds` (default 3900) in the coordinator
-configuration. If the quota still is not there, the run writes `skipped.json`
-with `"retryable": true`, publishes no failed comparison, and exits with status
-75; re-run the action once the quota resets.
+The REST API is used only when Git refs cannot answer: GitHub has no test
+merge for the head, for example while a pull request has conflicts (one read,
+then freshness reads every three minutes), the test merge disappears during a
+run, or the run has no BuildBuddy pull-request event to name the pull request.
+A refused quota is retried after the wait GitHub names, sleeping at most
+`github_rate_limit_wait_seconds` (default 300) per run, so the 130-minute action
+still fits the coordinator's two-hour deadline. A longer wait, such as an
+exhausted anonymous hour, defers the run: it writes `skipped.json` with
+`"retryable": true`, publishes no failed comparison, and exits with status 75.
+Results already scored stay cached, so a re-run after the reset is quick.
 
 Private repositories need a `GITHUB_TOKEN` BuildBuddy secret for the
 repository's group, which also switches discovery and freshness checks to the
