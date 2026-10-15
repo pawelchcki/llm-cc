@@ -61,11 +61,30 @@ extension table.
 
 ## Private repositories and GitHub quota
 
-The coordinator discovers the open pull request through the GitHub REST API.
-Anonymous reads share a 60-per-hour quota by source IP, which the host also uses
-for every other repository. Configure a `GITHUB_TOKEN` BuildBuddy secret for the
-repository's group. A token is required for private repositories and strongly
-recommended for public ones.
+Public repositories need no token. Anonymous GitHub REST reads share a
+60-per-hour quota by source IP with everything else on the host, so without a
+token the coordinator reads Git refs instead, which use no REST quota:
+
+- BuildBuddy names the pull request (`GIT_PR_NUMBER`, `GIT_BASE_BRANCH`,
+  `GIT_BRANCH`, `GIT_COMMIT`). The coordinator checks that the repository's
+  branch and `refs/pull/N/head` both point at the head, and takes the target
+  from GitHub's test merge, `refs/pull/N/merge`, whose first parent is the
+  recorded base that GitHub's API reports as `base.sha`.
+- A default-branch push checks `refs/heads/<default>` with `git ls-remote`.
+- Freshness checks while GPU workers run use `git ls-remote` as well.
+
+The REST API is used only when GitHub has no test merge for the head, for
+example while a pull request has conflicts (one read), or when the run has no
+BuildBuddy pull-request event to name the pull request. A refused
+quota is retried after the reset GitHub reports, waiting at most
+`github_rate_limit_wait_seconds` (default 3900) in the coordinator
+configuration. If the quota still is not there, the run writes `skipped.json`
+with `"retryable": true`, publishes no failed comparison, and exits with status
+75; re-run the action once the quota resets.
+
+Private repositories need a `GITHUB_TOKEN` BuildBuddy secret for the
+repository's group, which also switches discovery and freshness checks to the
+REST API.
 
 ## Shared store
 

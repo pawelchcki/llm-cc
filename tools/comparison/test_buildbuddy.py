@@ -38,7 +38,7 @@ from .common import (
     write_json,
 )
 from .fixtures import commit_files, fake_scoring, git
-from .github import GitHub
+from .github import GitHub, RateLimited
 from .store import FilesystemStore
 
 # Stands in for a bare host that passes llm-cc's execution-host verification:
@@ -544,6 +544,48 @@ class BuildBuddyTest(unittest.TestCase):
         github = GitHub("owner/repo")
         github.get = lambda _: []
         self.assertIsNone(github.discover("a" * 40, "feature", "main"))
+
+    def test_refused_quota_defers_without_publishing_a_failure(self):
+        config = self.root / "comparison.json"
+        config.write_text("{}")
+        output = self.root / "artifacts"
+        args = argparse.Namespace(
+            config=str(config),
+            repository="owner/repo",
+            pipeline_id="pipeline",
+            head="a" * 40,
+            branch="feature",
+            default_branch="main",
+            repo=str(self.root),
+            output_dir=str(output),
+            pull_request=7,
+            base_branch="main",
+        )
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch(
+                "tools.comparison.buildbuddy.discover_anonymous",
+                side_effect=RateLimited("/repos/owner/repo/pulls/7", 1_800_000_000),
+            ) as discover,
+            patch("sys.stderr"),
+        ):
+            self.assertEqual(buildbuddy.coordinate(args), buildbuddy.EXIT_RETRYABLE)
+        self.assertEqual(discover.call_args.args[5:], (7, "main"))
+        skipped = read_json(output / "skipped.json")
+        self.assertTrue(skipped["retryable"])
+        self.assertIn("retry after 2027-01-15T08:00:00Z", skipped["reason"])
+        self.assertFalse((output / "report.json").exists())
+        self.assertFalse((output / "comment.md").exists())
+
+    def test_rate_limit_wait_is_bounded(self):
+        self.assertEqual(buildbuddy.rate_limit_wait({}), 3900)
+        self.assertEqual(
+            buildbuddy.rate_limit_wait({"github_rate_limit_wait_seconds": 0}), 0
+        )
+        for value in (-1, 7201, "60", 1.5, True):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    buildbuddy.rate_limit_wait({"github_rate_limit_wait_seconds": value})
 
     def test_failure_envelope_matches_bounded_comment(self):
         aggregate_report(self.root, identity=self.identity, errors=["analysis failed"])

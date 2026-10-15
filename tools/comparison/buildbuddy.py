@@ -19,6 +19,7 @@ import shlex
 import signal
 import string
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.parse
@@ -30,8 +31,14 @@ from .common import (
     write_json,
 )
 from .deadline import Deadline, DeadlineExceeded
-from .discover import discover_identity, fetch_target, new_identity
-from .github import GitHub, api_request
+from .discover import (
+    current_from_git,
+    discover_anonymous,
+    discover_identity,
+    fetch_target,
+    new_identity,
+)
+from .github import GitHub, RateLimited, api_request
 from .publish import store_report
 from .store import open_store
 
@@ -41,6 +48,11 @@ WORKER_SECONDS = 6600
 PLAN_BYTES = 256 * 1024 * 1024
 # llm-cc's analyzer limit (kMaxSourceBytes); larger files are oversized.
 MAX_SOURCE_BYTES = 1024 * 1024 * 1024
+# A full anonymous REST window plus margin: a quota GitHub refuses now is
+# granted again within the hour, and every comparison on the host shares it.
+GITHUB_RATE_LIMIT_WAIT_SECONDS = 3900
+# The CI convention for a temporary failure that a re-run can fix.
+EXIT_RETRYABLE = 75
 
 
 class BuildBuddy:
@@ -660,6 +672,13 @@ def prepare_plan(config, repo, head, identity, output):
     return read_json(output / "plan.json")
 
 
+def rate_limit_wait(config):
+    value = config.get("github_rate_limit_wait_seconds", GITHUB_RATE_LIMIT_WAIT_SECONDS)
+    if type(value) is not int or not 0 <= value <= 7200:
+        raise ValueError("github_rate_limit_wait_seconds must be between 0 and 7200")
+    return value
+
+
 def coordinate(args):
     output = Path(args.output_dir)
     identity = new_identity(args.repository, args.pipeline_id, args.head)
@@ -669,8 +688,23 @@ def coordinate(args):
         github = GitHub(
             args.repository,
             os.environ.get(config.get("github_token_env", "GITHUB_TOKEN"), ""),
+            rate_limit_wait=rate_limit_wait(config),
         )
-        resolved = discover_identity(github, identity, args.branch, args.default_branch)
+        merge = None
+        if github.token:
+            resolved = discover_identity(
+                github, identity, args.branch, args.default_branch
+            )
+        else:
+            resolved, merge = discover_anonymous(
+                github,
+                identity,
+                args.repo,
+                args.branch,
+                args.default_branch,
+                getattr(args, "pull_request", None),
+                getattr(args, "base_branch", None),
+            )
         if resolved is None:
             write_json(
                 output / "skipped.json",
@@ -686,22 +720,37 @@ def coordinate(args):
             config.get("endpoint", "https://pawel.buildbuddy.io"),
             os.environ.get(config.get("api_key_env", "BUILDBUDDY_API_KEY"), ""),
         )
+
+        def current():
+            if github.token:
+                return github.current(plan["identity"])
+            # Anonymous REST reads share the host's 60/hour quota; Git refs do not.
+            return current_from_git(args.repo, plan["identity"], merge)
+
         report = run_prepared(
             output / "plan.json",
             config,
             store,
             api,
             output,
-            current=lambda: github.current(plan["identity"]),
+            current=current,
             # A completion poll is one BuildBuddy read per pending worker, so a
             # short interval stops the coordinator idling after workers finish.
             poll_seconds=2,
-            # Anonymous GitHub REST reads share a 60/hour IP quota. Poll PR
-            # freshness separately (20/hour), leaving room for discovery and
-            # final checks while BuildBuddy completion remains responsive.
-            current_check_seconds=10 if github.token else 180,
+            # Freshness is polled separately, so BuildBuddy completion stays
+            # responsive; ls-remote is one Git request.
+            current_check_seconds=10 if github.token else 30,
         )
         return 1 if report["status"] == "failed" else 0
+    except RateLimited as error:
+        # Nothing was measured, so no failed comparison is published: the run
+        # exits as retryable, and a re-run once quota returns completes it.
+        write_json(
+            output / "skipped.json",
+            {"reason": str(error), "retryable": True, "identity": identity},
+        )
+        print("Comparison deferred: %s" % error, file=sys.stderr, flush=True)
+        return EXIT_RETRYABLE
     except Exception as error:
         aggregate_report(
             output,
@@ -710,6 +759,12 @@ def coordinate(args):
             executable=config.get("llm_cc") if isinstance(config, dict) else None,
         )
         return 1
+
+
+def pull_request_arguments(parser):
+    """The PR a CI event names; anonymous discovery then reads its Git refs."""
+    parser.add_argument("--pull-request", type=int, help="pull request number")
+    parser.add_argument("--base-branch", help="the pull request's target branch")
 
 
 def main(argv=None):
@@ -732,6 +787,7 @@ def main(argv=None):
         coordinator.add_argument("--" + name, required=True)
     coordinator.add_argument("--repo", default=".")
     coordinator.add_argument("--default-branch", default="main")
+    pull_request_arguments(coordinator)
     args = parser.parse_args(argv)
     return remote_worker(args) if args.stage == "remote-worker" else coordinate(args)
 
