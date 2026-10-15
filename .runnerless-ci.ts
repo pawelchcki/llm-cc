@@ -60,9 +60,9 @@ function commentBody(value: Value): string {
   return String.fromCharCodes(units);
 }
 
-// The escaped LM-CC/token data in a publisher complexity report, given the report
-// body as compact JSON text starting at its opening quote: "" when that report has
-// no data, or null for any other text.
+// The escaped LM-CC/token data in a publisher complexity report, given its body as
+// compact JSON text from the opening quote: "" when that report has no data, or
+// null for any other text.
 function ratioData(body: string): string | null {
   // Publication attribution can appear between these two host markers.
   if (!body.startsWith('"<!-- codex-review-artifact-publisher -->')
@@ -116,9 +116,9 @@ function reportRatio(): void {
   // Another author's comment cannot change the publisher's report. Skip it before
   // any GitHub read: every read counts against the program's deadline. A deletion
   // may have removed the report, so it always rescans the live comments.
-  const commented = details.get("event").string() == "issue_comment"
-    && details.get("action").string() != "deleted";
-  if (commented && details.get("actorId").integer() != publisherActorId) return;
+  if (details.get("event").string() == "issue_comment"
+    && details.get("action").string() != "deleted"
+    && details.get("actorId").integer() != publisherActorId) return;
   // The typed PR wrapper also decodes the unused title and description.
   const pr = capabilities.call("pulls.get").require();
   if (pr.get("state").string() != "open") return;
@@ -137,13 +137,10 @@ function reportRatio(): void {
       return;
     }
   }
-  // The publisher's own report arrives with its comment event. An event body that
-  // was cut short or delivered after a newer edit falls back to the live report.
-  const fullName = details.get("fullName").string();
-  let data: Value | null = commented
-    ? currentData(ratioData(details.get("commentBody").json), fullName, prNumber, prHead, prBase)
-    : null;
-  if (data === null) data = currentData(publishedData(), fullName, prNumber, prHead, prBase);
+  // Always read the live report: comment events can arrive out of order, so even
+  // the publisher's own event body may describe an older report.
+  const data = currentData(publishedData(), details.get("fullName").string(),
+                           prNumber, prHead, prBase);
   if (data === null) {
     checks.report("LM-CC/token", false,
       "Waiting for verified LM-CC/token data for the current PR head and target.");
