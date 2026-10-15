@@ -100,8 +100,10 @@ function reportRatio(): void {
   const details = event.details();
   if (details.get("pullNumber").isNull()) return;
   // Another author's comment cannot change the publisher's report. Skip it before
-  // any GitHub read: every read counts against the program's deadline.
-  const commented = details.get("event").string() == "issue_comment";
+  // any GitHub read: every read counts against the program's deadline. A deletion
+  // may have removed the report, so it always rescans the live comments.
+  const commented = details.get("event").string() == "issue_comment"
+    && details.get("action").string() != "deleted";
   if (commented && details.get("actorId").integer() != publisherActorId) return;
   // The typed PR wrapper also decodes the unused title and description.
   const pr = capabilities.call("pulls.get").require();
