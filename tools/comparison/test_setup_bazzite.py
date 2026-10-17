@@ -571,12 +571,23 @@ class CheckoutResolutionTest(unittest.TestCase):
                 "GIT_COMMITTER_EMAIL": "ci-runner@buildbuddy.io",
             },
         ).decode().strip()
-        head, branch, default = resolve_checkout(
-            self.repo, {"GIT_COMMIT": merge, "GIT_BRANCH": "feature"}
-        )
+        event = {
+            "GIT_COMMIT": merge,
+            "GIT_BRANCH": "feature",
+            "GIT_BASE_BRANCH": "main",
+            "GIT_PR_NUMBER": "7",
+        }
+        head, branch, default = resolve_checkout(self.repo, event)
         self.assertEqual(head, side)
         self.assertEqual(branch, "feature")
         self.assertEqual(default, "main")
+        self.assertEqual(
+            pull_request_environment(head, branch, event, repo=self.repo), (7, "main")
+        )
+        self.assertEqual(
+            pull_request_environment(self.head, branch, event, repo=self.repo),
+            (None, None),
+        )
 
     def test_forged_committer_on_a_non_merge_commit_is_not_unwrapped(self):
         # The committer email is attacker-controlled. Unwrapping an ordinary
@@ -600,6 +611,20 @@ class CheckoutResolutionTest(unittest.TestCase):
             self.repo, {"GIT_COMMIT": forged, "GIT_BRANCH": "forged"}
         )
         self.assertEqual(head, forged)
+        self.assertEqual(
+            pull_request_environment(
+                self.head,
+                "forged",
+                {
+                    "GIT_COMMIT": forged,
+                    "GIT_BRANCH": "forged",
+                    "GIT_BASE_BRANCH": "main",
+                    "GIT_PR_NUMBER": "7",
+                },
+                repo=self.repo,
+            ),
+            (None, None),
+        )
 
     def test_default_branch_precedence_and_checkout_fallbacks(self):
         head, branch, default = resolve_checkout(self.repo, {})

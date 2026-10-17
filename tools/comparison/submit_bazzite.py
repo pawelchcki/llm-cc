@@ -67,17 +67,8 @@ def _git(repo, *args):
     ).stdout.strip()
 
 
-def resolve_checkout(repo=".", environment=None, default_branch=None):
-    """Derive the analysed head and branch from whatever the runner provides."""
-    environment = os.environ if environment is None else environment
-    head = environment.get("GIT_COMMIT") or environment.get("COMMIT_SHA")
-    if not head:
-        try:
-            head = runner_metadata("COMMIT_SHA", environment=environment)
-        except ValueError:
-            head = None
-    if not head:
-        head = _git(repo, "rev-parse", "HEAD")
+def checkout_head(repo, head):
+    """Resolve a runner commit to the head it actually proposes."""
     if not re.fullmatch(r"[0-9a-fA-F]{40}", head):
         raise ValueError("checkout head must be a full Git commit SHA")
     head = head.lower()
@@ -91,6 +82,21 @@ def resolve_checkout(repo=".", environment=None, default_branch=None):
     )[:2]
     if committer == CI_MERGE_COMMITTER and len(parents.split()) >= 2:
         head = _git(repo, "rev-parse", head + "^1")
+    return head
+
+
+def resolve_checkout(repo=".", environment=None, default_branch=None):
+    """Derive the analysed head and branch from whatever the runner provides."""
+    environment = os.environ if environment is None else environment
+    head = environment.get("GIT_COMMIT") or environment.get("COMMIT_SHA")
+    if not head:
+        try:
+            head = runner_metadata("COMMIT_SHA", environment=environment)
+        except ValueError:
+            head = None
+    if not head:
+        head = _git(repo, "rev-parse", "HEAD")
+    head = checkout_head(repo, head)
     branch = environment.get("GIT_BRANCH") or _git(repo, "branch", "--show-current")
     if not branch:
         branch = runner_metadata("BRANCH_NAME", environment=environment)
@@ -98,12 +104,13 @@ def resolve_checkout(repo=".", environment=None, default_branch=None):
     return head, branch, default
 
 
-def pull_request_environment(head, branch, environment=None):
+def pull_request_environment(head, branch, environment=None, repo="."):
     """The PR number and target branch BuildBuddy names for this exact push.
 
     BuildBuddy sets GIT_PR_NUMBER (0 for a push), GIT_BASE_BRANCH, GIT_BRANCH
-    and GIT_COMMIT, the PR head, from the triggering webhook. Values for any
-    other head or branch belong to another event and are not used.
+    and GIT_COMMIT from the triggering webhook. The commit can be the PR head
+    or the runner's synthetic merge of it. Values for any other head or branch
+    belong to another event and are not used.
     """
     environment = os.environ if environment is None else environment
     number = environment.get("GIT_PR_NUMBER", "")
@@ -111,10 +118,17 @@ def pull_request_environment(head, branch, environment=None):
     if (
         not re.fullmatch(r"[1-9][0-9]{0,9}", number)
         or not target
-        or (environment.get("GIT_COMMIT") or "").lower() != head
         or environment.get("GIT_BRANCH") != branch
     ):
         return None, None
+    event_head = (environment.get("GIT_COMMIT") or "").lower()
+    if event_head != head:
+        try:
+            event_head = checkout_head(repo, event_head)
+        except (ValueError, subprocess.CalledProcessError):
+            return None, None
+        if event_head != head:
+            return None, None
     return int(number), target
 
 
@@ -221,7 +235,7 @@ def main(argv=None):
         args.default_branch = args.default_branch or default_branch
     if args.pull_request is None:
         args.pull_request, args.base_branch = pull_request_environment(
-            args.head, args.branch
+            args.head, args.branch, repo=repo
         )
     if args.action == "run-coordinator":
         config = read_json(args.config)
