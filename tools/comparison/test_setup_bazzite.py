@@ -24,6 +24,7 @@ from .submit_bazzite import (
     coordinator_request,
     main,
     parent_invocation_id,
+    pull_request_environment,
     resolve_checkout,
     runner_metadata,
 )
@@ -158,6 +159,70 @@ class BazziteSetupTest(unittest.TestCase):
                 parent_invocation_id(artifacts, {})
 
     @unittest.skipUnless(os.name == "posix", "host paths require POSIX")
+    def coordinator_pull_request(self, *arguments):
+        """The PR `run-coordinator` passes on during BuildBuddy's PR #24 event."""
+        seen = []
+        with tempfile.TemporaryDirectory() as temporary:
+            config = Path(temporary) / "comparison.json"
+            config.write_text("{}")
+            environment = {
+                "BUILDBUDDY_API_KEY": "server-injected",
+                "BUILDBUDDY_INVOCATION_ID": "01234567-89ab-cdef-0123-456789abcdef",
+                "BUILDBUDDY_ARTIFACTS_DIRECTORY": temporary,
+                "GIT_COMMIT": "a" * 40,
+                "GIT_BRANCH": "feature",
+                "GIT_BASE_BRANCH": "release",
+                "GIT_PR_NUMBER": "24",
+            }
+            with (
+                mock.patch.dict(os.environ, environment, clear=True),
+                mock.patch(
+                    "tools.comparison.submit_bazzite.coordinate",
+                    side_effect=lambda args: seen.append(
+                        (args.pull_request, args.base_branch)
+                    ) or 0,
+                ),
+            ):
+                main(["run-coordinator", "--config", str(config), "--repository",
+                      "owner/repo", "--head", "a" * 40, "--default-branch", "main",
+                      *arguments])
+        return seen[0]
+
+    def test_coordinator_receives_the_pull_request_buildbuddy_names(self):
+        coordinator = self.coordinator_pull_request
+        self.assertEqual(coordinator("--branch", "feature"), (24, "release"))
+        self.assertEqual(coordinator("--branch", "other"), (None, None))
+        self.assertEqual(
+            coordinator(
+                "--branch", "other", "--pull-request", "5", "--base-branch", "main"
+            ),
+            (5, "main"),
+        )
+        with mock.patch("sys.stderr", io.StringIO()), self.assertRaises(SystemExit):
+            coordinator("--branch", "feature", "--pull-request", "5")
+
+    def test_pull_request_environment_belongs_to_one_exact_push(self):
+        event = {
+            "GIT_COMMIT": "A" * 40,
+            "GIT_BRANCH": "feature",
+            "GIT_BASE_BRANCH": "main",
+            "GIT_PR_NUMBER": "7",
+        }
+        self.assertEqual(pull_request_environment("a" * 40, "feature", event), (7, "main"))
+        for change in (
+            {"GIT_PR_NUMBER": "0"},  # BuildBuddy's value for a push
+            {"GIT_PR_NUMBER": "07"},
+            {"GIT_PR_NUMBER": ""},
+            {"GIT_BASE_BRANCH": ""},
+            {"GIT_COMMIT": "b" * 40},
+            {"GIT_BRANCH": "other"},
+        ):
+            with self.subTest(change=change):
+                self.assertEqual(
+                    pull_request_environment("a" * 40, "feature", event | change),
+                    (None, None),
+                )
+
     def test_cpu_submission_pins_code_without_forwarding_local_credentials(self):
         config = {
             "execution_image": "none",
@@ -196,6 +261,13 @@ class BazziteSetupTest(unittest.TestCase):
         self.assertNotIn("env", request)
         self.assertNotIn("synthetic-secret", str(request))
         self.assertNotIn("synthetic-github", str(request))
+        self.assertNotIn("--pull-request", request["steps"][0]["run"])
+        # A remote runner has no webhook environment; the PR travels as arguments.
+        request = coordinator_request(
+            config, "/var/lib/llm-cc/comparison.json", "owner/repo", "b" * 40,
+            "topic", "trunk", 24, "trunk",
+        )
+        self.assertIn("--pull-request 24 --base-branch trunk", request["steps"][0]["run"])
 
     def test_bundle_is_deterministic_and_excludes_unrelated_files(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -499,12 +571,23 @@ class CheckoutResolutionTest(unittest.TestCase):
                 "GIT_COMMITTER_EMAIL": "ci-runner@buildbuddy.io",
             },
         ).decode().strip()
-        head, branch, default = resolve_checkout(
-            self.repo, {"GIT_COMMIT": merge, "GIT_BRANCH": "feature"}
-        )
+        event = {
+            "GIT_COMMIT": merge,
+            "GIT_BRANCH": "feature",
+            "GIT_BASE_BRANCH": "main",
+            "GIT_PR_NUMBER": "7",
+        }
+        head, branch, default = resolve_checkout(self.repo, event)
         self.assertEqual(head, side)
         self.assertEqual(branch, "feature")
         self.assertEqual(default, "main")
+        self.assertEqual(
+            pull_request_environment(head, branch, event, repo=self.repo), (7, "main")
+        )
+        self.assertEqual(
+            pull_request_environment(self.head, branch, event, repo=self.repo),
+            (None, None),
+        )
 
     def test_forged_committer_on_a_non_merge_commit_is_not_unwrapped(self):
         # The committer email is attacker-controlled. Unwrapping an ordinary
@@ -528,6 +611,20 @@ class CheckoutResolutionTest(unittest.TestCase):
             self.repo, {"GIT_COMMIT": forged, "GIT_BRANCH": "forged"}
         )
         self.assertEqual(head, forged)
+        self.assertEqual(
+            pull_request_environment(
+                self.head,
+                "forged",
+                {
+                    "GIT_COMMIT": forged,
+                    "GIT_BRANCH": "forged",
+                    "GIT_BASE_BRANCH": "main",
+                    "GIT_PR_NUMBER": "7",
+                },
+                repo=self.repo,
+            ),
+            (None, None),
+        )
 
     def test_default_branch_precedence_and_checkout_fallbacks(self):
         head, branch, default = resolve_checkout(self.repo, {})
