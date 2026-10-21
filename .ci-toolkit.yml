@@ -1,9 +1,5 @@
 api_version: ci-toolkit/v1alpha1
 
-pull_requests:
-  title:
-    format: conventional-commits
-
 # .runnerless-ci.ts opts into releasePlease(); these are its release settings.
 releases:
   uses: toolkit.release-please@v1
