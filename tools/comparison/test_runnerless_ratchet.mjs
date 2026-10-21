@@ -20,7 +20,7 @@ function comment(payload = data, actorId = 317265358, attribution = '') {
 
 async function run(items, { proposed = '', paged = false, details = {}, pull = {} } = {}) {
   let exports, response = new Uint8Array(), operations = 0;
-  const checks = [], workflows = [], recipes = new Map();
+  const checks = [], workflows = [], titlePolicies = [], recipes = new Map();
   const event = { event: 'pull_request', action: 'opened', state: 'open',
     pullNumber: 42, fullName: 'pawelchcki/llm-cc', head, base, ...details };
   const { instance } = await WebAssembly.instantiate(wasm, {
@@ -51,6 +51,7 @@ async function run(items, { proposed = '', paged = false, details = {}, pull = {
           value = { items: selected, nextPage: selected.length === args.size ? args.page + 1 : null };
         }
         else if (capability === 'configure.workflow') workflows.push(args);
+        else if (capability === 'configure.titlePolicy') titlePolicies.push(args);
         else if (capability === 'jobs.result') ok = false;
         else if (capability === 'workflow.configure' || capability === 'workflow.run') {
           assert.ok(!recipes.has(capability), `${capability} called more than once`);
@@ -71,6 +72,7 @@ async function run(items, { proposed = '', paged = false, details = {}, pull = {
   exports = instance.exports;
   exports.__runnerless_init();
   exports.configure();
+  assert.deepEqual(titlePolicies, [{ enabled: true, format: 'conventional-commits' }]);
   assert.deepEqual(recipes.get('workflow.configure'), { version: 1, release: true, deploy: null },
     'Release Please must be enabled in the repository program; YAML only supplies its settings');
   assert.deepEqual(workflows.find(item => item.id === 'llm-cc-token-ratio').events,
