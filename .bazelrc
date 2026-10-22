@@ -77,6 +77,10 @@ build:buildbuddy --remote_timeout=3600
 # zstd shrinks object files and GPU modules on the wire in both directions.
 build:buildbuddy --remote_cache_compression
 
+# Non-push workflow runs read the shared cache but do not write to it.
+build:buildbuddy-pr --config=buildbuddy
+build:buildbuddy-pr --remote_upload_local_results=false
+
 build:buildbuddy-rbe --config=buildbuddy
 build:buildbuddy-rbe --remote_executor=grpcs://remote.buildbuddy.io
 build:buildbuddy-rbe --remote_local_fallback=false

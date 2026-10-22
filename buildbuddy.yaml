@@ -14,15 +14,17 @@ actions:
       pull_request:
         branches:
           - "main"
+    # Only push runs write local results to the shared remote cache;
+    # pull request runs use --config=buildbuddy-pr, which reads it.
     steps:
       - run: "tools/check_format.sh"
-      - run: "bazel test --config=buildbuddy --test_output=errors //:unit //:integration //:tls_integration_test //tools/comparison:comparison_test"
+      - run: "bazel test --config=\"$(tools/buildbuddy_config.sh)\" --test_output=errors //:unit //:integration //:tls_integration_test //tools/comparison:comparison_test"
       # Recycled runners keep $HOME, so the consumer's action cache survives
       # between runs instead of re-checking every action against the remote cache.
-      - run: "CONSUMER_ROOT=\"$HOME/.cache/llm-cc-consumer-root\" BACKEND=cpu tools/check_consumer.sh --tests-only"
+      - run: "CONSUMER_ROOT=\"$HOME/.cache/llm-cc-consumer-root\" BACKEND=cpu CONSUMER_BAZEL_ARGS=\"$(tools/buildbuddy_config.sh --upload-flag)\" tools/check_consumer.sh --tests-only"
       # The checks below read bazel-bin/llm-cc, so request it as a top-level
       # output rather than downloading every intermediate.
-      - run: "bazel build --config=buildbuddy --remote_download_toplevel --config=distribution --config=portable //:cpu_static_archive //:llm-cc"
+      - run: "bazel build --config=\"$(tools/buildbuddy_config.sh)\" --remote_download_toplevel --config=distribution --config=portable //:cpu_static_archive //:llm-cc"
       - run: "tools/check_glibc_version.sh bazel-bin/llm-cc 2.28"
       - run: "tools/check_static_link.sh bazel-bin/llm-cc"
   - name: "GPU backends"
@@ -49,7 +51,7 @@ actions:
             git checkout --detach HEAD^1
           fi
 
-          bazel build --config=buildbuddy --remote_download_all --config=release --config=universal \
+          bazel build --config="$(tools/buildbuddy_config.sh)" --remote_download_all --config=release --config=universal \
             //dist:backend_cuda //dist:backend_rocm
 
           # Bundles are containers, not ELF files; check the actual module ELFs
@@ -79,6 +81,8 @@ actions:
   # Bazzite hosts the CPU coordinator and its shared filesystem cache.
   # GPU workers are submitted only for misses and serialize the shared Radeon.
   # Seed main's baseline and compare pull requests using the same pinned scorer.
+  # Runs only on pushes to this repository's branches, never on pull_request
+  # events; a pushed branch is compared against its open pull request.
   - name: "Complexity comparison"
     self_hosted: true
     pool: "linux-amd64-kvm"
@@ -94,9 +98,8 @@ actions:
     triggers:
       push:
         branches:
-          - "main"
-      pull_request:
-        branches:
-          - "main"
+          - "*"
+          - "!gh-readonly-queue/*"
+          - "!data/*"
     steps:
       - run: "tools/comparison/dogfood.sh"

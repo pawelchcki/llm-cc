@@ -79,6 +79,10 @@ args=(--config=release --config="$backend" --stamp --workspace_status_command='b
 if [[ -n "${CUDA_ARCHS:-}" ]]; then
   args+=("--@renamed_engine//:cuda_archs=$CUDA_ARCHS")
 fi
+if [[ -n "${CONSUMER_BAZEL_ARGS:-}" ]]; then
+  read -ra extra_args <<<"$CONSUMER_BAZEL_ARGS"
+  args+=("${extra_args[@]}")
+fi
 bazel test "${args[@]}" --test_output=errors \
   @renamed_engine//:install_test @renamed_engine//:cli_test \
   @renamed_engine//:lang_test @renamed_engine//:tls_integration_test \

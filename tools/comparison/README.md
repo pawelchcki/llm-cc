@@ -177,6 +177,11 @@ repository-wide ratio to be equal to or below the PR merge base's ratio. Raw
 LM-CC can grow when code is added; any increase in LM-CC/token fails the check.
 Missing, incomplete, non-finite, zero-token, or stale measurements also fail.
 
+The `Complexity comparison` action runs only on pushes to this repository's
+branches, not on `pull_request` events, so pull requests from forks are not
+measured. A branch pushed before its PR is opened is skipped; push again or
+re-run the action once the PR exists.
+
 `dogfood.sh` runs the installed `/var/lib/llm-cc/bin/llm-cc-coordinate`, which
 verifies its execution bundle's SHA-256 and isolates Python imports from the
 checkout. It then runs `ratchet.py` with Python `-I` to add exact ratios and
