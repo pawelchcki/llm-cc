@@ -44,15 +44,15 @@ jobs:
 
   platform:
     # Ordinary PRs use BuildBuddy. Full platform and consumer builds run for
-    # main, dispatches, PRs into release-please branches, and PRs from
-    # same-repository release-please branches, as well as PRs
+    # main, dispatches, same-repository PRs into or from
+    # release-please branches, as well as PRs
     # labeled `ci: release-builds` (when labeled, and on each later push).
     if: >-
       github.event_name != 'pull_request' ||
-      startsWith(github.base_ref, 'release-please--branches--') ||
       contains(github.event.pull_request.labels.*.name, 'ci: release-builds') ||
       (github.event.pull_request.head.repo.full_name == github.repository &&
-       startsWith(github.head_ref, 'release-please--branches--'))
+       (startsWith(github.base_ref, 'release-please--branches--') ||
+        startsWith(github.head_ref, 'release-please--branches--')))
     strategy:
       fail-fast: false
       matrix:
@@ -121,15 +121,15 @@ jobs:
 
   consumer:
     # Ordinary PRs use BuildBuddy. Full platform and consumer builds run for
-    # main, dispatches, PRs into release-please branches, and PRs from
-    # same-repository release-please branches, as well as PRs
+    # main, dispatches, same-repository PRs into or from
+    # release-please branches, as well as PRs
     # labeled `ci: release-builds` (when labeled, and on each later push).
     if: >-
       github.event_name != 'pull_request' ||
-      startsWith(github.base_ref, 'release-please--branches--') ||
       contains(github.event.pull_request.labels.*.name, 'ci: release-builds') ||
       (github.event.pull_request.head.repo.full_name == github.repository &&
-       startsWith(github.head_ref, 'release-please--branches--'))
+       (startsWith(github.base_ref, 'release-please--branches--') ||
+        startsWith(github.head_ref, 'release-please--branches--')))
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:

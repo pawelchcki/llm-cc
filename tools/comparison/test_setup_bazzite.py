@@ -702,9 +702,12 @@ class ConsumerTemplateTest(unittest.TestCase):
         self.assertIn("--repository OWNER/REPO", workflow)
         # The runner otherwise falls back to "main" and skips a trunk push.
         self.assertIn("--default-branch main", workflow)
-        # A copy used as the whole policy is rejected without the declaration.
-        self.assertIn("pull_request:", workflow)
+        # The self-hosted action runs only for pushes to the repository's own
+        # branches; pull_request events would also run for forks.
+        self.assertNotIn("pull_request:", workflow)
+        self.assertIn('- "*"', workflow)
         self.assertIn("default branch", workflow)
+        # A copy used as the whole policy is rejected without the declaration.
         policy = self.read(".ci-toolkit.yml")
         self.assertIn("api_version: ci-toolkit/v1alpha1", policy)
         self.assertIn("context: Complexity comparison", policy)
