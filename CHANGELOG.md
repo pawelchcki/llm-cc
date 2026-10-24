@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.1](https://github.com/pawelchcki/llm-cc/compare/v0.9.0...v0.9.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* keep the LM-CC/token report within the Runnerless deadline ([#93](https://github.com/pawelchcki/llm-cc/issues/93)) ([f2a1d9c](https://github.com/pawelchcki/llm-cc/commit/f2a1d9c851555f070dba29df10fc0f5afdc40402))
+* **comparison:** discover anonymous PRs from Git refs and wait out rate limits ([#92](https://github.com/pawelchcki/llm-cc/issues/92)) ([1a8db60](https://github.com/pawelchcki/llm-cc/commit/1a8db605d97a0d55989750513f6675cd185618fa))
+
 ## [0.9.0](https://github.com/pawelchcki/llm-cc/compare/v0.8.0...v0.9.0) (2026-10-12)
 
 
