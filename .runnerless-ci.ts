@@ -3,8 +3,8 @@ import {
   ArtifactComment, ArtifactSpec, ArtifactStatus, artifacts, workflow,
 } from "runnerless/v1";
 import {
-  capabilities, checks, comments, configuration, event, jobs, packages, repo,
-  OperationRef, OperationRequest, PageRequest, RegistryPublishRequest, Value, WriteResult,
+  checks, configuration, event, jobs, packages, repo,
+  OperationRef, OperationRequest, RegistryPublishRequest, WriteResult,
 } from "runnerless";
 
 const gpu = new ArtifactSpec("public-artifacts",
@@ -14,149 +14,10 @@ const gpu = new ArtifactSpec("public-artifacts",
   .file("llm-cc-backend-*-linux-x86_64.manifest.json", "application/json", 65536);
 gpu.comment = ArtifactComment.fileTable("GPU backends");
 
-const comparison = new ArtifactSpec("public-artifacts",
-  new ArtifactStatus("Complexity comparison", 130678843, "https://pawel.buildbuddy.io"), "comparison-files")
-  .file("comment.md", "text/plain", 24576)
-  .file("publication.json", "application/json", 4096)
-  .file("report.json", "application/json", 16777216)
-  .file("report.md", "text/plain", 16777216)
-  .file("baseline.md", "text/plain", 1048576)
-  .file("baseline.json", "application/json", 16777216);
-comparison.comment = ArtifactComment.generated("comment.md", "publication.json", 24576);
-
-// Each publisher keeps one complete default-branch set and the 14-day fallback.
-// The host protects active release inputs and owns storage paths and credentials.
+// Public CI publishes build artifacts; GPU complexity comparisons are retired.
 const program = workflow()
   .releasePlease()
-  .publishArtifacts("gpu-backends", gpu)
-  .publishArtifacts("complexity", comparison);
-
-const ratioPrefix = "LM-CC/token data: `";
-const publisherActorId: i64 = 317265358;
-
-function commentBody(value: Value): string {
-  // The stub runtime retains every allocation. Decode once into UTF-16 units
-  // instead of the SDK's repeated string concatenation for long reports.
-  const json = value.json;
-  if (!json.startsWith('"')) return "";
-  const units = new Array<i32>(json.length - 2);
-  let length = 0;
-  for (let i = 1; i < json.length - 1; i++) {
-    let c = json.charCodeAt(i);
-    if (c == 92) {
-      c = json.charCodeAt(++i);
-      if (c == 117) {
-        c = I32.parseInt(json.substring(i + 1, i + 5), 16);
-        i += 4;
-      } else if (c == 110) c = 10;
-      else if (c == 114) c = 13;
-      else if (c == 116) c = 9;
-      else if (c == 98) c = 8;
-      else if (c == 102) c = 12;
-    }
-    units[length++] = c;
-  }
-  units.length = length;
-  return String.fromCharCodes(units);
-}
-
-// The escaped LM-CC/token data in a publisher complexity report, given its body as
-// compact JSON text from the opening quote: "" when that report has no data, or
-// null for any other text.
-function ratioData(body: string): string | null {
-  // Publication attribution can appear between these two host markers.
-  if (!body.startsWith('"<!-- codex-review-artifact-publisher -->')
-    || body.indexOf("<!-- ci-toolkit:complexity -->") < 0) return null;
-  const start = body.indexOf(ratioPrefix);
-  if (start < 0) return "";
-  const first = start + ratioPrefix.length;
-  const end = body.indexOf("`", first);
-  return end < 0 ? "" : body.substring(first, end);
-}
-
-// The data in the publisher's complexity report, of which each PR has one; null
-// when there is no such report yet.
-function publishedData(): string | null {
-  let nextPage: i32 = 1;
-  while (nextPage > 0) {
-    // A page of full artifact reports can exhaust the guest's fuel budget.
-    const page = comments.list(new PageRequest(nextPage, 1));
-    for (let i = 0; i < page.items.length; i++) {
-      const comment = page.items[i];
-      // The host serializes compact JSON. Filter its escaped body before scanning
-      // publisher fields; unrelated reports also consume the guest's fuel.
-      const at = comment.json.indexOf('"body":"<!-- codex-review-artifact-publisher -->');
-      if (at < 0) continue;
-      const data = ratioData(comment.json.substring(at + 7));
-      if (data === null || comment.get("actorId").integer() != publisherActorId) continue;
-      return data;
-    }
-    nextPage = page.nextPage;
-  }
-  return null;
-}
-
-// The report's data when it is for this PR's current head and target, else null.
-function currentData(found: string | null, fullName: string, number: i64,
-                     head: string, base: string): Value | null {
-  if (found === null || found == "") return null;
-  const data = new Value(commentBody(new Value('"' + found! + '"')));
-  const identity = data.get("identity");
-  if (data.get("schema_version").integer() != 1
-    || identity.get("repository").string() != fullName
-    || identity.get("pr_number").integer() != number
-    || identity.get("head_sha").string() != head
-    || identity.get("target_sha").string() != base) return null;
-  return data;
-}
-
-function reportRatio(): void {
-  const details = event.details();
-  if (details.get("pullNumber").isNull()) return;
-  // Another author's comment cannot change the publisher's report. Skip it before
-  // any GitHub read: every read counts against the program's deadline. A deletion
-  // may have removed the report, so it always rescans the live comments.
-  if (details.get("event").string() == "issue_comment"
-    && details.get("action").string() != "deleted"
-    && details.get("actorId").integer() != publisherActorId) return;
-  // The typed PR wrapper also decodes the unused title and description.
-  const pr = capabilities.call("pulls.get").require();
-  if (pr.get("state").string() != "open") return;
-  const prNumber = pr.get("number").integer();
-  const prHead = pr.get("head").string();
-  const prBase = pr.get("base").string();
-  // The host coordinator is checksum-pinned and isolated from PR imports.
-  // A PR cannot replace its entrypoint, annotation, or source-selection policy.
-  const producers = ["buildbuddy.yaml", "tools/comparison/dogfood.sh",
-                     "tools/comparison/ratchet.py", ".llm-cc/rules.json"];
-  for (let i = 0; i < producers.length; i++) {
-    const path = producers[i];
-    if (repo.readText(path, "head") != repo.readText(path, "base")) {
-      checks.report("LM-CC/token", false,
-        "The comparison producer changed: " + path + "; deploy producer updates through a trusted rollout.");
-      return;
-    }
-  }
-  // Always read the live report: comment events can arrive out of order, so even
-  // the publisher's own event body may describe an older report.
-  const data = currentData(publishedData(), details.get("fullName").string(),
-                           prNumber, prHead, prBase);
-  if (data === null) {
-    checks.report("LM-CC/token", false,
-      "Waiting for verified LM-CC/token data for the current PR head and target.");
-    return;
-  }
-  const base = F64.parseFloat(data.get("base_ratio").json);
-  const head = F64.parseFloat(data.get("head_ratio").json);
-  if (data.get("status").string() != "complete" || !isFinite(base) || !isFinite(head) || base < 0 || head < 0) {
-    checks.report("LM-CC/token", false,
-      "The current comparison has no complete, finite LM-CC/token measurements.");
-    return;
-  }
-  checks.report("LM-CC/token", head <= base,
-    "Repository LM-CC/token: " + base.toString() + " -> " + head.toString()
-      + (head <= base ? "; maintained or improved." : "; regression."));
-}
+  .publishArtifacts("gpu-backends", gpu);
 
 export function configure(): void {
   configuration.titlePolicy();
@@ -164,9 +25,6 @@ export function configure(): void {
   program.configure();
   configuration.workflow("artifact-cleanup", ["pull_request"]);
   configuration.workflow("registry-publish", ["workflow_run", "runnerless_completion"]);
-  configuration.workflow("llm-cc-token-ratio", [
-    "pull_request", "status", "runnerless_completion", "issue_comment",
-  ]);
 }
 
 function reportPublishing(key: string, name: string): void {
@@ -214,7 +72,6 @@ function publishRegistries(): void {
 
 export function run(): void {
   program.run();
-  reportRatio();
   publishRegistries();
   if (event.isMerge()) artifacts.cleanup();
 }

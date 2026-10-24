@@ -1,3 +1,7 @@
+> GPU comparisons for llm-cc itself have been retired. The self-hosted setup
+> described below is available for private repositories only. Public CI uses
+> managed runners and does not publish an LM-CC/token merge check.
+
 # Revision comparison
 
 `llm-cc compare` compares committed source at two Git revisions: it selects and
@@ -170,47 +174,12 @@ stored reports, match `identity` to the intended repository and commits and
 `fingerprint` to the intended scorer settings. LM-CC/token is a heuristic;
 raw totals and file regressions provide context for a ratio change.
 
-## Repository ratchet
+## Repository comparisons retired
 
-This repository's `Runnerless / LM-CC/token` check requires the head's
-repository-wide ratio to be equal to or below the PR merge base's ratio. Raw
-LM-CC can grow when code is added; any increase in LM-CC/token fails the check.
-Missing, incomplete, non-finite, zero-token, or stale measurements also fail.
-
-The `Complexity comparison` action runs only on pushes to this repository's
-branches, not on `pull_request` events, so pull requests from forks are not
-measured. A branch pushed before its PR is opened is skipped; push again or
-re-run the action once the PR exists.
-
-`dogfood.sh` runs the installed `/var/lib/llm-cc/bin/llm-cc-coordinate`, which
-verifies its execution bundle's SHA-256 and isolates Python imports from the
-checkout. It then runs `ratchet.py` with Python `-I` to add exact ratios and
-report identity in a collapsed **Comparison data** block, preserving the
-headline and updating the comment's checksum in `publication.json`. This
-works with the existing pinned scorer as well as newer reports. Runnerless
-accepts only the comparison publisher bot (`317265358`) and its artifact
-markers, and matches the repository, PR number, head and target commit before
-comparing ratios. It does not parse rounded headline or table values.
-
-The check requires `buildbuddy.yaml`, `tools/comparison/dogfood.sh`,
-`tools/comparison/ratchet.py` and `.llm-cc/rules.json` to match the trusted base.
-Updates to those producers need a separate trusted rollout; a PR cannot
-replace the producer or redefine the measured source set and pass its own gate.
-
-Runnerless executes the base branch's policy, so the new check starts after
-this policy lands on `main`. Once an ordinary PR reports the new check, apply
-the recorded [main ruleset](../../.github/main-ruleset.json) to ruleset
-`21882868` to make it required:
-
-```sh
-gh api --method PUT repos/pawelchcki/llm-cc/rulesets/21882868 \
-  --input .github/main-ruleset.json
-```
-
-The ruleset retains the existing merge protections, requires `Runnerless`
-and `Runnerless / LM-CC/token` from app `4602759`, and requires the PR branch
-to be current with `main`. Applying it before the policy lands would leave
-this PR waiting for a check that the base policy cannot produce.
+The GPU comparison workflow and `Runnerless / LM-CC/token` check have been
+retired for this public repository. CPU tests, GPU backend compilation and
+release packaging run on managed runners. The comparison library and reusable
+private-repository recipes remain available.
 
 ## Per-repository classification rules
 
@@ -321,19 +290,9 @@ derived from the **parent invocation** identity. Default-branch pushes compare
 the head to itself and populate the baseline cache. A branch with no current PR
 skips inference.
 
-The `Complexity comparison` BuildBuddy action runs on pull requests targeting
-`main` and on `main` pushes. This repository runs the checkout's own coordinator
-through [dogfood.sh](dogfood.sh), so pull requests exercise coordinator changes
-before the host bundle is refreshed; consuming repositories call the published
-launcher instead. The coordinator derives its own head, branch and default branch
-from the checkout, unwrapping BuildBuddy's synthetic merge commit to the actual
-pull-request head. Runnerless consumes the completed BuildBuddy status and
-publishes the generated table and report links using
-[`.runnerless-ci.ts`](../../.runnerless-ci.ts) from the PR's target commit. The
-program must land on the target branch before a fresh PR comparison can publish
-automatically. It retains one complete main set, explicitly cleans merged PR
-copies, and uses a 14-day fallback for abandoned PRs while protecting active
-release inputs.
+This repository no longer registers a `Complexity comparison` action or
+report publisher. Private consumers may use the installed host coordinator and
+the trusted publication policy described above.
 
 In this BuildBuddy flow, the publication host owns comment markers, serialization,
 ordering, and PR-state rechecks, and the coordinator never posts comments.

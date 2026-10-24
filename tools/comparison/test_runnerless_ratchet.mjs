@@ -1,4 +1,4 @@
-// Verify release recipe registration and ratio checks against the versioned host ABI:
+// Verify release registration and retired comparisons against the versioned host ABI:
 // node tools/comparison/test_runnerless_ratchet.mjs PROGRAM.wasm
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -6,19 +6,7 @@ import { readFile } from 'node:fs/promises';
 const wasm = await readFile(process.argv[2]);
 const encoder = new TextEncoder(), decoder = new TextDecoder();
 const head = 'a'.repeat(40), base = 'b'.repeat(40);
-const data = { schema_version: 1, status: 'complete', identity: {
-  repository: 'pawelchcki/llm-cc', pr_number: 42, head_sha: head, target_sha: base,
-}, base_ratio: 0.1, head_ratio: 0.1 };
-const publisher = '<!-- codex-review-artifact-publisher -->';
-const artifact = '<!-- ci-toolkit:complexity -->';
-const producers = ['buildbuddy.yaml', 'tools/comparison/dogfood.sh',
-  'tools/comparison/ratchet.py', '.llm-cc/rules.json'];
-function comment(payload = data, actorId = 317265358, attribution = '') {
-  return { actorId, body: publisher + '\n' + attribution + artifact +
-    '\nSummary\nLM-CC/token data: `' + JSON.stringify(payload) + '`\n' };
-}
-
-async function run(items, { proposed = '', paged = false, details = {}, pull = {} } = {}) {
+async function run({ details = {} } = {}) {
   let exports, response = new Uint8Array(), operations = 0;
   const checks = [], workflows = [], titlePolicies = [], recipes = new Map();
   const event = { event: 'pull_request', action: 'opened', state: 'open',
@@ -32,24 +20,12 @@ async function run(items, { proposed = '', paged = false, details = {}, pull = {
         assert.ok(++operations <= 32, 'Runnerless host-operation budget exceeded');
         const request = JSON.parse(decoder.decode(new Uint8Array(exports.memory.buffer, ptr, length)));
         if (kind === 3) { checks.push(request); response = encoder.encode('null'); return; }
-        if (kind === 1) {
-          const [path, ref] = request;
-          assert.ok(producers.includes(path), path);
-          response = encoder.encode(path === proposed && ref === 'head' ? 'changed' : 'trusted');
-          return;
-        }
+        if (kind === 1) assert.fail('retired comparisons must not read producer files');
         if (kind === 4) { response = encoder.encode(event[request[0]] ?? ''); return; }
         assert.equal(kind, 8);
         const { capability, args } = request;
         let value = null, ok = true;
         if (capability === 'event.details') value = event;
-        else if (capability === 'pulls.get') value = { number: 42, state: 'open', head, base, ...pull };
-        else if (capability === 'comments.list') {
-          const all = paged ? [{ actorId: 1, body: 'unrelated' }, ...items] : items;
-          const first = (args.page - 1) * args.size;
-          const selected = all.slice(first, first + args.size);
-          value = { items: selected, nextPage: selected.length === args.size ? args.page + 1 : null };
-        }
         else if (capability === 'configure.workflow') workflows.push(args);
         else if (capability === 'configure.titlePolicy') titlePolicies.push(args);
         else if (capability === 'jobs.result') ok = false;
@@ -75,56 +51,17 @@ async function run(items, { proposed = '', paged = false, details = {}, pull = {
   assert.deepEqual(titlePolicies, [{ enabled: true, format: 'conventional-commits' }]);
   assert.deepEqual(recipes.get('workflow.configure'), { version: 1, release: true, deploy: null },
     'Release Please must be enabled in the repository program; YAML only supplies its settings');
-  assert.deepEqual(workflows.find(item => item.id === 'llm-cc-token-ratio').events,
-    ['pull_request', 'status', 'runnerless_completion', 'issue_comment']);
+  assert.equal(workflows.find(item => item.id === 'llm-cc-token-ratio'), undefined);
   operations = 0; // Configuration and execution have separate production budgets.
   exports.run();
   assert.deepEqual(recipes.get('workflow.run'), recipes.get('workflow.configure'),
     'Execution must use the configured release recipe');
-  const ratios = checks.filter(check => check[0] === 'LM-CC/token');
-  if (event.pullNumber === null) { assert.equal(ratios.length, 0); return null; }
-  assert.equal(ratios.length, 1);
-  return ratios[0][1];
+  assert.deepEqual(checks.filter(check => check[0] === 'LM-CC/token'), [],
+    'Retired GPU comparisons must not publish a merge gate');
 }
 
-let scenarios = 0;
-async function expect(items, passed, options) {
-  assert.equal(await run(items, options), passed);
-  scenarios++;
+for (const event of ['pull_request', 'status', 'issue_comment', 'runnerless_completion']) {
+  await run({ details: { event } });
 }
-for (const [ratio, passed] of [[0.1, true], [0.05, true], [0.100000000001, false],
-  [null, false], [-0.1, false], [Infinity, false], [true, false], ['0.05', false]]) {
-  await expect([comment({ ...data, head_ratio: ratio })], passed);
-}
-await expect([comment({ ...data, base_ratio: 0, head_ratio: 0 })], true);
-await expect([comment({ ...data, base_ratio: 0, head_ratio: 0.1 })], false);
-for (const status of ['incomplete', 'failed']) await expect([comment({ ...data, status })], false);
-await expect([comment({ ...data, schema_version: 2 })], false);
-await expect([], false);
-await expect([comment(data, 1)], false);
-await expect([{ actorId: 317265358, body: 'Unrelated', other: comment().body }], false);
-await expect([{ actorId: 317265358, body: 'Unrelated "body":"' + comment().body }], false);
-await expect([{ actorId: 317265358, body: publisher + artifact },
-  { actorId: 317265358, body: publisher + '<!-- ci-toolkit:gpu-backends -->\n' + 'x'.repeat(4000) },
-  { actorId: 1, body: 'Unrelated\n'.repeat(200) }], false);
-await expect([{ ...comment(), body: 'unverified ' + comment().body }], false);
-await expect([{ ...comment(), body: comment().body.replace(artifact, '<!-- ci-toolkit:gpu-backends -->') }], false);
-for (const [field, value] of [['repository', 'other/repo'], ['pr_number', 43],
-  ['head_sha', 'c'.repeat(40)], ['target_sha', 'c'.repeat(40)]]) {
-  await expect([comment({ ...data, identity: { ...data.identity, [field]: value } })], false);
-}
-await expect([comment()], true, { paged: true });
-await expect([comment(data, 317265358, '> Automation policy from the trusted base.\n\n')], true);
-const large = comment();
-large.body = large.body.replace('Summary', '### llm-cc: LM-CC Δ +554.6 · LM-CC/token 0.110017 → 0.109755\n' +
-  '| `src/parser.cc` | runtime | +35.6 |\n'.repeat(650));
-await expect([large], true);
-await expect([{ actorId: 317265358, body: 'Unrelated automation\n'.repeat(1000) }, large], true);
-await expect([comment(data, 317265358, 'Unicode: Δ → 🦀, escapes: " \\ \t \r \b \f\n')], true);
-await expect([large], true, { pull: { title: 'feat: ratio gate', body: 'PR details\n'.repeat(500) } });
-await expect([large], true, { pull: { body: 'Details\n'.repeat(6000) } });
-for (const proposed of producers) await expect([comment()], false, { proposed });
-await expect([comment()], true, { details: { event: 'runnerless_completion' } });
-await expect([], null, { details: { event: 'push', pullNumber: null } });
-await expect([], null, { details: { event: 'runnerless_completion', pullNumber: null } });
-console.log(`Runnerless Wasm: release registration and ${scenarios} ratio, identity, publisher, pagination, producer and event scenarios passed.`);
+await run({ details: { event: 'push', pullNumber: null } });
+console.log('Runnerless Wasm: release registration and GPU comparison retirement passed for five event types.');

@@ -10,4 +10,4 @@ releases:
     # uploads every verified artifact, and only then publishes the release.
     skip_github_release: true
 
-# GPU bundles and comparison reports are declared in .runnerless-ci.ts.
+# GPU build bundles are declared in .runnerless-ci.ts.

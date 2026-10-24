@@ -1,5 +1,6 @@
 actions:
   - name: "CPU build and test"
+    self_hosted: false
     container_image: "ubuntu-24.04"
     resource_requests: { disk: 40GB }
     allow_concurrent_runs: false
@@ -28,6 +29,7 @@ actions:
       - run: "tools/check_glibc_version.sh bazel-bin/llm-cc 2.28"
       - run: "tools/check_static_link.sh bazel-bin/llm-cc"
   - name: "GPU backends"
+    self_hosted: false
     container_image: "ubuntu-24.04"
     resource_requests: { disk: 80GB }
     timeout: 2h
@@ -78,28 +80,3 @@ actions:
             "$artifacts/llm-cc-backend-rocm-linux-x86_64.bundle.sha256"
           cp bazel-bin/dist/backend_rocm/manifest.json \
             "$artifacts/llm-cc-backend-rocm-linux-x86_64.manifest.json"
-  # Bazzite hosts the CPU coordinator and its shared filesystem cache.
-  # GPU workers are submitted only for misses and serialize the shared Radeon.
-  # Seed main's baseline and compare pull requests using the same pinned scorer.
-  # Runs only on pushes to this repository's branches, never on pull_request
-  # events; a pushed branch is compared against its open pull request.
-  - name: "Complexity comparison"
-    self_hosted: true
-    pool: "linux-amd64-kvm"
-    platform_properties:
-      workload-isolation-type: "none"
-      container-image: "none"
-      resources:bazzite-host: "1"
-    env:
-      LLM_CC_COMPARISON_CONFIG: "/var/lib/llm-cc/comparison-v2.json"
-    resource_requests: { disk: 10GB }
-    timeout: 130m
-    allow_concurrent_runs: false
-    triggers:
-      push:
-        branches:
-          - "*"
-          - "!gh-readonly-queue/*"
-          - "!data/*"
-    steps:
-      - run: "tools/comparison/dogfood.sh"
