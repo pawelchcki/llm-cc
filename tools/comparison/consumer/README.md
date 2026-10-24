@@ -1,3 +1,6 @@
+> This self-hosted template is for private repositories only. Public projects
+> must use managed runners; llm-cc no longer runs GPU comparisons for itself.
+
 # Adopting the complexity comparison in another repository
 
 Every pull request gets an upserted `llm-cc comparison` comment with per-category

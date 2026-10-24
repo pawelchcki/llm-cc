@@ -85,9 +85,7 @@ build:buildbuddy-rbe --config=buildbuddy
 build:buildbuddy-rbe --remote_executor=grpcs://remote.buildbuddy.io
 build:buildbuddy-rbe --remote_local_fallback=false
 
-# Windows RBE requires a self-hosted Windows executor with MSVC installed.
-# Add --remote_default_exec_properties=Pool=NAME when using a named pool.
-build:buildbuddy-rbe-windows --config=buildbuddy-rbe
-build:buildbuddy-rbe-windows --remote_default_exec_properties=OSFamily=windows
-build:buildbuddy-rbe-windows --remote_default_exec_properties=Arch=amd64
-build:buildbuddy-rbe-windows --remote_default_exec_properties=use-self-hosted-executors=true
+# Public RBE always uses the managed Linux fleet. Windows builds run on
+# GitHub-hosted Windows runners. Private repositories may define their own
+# self-hosted execution profiles.
+build:buildbuddy-rbe --remote_default_exec_properties=use-self-hosted-executors=false
