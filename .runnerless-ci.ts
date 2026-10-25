@@ -1,4 +1,4 @@
-import { badges, BadgeSpec } from "runnerless/v1";
+import { badges, BadgeSpec, scans, ScanSpec } from "runnerless/v1";
 import {
   ArtifactComment, ArtifactSpec, ArtifactStatus, artifacts, workflow,
 } from "runnerless/v1";
@@ -14,7 +14,10 @@ const gpu = new ArtifactSpec("public-artifacts",
   .file("llm-cc-backend-*-linux-x86_64.manifest.json", "application/json", 65536);
 gpu.comment = ArtifactComment.fileTable("GPU backends");
 
-// Public CI publishes build artifacts; GPU complexity comparisons are retired.
+// Public CI publishes build artifacts. LM-CC complexity is scored by the organization's
+// installed llm-cc scanners (Runnerless content scans): each blob is scored once, a pull
+// request scores only the files it changes, and the ratchet fails a rise in LM-CC/token.
+const complexity = new ScanSpec("complexity", "llm-cc", true);
 const program = workflow()
   .releasePlease()
   .publishArtifacts("gpu-backends", gpu);
@@ -22,6 +25,7 @@ const program = workflow()
 export function configure(): void {
   configuration.titlePolicy();
   badges.define(new BadgeSpec("badge", "medium", "slowest-job"));
+  scans.define(complexity);
   program.configure();
   configuration.workflow("artifact-cleanup", ["pull_request"]);
   configuration.workflow("registry-publish", ["workflow_run", "runnerless_completion"]);
@@ -72,6 +76,7 @@ function publishRegistries(): void {
 
 export function run(): void {
   program.run();
+  scans.publish(complexity, "LM-CC/token");
   publishRegistries();
   if (event.isMerge()) artifacts.cleanup();
 }
